@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 7 May 2023 14:03:55 +0000
+Subject: [PATCH 142/310] WIN Disable updater
+
+FILE:WIN-Disable-updater.patch
+---
+ chrome/browser/active_use_util.h              |  2 +-
+ chrome/browser/updater/BUILD.gn               | 14 ------
+ .../browser/updater/browser_updater_client.cc | 43 +------------------
+ 3 files changed, 2 insertions(+), 57 deletions(-)
+
+diff --git a/chrome/browser/active_use_util.h b/chrome/browser/active_use_util.h
+index 2129a57246d..6a0c4b99f1f 100644
+--- a/chrome/browser/active_use_util.h
++++ b/chrome/browser/active_use_util.h
+@@ -9,6 +9,6 @@
+ #include "chrome/install_static/buildflags.h"
+ 
+ inline constexpr bool kShouldRecordActiveUse =
+-    !BUILDFLAG(IS_WIN) || BUILDFLAG(USE_GOOGLE_UPDATE_INTEGRATION);
++    false;
+ 
+ #endif  // CHROME_BROWSER_ACTIVE_USE_UTIL_H_
+diff --git a/chrome/browser/updater/BUILD.gn b/chrome/browser/updater/BUILD.gn
+index f7bcb1e6b7a..8d1c91c3982 100644
+--- a/chrome/browser/updater/BUILD.gn
++++ b/chrome/browser/updater/BUILD.gn
+@@ -41,20 +41,6 @@ source_set("updater") {
+       "//components/version_info",
+     ]
+ 
+-    if (is_win) {
+-      sources += [
+-        "browser_updater_client_util_win.cc",
+-        "browser_updater_client_win.cc",
+-        "scheduler_win.cc",
+-      ]
+-      deps += [
+-        "//chrome/browser/google",
+-        "//chrome/install_static:install_static_util",
+-        "//chrome/installer/util:with_no_strings",
+-        "//chrome/updater:browser_sources",
+-      ]
+-    }
+-
+     if (is_mac) {
+       sources += [
+         "browser_updater_client_mac.mm",
+diff --git a/chrome/browser/updater/browser_updater_client.cc b/chrome/browser/updater/browser_updater_client.cc
+index 6fd0c8ac747..5e4244f95f3 100644
+--- a/chrome/browser/updater/browser_updater_client.cc
++++ b/chrome/browser/updater/browser_updater_client.cc
+@@ -57,19 +57,6 @@ BrowserUpdaterClient::~BrowserUpdaterClient() {
+ 
+ void BrowserUpdaterClient::Register(base::OnceClosure complete) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+-  base::ThreadPool::PostTaskAndReplyWithResult(
+-      FROM_HERE, {base::MayBlock()},
+-      base::BindOnce(&BrowserUpdaterClient::GetRegistrationRequest, this),
+-      base::BindOnce(
+-          [](base::OnceCallback<void(int)> callback,
+-             scoped_refptr<UpdateService> update_service,
+-             const RegistrationRequest& request) {
+-            update_service->RegisterApp(request, std::move(callback));
+-          },
+-          base::BindPostTaskToCurrentDefault(
+-              base::BindOnce(&BrowserUpdaterClient::RegistrationCompleted, this,
+-                             std::move(complete))),
+-          update_service_));
+ }
+ 
+ void BrowserUpdaterClient::RegistrationCompleted(base::OnceClosure complete,
+@@ -101,22 +88,6 @@ void BrowserUpdaterClient::CheckForUpdate(
+     base::RepeatingCallback<void(const UpdateService::UpdateState&)>
+         version_updater_callback) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+-
+-  UpdateService::UpdateState update_state;
+-  update_state.state = UpdateService::UpdateState::State::kCheckingForUpdates;
+-  version_updater_callback.Run(update_state);
+-  update_service_->Update(
+-      GetAppId(), {}, UpdateService::Priority::kForeground,
+-      UpdateService::PolicySameVersionUpdate::kNotAllowed,
+-      /*language=*/{},
+-      base::BindPostTaskToCurrentDefault(
+-          base::BindRepeating([](const UpdateService::UpdateState& state) {
+-            GetLastOnDemandUpdateStateStorage() = state;
+-            return state;
+-          }).Then(version_updater_callback)),
+-      base::BindPostTaskToCurrentDefault(
+-          base::BindOnce(&BrowserUpdaterClient::UpdateCompleted, this,
+-                         version_updater_callback)));
+ }
+ 
+ void BrowserUpdaterClient::UpdateCompleted(
+@@ -186,19 +157,7 @@ void BrowserUpdaterClient::IsBrowserRegisteredCompleted(
+     base::OnceCallback<void(bool)> callback,
+     const std::vector<UpdateService::AppState>& apps) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+-  const auto updater =
+-      std::ranges::find_if(apps, [](const UpdateService::AppState& state) {
+-        return base::EqualsCaseInsensitiveASCII(state.app_id, kUpdaterAppId);
+-      });
+-  if (updater != apps.end()) {
+-    GetLastKnownUpdaterRegistrationStorage() = *updater;
+-  }
+-  const auto app =
+-      std::ranges::find_if(apps, &BrowserUpdaterClient::AppMatches);
+-  if (app != apps.end()) {
+-    GetLastKnownBrowserRegistrationStorage() = *app;
+-  }
+-  std::move(callback).Run(app != apps.end());
++  std::move(callback).Run(true);
+ }
+ 
+ void BrowserUpdaterClient::GetUpdaterStateCompleted(

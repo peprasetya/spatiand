@@ -1,7 +1,7 @@
-From 0fed8cf256f89c2f693c677d9e249941d55cb096 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Tue, 10 Nov 2026 09:33:18 +0700
-Subject: [PATCH 21/22] Spatiand: what extensions keep in storage.sync, on
+Subject: [PATCH 301/310] Spatiand: what extensions keep in storage.sync, on
  every machine
 
 Without Google's sync Chrome keeps an extension's storage.sync on the machine alone. It is now kept
@@ -28,10 +28,10 @@ extension's storage.sync within seconds, and its onChanged heard all three.
  create mode 100644 chrome/browser/spatiand/storage_sync.h
 
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 08b3c73f2a..122d85bf51 100644
+index 18ad3d0c80d..891c5d0af61 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -1644,6 +1644,8 @@ source_set("core") {
+@@ -1849,6 +1849,8 @@ source_set("core") {
        "spatiand/settings_sync.h",
        "spatiand/shared_folder.cc",
        "spatiand/spatikey_window.cc",
@@ -41,7 +41,7 @@ index 08b3c73f2a..122d85bf51 100644
        "spatiand/shared_folder.h",
        "fullscreen_linux.cc",
 diff --git a/chrome/browser/spatiand/profile_service.cc b/chrome/browser/spatiand/profile_service.cc
-index 909a380a51..ba7179d7c4 100644
+index 909a380a510..ba7179d7c43 100644
 --- a/chrome/browser/spatiand/profile_service.cc
 +++ b/chrome/browser/spatiand/profile_service.cc
 @@ -33,6 +33,7 @@ ProfileService::ProfileService(Profile* profile)
@@ -61,7 +61,7 @@ index 909a380a51..ba7179d7c4 100644
  
  // static
 diff --git a/chrome/browser/spatiand/profile_service.h b/chrome/browser/spatiand/profile_service.h
-index f5c06ba963..a290fd02e6 100644
+index f5c06ba9632..a290fd02e6b 100644
 --- a/chrome/browser/spatiand/profile_service.h
 +++ b/chrome/browser/spatiand/profile_service.h
 @@ -12,6 +12,7 @@
@@ -82,7 +82,7 @@ index f5c06ba963..a290fd02e6 100644
  
 diff --git a/chrome/browser/spatiand/storage_sync.cc b/chrome/browser/spatiand/storage_sync.cc
 new file mode 100644
-index 0000000000..bde210ac11
+index 00000000000..bde210ac117
 --- /dev/null
 +++ b/chrome/browser/spatiand/storage_sync.cc
 @@ -0,0 +1,210 @@
@@ -298,7 +298,7 @@ index 0000000000..bde210ac11
 +}  // namespace spatiand
 diff --git a/chrome/browser/spatiand/storage_sync.h b/chrome/browser/spatiand/storage_sync.h
 new file mode 100644
-index 0000000000..2b6460a51e
+index 00000000000..2b6460a51e9
 --- /dev/null
 +++ b/chrome/browser/spatiand/storage_sync.h
 @@ -0,0 +1,66 @@
@@ -369,7 +369,7 @@ index 0000000000..2b6460a51e
 +
 +#endif  // CHROME_BROWSER_SPATIAND_STORAGE_SYNC_H_
 diff --git a/extensions/browser/api/storage/storage_frontend.cc b/extensions/browser/api/storage/storage_frontend.cc
-index 5c70ae2877..201f263247 100644
+index a2af0fdf593..30d7d60b33d 100644
 --- a/extensions/browser/api/storage/storage_frontend.cc
 +++ b/extensions/browser/api/storage/storage_frontend.cc
 @@ -4,6 +4,8 @@
@@ -411,7 +411,7 @@ index 5c70ae2877..201f263247 100644
    EventRouter* event_router = EventRouter::Get(browser_context_);
  
 diff --git a/extensions/browser/api/storage/storage_frontend.h b/extensions/browser/api/storage/storage_frontend.h
-index 909f9e5daa..79dd162f61 100644
+index 909f9e5daa8..79dd162f61d 100644
 --- a/extensions/browser/api/storage/storage_frontend.h
 +++ b/extensions/browser/api/storage/storage_frontend.h
 @@ -33,6 +33,12 @@ class ValueStoreFactory;
@@ -427,6 +427,3 @@ index 909f9e5daa..79dd162f61 100644
  class StorageFrontend : public BrowserContextKeyedAPI {
   public:
    struct ResultStatus {
--- 
-2.53.0
-

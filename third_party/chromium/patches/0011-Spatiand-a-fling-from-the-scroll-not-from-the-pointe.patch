@@ -1,8 +1,8 @@
-From 6e99421f1c8eae5d0ea438ea20c08f87cc8d3f41 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Fri, 30 Oct 2026 21:46:23 +0700
-Subject: [PATCH] Spatiand: a fling from the scroll, not from the pointer
- moving between
+Subject: [PATCH 291/310] Spatiand: a fling from the scroll, not from the
+ pointer moving between
 
 The time of a scroll frame was measured from the last pointer frame of any kind, so a pointer moving between the frames of a scroll made them look a moment apart, and the end of a gesture look recent however late it came: a fling at a speed worked out from those, thrown long after the finger had stopped. Spatiand moves the pointer under a right thumb resting on its pad as the left one scrolls.
 ---
@@ -11,10 +11,10 @@ The time of a scroll frame was measured from the last pointer frame of any kind,
  2 files changed, 5 insertions(+), 3 deletions(-)
 
 diff --git a/ui/ozone/platform/wayland/host/wayland_event_source.cc b/ui/ozone/platform/wayland/host/wayland_event_source.cc
-index 396e22974c..97c9e00817 100644
+index 5a3773742a9..bf83e3b561f 100644
 --- a/ui/ozone/platform/wayland/host/wayland_event_source.cc
 +++ b/ui/ozone/platform/wayland/host/wayland_event_source.cc
-@@ -554,12 +554,14 @@ void WaylandEventSource::OnPointerFrameEvent() {
+@@ -560,12 +560,14 @@ void WaylandEventSource::OnPointerFrameEvent() {
    }
  
    if (pointer_scroll_data_) {
@@ -32,7 +32,7 @@ index 396e22974c..97c9e00817 100644
    if (!target_window) {
      return;
 diff --git a/ui/ozone/platform/wayland/host/wayland_event_source.h b/ui/ozone/platform/wayland/host/wayland_event_source.h
-index 04fce49654..40a052a63e 100644
+index 04fce496547..40a052a63e0 100644
 --- a/ui/ozone/platform/wayland/host/wayland_event_source.h
 +++ b/ui/ozone/platform/wayland/host/wayland_event_source.h
 @@ -282,7 +282,7 @@ class WaylandEventSource : public PlatformEventSource,
@@ -44,6 +44,3 @@ index 04fce49654..40a052a63e 100644
    base::TimeTicks last_pointer_frame_time_;
  
    // Order set of touch events to be dispatching on the next
--- 
-2.53.0
-

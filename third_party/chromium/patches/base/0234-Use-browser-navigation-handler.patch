@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 21 Sep 2024 15:32:02 +0000
+Subject: [PATCH 234/310] Use browser navigation handler
+
+Added a flag in the settings to restore the pre-A12 navigation mode.
+Pulling the edge to the right will go backwards, pulling it further forwards.
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Use-browser-navigation-handler.patch
+---
+ .../Use-browser-navigation-handler.inc               | 12 ++++++++++++
+ .../Use-browser-navigation-handler.inc               |  3 +++
+ .../Use-browser-navigation-handler.inc               |  1 +
+ 3 files changed, 16 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Use-browser-navigation-handler.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Use-browser-navigation-handler.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Use-browser-navigation-handler.inc
+
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Use-browser-navigation-handler.inc b/cromite_flags/chrome/browser/about_flags_cc/Use-browser-navigation-handler.inc
+new file mode 100644
+index 00000000000..02c7f144e58
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Use-browser-navigation-handler.inc
+@@ -0,0 +1,12 @@
++#if BUILDFLAG(IS_ANDROID)
++
++#ifdef FLAG_SECTION
++
++    {"UseBrowserNavigationHandler",
++     "Disable system gestures for web browsing",
++     "Forces activation of the old page navigation mode", kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kUseBrowserNavigationHandler)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Use-browser-navigation-handler.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Use-browser-navigation-handler.inc
+new file mode 100644
+index 00000000000..404f9eb20dd
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Use-browser-navigation-handler.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kUseBrowserNavigationHandler,
++                "UseBrowserNavigationHandler",
++                base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Use-browser-navigation-handler.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Use-browser-navigation-handler.inc
+new file mode 100644
+index 00000000000..81f2c4418d7
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Use-browser-navigation-handler.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kUseBrowserNavigationHandler);

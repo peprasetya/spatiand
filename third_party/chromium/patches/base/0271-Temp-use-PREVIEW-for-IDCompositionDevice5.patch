@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 29 Oct 2025 12:30:49 +0000
+Subject: [PATCH 271/310] Temp use PREVIEW for IDCompositionDevice5
+
+Temporarily restore the statement from v141 while waiting to update the Windows SDK.
+See Remove preview usage of DynamicTexture DComp APIs.
+https://chromium-review.googlesource.com/c/chromium/src/+/6902339
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Temp-use-PREVIEW-for-IDCompositionDevice5.patch
+---
+ .../viz/service/display_embedder/skia_output_device_dcomp.cc   | 3 ++-
+ ui/gl/dc_layer_tree.cc                                         | 3 ++-
+ ui/gl/dc_layer_tree.h                                          | 3 ++-
+ 3 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/components/viz/service/display_embedder/skia_output_device_dcomp.cc b/components/viz/service/display_embedder/skia_output_device_dcomp.cc
+index d20a7745332..ce21db60004 100644
+--- a/components/viz/service/display_embedder/skia_output_device_dcomp.cc
++++ b/components/viz/service/display_embedder/skia_output_device_dcomp.cc
+@@ -27,6 +27,7 @@
+ #include "gpu/command_buffer/service/texture_manager.h"
+ #include "gpu/config/gpu_driver_bug_workarounds.h"
+ #include "gpu/config/gpu_util.h"
++#include "third_party/microsoft_dxheaders/src/include/composition/dcomp-preview.h"
+ #include "third_party/skia/include/core/SkCanvas.h"
+ #include "third_party/skia/include/core/SkSurface.h"
+ #include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
+@@ -60,7 +61,7 @@ OutputSurface::DCSupportLevel GetDcSupportLevel() {
+     Microsoft::WRL::ComPtr<IDCompositionDevice3> dcomp_device =
+         gl::GetDirectCompositionDevice();
+ 
+-    if (Microsoft::WRL::ComPtr<IDCompositionDevice5> dcomp_device5;
++    if (Microsoft::WRL::ComPtr<PREVIEW_IDCompositionDevice5> dcomp_device5;
+         SUCCEEDED(dcomp_device.As(&dcomp_device5))) {
+       return OutputSurface::DCSupportLevel::kDCompDynamicTexture;
+     }
+diff --git a/ui/gl/dc_layer_tree.cc b/ui/gl/dc_layer_tree.cc
+index eaf7e35e245..dabb3214095 100644
+--- a/ui/gl/dc_layer_tree.cc
++++ b/ui/gl/dc_layer_tree.cc
+@@ -18,6 +18,7 @@
+ #include "base/trace_event/trace_event.h"
+ #include "base/types/expected.h"
+ #include "base/types/expected_macros.h"
++#include "third_party/microsoft_dxheaders/src/include/composition/dcomp-preview.h"
+ #include "ui/gfx/color_space_win.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
+ #include "ui/gfx/geometry/transform_util.h"
+@@ -207,7 +208,7 @@ void DCLayerTree::Initialize(
+ 
+   hdr_metadata_helper_ = HDRMetadataHelperWin::Create();
+ 
+-  if (Microsoft::WRL::ComPtr<IDCompositionDevice5> dcomp_device5;
++  if (Microsoft::WRL::ComPtr<PREVIEW_IDCompositionDevice5> dcomp_device5;
+       SUCCEEDED(dcomp_device_.As(&dcomp_device5))) {
+     hr = dcomp_device5->CreateDynamicTexture(&primary_plane_surface_);
+     if (FAILED(hr)) {
+diff --git a/ui/gl/dc_layer_tree.h b/ui/gl/dc_layer_tree.h
+index 01de95cef05..b53f72e839f 100644
+--- a/ui/gl/dc_layer_tree.h
++++ b/ui/gl/dc_layer_tree.h
+@@ -20,6 +20,7 @@
+ #include "base/moving_window.h"
+ #include "base/types/expected.h"
+ #include "mojo/public/cpp/bindings/pending_receiver.h"
++#include "third_party/microsoft_dxheaders/src/include/composition/dcomp-preview.h"
+ #include "third_party/microsoft_dxheaders/src/include/experimental-composition/experimental-dcomp.h"
+ #include "ui/gfx/geometry/size.h"
+ #include "ui/gfx/overlay_layer_id.h"
+@@ -507,7 +508,7 @@ class GL_EXPORT DCLayerTree {
+ 
+   // If supported, a surface that is updated with the contents of the primary
+   // plane. If not supported, null.
+-  Microsoft::WRL::ComPtr<IDCompositionDynamicTexture> primary_plane_surface_;
++  Microsoft::WRL::ComPtr<PREVIEW_IDCompositionDynamicTexture> primary_plane_surface_;
+ 
+   // This is a number that increments once every time `primary_plane_surface_`
+   // is updated, and is used to determine when the contents have changed so

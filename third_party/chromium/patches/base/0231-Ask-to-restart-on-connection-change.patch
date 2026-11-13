@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 18 Jun 2024 15:31:12 +0000
+Subject: [PATCH 231/310] Ask to restart on connection change
+
+Experimental use of the OfflineDetector to identify network change, disabled by default.
+If it is active, when the network change is detected by the android API,
+the user is warned and asked to restart the browser.
+Technically, blink's freeze mode is exploited, which allows javascript
+execution and network calls to be blocked.
+A preventive shutdown of all service workers is carried out, to inhibit the sending
+of messages over the new ip, since the service workers have access
+to the background fetch api.
+The freeze and resume event of javascript is deliberately left, since the
+page could deduct it in any case. In any case during the execution of
+the javascript events, the page can only access the FetchLater api,
+which is disabled by another patch.
+The patch also changes the standard behaviour of the browser, allowing visible pages to freeze.
+This could lead to the failure of some DCHECKS related to the handling of UI messages at unfreeze,
+but since the goal is a reboot, this should not be the case.
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Ask-for-restart-on-connection-change.patch
+---
+ .../browser/web_contents/web_contents_android.cc | 16 ++++++++++++++++
+ .../browser/web_contents/web_contents_android.h  |  1 +
+ .../browser/web_contents/web_contents_impl.cc    |  2 ++
+ .../Ask-for-restart-on-connection-change.inc     | 13 +++++++++++++
+ .../Ask-for-restart-on-connection-change.inc     |  3 +++
+ .../Ask-for-restart-on-connection-change.inc     |  1 +
+ third_party/blink/renderer/core/dom/document.cc  |  1 +
+ .../blink/renderer/core/frame/local_frame.cc     |  2 ++
+ .../main_thread/frame_scheduler_impl.cc          |  2 ++
+ .../scheduler/main_thread/page_scheduler_impl.cc |  9 ++++++++-
+ 10 files changed, 49 insertions(+), 1 deletion(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Ask-for-restart-on-connection-change.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Ask-for-restart-on-connection-change.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Ask-for-restart-on-connection-change.inc
+
+diff --git a/content/browser/web_contents/web_contents_android.cc b/content/browser/web_contents/web_contents_android.cc
+index d92682d27d6..f6ddd5d97cd 100644
+--- a/content/browser/web_contents/web_contents_android.cc
++++ b/content/browser/web_contents/web_contents_android.cc
+@@ -914,6 +914,22 @@ void WebContentsAndroid::SetFocus(JNIEnv* env, bool focused) {
+   view->SetFocus(focused);
+ }
+ 
++void WebContentsAndroid::SetPageFrozen(JNIEnv* env, jboolean frozen) {
++  // shutdown service workers
++  BrowserContext* browser_context =
++      web_contents_->GetBrowserContext();
++  browser_context->ForEachLoadedStoragePartition(
++      [](StoragePartition* partition) {
++        scoped_refptr<ServiceWorkerContextWrapper> context =
++            static_cast<ServiceWorkerContextWrapper*>(
++                partition->GetServiceWorkerContext());
++        context->Shutdown();
++      });
++
++  SuspendAllMediaPlayers(env);
++  web_contents_->SetPageFrozen(frozen);
++}
++
+ bool WebContentsAndroid::IsBeingDestroyed(JNIEnv* env) {
+   return web_contents_->IsBeingDestroyed();
+ }
+diff --git a/content/browser/web_contents/web_contents_android.h b/content/browser/web_contents/web_contents_android.h
+index 33aeec882ef..a11ffde57cd 100644
+--- a/content/browser/web_contents/web_contents_android.h
++++ b/content/browser/web_contents/web_contents_android.h
+@@ -200,6 +200,7 @@ class CONTENT_EXPORT WebContentsAndroid {
+ 
+   void OnScaleFactorChanged(JNIEnv* env);
+   void SetFocus(JNIEnv* env, bool focused);
++  void SetPageFrozen(JNIEnv* env, jboolean frozen);
+   bool IsBeingDestroyed(JNIEnv* env);
+ 
+   void SetDisplayCutoutSafeArea(JNIEnv* env,
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index 918043ce7dd..af7b76e6f88 100644
+--- a/content/browser/web_contents/web_contents_impl.cc
++++ b/content/browser/web_contents/web_contents_impl.cc
+@@ -4468,8 +4468,10 @@ void WebContentsImpl::Stop() {
+ void WebContentsImpl::SetPageFrozen(bool frozen) {
+   TRACE_EVENT1("content", "WebContentsImpl::SetPageFrozen", "frozen", frozen);
+ 
++#if !BUILDFLAG(IS_ANDROID)
+   // A visible page is never frozen.
+   DCHECK_NE(Visibility::VISIBLE, GetVisibility());
++#endif
+ 
+   primary_frame_tree_.ForEachRenderViewHost(
+       [&frozen](RenderViewHostImpl* rvh) { rvh->SetIsFrozen(frozen); });
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Ask-for-restart-on-connection-change.inc b/cromite_flags/chrome/browser/about_flags_cc/Ask-for-restart-on-connection-change.inc
+new file mode 100644
+index 00000000000..f50f4caabe6
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Ask-for-restart-on-connection-change.inc
+@@ -0,0 +1,13 @@
++#ifdef FLAG_SECTION
++
++#if BUILDFLAG(IS_ANDROID)
++
++    {"ask-for-restart-on-connection-change",
++     "Restart on connection change",
++     "Asks the user whether to restart the browser when the connection changes.",
++     kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kAskForRestartOnConnectionChange)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Ask-for-restart-on-connection-change.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Ask-for-restart-on-connection-change.inc
+new file mode 100644
+index 00000000000..a8410310a79
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Ask-for-restart-on-connection-change.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kAskForRestartOnConnectionChange,
++                "AskForRestartOnConnectionChange",
++                base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Ask-for-restart-on-connection-change.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Ask-for-restart-on-connection-change.inc
+new file mode 100644
+index 00000000000..1a81cdb23ba
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Ask-for-restart-on-connection-change.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kAskForRestartOnConnectionChange);
+diff --git a/third_party/blink/renderer/core/dom/document.cc b/third_party/blink/renderer/core/dom/document.cc
+index ac530a0a97b..03e0a57d2fa 100644
+--- a/third_party/blink/renderer/core/dom/document.cc
++++ b/third_party/blink/renderer/core/dom/document.cc
+@@ -4750,6 +4750,7 @@ void Document::DispatchUnloadEvents(
+ }
+ 
+ void Document::DispatchFreezeEvent() {
++  DLOG(INFO) << "---Document::DispatchFreezeEvent";
+   SetFreezingInProgress(true);
+   DispatchEvent(*Event::Create(event_type_names::kFreeze));
+   SetFreezingInProgress(false);
+diff --git a/third_party/blink/renderer/core/frame/local_frame.cc b/third_party/blink/renderer/core/frame/local_frame.cc
+index e5dc9ffc5e3..68c52cbae62 100644
+--- a/third_party/blink/renderer/core/frame/local_frame.cc
++++ b/third_party/blink/renderer/core/frame/local_frame.cc
+@@ -3516,6 +3516,7 @@ void LocalFrame::DidFreeze() {
+   LoaderFreezeMode freeze_mode = GetLoaderFreezeMode();
+   GetDocument()->Fetcher()->SetDefersLoading(freeze_mode);
+   Loader().SetDefersLoading(freeze_mode);
++  DLOG(INFO) << "---LocalFrame::DidFreeze end " << (int)freeze_mode;
+ }
+ 
+ void LocalFrame::DidResume() {
+@@ -3530,6 +3531,7 @@ void LocalFrame::DidResume() {
+   GetDocument()->Fetcher()->SetDefersLoading(LoaderFreezeMode::kNone);
+   Loader().SetDefersLoading(LoaderFreezeMode::kNone);
+ 
++  DLOG(INFO) << "---LocalFrame::DidResume";
+   // Ensure that the document is not in the frozen state when running the resume
+   // event.
+   DCHECK_NE(DomWindow()->ContextPauseState(),
+diff --git a/third_party/blink/renderer/platform/scheduler/main_thread/frame_scheduler_impl.cc b/third_party/blink/renderer/platform/scheduler/main_thread/frame_scheduler_impl.cc
+index c0cfb493526..4c7e28cc2fc 100644
+--- a/third_party/blink/renderer/platform/scheduler/main_thread/frame_scheduler_impl.cc
++++ b/third_party/blink/renderer/platform/scheduler/main_thread/frame_scheduler_impl.cc
+@@ -1022,7 +1022,9 @@ SchedulingLifecycleState FrameSchedulerImpl::CalculateLifecycleState(
+   if (!parent_page_scheduler_)
+     return SchedulingLifecycleState::kNotThrottled;
+   if (parent_page_scheduler_->IsFrozen()) {
++#if !BUILDFLAG(IS_ANDROID)
+     DCHECK(!parent_page_scheduler_->IsPageVisible());
++#endif
+     return SchedulingLifecycleState::kStopped;
+   }
+   if (subresource_loading_paused_ && type == ObserverType::kLoader)
+diff --git a/third_party/blink/renderer/platform/scheduler/main_thread/page_scheduler_impl.cc b/third_party/blink/renderer/platform/scheduler/main_thread/page_scheduler_impl.cc
+index 89964c77fe1..979c4bbd3be 100644
+--- a/third_party/blink/renderer/platform/scheduler/main_thread/page_scheduler_impl.cc
++++ b/third_party/blink/renderer/platform/scheduler/main_thread/page_scheduler_impl.cc
+@@ -235,10 +235,12 @@ void PageSchedulerImpl::SetPageFrozen(bool frozen) {
+   // it is desirable to reject the page freeze to prevent the scheduler from
+   // being put in a bad state. See https://crbug.com/873214 for context of how
+   // this can happen on the browser side.
++#if !BUILDFLAG(IS_ANDROID)
+   if (frozen && IsPageVisible()) {
+     DCHECK(false);
+     return;
+   }
++#endif
+   PolicyUpdater policy_updater;
+   SetPageFrozenImpl(frozen, policy_updater);
+ }
+@@ -809,7 +811,12 @@ bool PageSchedulerImpl::IsBackgrounded() const {
+   // expire immediately when a page is backgrounded, which is undesirable in
+   // headless mode. To prevent that, a page is never considerer backgrounded
+   // when virtual time is enabled.
+-  return !IsPageVisible() && !IsAudioPlaying() &&
++#if BUILDFLAG(IS_ANDROID)
++  bool page_visible = true;
++#else
++  bool page_visible = IsPageVisible();
++#endif
++  return !page_visible && !IsAudioPlaying() &&
+          !main_thread_scheduler_->IsVirtualTimeEnabled();
+ }
+ 

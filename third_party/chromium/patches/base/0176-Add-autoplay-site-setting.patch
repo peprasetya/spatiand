@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 7 Nov 2020 21:59:18 +0000
+Subject: [PATCH 176/310] Add autoplay site setting
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+Require: Content-settings-infrastructure.patch
+FILE:Add-autoplay-site-setting.patch
+---
+ .../bromite_content_settings/autoplay.grdp    | 21 +++++++++++++++++++
+ .../bromite_content_settings/autoplay.inc     | 12 +++++++++++
+ .../core/browser/content_settings_registry.cc |  2 +-
+ .../core/html/media/autoplay_policy.cc        | 14 +++++++++++++
+ .../core/html/media/autoplay_policy.h         |  4 ++++
+ 5 files changed, 52 insertions(+), 1 deletion(-)
+ create mode 100644 components/browser_ui/strings/bromite_content_settings/autoplay.grdp
+ create mode 100644 components/content_settings/core/browser/bromite_content_settings/autoplay.inc
+
+diff --git a/components/browser_ui/strings/bromite_content_settings/autoplay.grdp b/components/browser_ui/strings/bromite_content_settings/autoplay.grdp
+new file mode 100644
+index 00000000000..03a149f683f
+--- /dev/null
++++ b/components/browser_ui/strings/bromite_content_settings/autoplay.grdp
+@@ -0,0 +1,21 @@
++<?xml version="1.0" encoding="utf-8"?>
++<grit-part>
++  <message name="IDS_AUTOPLAY_PERMISSION_TITLE" desc='Title for the Autoplay settings screen [CHAR-LIMIT=32]' formatter_data="android_java">
++    Autoplay
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_ADD_SITE_DESCRIPTION_AUTOPLAY" desc="The description for the allow autoplay of muted videos for website dialog." formatter_data="android_java">
++    Allow autoplay for a specific site.
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_AUTOPLAY_ENABLED" desc="Summary text explaining that sites are allowed to compile JavaScript in JIT mode." formatter_data="android_java">
++    Allow sites to automatically play muted videos
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_AUTOPLAY_DISABLED" desc="Summary text explaining that sites are running JavaScript in JITless mode." formatter_data="android_java">
++    Autoplay disabled
++  </message>
++  <message name="IDS_SETTINGS_SITE_SETTINGS_AUTOPLAY_ALLOWED_EXCEPTIONS" desc="Label for the allowed exceptions site list of the autoplay setting.">
++    Allowed to autoplay
++  </message>
++  <message name="IDS_SETTINGS_SITE_SETTINGS_AUTOPLAY_BLOCKED_EXCEPTIONS" desc="Label for the blocked exceptions site list of the autoplay setting.">
++    Not allowed to autoplay
++  </message>
++</grit-part>
+diff --git a/components/content_settings/core/browser/bromite_content_settings/autoplay.inc b/components/content_settings/core/browser/bromite_content_settings/autoplay.inc
+new file mode 100644
+index 00000000000..8d7a0eb1a4c
+--- /dev/null
++++ b/components/content_settings/core/browser/bromite_content_settings/autoplay.inc
+@@ -0,0 +1,12 @@
++  content_settings::WebsiteSettingsRegistry::GetInstance()
++    ->GetMutable(ContentSettingsType::AUTOPLAY)
++    ->set_show_into_info_page()
++    .set_desktop_ui()
++    .set_is_renderer_content_setting()
++    .set_title_ui(IDS_AUTOPLAY_PERMISSION_TITLE)
++    .set_description_ui(IDS_WEBSITE_SETTINGS_ADD_SITE_DESCRIPTION_AUTOPLAY)
++    .set_allowed_ui(IDS_WEBSITE_SETTINGS_CATEGORY_AUTOPLAY_ENABLED)
++    .set_blocked_ui(IDS_WEBSITE_SETTINGS_CATEGORY_AUTOPLAY_DISABLED)
++    .set_allowed_exceptions_ui(IDS_SETTINGS_SITE_SETTINGS_AUTOPLAY_ALLOWED_EXCEPTIONS)
++    .set_blocked_exceptions_ui(IDS_SETTINGS_SITE_SETTINGS_AUTOPLAY_BLOCKED_EXCEPTIONS)
++    .set_mid_sentence_ui(IDS_AUTOPLAY_PERMISSION_TITLE);
+diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
+index 6ca9372c4ef..0b6f22471a2 100644
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -254,7 +254,7 @@ void ContentSettingsRegistry::Init() {
+            ContentSettingsInfo::INHERIT_IN_INCOGNITO,
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_ORIGINS_ONLY);
+ 
+-  Register(ContentSettingsType::AUTOPLAY, "autoplay", CONTENT_SETTING_ALLOW,
++  Register(ContentSettingsType::AUTOPLAY, "autoplay", CONTENT_SETTING_BLOCK,
+            WebsiteSettingsInfo::UNSYNCABLE, /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
+            WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
+diff --git a/third_party/blink/renderer/core/html/media/autoplay_policy.cc b/third_party/blink/renderer/core/html/media/autoplay_policy.cc
+index 6a713a6dfee..2511735839b 100644
+--- a/third_party/blink/renderer/core/html/media/autoplay_policy.cc
++++ b/third_party/blink/renderer/core/html/media/autoplay_policy.cc
+@@ -9,6 +9,7 @@
+ #include "third_party/blink/public/mojom/autoplay/autoplay.mojom-blink.h"
+ #include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink.h"
+ #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom-blink.h"
++#include "third_party/blink/public/platform/web_content_settings_client.h"
+ #include "third_party/blink/public/platform/web_media_player.h"
+ #include "third_party/blink/public/web/web_local_frame.h"
+ #include "third_party/blink/public/web/web_local_frame_client.h"
+@@ -337,6 +338,8 @@ void AutoplayPolicy::TryUnlockingUserGesture() {
+ }
+ 
+ bool AutoplayPolicy::IsGestureNeededForPlayback() const {
++  if (!IsAutoplayAllowedPerSettings())
++    return true;
+   if (!IsLockedPendingUserGesture())
+     return false;
+ 
+@@ -440,6 +443,17 @@ void AutoplayPolicy::MaybeSetAutoplayInitiated() {
+   }
+ }
+ 
++bool AutoplayPolicy::IsAutoplayAllowedPerSettings() const {
++  LocalFrame* frame = element_->GetDocument().GetFrame();
++  if (!frame)
++    return false;
++  if (auto* settings_client = frame->GetContentSettingsClient()) {
++    return settings_client->AllowContentSetting(
++        ContentSettingsType::AUTOPLAY, /*default_value*/ false);
++  }
++  return true;
++}
++
+ bool AutoplayPolicy::ShouldAutoplay() {
+   if (!element_->GetExecutionContext() ||
+       element_->GetExecutionContext()->IsSandboxed(
+diff --git a/third_party/blink/renderer/core/html/media/autoplay_policy.h b/third_party/blink/renderer/core/html/media/autoplay_policy.h
+index 516c7a49d94..ee8406f2eb1 100644
+--- a/third_party/blink/renderer/core/html/media/autoplay_policy.h
++++ b/third_party/blink/renderer/core/html/media/autoplay_policy.h
+@@ -139,6 +139,10 @@ class CORE_EXPORT AutoplayPolicy final
+   // should use, if checking to see if an action is allowed.
+   bool IsLockedPendingUserGesture() const;
+ 
++  // Return true if and only if the settings allow autoplay of media on this
++  // frame.
++  bool IsAutoplayAllowedPerSettings() const;
++
+   bool IsAutoplayingMutedInternal(bool muted) const;
+   bool IsOrWillBeAutoplayingMutedInternal(bool muted) const;
+ 

@@ -1,0 +1,212 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 18 Jan 2022 07:43:32 +0000
+Subject: [PATCH 120/310] Move navigation bar to bottom
+
+Adds an accessibility flag that allows navigation bar to be moved to the bottom.
+Unlike what is present in other browsers, this actually moves the bar below,
+without creating other elements.
+The bottom bar will also be colored as the navigation bar to make the interface
+more pleasant and fixes upstream bug 1285311.
+Support for tablet mode is also included.
+
+Need: bromite-build-utils.patch
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Move-navigation-bar-to-bottom.patch
+---
+ cc/base/features.cc                             |  8 ++++++++
+ cc/base/features.h                              |  2 ++
+ cc/input/browser_controls_offset_manager.cc     |  8 ++++++++
+ cc/trees/layer_tree_host_impl.cc                |  3 ++-
+ .../flags/android/chrome_feature_list.cc        |  2 ++
+ chrome/browser/hub/internal/BUILD.gn            |  5 +++++
+ chrome/browser/prefs/browser_prefs.cc           |  2 +-
+ components/viz/common/features.cc               |  1 +
+ .../Move-navigation-bar-to-bottom.inc           | 17 +++++++++++++++++
+ .../blink/renderer/core/frame/viewport_data.cc  |  1 +
+ 10 files changed, 47 insertions(+), 2 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Move-navigation-bar-to-bottom.inc
+
+diff --git a/cc/base/features.cc b/cc/base/features.cc
+index a492ce2cd5a..3bbdef63aa5 100644
+--- a/cc/base/features.cc
++++ b/cc/base/features.cc
+@@ -26,6 +26,14 @@ std::atomic<bool> s_is_eligible_for_throttle_main_frame_to_60hz = false;
+ BASE_FEATURE(kComputeRasterTranslateForExternalScale,
+              base::FEATURE_ENABLED_BY_DEFAULT);
+ 
++BASE_FEATURE(kMoveTopToolbarToBottom,
++             "MoveTopToolbarToBottom",
++             base::FEATURE_DISABLED_BY_DEFAULT);
++
++BASE_FEATURE(kDisableToolbarSwipeUp,
++             "DisableToolbarSwipeUp",
++             base::FEATURE_DISABLED_BY_DEFAULT);
++
+ // When enabled, non-root effect render surfaces (opacity/filter/mask) inside an
+ // OOPIF magnified by its embedder are allocated at the external page scale
+ // factor, matching the raster (picture layer) resolution. Without this, such a
+diff --git a/cc/base/features.h b/cc/base/features.h
+index 2970a059b19..5af6e5b183e 100644
+--- a/cc/base/features.h
++++ b/cc/base/features.h
+@@ -15,6 +15,8 @@
+ namespace features {
+ 
+ CC_BASE_EXPORT BASE_DECLARE_FEATURE(kComputeRasterTranslateForExternalScale);
++CC_BASE_EXPORT BASE_DECLARE_FEATURE(kMoveTopToolbarToBottom);
++CC_BASE_EXPORT BASE_DECLARE_FEATURE(kDisableToolbarSwipeUp);
+ CC_BASE_EXPORT BASE_DECLARE_FEATURE(kSizeOopifEffectSurfacesAtExternalScale);
+ 
+ // When enabled, the scheduler will allow deferring impl invalidation frames
+diff --git a/cc/input/browser_controls_offset_manager.cc b/cc/input/browser_controls_offset_manager.cc
+index 02c89c5ab86..d7af039ea59 100644
+--- a/cc/input/browser_controls_offset_manager.cc
++++ b/cc/input/browser_controls_offset_manager.cc
+@@ -30,6 +30,7 @@
+ #include "ui/gfx/animation/tween.h"
+ #include "ui/gfx/geometry/transform.h"
+ #include "ui/gfx/geometry/vector2d_f.h"
++#include "cc/base/features.h"
+ 
+ namespace cc {
+ namespace {
+@@ -107,6 +108,8 @@ BrowserControlsOffsetManager::BrowserControlsOffsetManager(
+ BrowserControlsOffsetManager::~BrowserControlsOffsetManager() = default;
+ 
+ float BrowserControlsOffsetManager::ControlsTopOffset() const {
++  if (base::FeatureList::IsEnabled(::features::kMoveTopToolbarToBottom))
++    return 0;
+   return ContentTopOffset() - TopControlsHeight();
+ }
+ 
+@@ -805,6 +808,11 @@ gfx::Vector2dF BrowserControlsOffsetManager::ScrollByPrecise(
+   // content. If the top controls have no height, the content should scroll
+   // immediately.
+   gfx::Vector2dF applied_delta(0.0f, old_top_offset - ContentTopOffset());
++  // Do not eat scroll offsets when the toolbar is at the bottom because the
++  // content view top offsets are not changed.
++  if (base::FeatureList::IsEnabled(::features::kMoveTopToolbarToBottom)) {
++    return pending_delta;
++  }
+   return pending_delta - applied_delta;
+ }
+ 
+diff --git a/cc/trees/layer_tree_host_impl.cc b/cc/trees/layer_tree_host_impl.cc
+index dca627ad8cc..9745ddea329 100644
+--- a/cc/trees/layer_tree_host_impl.cc
++++ b/cc/trees/layer_tree_host_impl.cc
+@@ -2533,7 +2533,7 @@ viz::CompositorFrameMetadata LayerTreeHostImpl::MakeCompositorFrameMetadata(
+     metadata.top_controls_visible_height.emplace(visible_height);
+   }
+ 
+-#if BUILDFLAG(IS_ANDROID)
++#if BUILDFLAG(IS_ANDROID) && false
+   metadata.offset_tag_values =
+       browser_controls_offset_manager_->GetOffsetTagValues();
+ #endif
+@@ -5035,6 +5035,7 @@ bool LayerTreeHostImpl::AnimateBrowserControls(base::TimeTicks time) {
+     return false;
+   }
+ 
++
+   // This counter-scrolls the page to keep the appearance of the page content
+   // being fixed while the browser controls animate.
+   viewport().ScrollBy(scroll_delta,
+diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
+index 9369f808855..f72c48813e4 100644
+--- a/chrome/browser/flags/android/chrome_feature_list.cc
++++ b/chrome/browser/flags/android/chrome_feature_list.cc
+@@ -163,6 +163,8 @@ const base::Feature* const kFeaturesExposedToJava[] = {
+     &autofill::features::kAutofillSyncEwalletAccounts,
+     &autofill::features::kResetNativePointerInCreditCardAuthDialog,
+     &base::features::kBackgroundThreadPoolFieldTrial,
++    &features::kDisableToolbarSwipeUp,
++    &features::kMoveTopToolbarToBottom,
+     &base::features::kLowEndMemoryExperiment,
+     &base::features::kShutdownPreNativeThreadPoolAfterStartup,
+     &blink::features::kAndroidHandlePdfInIframe,
+diff --git a/chrome/browser/hub/internal/BUILD.gn b/chrome/browser/hub/internal/BUILD.gn
+index 2ec2d64c90a..1afa71070ee 100644
+--- a/chrome/browser/hub/internal/BUILD.gn
++++ b/chrome/browser/hub/internal/BUILD.gn
+@@ -18,6 +18,7 @@ android_library("java") {
+     "//chrome/test/android:chrome_java_transit",
+   ]
+   sources = [
++    "android/java/src/org/chromium/chrome/browser/hub/ReversedLinearLayout.java",
+     "android/java/src/org/chromium/chrome/browser/hub/ApplyButtonData.java",
+     "android/java/src/org/chromium/chrome/browser/hub/BottomBarHubColorMixerAdapter.java",
+     "android/java/src/org/chromium/chrome/browser/hub/EmptyHubBottomToolbarDelegate.java",
+@@ -113,6 +114,10 @@ android_library("java") {
+     "//ui/edge_to_edge:java",
+     "//url:url_java",
+   ]
++  deps += [
++    "//base:base_cached_flags_java",
++    "//chrome/browser/flags:java",
++  ]
+ }
+ 
+ android_resources("java_resources") {
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index fb79b556083..8bb3b38db3e 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -2494,7 +2494,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+       prefs::kAppRatingPromptShown, false,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+   registry->RegisterBooleanPref(prefs::kVirtualKeyboardResizesLayoutByDefault,
+-                                false);
++                                true);
+ #endif
+ 
+ #if BUILDFLAG(ENTERPRISE_DATA_CONTROLS)
+diff --git a/components/viz/common/features.cc b/components/viz/common/features.cc
+index 611df52d9b1..16d6206504c 100644
+--- a/components/viz/common/features.cc
++++ b/components/viz/common/features.cc
+@@ -31,6 +31,7 @@
+ namespace features {
+ 
+ #if BUILDFLAG(IS_ANDROID)
++
+ // If this flag is enabled, a DumpWithoutCrashing() is captured when a bad
+ // state is detected when moving the composited UI. For example, this could
+ // mean scrolling without a resource, or OffsetTagValues trying to position
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Move-navigation-bar-to-bottom.inc b/cromite_flags/chrome/browser/about_flags_cc/Move-navigation-bar-to-bottom.inc
+new file mode 100644
+index 00000000000..bf5c09dea39
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Move-navigation-bar-to-bottom.inc
+@@ -0,0 +1,17 @@
++#if BUILDFLAG(IS_ANDROID)
++
++#ifdef FLAG_SECTION
++
++    {"move-top-toolbar-to-bottom",
++     "Move top toolbar to bottom",
++     "Move the top toolbar to the bottom.", kOsAndroid,
++     FEATURE_VALUE_TYPE(features::kMoveTopToolbarToBottom)},
++
++    {"disable-toolbar-swipe-up",
++     "Disable toolbar swipe up",
++     "Disable toolbar swipe up.", kOsAndroid,
++     FEATURE_VALUE_TYPE(features::kDisableToolbarSwipeUp)},
++
++#endif
++
++#endif
+diff --git a/third_party/blink/renderer/core/frame/viewport_data.cc b/third_party/blink/renderer/core/frame/viewport_data.cc
+index f314cae84b6..faeaa628081 100644
+--- a/third_party/blink/renderer/core/frame/viewport_data.cc
++++ b/third_party/blink/renderer/core/frame/viewport_data.cc
+@@ -175,6 +175,7 @@ void ViewportData::SetExpandIntoDisplayCutout(bool expand) {
+ }
+ 
+ void ViewportData::SetVirtualKeyboardOverlaysContent(bool overlays_content) {
++  overlays_content = false;
+   if (virtual_keyboard_overlays_content_ == overlays_content)
+     return;
+ 

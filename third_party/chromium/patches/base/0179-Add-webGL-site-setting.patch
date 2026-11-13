@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 3 May 2022 14:44:11 +0000
+Subject: [PATCH 179/310] Add webGL site setting
+
+Do not provide any device information when serving context creation errors.
+
+Requires patch: Content-settings-infrastructure.patch
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-webGL-site-setting.patch
+---
+ .../bromite_content_settings/webgl.grdp       | 27 +++++++++++++++++
+ .../bromite_content_settings/webgl.inc        | 22 ++++++++++++++
+ .../common/bromite_content_settings/WEBGL.inc |  1 +
+ .../execution_context/execution_context.cc    |  7 +++++
+ .../execution_context/execution_context.h     |  2 ++
+ .../webgl/webgl_rendering_context_base.cc     | 29 +++++++++----------
+ .../webgl/webgl_rendering_context_base.h      |  2 ++
+ 7 files changed, 74 insertions(+), 16 deletions(-)
+ create mode 100644 components/browser_ui/strings/bromite_content_settings/webgl.grdp
+ create mode 100644 components/content_settings/core/browser/bromite_content_settings/webgl.inc
+ create mode 100644 components/content_settings/core/common/bromite_content_settings/WEBGL.inc
+
+diff --git a/components/browser_ui/strings/bromite_content_settings/webgl.grdp b/components/browser_ui/strings/bromite_content_settings/webgl.grdp
+new file mode 100644
+index 00000000000..53635991ed2
+--- /dev/null
++++ b/components/browser_ui/strings/bromite_content_settings/webgl.grdp
+@@ -0,0 +1,27 @@
++<?xml version="1.0" encoding="utf-8"?>
++<grit-part>
++  <message name="IDS_SITE_SETTINGS_TYPE_WEBGL" desc="The label used for webgl site settings controls." formatter_data="android_java">
++    Webgl
++  </message>
++  <message name="IDS_SETTINGS_SITE_SETTINGS_WEBGL_DESCRIPTION" desc="Description of the webgl content setting." formatter_data="android_java">
++    Enable Webgl, a JavaScript API for rendering high-performance interactive 3D and 2D graphics
++  </message>
++  <message name="IDS_SITE_SETTINGS_TYPE_WEBGL_MID_SENTENCE" desc="The label used for webgl site settings controls when used mid-sentence." formatter_data="android_java">
++    webgl
++  </message>
++  <message name="IDS_WEBGL_PERMISSION_TITLE" desc="Title of the permission to use webgl [CHAR-LIMIT=32]" formatter_data="android_java">
++    Webgl
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_WEBGL_ENABLED" desc="Summary text explaining that webgl is full enabled." formatter_data="android_java">
++    Enabled
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_WEBGL_DISABLED" desc="Summary text explaining that webgl is full disabled." formatter_data="android_java">
++    Disabled
++  </message>
++  <message name="IDS_SETTINGS_SITE_SETTINGS_WEBGL_ALLOWED_EXCEPTIONS" desc="Label for the allowed exceptions site list of the webgl setting.">
++    Allowed to use webgl
++  </message>
++  <message name="IDS_SETTINGS_SITE_SETTINGS_WEBGL_BLOCKED_EXCEPTIONS" desc="Label for the blocked exceptions site list of the webgl setting.">
++    Not allowed to use webgl
++  </message>
++</grit-part>
+diff --git a/components/content_settings/core/browser/bromite_content_settings/webgl.inc b/components/content_settings/core/browser/bromite_content_settings/webgl.inc
+new file mode 100644
+index 00000000000..32fbb909806
+--- /dev/null
++++ b/components/content_settings/core/browser/bromite_content_settings/webgl.inc
+@@ -0,0 +1,22 @@
++  Register(ContentSettingsType::WEBGL, "webgl", CONTENT_SETTING_BLOCK,
++           WebsiteSettingsInfo::SYNCABLE,
++           /*allowlisted_schemes=*/{},
++           /*valid_settings=*/{CONTENT_SETTING_ALLOW,
++                               CONTENT_SETTING_BLOCK},
++           WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
++           WebsiteSettingsRegistry::ALL_PLATFORMS,
++           ContentSettingsInfo::INHERIT_IN_INCOGNITO,
++           PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_AND_INSECURE_ORIGINS);
++
++  content_settings::WebsiteSettingsRegistry::GetInstance()
++    ->GetMutable(ContentSettingsType::WEBGL)
++    ->set_show_into_info_page()
++    .set_desktop_ui()
++    .set_is_renderer_content_setting()
++    .set_title_ui(IDS_SITE_SETTINGS_TYPE_WEBGL)
++    .set_description_ui(IDS_SETTINGS_SITE_SETTINGS_WEBGL_DESCRIPTION)
++    .set_allowed_ui(IDS_WEBSITE_SETTINGS_CATEGORY_WEBGL_ENABLED)
++    .set_blocked_ui(IDS_WEBSITE_SETTINGS_CATEGORY_WEBGL_DISABLED)
++    .set_allowed_exceptions_ui(IDS_SETTINGS_SITE_SETTINGS_WEBGL_ALLOWED_EXCEPTIONS)
++    .set_blocked_exceptions_ui(IDS_SETTINGS_SITE_SETTINGS_WEBGL_BLOCKED_EXCEPTIONS)
++    .set_mid_sentence_ui(IDS_SITE_SETTINGS_TYPE_WEBGL);
+diff --git a/components/content_settings/core/common/bromite_content_settings/WEBGL.inc b/components/content_settings/core/common/bromite_content_settings/WEBGL.inc
+new file mode 100644
+index 00000000000..30dc2ff2d12
+--- /dev/null
++++ b/components/content_settings/core/common/bromite_content_settings/WEBGL.inc
+@@ -0,0 +1 @@
++  WEBGL,
+diff --git a/third_party/blink/renderer/core/execution_context/execution_context.cc b/third_party/blink/renderer/core/execution_context/execution_context.cc
+index c0fbff0af26..6d33bd5a36e 100644
+--- a/third_party/blink/renderer/core/execution_context/execution_context.cc
++++ b/third_party/blink/renderer/core/execution_context/execution_context.cc
+@@ -87,6 +87,13 @@ blink::WebContentSettingsClient* GetContentSettingsClientFor(
+   return settings;
+ }
+ 
++bool AllowWebgl(ExecutionContext* context) {
++  blink::WebContentSettingsClient* settings = GetContentSettingsClientFor(context);
++  if (settings)
++    return settings->AllowContentSetting(ContentSettingsType::WEBGL, false);
++  return false;
++}
++
+ ExecutionContext::ExecutionContext(v8::Isolate* isolate,
+                                    Agent* agent,
+                                    bool is_window)
+diff --git a/third_party/blink/renderer/core/execution_context/execution_context.h b/third_party/blink/renderer/core/execution_context/execution_context.h
+index 6120fa226fc..df7dc611806 100644
+--- a/third_party/blink/renderer/core/execution_context/execution_context.h
++++ b/third_party/blink/renderer/core/execution_context/execution_context.h
+@@ -113,6 +113,8 @@ enum ReasonForCallingCanExecuteScripts {
+ 
+ enum ReferrerPolicySource { kPolicySourceHttpHeader, kPolicySourceMetaTag };
+ 
++CORE_EXPORT bool AllowWebgl(ExecutionContext* context);
++
+ // An environment in which script can execute. This class exposes the common
+ // properties of script execution environments on the web (i.e, common between
+ // script executing in a window and script executing in a worker), such as:
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+index e72f6f7ca60..82c1f6ea096 100644
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -441,6 +441,13 @@ void WebGLRenderingContextBase::InitializeWebGLContextLimits(
+   }
+ }
+ 
++bool WebGLRenderingContextBase::AllowWebglForHost(blink::CanvasRenderingContextHost* host) {
++  if (!host)
++    return false;
++  blink::ExecutionContext* context = host->GetTopExecutionContext();
++  return blink::AllowWebgl(context);
++}
++
+ unsigned WebGLRenderingContextBase::CurrentMaxGLContexts() {
+   base::AutoLock locker(WebGLContextLimitLock());
+   DCHECK(webgl_context_limits_initialized_);
+@@ -703,22 +710,6 @@ static String ExtractWebGLContextCreationError(
+     const Platform::WebGLContextInfo& info) {
+   StringBuilder builder;
+   builder.Append("Could not create a WebGL context");
+-  FormatWebGLStatusString(
+-      "VENDOR", info.vendor_id ? Format("0x{:04x}", info.vendor_id) : "0xffff",
+-      builder);
+-  FormatWebGLStatusString(
+-      "DEVICE", info.device_id ? Format("0x{:04x}", info.device_id) : "0xffff",
+-      builder);
+-  FormatWebGLStatusString("GL_VENDOR", info.vendor_info, builder);
+-  FormatWebGLStatusString("GL_RENDERER", info.renderer_info, builder);
+-  FormatWebGLStatusString("GL_VERSION", info.driver_version, builder);
+-  FormatWebGLStatusString("Sandboxed", info.sandboxed ? "yes" : "no", builder);
+-  FormatWebGLStatusString("Optimus", info.optimus ? "yes" : "no", builder);
+-  FormatWebGLStatusString("AMD switchable", info.amd_switchable ? "yes" : "no",
+-                          builder);
+-  FormatWebGLStatusString("Reset notification strategy",
+-                          Format("0x{:04x}", info.reset_notification_strategy),
+-                          builder);
+   FormatWebGLStatusString("ErrorMessage", info.error_message, builder);
+   builder.Append('.');
+   return builder.ReleaseString();
+@@ -778,6 +769,12 @@ WebGLRenderingContextBase::CreateWebGraphicsContext3DProvider(
+     const CanvasContextCreationAttributesCore& attributes,
+     Platform::WebGLContextType context_type,
+     Platform::WebGLContextInfo* context_info) {
++  if (!AllowWebglForHost(host)) {
++    host->HostDispatchEvent(WebGLContextEvent::Create(
++        event_type_names::kWebglcontextcreationerror,
++        "disabled by site settings policy."));
++    return nullptr;
++  }
+   if ((context_type == Platform::kWebGL1ContextType &&
+        !host->IsWebGL1Enabled()) ||
+       (context_type == Platform::kWebGL2ContextType &&
+diff --git a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h
+index add96cfd872..efafe6ca257 100644
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h
+@@ -1947,6 +1947,8 @@ class MODULES_EXPORT WebGLRenderingContextBase
+                         DOMArrayBufferView* pixels,
+                         int64_t offset);
+ 
++  static bool AllowWebglForHost(blink::CanvasRenderingContextHost* host);
++
+   void RecordANGLEImplementation();
+ 
+   viz::SharedImageFormat GetSharedImageFormat() const;

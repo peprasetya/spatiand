@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Wed, 25 Apr 2018 10:23:51 +0200
+Subject: [PATCH 056/310] Disable various metrics
+
+Disable metrics on all I/O threads
+Set initial metrics opt-out
+Disable metrics collection for NTP tiles
+Fix startup crash for debug builds (uazo)
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Disable-various-metrics.patch
+---
+ chrome/browser/browser_process_impl.cc              |  2 +-
+ chrome/browser/chrome_content_browser_client.cc     |  1 -
+ ...e_content_browser_client_navigation_throttles.cc | 13 -------------
+ .../chrome_metrics_services_manager_client.cc       |  4 ++++
+ .../ui/search/most_visited_metrics_logger.cc        |  6 +-----
+ components/ntp_tiles/BUILD.gn                       |  3 ---
+ components/ntp_tiles/custom_links_manager_impl.cc   |  1 -
+ components/ntp_tiles/most_visited_sites.cc          |  4 ----
+ .../site_data/leveldb_site_data_store.cc            |  2 +-
+ services/metrics/public/cpp/ukm_recorder.cc         |  1 +
+ 10 files changed, 8 insertions(+), 29 deletions(-)
+
+diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
+index b52271e8e8c..9af0eef4db0 100644
+--- a/chrome/browser/browser_process_impl.cc
++++ b/chrome/browser/browser_process_impl.cc
+@@ -1360,7 +1360,7 @@ void BrowserProcessImpl::RegisterPrefs(PrefRegistrySimple* registry) {
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
+   registry->RegisterBooleanPref(metrics::prefs::kMetricsReportingEnabled,
+-                                GoogleUpdateSettings::GetCollectStatsConsent());
++                                false);
+   registry->RegisterBooleanPref(prefs::kDevToolsRemoteDebuggingAllowed, true);
+   registry->RegisterBooleanPref(prefs::kDevToolsRemoteDebuggingEnabled, false);
+ 
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 0e2124251ce..43201db35cc 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -1607,7 +1607,6 @@ ChromeContentBrowserClient::ChromeContentBrowserClient() {
+   extra_parts_.push_back(
+       std::make_unique<android::ChromeContentBrowserClientGuestViewPart>());
+ #endif
+-
+ #if !BUILDFLAG(IS_ANDROID)
+   extra_parts_.push_back(
+       std::make_unique<ChromeContentBrowserClientIsolatedWebAppsPart>());
+diff --git a/chrome/browser/chrome_content_browser_client_navigation_throttles.cc b/chrome/browser/chrome_content_browser_client_navigation_throttles.cc
+index 0f6731054f2..3f399ff12d7 100644
+--- a/chrome/browser/chrome_content_browser_client_navigation_throttles.cc
++++ b/chrome/browser/chrome_content_browser_client_navigation_throttles.cc
+@@ -22,7 +22,6 @@
+ #include "chrome/browser/glic/host/glic_guest_navigation_throttle.h"
+ #include "chrome/browser/history/history_service_factory.h"
+ #include "chrome/browser/interstitials/enterprise_util.h"
+-#include "chrome/browser/lookalikes/lookalike_url_navigation_throttle.h"
+ #include "chrome/browser/omnibox/geolocation_navigation_throttle.h"
+ #include "chrome/browser/plugins/pdf_iframe_navigation_throttle.h"
+ #include "chrome/browser/policy/chrome_policy_blocklist_service_factory.h"
+@@ -289,16 +288,6 @@ void CreateAndAddChromeThrottlesForNavigation(
+     content::NavigationThrottleRegistry& registry) {
+   content::NavigationHandle& handle = registry.GetNavigationHandle();
+   if (handle.IsInMainFrame()) {
+-    // MetricsNavigationThrottle requires that it runs before
+-    // NavigationThrottles that may delay or cancel navigations, so only
+-    // NavigationThrottles that don't delay or cancel navigations (e.g.
+-    // throttles that are only observing callbacks without affecting navigation
+-    // behavior) should be added before MetricsNavigationThrottle.
+-    // TODO(https://crbug.com/412524375): This assumption is fragile. This
+-    // should be cared by adding an attribute flag to
+-    // NavigationThrottleRegistry::AddThrottle().
+-    page_load_metrics::MetricsNavigationThrottle::CreateAndAdd(registry);
+-
+     // Appends the X-Geo header to the navigation request if needed.
+     if (auto throttle =
+             GeolocationNavigationThrottle::MaybeCreateThrottleFor(registry)) {
+@@ -409,8 +398,6 @@ void CreateAndAddChromeThrottlesForNavigation(
+     throttle_manager->MaybeCreateAndAddNavigationThrottles(registry);
+   }
+ 
+-  LookalikeUrlNavigationThrottle::MaybeCreateAndAdd(registry);
+-
+   PDFIFrameNavigationThrottle::MaybeCreateAndAdd(registry);
+ 
+ #if BUILDFLAG(ENABLE_PDF)
+diff --git a/chrome/browser/metrics/chrome_metrics_services_manager_client.cc b/chrome/browser/metrics/chrome_metrics_services_manager_client.cc
+index 3f31e4ba450..5906e872f2f 100644
+--- a/chrome/browser/metrics/chrome_metrics_services_manager_client.cc
++++ b/chrome/browser/metrics/chrome_metrics_services_manager_client.cc
+@@ -86,6 +86,10 @@ BASE_FEATURE(kPostFREFixMetricsReportingFeature,
+ // Name of the variations param that defines the sampling rate.
+ const char kRateParamName[] = "sampling_rate_per_mille";
+ 
++SET_CROMITE_FEATURE_DISABLED(kMetricsReportingFeature);
++#if BUILDFLAG(IS_ANDROID)
++SET_CROMITE_FEATURE_DISABLED(kPostFREFixMetricsReportingFeature);
++#endif  // BUILDFLAG(IS_ANDROID)
+ }  // namespace internal
+ }  // namespace metrics
+ 
+diff --git a/chrome/browser/ui/search/most_visited_metrics_logger.cc b/chrome/browser/ui/search/most_visited_metrics_logger.cc
+index 2aba98bba90..0d9480ed7e9 100644
+--- a/chrome/browser/ui/search/most_visited_metrics_logger.cc
++++ b/chrome/browser/ui/search/most_visited_metrics_logger.cc
+@@ -42,18 +42,15 @@ void MostVisitedMetricsLogger::LogMostVisitedLoaded(
+     return;
+   }
+ 
+-  int tiles_count = 0;
++  [[maybe_unused]] int tiles_count = 0;
+   for (const std::optional<ntp_tiles::NTPTileImpression>& impression :
+        logged_impressions_) {
+     if (!impression.has_value()) {
+       break;
+     }
+-    ntp_tiles::metrics::RecordTileImpression(*impression, histogram_prefix_);
+     ++tiles_count;
+   }
+ 
+-  ntp_tiles::metrics::RecordPageImpression(tiles_count, histogram_prefix_);
+-
+   if (is_expanded.has_value()) {
+     base::UmaHistogramBoolean(
+         base::StrCat({histogram_prefix_, ".MostVisited.IsExpandedOnLoad"}),
+@@ -65,6 +62,5 @@ void MostVisitedMetricsLogger::LogMostVisitedLoaded(
+ 
+ void MostVisitedMetricsLogger::LogMostVisitedNavigation(
+     const ntp_tiles::NTPTileImpression& impression) {
+-  ntp_tiles::metrics::RecordTileClick(impression, histogram_prefix_);
+   base::RecordAction(base::UserMetricsAction("MostVisited_Clicked"));
+ }
+diff --git a/components/ntp_tiles/BUILD.gn b/components/ntp_tiles/BUILD.gn
+index 2918a2ae8b0..4e714644883 100644
+--- a/components/ntp_tiles/BUILD.gn
++++ b/components/ntp_tiles/BUILD.gn
+@@ -63,8 +63,6 @@ static_library("ntp_tiles") {
+     "icon_cacher.h",
+     "icon_cacher_impl.cc",
+     "icon_cacher_impl.h",
+-    "metrics.cc",
+-    "metrics.h",
+     "most_visited_sites.cc",
+     "most_visited_sites.h",
+     "ntp_tile.cc",
+@@ -158,7 +156,6 @@ source_set("unit_tests") {
+     "custom_links_manager_impl_unittest.cc",
+     "custom_links_store_unittest.cc",
+     "icon_cacher_impl_unittest.cc",
+-    "metrics_unittest.cc",
+     "most_visited_sites_unittest.cc",
+     "popular_sites_impl_unittest.cc",
+   ]
+diff --git a/components/ntp_tiles/custom_links_manager_impl.cc b/components/ntp_tiles/custom_links_manager_impl.cc
+index b7b2bdb4145..b08ecd3c5a8 100644
+--- a/components/ntp_tiles/custom_links_manager_impl.cc
++++ b/components/ntp_tiles/custom_links_manager_impl.cc
+@@ -290,7 +290,6 @@ void CustomLinksManagerImpl::RemoveCustomLinksForPreinstalledApps() {
+       }
+     }
+     if (default_app_links_deleted) {
+-      metrics::RecordsMigratedDefaultAppDeleted(TileType::kCustomLinks);
+       prefs_->SetBoolean(prefs::kCustomLinksForPreinstalledAppsRemoved, true);
+     }
+   }
+diff --git a/components/ntp_tiles/most_visited_sites.cc b/components/ntp_tiles/most_visited_sites.cc
+index d1589b69b9f..a5265d8d1d6 100644
+--- a/components/ntp_tiles/most_visited_sites.cc
++++ b/components/ntp_tiles/most_visited_sites.cc
+@@ -964,10 +964,6 @@ void MostVisitedSites::SaveTilesAndNotify(
+                                    ? RemoveInvalidPreinstallApps(new_tiles)
+                                    : new_tiles;
+ 
+-  if (fixed_tiles.size() != new_tiles.size()) {
+-    metrics::RecordsMigratedDefaultAppDeleted(TileType::kTopSites);
+-  }
+-
+   fixed_tiles = ImposeCustomLinks(std::move(fixed_tiles));
+   fixed_tiles = ImposeEnterpriseShortcuts(std::move(fixed_tiles));
+ 
+diff --git a/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc b/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc
+index ae1d246bd36..73b218cb715 100644
+--- a/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc
++++ b/components/performance_manager/persistence/site_data/leveldb_site_data_store.cc
+@@ -40,7 +40,7 @@ namespace {
+ 
+ #if !BUILDFLAG(IS_ANDROID)
+ // Disable some testing features in Android to reduce APK size.
+-std::atomic<bool> g_use_in_memory_db_for_testing = false;
++std::atomic<bool> g_use_in_memory_db_for_testing = true;
+ #endif  // !BUILDFLAG(IS_ANDROID)
+ 
+ // Attempt to repair the database stored in |db_path|.
+diff --git a/services/metrics/public/cpp/ukm_recorder.cc b/services/metrics/public/cpp/ukm_recorder.cc
+index e00753e70ba..2decd0d171d 100644
+--- a/services/metrics/public/cpp/ukm_recorder.cc
++++ b/services/metrics/public/cpp/ukm_recorder.cc
+@@ -263,4 +263,5 @@ void UkmRecorder::RemoveObserver(Observer* observer) {
+   observers_.RemoveObserver(observer);
+ }
+ 
++SET_CROMITE_FEATURE_DISABLED(kUkmFeature);
+ }  // namespace ukm

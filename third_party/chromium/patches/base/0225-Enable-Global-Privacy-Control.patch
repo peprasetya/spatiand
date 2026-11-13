@@ -1,0 +1,421 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 29 May 2024 13:43:50 +0000
+Subject: [PATCH 225/310] Enable Global Privacy Control
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Enable-Global-Privacy-Control.patch
+---
+ chrome/app/settings_strings.grdp              |  15 +++
+ .../api/settings_private/prefs_util.cc        |   1 +
+ chrome/browser/renderer_preferences_util.cc   |   2 +
+ chrome/browser/resources/settings/BUILD.gn    |   1 +
+ .../settings/privacy_page/cookies_page.html   |   2 +
+ .../settings/privacy_page/cookies_page.ts     |   1 +
+ .../settings/privacy_page/gpc_toggle.html     |  22 ++++
+ .../settings/privacy_page/gpc_toggle.ts       | 102 ++++++++++++++++++
+ chrome/browser/ui/browser_ui_prefs.cc         |   1 +
+ chrome/browser/ui/prefs/pref_watcher.cc       |   2 +
+ .../settings_localized_strings_provider.cc    |   3 +
+ chrome/common/pref_names.h                    |   2 +
+ .../global_privacy_control_util.cc            |   5 +
+ .../renderer_preferences_mojom_traits.cc      |   1 +
+ .../renderer_preferences.h                    |   1 +
+ .../renderer_preferences_mojom_traits.h       |   5 +
+ .../public/mojom/renderer_preferences.mojom   |   2 +
+ .../renderer/core/exported/web_view_impl.cc   |   3 +
+ .../platform/runtime_enabled_features.json5   |  13 +--
+ 19 files changed, 176 insertions(+), 8 deletions(-)
+ create mode 100644 chrome/browser/resources/settings/privacy_page/gpc_toggle.html
+ create mode 100644 chrome/browser/resources/settings/privacy_page/gpc_toggle.ts
+
+diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
+index 1cbee60222f..a803c69e262 100644
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -1786,6 +1786,21 @@
+     <message name="IDS_SETTINGS_UNIVERSAL_OPT_OUT_SUB_LABEL" desc="Subtitle of a setting. It appears below the title: ‘Send an opt-out request to sites regarding use of your data’. Users choose whether they want to send a request to sites about how to treat their user data. This string explains that sites may not respond to the user’s request even when this toggle is on; and, even when they do respond, sites may handle opt-out requests differently based on regional laws. On desktop computers, this string appears in the ‘Site requests’ section of the ‘Third-party cookies and site data’ page. On mobile devices, this string appears on its own subpage. The tone should be informative.">
+       The sites you visit, including Google, are responsible for determining how they respond to this request. Depending on the laws in your region, sites may respond by limiting the sale and sharing of your data or its use for personalized ads.
+     </message>
++    <message name="IDS_SETTINGS_ENABLE_GPC" desc="">
++      Global Privacy Control "Sec-GPC"
++    </message>
++    <message name="IDS_SETTINGS_ENABLE_GPC_DIALOG_TITLE" desc="">
++      Global Privacy Control "Sec-GPC"
++    </message>
++    <message name="IDS_SETTINGS_ENABLE_GPC_DIALOG_TEXT" desc="">
++      Enables support for Global Privacy Control signals.
++
++Right to opt-out of sale or sharing: You may request that businesses stop selling or sharing your personal information (“opt-out”).
++
++Businesses cannot sell or share your personal information after they receive your opt-out request unless you later authorize them to do so again.
++
++Please note that it only applies to the states of California (under CCPA and CPRA) and Colorado (under CoPA).
++    </message>
+     <message name="IDS_SETTINGS_PERMISSIONS_DESCRIPTION" desc="Description of the controls available on the permissions and site content settings page">
+       Controls what information sites can use and show (location, camera, pop-ups, and more)
+     </message>
+diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+index 25d3abeeab9..f6d98afb7c5 100644
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -497,6 +497,7 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
+   (*s_allowlist)[::prefs::kEnableDoNotTrack] = settings_api::PrefType::kBoolean;
+   (*s_allowlist)[universal_optout::prefs::kUniversalOptOutEnabled] =
+       settings_api::PrefType::kBoolean;
++  (*s_allowlist)[::prefs::kEnableGPC] = settings_api::PrefType::kBoolean;
+ 
+   // Sync and personalization page.
+   (*s_allowlist)[::prefs::kSearchSuggestEnabled] =
+diff --git a/chrome/browser/renderer_preferences_util.cc b/chrome/browser/renderer_preferences_util.cc
+index 29afa0a564a..20eea6d9d92 100644
+--- a/chrome/browser/renderer_preferences_util.cc
++++ b/chrome/browser/renderer_preferences_util.cc
+@@ -165,6 +165,8 @@ void UpdateFromSystemSettings(blink::RendererPreferences* prefs,
+     prefs->is_global_privacy_control_setting_enabled = pref_service->GetBoolean(
+         universal_optout::prefs::kUniversalOptOutEnabled);
+   }
++  prefs->enable_gpc =
++      pref_service->GetBoolean(prefs::kEnableGPC);
+   prefs->enable_encrypted_media =
+       pref_service->GetBoolean(prefs::kEnableEncryptedMedia);
+ 
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 931e7086371..8c77f67ec4c 100644
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -57,6 +57,7 @@ build_webui("build") {
+     "controls/settings_radio_group.ts",
+     "controls/settings_toggle_button.ts",
+     "privacy_page/cookies_page.ts",
++    "privacy_page/gpc_toggle.ts",
+     "privacy_page/personalization_options.ts",
+     "privacy_page/privacy_page.ts",
+     "privacy_page/privacy_page_index.ts",
+diff --git a/chrome/browser/resources/settings/privacy_page/cookies_page.html b/chrome/browser/resources/settings/privacy_page/cookies_page.html
+index 828a9914241..bff6049f024 100644
+--- a/chrome/browser/resources/settings/privacy_page/cookies_page.html
++++ b/chrome/browser/resources/settings/privacy_page/cookies_page.html
+@@ -160,6 +160,8 @@ import {ThirdPartyCookieBlockingSetting} from '../site_settings/site_settings_br
+           learn-more-url="$i18n{universalOptOutLearnMoreURL}">
+       </settings-toggle-button>
+     ` : ''}
++    <settings-gpc-toggle id="gpc">
++    </settings-gpc-toggle>
+     <cr-link-row id="siteDataTrigger" class="hr"
+         @click="${this.onSiteDataClick_}" label="$i18n{cookiePageAllSitesLink}"
+         role-description="$i18n{subpageArrowRoleDescription}">
+diff --git a/chrome/browser/resources/settings/privacy_page/cookies_page.ts b/chrome/browser/resources/settings/privacy_page/cookies_page.ts
+index 2aae884bef0..243dd32845a 100644
+--- a/chrome/browser/resources/settings/privacy_page/cookies_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/cookies_page.ts
+@@ -20,6 +20,7 @@ import '../icons.html.js';
+ import '../privacy_icons.html.js';
+ import '../settings_page/settings_subpage.js';
+ import '../site_settings/site_list.js';
++import './gpc_toggle.js';
+ import './do_not_track_toggle.js';
+ 
+ import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
+diff --git a/chrome/browser/resources/settings/privacy_page/gpc_toggle.html b/chrome/browser/resources/settings/privacy_page/gpc_toggle.html
+new file mode 100644
+index 00000000000..b2c17eff546
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/gpc_toggle.html
+@@ -0,0 +1,22 @@
++<settings-toggle-button id="toggle" class="toggle"
++    label="$i18n{gpc}"
++    pref-key="enable_gpc"
++    @settings-boolean-control-change="${this.onToggleSettingsBooleanControlChange_}"
++    icon="settings:forward"
++    no-set-pref>
++</settings-toggle-button>
++${this.showDialog_ ? html`
++  <cr-dialog id="confirmDialog"
++      close-text="$i18n{close}" @cancel="${this.onDialogCancel_}"
++      @close="${this.onDialogClose_}" show-on-attach>
++    <div slot="title">$i18n{gpcDialogTitle}</div>
++    <div slot="body">$i18n{gpcDialogMessage}</div>
++    <div slot="button-container">
++      <cr-button class="cancel-button" @click="${this.onCancelClick_}">
++        $i18n{cancel}
++      </cr-button>
++      <cr-button class="action-button" @click="${this.onConfirmClick_}">
++        $i18n{confirm}
++      </cr-button>
++    </div>
++  </cr-dialog>` : ''}
+diff --git a/chrome/browser/resources/settings/privacy_page/gpc_toggle.ts b/chrome/browser/resources/settings/privacy_page/gpc_toggle.ts
+new file mode 100644
+index 00000000000..21a72f030a1
+--- /dev/null
++++ b/chrome/browser/resources/settings/privacy_page/gpc_toggle.ts
+@@ -0,0 +1,102 @@
++// Copyright 2020 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import '../controls/settings_toggle_button.js';
++import '../icons.html.js';
++
++import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
++import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
++
++// The toggle shares the do-not-track toggle's look.
++import {getCss} from './do_not_track_toggle.css.js';
++import {getHtml} from './gpc_toggle.html.js';
++
++export interface SettingsGpcToggleElement {
++  $: {
++    toggle: SettingsToggleButtonElement,
++  };
++}
++
++export type GpcToggleElement = SettingsGpcToggleElement;
++
++export class SettingsGpcToggleElement extends CrLitElement {
++  static get is() {
++    return 'settings-gpc-toggle';
++  }
++
++  static override get styles() {
++    return getCss();
++  }
++
++  override render() {
++    return getHtml.bind(this)();
++  }
++
++  static override get properties() {
++    return {
++      showDialog_: {type: Boolean},
++    };
++  }
++
++  protected accessor showDialog_: boolean = false;
++
++  /**
++   * Handles the change event for the GPC toggle. Shows a confirmation dialog
++   * when enabling the setting.
++   */
++  protected onToggleSettingsBooleanControlChange_(event: Event) {
++    const target = event.target as SettingsToggleButtonElement;
++    if (!target.checked) {
++      // Always allow disabling the pref.
++      target.sendPrefChange();
++      return;
++    }
++
++    this.showDialog_ = true;
++  }
++
++  private closeDialog_() {
++    this.shadowRoot.querySelector('cr-dialog')!.close();
++    this.showDialog_ = false;
++  }
++
++  protected onDialogClose_() {
++    focusWithoutInk(this.$.toggle);
++  }
++
++  /**
++   * Handles the confirmation dialog 'Confirm' button.
++   */
++  protected onConfirmClick_() {
++    this.$.toggle.sendPrefChange();
++    this.closeDialog_();
++  }
++
++  /**
++   * Handles the confirmation dialog 'Cancel' button.
++   */
++  protected onCancelClick_() {
++    this.onDialogCancel_();
++  }
++
++  /**
++   * Handles the confirmation dialog 'Cancel' button or a cancel event.
++   */
++  protected onDialogCancel_() {
++    this.$.toggle.resetToPrefValue();
++    this.closeDialog_();
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-gpc-toggle': SettingsGpcToggleElement;
++  }
++}
++
++customElements.define(SettingsGpcToggleElement.is, SettingsGpcToggleElement);
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index 9d9f0e356c8..8c609c5ade2 100644
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -155,6 +155,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(
+       prefs::kEnableDoNotTrack, false,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
++  registry->RegisterBooleanPref(prefs::kEnableGPC, true);
+ #if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
+   registry->RegisterBooleanPref(prefs::kPrintPreviewUseSystemDefaultPrinter,
+                                 false);
+diff --git a/chrome/browser/ui/prefs/pref_watcher.cc b/chrome/browser/ui/prefs/pref_watcher.cc
+index 3bed2a37ab3..6f0d75db4a5 100644
+--- a/chrome/browser/ui/prefs/pref_watcher.cc
++++ b/chrome/browser/ui/prefs/pref_watcher.cc
+@@ -158,6 +158,8 @@ PrefWatcher::PrefWatcher(Profile* profile) : profile_(profile) {
+                                      renderer_callback);
+   profile_pref_change_registrar_.Add(prefs::kEnableDoNotTrack,
+                                      renderer_callback);
++  profile_pref_change_registrar_.Add(prefs::kEnableGPC,
++                                     renderer_callback);
+   profile_pref_change_registrar_.Add(
+       universal_optout::prefs::kUniversalOptOutEnabled, renderer_callback);
+   profile_pref_change_registrar_.Add(autofill::prefs::kAutofillAtMemoryShortcut,
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index dc3adac2dbe..6e7fab0a05c 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2623,6 +2623,9 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
+       {"doNotTrackDialogMessage", IDS_SETTINGS_ENABLE_DO_NOT_TRACK_DIALOG_TEXT},
+       {"doNotTrackDialogLearnMoreA11yLabel",
+        IDS_SETTINGS_ENABLE_DO_NOT_TRACK_DIALOG_LEARN_MORE_ACCESSIBILITY_LABEL},
++      {"gpc", IDS_SETTINGS_ENABLE_GPC},
++      {"gpcDialogTitle", IDS_SETTINGS_ENABLE_GPC_DIALOG_TITLE},
++      {"gpcDialogMessage", IDS_SETTINGS_ENABLE_GPC_DIALOG_TEXT},
+       {"siteSettingsSublabel", IDS_SETTINGS_PERMISSIONS_DESCRIPTION},
+       {"securityPageTitle", IDS_SETTINGS_SECURITY},
+       {"securityPageDescription", IDS_SETTINGS_SECURITY_DESCRIPTION},
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index fde03e39d46..8c8b12126e4 100644
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -901,6 +901,8 @@ inline constexpr char kEnableReferrers[] = "enable_referrers";
+ // Whether to send the DNT header.
+ inline constexpr char kEnableDoNotTrack[] = "enable_do_not_track";
+ 
++inline constexpr char kEnableGPC[] = "enable_gpc";
++
+ // Whether to allow the use of Encrypted Media Extensions (EME), except for the
+ // use of Clear Key key sytems, which is always allowed as required by the spec.
+ // TODO(crbug.com/40549758): This pref was used as a WebPreference which is why
+diff --git a/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc b/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
+index 0cce5820f45..4ffaaa5242a 100644
+--- a/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
++++ b/third_party/blink/common/global_privacy_control/global_privacy_control_util.cc
+@@ -34,6 +34,11 @@ bool IsGlobalPrivacyControlFeatureAndSettingEnabled(
+     return true;
+   }
+ 
++  // Cromite: the user's own GPC setting.
++  if (renderer_preferences.enable_gpc) {
++    return true;
++  }
++
+   if (!IsGlobalPrivacyControlFeatureEnabled()) {
+     return false;
+   }
+diff --git a/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc b/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc
+index 63d141c8416..0cc6f82c6d9 100644
+--- a/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc
++++ b/third_party/blink/common/renderer_preferences/renderer_preferences_mojom_traits.cc
+@@ -55,6 +55,7 @@ bool StructTraits<blink::mojom::RendererPreferencesDataView,
+   out->enable_referrers = data.enable_referrers();
+   out->allow_cross_origin_auth_prompt = data.allow_cross_origin_auth_prompt();
+   out->enable_do_not_track = data.enable_do_not_track();
++  out->enable_gpc = data.enable_gpc();
+   out->enable_encrypted_media = data.enable_encrypted_media();
+ 
+   if (!data.ReadWebrtcIpHandlingPolicy(&out->webrtc_ip_handling_policy))
+diff --git a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
+index b7bad104b62..80f28aec93c 100644
+--- a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
++++ b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
+@@ -54,6 +54,7 @@ struct BLINK_COMMON_EXPORT RendererPreferences {
+   uint32_t referrers_policy{2};
+   bool allow_cross_origin_auth_prompt{false};
+   bool enable_do_not_track{false};
++  bool enable_gpc{false};
+   bool enable_encrypted_media{true};
+ #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || \
+     BUILDFLAG(IS_WIN)
+diff --git a/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h b/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h
+index 3851a3a49ac..04ac02e0307 100644
+--- a/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h
++++ b/third_party/blink/public/common/renderer_preferences/renderer_preferences_mojom_traits.h
+@@ -125,6 +125,11 @@ struct BLINK_COMMON_EXPORT
+     return data.enable_do_not_track;
+   }
+ 
++  static const bool& enable_gpc(
++      const ::blink::RendererPreferences& data) {
++    return data.enable_gpc;
++  }
++
+   static const bool& enable_encrypted_media(
+       const ::blink::RendererPreferences& data) {
+     return data.enable_encrypted_media;
+diff --git a/third_party/blink/public/mojom/renderer_preferences.mojom b/third_party/blink/public/mojom/renderer_preferences.mojom
+index 88f561eac90..b113e2f2d64 100644
+--- a/third_party/blink/public/mojom/renderer_preferences.mojom
++++ b/third_party/blink/public/mojom/renderer_preferences.mojom
+@@ -89,6 +89,8 @@ struct RendererPreferences {
+   // Set to true to indicate that the preference to set DNT to 1 is enabled.
+   bool enable_do_not_track = false;
+ 
++  bool enable_gpc = false;
++
+   // Whether to allow the use of Encrypted Media Extensions (EME), except for
+   // the use of Clear Key key system which is always allowed as required by the
+   // spec.
+diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
+index 210e182a803..a9577f95f77 100644
+--- a/third_party/blink/renderer/core/exported/web_view_impl.cc
++++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
+@@ -3860,6 +3860,9 @@ void WebViewImpl::UpdateRendererPreferences(
+   GetSettings()->SetCaretBrowsingEnabled(
+       renderer_preferences_.caret_browsing_enabled);
+ 
++  WebRuntimeFeatures::EnableGlobalPrivacyControl(
++    renderer_preferences_.enable_gpc);
++
+ #if BUILDFLAG(IS_OZONE)
+   GetSettings()->SetSelectionClipboardBufferAvailable(
+       renderer_preferences_.selection_clipboard_buffer_available);
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index 2fd192607f6..6591731b164 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -3627,14 +3627,6 @@
+       name: "GetUserMediaEchoCancellationModes",
+       status: "stable",
+     },
+-    {
+-      name: "GlobalPrivacyControl",
+-      implied_by: [
+-        "GlobalPrivacyControlApi",
+-        "GlobalPrivacyControlForce"
+-      ],
+-      base_feature: "none",
+-    },
+     {
+       // Gates the navigator.globalPrivacyControl JavaScript API.
+       name: "GlobalPrivacyControlApi",
+@@ -4391,6 +4383,11 @@
+       status: "stable",
+       base_feature: "none",
+     },
++    {
++      name: "GlobalPrivacyControl",
++      base_feature_status: "disabled",
++      public: true,
++    },
+     {
+       name: "MediaSessionChapterInformation",
+       status: "stable",

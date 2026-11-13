@@ -1,0 +1,183 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 24 Mar 2023 07:50:59 +0000
+Subject: [PATCH 159/310] Warning message for unsupported hardware aes
+
+In boringssl the lack of support for native aes instructions in the cpu
+leads to a change in the order of the encryption methods in the
+tls1.3 stack and thus to an additional fingerprint bit.
+The use of software aes is discouraged due to possible side channel
+attacks, so it is better to warn the user of the presence of an
+unsupported device.
+you can remove the message by going to chrome://flags/#no-hw-aes-warning
+FILE:Warning-message-for-unsupported-hardware-aes.patch
+---
+ base/base_switches.h                                   |  2 ++
+ chrome/BUILD.gn                                        |  2 ++
+ chrome/app/chrome_main_delegate.cc                     | 10 +++++++++-
+ chrome/app/generated_resources.grd                     |  4 ++++
+ chrome/browser/ui/startup/bad_flags_prompt.cc          |  9 +++++++++
+ .../browser/renderer_host/render_process_host_impl.cc  |  1 +
+ .../Warning-message-for-unsupported-hardware-aes.inc   | 10 ++++++++++
+ .../Warning-message-for-unsupported-hardware-aes.inc   |  4 ++++
+ .../Warning-message-for-unsupported-hardware-aes.inc   |  1 +
+ 9 files changed, 42 insertions(+), 1 deletion(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Warning-message-for-unsupported-hardware-aes.inc
+ create mode 100644 cromite_flags/content/public/common/content_features_cc/Warning-message-for-unsupported-hardware-aes.inc
+ create mode 100644 cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc
+
+diff --git a/base/base_switches.h b/base/base_switches.h
+index 9d544c40c69..f829af31c3d 100644
+--- a/base/base_switches.h
++++ b/base/base_switches.h
+@@ -132,6 +132,8 @@ inline constexpr char kWaitForDebugger[] = "wait-for-debugger";
+ // See flag_descriptions.cc for more details.
+ inline constexpr char kEnableBenchmarking[] = "enable-benchmarking";
+ 
++inline constexpr char kNoAESHardware[] = "no-aes-hardware";
++
+ #if BUILDFLAG(IS_WIN)
+ // Disable high-resolution timer on Windows.
+ inline constexpr char kDisableHighResTimer[] = "disable-highres-timer";
+diff --git a/chrome/BUILD.gn b/chrome/BUILD.gn
+index f1d133b6cda..ea114499f94 100644
+--- a/chrome/BUILD.gn
++++ b/chrome/BUILD.gn
+@@ -1823,6 +1823,8 @@ if (is_android) {
+       "//chrome/common/profiler",
+       "//chrome/gpu",
+       "//chrome/renderer",
++      "//crypto",
++      "//third_party/boringssl",
+       "//components/crash/android:crash_android",
+       "//components/minidump_uploader",
+       "//components/safe_browsing:buildflags",
+diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
+index 0447c4084b0..641ec29b5a0 100644
+--- a/chrome/app/chrome_main_delegate.cc
++++ b/chrome/app/chrome_main_delegate.cc
+@@ -10,6 +10,7 @@
+ #include <variant>
+ 
+ #include "base/base_paths.h"
++#include "base/base_switches.h"
+ #include "base/check.h"
+ #include "base/command_line.h"
+ #include "base/compiler_specific.h"
+@@ -81,6 +82,7 @@
+ #include "content/public/common/main_function_params.h"
+ #include "content/public/common/profiling.h"
+ #include "content/public/common/url_constants.h"
++#include "crypto/openssl_util.h"
+ #include "extensions/buildflags/buildflags.h"
+ #include "net/http/http_cache.h"
+ #include "net/url_request/url_request.h"
+@@ -88,6 +90,7 @@
+ #include "printing/buildflags/buildflags.h"
+ #include "services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.h"
+ #include "third_party/blink/public/common/features.h"
++#include "third_party/boringssl/src/include/openssl/ssl.h"
+ #include "ui/base/l10n/l10n_util.h"
+ #include "ui/base/resource/resource_bundle.h"
+ #include "ui/base/resource/scoped_startup_resource_bundle.h"
+@@ -104,7 +107,6 @@
+ 
+ #include <algorithm>
+ 
+-#include "base/base_switches.h"
+ #include "base/files/important_file_writer_cleaner.h"
+ #include "base/process/launch.h"
+ #include "base/process/process_handle.h"
+@@ -1254,6 +1256,12 @@ std::optional<int> ChromeMainDelegate::BasicStartupComplete() {
+   }
+ #endif
+ 
++if (!command_line.HasSwitch(switches::kProcessType)) {
++  if (EVP_has_aes_hardware() == 0) {
++    base::CommandLine::ForCurrentProcess()->AppendSwitch(switches::kNoAESHardware);
++  }
++}
++
+ #if BUILDFLAG(IS_MAC)
+   // Give the browser process a longer treadmill, since crashes
+   // there have more impact.
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index f659bbdb317..1d1a040cdff 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -7210,6 +7210,10 @@ Keep your key file in a safe place. You will need it to create new versions of y
+         Chrome is loading flags from a command-line file. Stability and security may be affected.
+       </message>
+ 
++      <message name="IDS_UNSUPPORTED_AES_HARDWARE" desc="Message shown when an unsupported hardware">
++        Your device does not support hardware aes, so it is easier to track you at the network level.
++      </message>
++
+       <!-- Bad Environment Variables Infobar-->
+       <message name="IDS_BAD_ENVIRONMENT_VARIABLES_WARNING_MESSAGE" desc="Message shown when an unsupported environment variable is used [Keep it short so it fits in the infobar.]">
+         You are using an unsupported environment variable: <ph name="BAD_VAR">$1<ex>SSLKEYLOGFILE</ex></ph>. Stability and security will suffer.
+diff --git a/chrome/browser/ui/startup/bad_flags_prompt.cc b/chrome/browser/ui/startup/bad_flags_prompt.cc
+index e978ec9cf1d..5f63f915773 100644
+--- a/chrome/browser/ui/startup/bad_flags_prompt.cc
++++ b/chrome/browser/ui/startup/bad_flags_prompt.cc
+@@ -347,6 +347,15 @@ void ShowBadFlagsPrompt(content::WebContents* web_contents) {
+       return;
+     }
+   }
++
++  if (base::FeatureList::IsEnabled(features::kNoAESHardwareMessage) &&
++        base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoAESHardware)) {
++    CreateSimpleAlertInfoBar(
++        infobars::ContentInfoBarManager::FromWebContents(web_contents),
++        infobars::InfoBarDelegate::BAD_FLAGS_INFOBAR_DELEGATE, nullptr,
++        l10n_util::GetStringUTF16(IDS_UNSUPPORTED_AES_HARDWARE),
++        /*auto_expire=*/false, /*should_animate=*/false);
++  }
+ }
+ 
+ void ShowBadFlagsInfoBar(content::WebContents* web_contents,
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 200e0ab673c..048e8a41686 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -4094,6 +4094,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+       switches::kSchedulerBoostUrgent,
+ #endif
+     switches::kDesktopModeViewportMetaEnabled,
++    switches::kNoAESHardware,
+   };
+   renderer_cmd->CopySwitchesFrom(browser_cmd, kSwitchNames);
+ 
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Warning-message-for-unsupported-hardware-aes.inc b/cromite_flags/chrome/browser/about_flags_cc/Warning-message-for-unsupported-hardware-aes.inc
+new file mode 100644
+index 00000000000..eff9a455f5c
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Warning-message-for-unsupported-hardware-aes.inc
+@@ -0,0 +1,10 @@
++
++#ifdef FLAG_SECTION
++
++    {"no-hw-aes-warning",
++     "Enable no aes warning message",
++     "Displays a warning message if the device does not have aes support in the hardware. "
++     "The message is not shown with the feature disabled.", kOsDesktop | kOsAndroid,
++     FEATURE_VALUE_TYPE(features::kNoAESHardwareMessage)},
++
++#endif
+diff --git a/cromite_flags/content/public/common/content_features_cc/Warning-message-for-unsupported-hardware-aes.inc b/cromite_flags/content/public/common/content_features_cc/Warning-message-for-unsupported-hardware-aes.inc
+new file mode 100644
+index 00000000000..a5fe1b29072
+--- /dev/null
++++ b/cromite_flags/content/public/common/content_features_cc/Warning-message-for-unsupported-hardware-aes.inc
+@@ -0,0 +1,4 @@
++// Show a warning message to user if aes hardware is not found
++CROMITE_FEATURE(kNoAESHardwareMessage,
++                "NoAESHardwareMessage",
++                base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc b/cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc
+new file mode 100644
+index 00000000000..8d2111d7fdb
+--- /dev/null
++++ b/cromite_flags/content/public/common/content_features_h/Warning-message-for-unsupported-hardware-aes.inc
+@@ -0,0 +1 @@
++CONTENT_EXPORT BASE_DECLARE_FEATURE(kNoAESHardwareMessage);

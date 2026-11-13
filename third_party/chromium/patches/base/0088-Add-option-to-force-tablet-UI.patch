@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 5 May 2024 09:34:39 +0000
+Subject: [PATCH 088/310] Add option to force tablet UI
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Add-option-to-force-tablet-UI.patch
+---
+ chrome/browser/preferences/BUILD.gn | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/chrome/browser/preferences/BUILD.gn b/chrome/browser/preferences/BUILD.gn
+index d3440ebb58f..785dd414fb7 100644
+--- a/chrome/browser/preferences/BUILD.gn
++++ b/chrome/browser/preferences/BUILD.gn
+@@ -25,6 +25,7 @@ android_library("java") {
+     "//components/cached_flags:java",
+     "//third_party/androidx:androidx_annotation_annotation_java",
+     "//third_party/jni_zero:jni_zero_java",
++    "//ui/android:ui_java",
+   ]
+ 
+   srcjar_deps = [

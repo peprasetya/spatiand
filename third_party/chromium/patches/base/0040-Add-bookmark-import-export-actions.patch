@@ -1,0 +1,588 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Wed, 1 Aug 2018 09:19:40 +0200
+Subject: [PATCH 040/310] Add bookmark import/export actions
+
+Add bookmark import/export actions in bookmarks activity and page
+Reduce permissions needed for bookmarks import/export
+Completely remove contacts picker permission from the file dialog
+
+Requires: Adds-support-for-writing-URIs.patch
+Requires: Restore-BookmarkToolbar-setCurrentFolder.patch
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-bookmark-import-export-actions.patch
+---
+ chrome/browser/BUILD.gn                       |   7 +
+ .../bookmarks/android/bookmark_bridge.cc      | 193 ++++++++++++++++++
+ .../bookmarks/android/bookmark_bridge.h       |  30 ++-
+ chrome/browser/importer/profile_writer.cc     |  10 +
+ chrome/browser/importer/profile_writer.h      |   6 +
+ chrome/utility/BUILD.gn                       |   7 +
+ .../importer/bookmarks_file_importer.cc       |   4 +
+ .../headless_select_file_dialog.cc            |   4 +
+ .../content/content_bookmark_parser_utils.cc  |   3 +
+ .../add-bookmark-import-export-actions.inc    |  12 ++
+ .../add-bookmark-import-export-actions.inc    |   4 +
+ .../add-bookmark-import-export-actions.inc    |   1 +
+ ui/shell_dialogs/select_file_dialog.h         |   2 +
+ .../select_file_dialog_android.cc             |   6 +
+ ui/shell_dialogs/select_file_dialog_android.h |   2 +
+ ui/shell_dialogs/select_file_dialog_linux.cc  |   4 +
+ ui/shell_dialogs/select_file_dialog_linux.h   |   2 +
+ 17 files changed, 296 insertions(+), 1 deletion(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/add-bookmark-import-export-actions.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-bookmark-import-export-actions.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index da5a3743cc1..975574458f2 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1038,6 +1038,13 @@ source_set("core") {
+     "universal_web_contents_observers.cc",
+   ]
+ 
++  if (is_android) {
++    sources += [
++      "importer/profile_writer.cc",
++      "importer/profile_writer.h",
++    ]
++  }
++
+   configs += [ "//build/config:precompiled_headers" ]
+   defines = [ "ZLIB_CONST" ]
+ 
+diff --git a/chrome/browser/bookmarks/android/bookmark_bridge.cc b/chrome/browser/bookmarks/android/bookmark_bridge.cc
+index b94692c5baf..58832478046 100644
+--- a/chrome/browser/bookmarks/android/bookmark_bridge.cc
++++ b/chrome/browser/bookmarks/android/bookmark_bridge.cc
+@@ -65,6 +65,28 @@
+ #include "content/public/browser/web_contents.h"
+ #include "url/gurl.h"
+ 
++#include "base/android/content_uri_utils.h"
++#include "base/android/path_utils.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/bookmarks/bookmark_html_writer.h"
++#include "chrome/browser/importer/profile_writer.h"
++#include "chrome/browser/platform_util.h"
++#include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
++#include "components/user_data_importer/common/imported_bookmark_entry.h"
++#include "components/user_data_importer/content/content_bookmark_parser.h"
++#include "components/user_data_importer/content/content_bookmark_parser_utils.h"
++#include "chrome/common/url_constants.h"
++#include "components/favicon_base/favicon_usage_data.h"
++#include "components/search_engines/template_url.h"
++#include "components/url_formatter/url_fixer.h"
++#include "ui/android/window_android.h"
++#include "base/task/task_traits.h"
++#include "base/task/thread_pool.h"
++#include "content/public/browser/browser_task_traits.h"
++#include "base/files/file_path.h"
++#include "ui/shell_dialogs/selected_file_info.h"
++#include "ui/shell_dialogs/select_file_dialog.h"
++
+ // Must come after all headers that specialize FromJniType() / ToJniType().
+ #include "chrome/browser/bookmarks/android/jni_headers/BookmarkBridge_jni.h"
+ 
+@@ -295,6 +317,10 @@ BookmarkBridge::~BookmarkBridge() {
+   partner_bookmarks_shim_observation_.Reset();
+   bookmark_model_observation_.Reset();
+   profile_observation_.Reset();
++  // There may be pending file dialogs, we need to tell them that we've gone
++  // away so they don't try and call back to us.
++  if (select_file_dialog_)
++    select_file_dialog_->ListenerDestroyed();
+ }
+ 
+ void BookmarkBridge::Destroy(JNIEnv* env) {
+@@ -859,6 +885,173 @@ int32_t BookmarkBridge::GetTotalBookmarkCount(JNIEnv* env,
+   return count;
+ }
+ 
++void BookmarkBridge::ImportBookmarks(JNIEnv* env,
++                                       const JavaRef<jobject>& obj,
++                                       const JavaRef<jobject>& java_window) {
++  DCHECK(IsLoaded());
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++
++  ui::WindowAndroid* window =
++      ui::WindowAndroid::FromJavaWindowAndroid(java_window);
++  CHECK(window);
++
++  select_file_dialog_ = ui::SelectFileDialog::Create(
++    this, std::make_unique<ChromeSelectFilePolicy>(nullptr));
++
++  //NOTE: extension and description are not used on Android, thus not set
++  ui::SelectFileDialog::FileTypeInfo file_type_info;
++
++  const std::vector<std::u16string> v_accept_types = { u"text/html" };
++  select_file_dialog_->SetAcceptTypes(v_accept_types);
++
++  select_file_dialog_->SelectFile(
++        ui::SelectFileDialog::SELECT_OPEN_FILE,
++        std::u16string(),
++        export_path_,
++        &file_type_info,
++        0,
++        base::FilePath::StringType(),
++        window
++  );
++}
++
++void BookmarkBridge::ExportBookmarks(JNIEnv* env,
++                                     const JavaRef<jobject>& obj,
++                                     const JavaRef<jobject>& java_window,
++                                     const JavaRef<jstring>& j_export_path) {
++  DCHECK(IsLoaded());
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++
++  ui::WindowAndroid* window =
++      ui::WindowAndroid::FromJavaWindowAndroid(java_window);
++  CHECK(window);
++
++  std::u16string export_path =
++    base::android::ConvertJavaStringToUTF16(env, j_export_path);
++
++  export_path_ = base::FilePath::FromUTF16Unsafe(export_path);
++
++  if (export_path_.empty()) {
++    if (!base::android::GetDownloadsDirectory(&export_path_)) {
++      LOG(ERROR) << "Could not retrieve downloads directory for bookmarks export";
++      return;
++    }
++    export_path_ = export_path_.Append(FILE_PATH_LITERAL("bookmarks.html"));
++  }
++
++  bookmark_html_writer::WriteBookmarks(profile_, export_path_,
++    base::BindOnce(&BookmarkBridge::ExportBookmarksEnd,
++                   weak_ptr_factory_.GetWeakPtr(),
++                   base::android::ScopedJavaGlobalRef<jobject>(obj),
++                   window));
++}
++
++void BookmarkBridge::ExportBookmarksEnd(const ScopedJavaGlobalRef<jobject>& obj,
++                                        ui::WindowAndroid* window,
++                                        bookmark_html_writer::Result result) const
++{
++  auto export_path = export_path_.MaybeAsASCII();
++  if (result == bookmark_html_writer::Result::kSuccess) {
++    LOG(INFO) << "Bookmarks exported successfully to " << export_path;
++  } else if (result == bookmark_html_writer::Result::kCouldNotCreateFile) {
++    LOG(ERROR) << "Bookmarks export: could not create file " << export_path;
++  } else if (result == bookmark_html_writer::Result::kCouldNotWriteHeader) {
++    LOG(ERROR) << "Bookmarks export: could not write header";
++  } else if (result == bookmark_html_writer::Result::kCouldNotWriteNodes) {
++    LOG(ERROR) << "Bookmarks export: could not write nodes";
++  }
++
++  JNIEnv* env = AttachCurrentThread();
++  Java_BookmarkBridge_bookmarksExported(env, obj, window->GetJavaObject(),
++    base::android::ConvertUTF8ToJavaString(env, export_path),
++    result == bookmark_html_writer::Result::kSuccess);
++}
++
++// Attempts to create a TemplateURL from the provided data. |title| is optional.
++// If TemplateURL creation fails, returns null.
++std::unique_ptr<TemplateURL> CreateTemplateURL(const std::u16string& url,
++                                               const std::u16string& keyword,
++                                               const std::u16string& title) {
++  if (url.empty() || keyword.empty())
++    return nullptr;
++  TemplateURLData data;
++  data.SetKeyword(keyword);
++  // We set short name by using the title if it exists.
++  // Otherwise, we use the shortcut.
++  data.SetShortName(title.empty() ? keyword : title);
++  data.SetURL(TemplateURLRef::DisplayURLToURLRef(url));
++  return std::make_unique<TemplateURL>(data);
++}
++
++void BookmarkBridge::FileSelected(const ui::SelectedFileInfo& file, int index) {
++  base::FilePath path = file.path();
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::TaskPriority::BEST_EFFORT, base::MayBlock()},
++      base::BindOnce(&BookmarkBridge::FileSelectedImpl,
++        base::Unretained(this),
++        path),
++      base::BindOnce(&BookmarkBridge::FileSelectedImplOnUIThread,
++        base::Unretained(this),
++        path));
++}
++
++const std::string BookmarkBridge::FileSelectedImpl(const base::FilePath& path) {
++  base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
++  if (!file.IsValid()) {
++    select_file_dialog_->ShowToast("Cannot open bookmarks file for import");
++    return "";
++  }
++
++  auto fileLength = file.GetLength();
++  if (-1 == fileLength) {
++    select_file_dialog_->ShowToast("Cannot read bookmarks file length");
++    return "";
++  }
++
++  std::vector<char> buffer(fileLength);
++  base::span<uint8_t> buffer_span = base::as_writable_byte_span(buffer);
++  if (-1 == file.ReadAtCurrentPos(buffer_span)) {
++    select_file_dialog_->ShowToast("Could not read bookmarks file");
++    return "";
++  }
++
++  if (buffer.empty()) {
++    select_file_dialog_->ShowToast("Empty bookmarks file");
++    return "";
++  }
++
++  std::string contents(buffer.begin(), buffer.end());
++  return contents;
++}
++
++void BookmarkBridge::FileSelectedImplOnUIThread(const base::FilePath& path,
++                                                const std::string& contents) {
++  if (contents.empty())
++    return;
++
++  // the following import logic comes from BookmarksFileImporter class
++  user_data_importer::BookmarkParser::ParsedBookmarks parsed_bookmarks =
++      user_data_importer::ParseBookmarksUnsafe(contents);
++
++  auto *writer = new ProfileWriter(profile_);
++
++  if (!parsed_bookmarks.bookmarks.empty()) {
++    // adding bookmarks will begin extensive changes to the model
++    writer->AddBookmarksWithModel(bookmark_model_, parsed_bookmarks.bookmarks, u"Imported");
++  }
++
++  std::stringstream message;
++  message << "Imported " << parsed_bookmarks.bookmarks.size() << " bookmarks " <<
++		" from " << path.MaybeAsASCII();
++  auto result = message.str();
++
++  select_file_dialog_->ShowToast(result);
++
++  LOG(INFO) << result;
++}
++
++void BookmarkBridge::FileSelectionCanceled() {}
++
+ void BookmarkBridge::SetBookmarkTitle(JNIEnv* env,
+                                       int64_t id,
+                                       int32_t type,
+diff --git a/chrome/browser/bookmarks/android/bookmark_bridge.h b/chrome/browser/bookmarks/android/bookmark_bridge.h
+index 7b7395043de..0adac2b86df 100644
+--- a/chrome/browser/bookmarks/android/bookmark_bridge.h
++++ b/chrome/browser/bookmarks/android/bookmark_bridge.h
+@@ -19,6 +19,7 @@
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/supports_user_data.h"
+ #include "chrome/browser/partnerbookmarks/partner_bookmarks_shim.h"
++#include "chrome/browser/bookmarks/bookmark_html_writer.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/profiles/profile_observer.h"
+ #include "chrome/browser/reading_list/android/reading_list_manager.h"
+@@ -36,6 +37,9 @@
+ #include "components/signin/public/identity_manager/identity_manager.h"
+ #include "url/android/gurl_android.h"
+ 
++#include "components/search_engines/template_url.h"
++#include "ui/shell_dialogs/select_file_dialog.h"
++
+ class BookmarkBridgeTest;
+ 
+ // Values for a bitmask used to refer to a collection of bookmark nodes.
+@@ -76,7 +80,8 @@ class BookmarkBridge : public ProfileObserver,
+                        public reading_list::ReadingListManager::Observer,
+                        public ReadingListModelObserver,
+                        public signin::IdentityManager::Observer,
+-                       public base::SupportsUserData::Data {
++                       public base::SupportsUserData::Data,
++                       public ui::SelectFileDialog::Listener {
+  public:
+   // All of the injected pointers must be non-null and must outlive `this`.
+   BookmarkBridge(Profile* profile,
+@@ -107,6 +112,11 @@ class BookmarkBridge : public ProfileObserver,
+ 
+   bool IsDoingExtensiveChanges(JNIEnv* env);
+ 
++  // SelectFileDialog::Listener implementation.
++  void FileSelected(const ui::SelectedFileInfo& file,
++                    int index) override;
++  void FileSelectionCanceled() override;
++
+   bool IsEditBookmarksEnabled(JNIEnv* env);
+ 
+   void LoadEmptyPartnerBookmarkShimForTesting(JNIEnv* env);
+@@ -119,6 +129,17 @@ class BookmarkBridge : public ProfileObserver,
+                                                              int64_t id,
+                                                              int32_t type);
+ 
++  void ImportBookmarks(JNIEnv* env,
++                        const base::android::JavaRef<jobject>& obj,
++                        const base::android::JavaRef<jobject>& java_window);
++
++  void ExportBookmarks(JNIEnv* env,
++                        const base::android::JavaRef<jobject>& obj,
++                        const base::android::JavaRef<jobject>& java_window,
++                        const base::android::JavaRef<jstring>& j_export_path);
++  void ExportBookmarksEnd(const base::android::ScopedJavaGlobalRef<jobject>& obj,
++                        ui::WindowAndroid* window, bookmark_html_writer::Result result) const;
++
+   void GetAllFoldersWithDepths(
+       JNIEnv* env,
+       const base::android::JavaRef<jobject>& j_folders_obj,
+@@ -372,6 +393,8 @@ class BookmarkBridge : public ProfileObserver,
+   void CreateOrDestroyAccountReadingListManagerIfNeeded();
+ 
+   const raw_ptr<Profile> profile_;  // weak
++  base::FilePath export_path_;
++
+   base::android::ScopedJavaGlobalRef<jobject> java_bookmark_model_;
+   const raw_ptr<bookmarks::BookmarkModel> bookmark_model_;  // weak
+   const raw_ptr<bookmarks::ManagedBookmarkService>
+@@ -386,6 +409,7 @@ class BookmarkBridge : public ProfileObserver,
+   std::unique_ptr<bookmarks::ScopedGroupBookmarkActions>
+       grouped_bookmark_actions_;
+   PrefChangeRegistrar pref_change_registrar_;
++  scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
+ 
+   // Information about the Partner bookmarks (must check for IsLoaded()).
+   // This is owned by profile.
+@@ -420,6 +444,10 @@ class BookmarkBridge : public ProfileObserver,
+   base::TimeTicks load_start_time_;
+   bool loading_notification_sent_ = false;
+ 
++  const std::string FileSelectedImpl(const base::FilePath& path);
++  void FileSelectedImplOnUIThread(const base::FilePath& path,
++                                  const std::string& contents);
++
+   // Weak pointers for creating callbacks that won't call into a destroyed
+   // object.
+   base::WeakPtrFactory<BookmarkBridge> weak_ptr_factory_;
+diff --git a/chrome/browser/importer/profile_writer.cc b/chrome/browser/importer/profile_writer.cc
+index a29027ec2b2..3c1200132d6 100644
+--- a/chrome/browser/importer/profile_writer.cc
++++ b/chrome/browser/importer/profile_writer.cc
+@@ -127,6 +127,16 @@ void ProfileWriter::AddBookmarks(
+     return;
+ 
+   BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile_);
++  AddBookmarksWithModel(model, bookmarks, top_level_folder_name);
++}
++
++void ProfileWriter::AddBookmarksWithModel(
++    BookmarkModel* model,
++    const std::vector<user_data_importer::ImportedBookmarkEntry>& bookmarks,
++    const std::u16string& top_level_folder_name) {
++  if (bookmarks.empty())
++    return;
++
+   CHECK(model->loaded(), base::NotFatalUntil::M161);
+ 
+   // If the bookmark bar is currently empty, we should import directly to it.
+diff --git a/chrome/browser/importer/profile_writer.h b/chrome/browser/importer/profile_writer.h
+index f609d99dde3..f6938f74d6a 100644
+--- a/chrome/browser/importer/profile_writer.h
++++ b/chrome/browser/importer/profile_writer.h
+@@ -11,6 +11,7 @@
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/ref_counted.h"
+ #include "build/build_config.h"
++#include "components/bookmarks/browser/bookmark_model.h"
+ #include "components/favicon_base/favicon_usage_data.h"
+ #include "components/history/core/browser/history_types.h"
+ #include "components/search_engines/template_url_service.h"
+@@ -75,6 +76,11 @@ class ProfileWriter : public base::RefCountedThreadSafe<ProfileWriter> {
+       const std::vector<user_data_importer::ImportedBookmarkEntry>& bookmarks,
+       const std::u16string& top_level_folder_name);
+ 
++  virtual void AddBookmarksWithModel(
++      bookmarks::BookmarkModel* model,
++      const std::vector<user_data_importer::ImportedBookmarkEntry>& bookmarks,
++      const std::u16string& top_level_folder_name);
++
+   virtual void AddFavicons(const favicon_base::FaviconUsageDataList& favicons);
+ 
+   // Adds the TemplateURLs in |template_urls| to the local store.
+diff --git a/chrome/utility/BUILD.gn b/chrome/utility/BUILD.gn
+index e5b851a44d6..735669efe4e 100644
+--- a/chrome/utility/BUILD.gn
++++ b/chrome/utility/BUILD.gn
+@@ -218,6 +218,13 @@ static_library("utility") {
+     deps += [ "//chrome/services/pdf:lib" ]
+   }
+ 
++  if (is_android) {
++    sources += [
++      "importer/bookmarks_file_importer.cc",
++      "importer/bookmarks_file_importer.h",
++    ]
++  }
++
+   # NSS decryptor is not needed on ChromeOS.
+   if (!is_chromeos && use_nss_certs) {
+     sources += [
+diff --git a/chrome/utility/importer/bookmarks_file_importer.cc b/chrome/utility/importer/bookmarks_file_importer.cc
+index 1184ce779e0..5047a67e38c 100644
+--- a/chrome/utility/importer/bookmarks_file_importer.cc
++++ b/chrome/utility/importer/bookmarks_file_importer.cc
+@@ -128,8 +128,12 @@ void BookmarksFileImporter::OnBookmarksParsed(
+         html_parser,
+     user_data_importer::BookmarkParser::ParsedBookmarks parsed_bookmarks) {
+   if (!parsed_bookmarks.bookmarks.empty()) {
++#if BUILDFLAG(IS_ANDROID)
++    std::u16string first_folder_name;
++#else
+     std::u16string first_folder_name =
+         bridge_->GetLocalizedString(IDS_BOOKMARK_GROUP);
++#endif
+     std::erase_if(parsed_bookmarks.bookmarks,
+                   [](user_data_importer::ImportedBookmarkEntry bookmark) {
+                     return !internal::CanImportURL(bookmark.url);
+diff --git a/components/headless/select_file_dialog/headless_select_file_dialog.cc b/components/headless/select_file_dialog/headless_select_file_dialog.cc
+index 23af76dec60..8cbc9290cb5 100644
+--- a/components/headless/select_file_dialog/headless_select_file_dialog.cc
++++ b/components/headless/select_file_dialog/headless_select_file_dialog.cc
+@@ -57,6 +57,10 @@ class HeadlessSelectFileDialog : public ui::SelectFileDialog {
+   // ui::SelectFileDialog:
+   bool HasMultipleFileTypeChoicesImpl() override { return false; }
+ 
++  void ShowToast(const std::string& message) override {
++    // nothing to do, used only on android
++  }
++
+   SelectFileDialogCallback callback_;
+ };
+ 
+diff --git a/components/user_data_importer/content/content_bookmark_parser_utils.cc b/components/user_data_importer/content/content_bookmark_parser_utils.cc
+index f6f8396c67b..7b4088669d4 100644
+--- a/components/user_data_importer/content/content_bookmark_parser_utils.cc
++++ b/components/user_data_importer/content/content_bookmark_parser_utils.cc
+@@ -138,6 +138,7 @@ std::optional<bool> GetBoolAttribute(std::string_view attribute_list,
+ 
+ // Given the URL of a page and a favicon data URL, adds an appropriate record
+ // to the given favicon usage vector.
++[[maybe_unused]]
+ void DataURLToFaviconUsage(const GURL& link_url,
+                            const GURL& favicon_data,
+                            favicon_base::FaviconUsageDataList* favicons) {
+@@ -495,9 +496,11 @@ BookmarkParser::ParsedBookmarks ParseBookmarksUnsafe(
+       }
+       parsing_result.bookmarks.push_back(std::move(entry));
+ 
++#if !BUILDFLAG(IS_ANDROID)
+       // Save the favicon. DataURLToFaviconUsage will handle the case where
+       // there is no favicon.
+       DataURLToFaviconUsage(url, favicon, &parsing_result.favicons);
++#endif
+ 
+       continue;
+     }
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/add-bookmark-import-export-actions.inc b/cromite_flags/chrome/browser/about_flags_cc/add-bookmark-import-export-actions.inc
+new file mode 100644
+index 00000000000..2974200f1ca
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/add-bookmark-import-export-actions.inc
+@@ -0,0 +1,12 @@
++#ifdef FLAG_SECTION
++
++#if BUILDFLAG(IS_ANDROID)
++    {"export-bookmarks-use-saf",
++     "Use saf for bookmarks export",
++     "When enabled user can choose where save the exported bookmarks "
++     "file.", kOsAndroid,
++     FEATURE_VALUE_TYPE(
++         chrome::android::kBookmarksExportUseSaf)},
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-bookmark-import-export-actions.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-bookmark-import-export-actions.inc
+new file mode 100644
+index 00000000000..df613c0776c
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-bookmark-import-export-actions.inc
+@@ -0,0 +1,4 @@
++// disabled by default because of an issue on Android 6.0
++CROMITE_FEATURE(kBookmarksExportUseSaf,
++                "BookmarksExportUseSaf",
++                base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc
+new file mode 100644
+index 00000000000..2c0451dd834
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/add-bookmark-import-export-actions.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kBookmarksExportUseSaf);
+diff --git a/ui/shell_dialogs/select_file_dialog.h b/ui/shell_dialogs/select_file_dialog.h
+index 12a514b89c2..8a0e30de6bd 100644
+--- a/ui/shell_dialogs/select_file_dialog.h
++++ b/ui/shell_dialogs/select_file_dialog.h
+@@ -224,6 +224,8 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
+                   const GURL* caller = nullptr);
+   bool HasMultipleFileTypeChoices();
+ 
++  virtual void ShowToast(const std::string& message) = 0;
++
+  protected:
+   friend class base::RefCountedThreadSafe<SelectFileDialog>;
+ 
+diff --git a/ui/shell_dialogs/select_file_dialog_android.cc b/ui/shell_dialogs/select_file_dialog_android.cc
+index 26121305e3d..b885479f167 100644
+--- a/ui/shell_dialogs/select_file_dialog_android.cc
++++ b/ui/shell_dialogs/select_file_dialog_android.cc
+@@ -204,6 +204,12 @@ void SelectFileDialogImpl::SelectFileImpl(Type type,
+       owning_window->GetJavaObject());
+ }
+ 
++void SelectFileDialogImpl::ShowToast(const std::string& message) {
++  JNIEnv* env = base::android::AttachCurrentThread();
++
++  Java_SelectFileDialog_showToast(env, java_object_, base::android::ConvertUTF8ToJavaString(env, message));
++}
++
+ SelectFileDialogImpl::~SelectFileDialogImpl() {
+   JNIEnv* env = base::android::AttachCurrentThread();
+   Java_SelectFileDialog_nativeDestroyed(env, java_object_);
+diff --git a/ui/shell_dialogs/select_file_dialog_android.h b/ui/shell_dialogs/select_file_dialog_android.h
+index 75d40a15807..5b981dea1e4 100644
+--- a/ui/shell_dialogs/select_file_dialog_android.h
++++ b/ui/shell_dialogs/select_file_dialog_android.h
+@@ -49,6 +49,8 @@ class SelectFileDialogImpl : public SelectFileDialog {
+                       gfx::NativeWindow owning_window,
+                       const GURL* caller) override;
+ 
++  void ShowToast(const std::string& message) override;
++
+  protected:
+   ~SelectFileDialogImpl() override;
+ 
+diff --git a/ui/shell_dialogs/select_file_dialog_linux.cc b/ui/shell_dialogs/select_file_dialog_linux.cc
+index 4b540a7fcdf..616f59abedd 100644
+--- a/ui/shell_dialogs/select_file_dialog_linux.cc
++++ b/ui/shell_dialogs/select_file_dialog_linux.cc
+@@ -31,6 +31,10 @@ void SelectFileDialogLinux::ListenerDestroyed() {
+   listener_ = nullptr;
+ }
+ 
++void SelectFileDialogLinux::ShowToast(const std::string& message) {
++  // nothing to do, used only on android
++}
++
+ bool SelectFileDialogLinux::CallDirectoryExistsOnUIThread(
+     const base::FilePath& path) {
+   base::ScopedAllowBlocking scoped_allow_blocking;
+diff --git a/ui/shell_dialogs/select_file_dialog_linux.h b/ui/shell_dialogs/select_file_dialog_linux.h
+index 61683d0eddb..9edc0f06917 100644
+--- a/ui/shell_dialogs/select_file_dialog_linux.h
++++ b/ui/shell_dialogs/select_file_dialog_linux.h
+@@ -33,6 +33,8 @@ class SHELL_DIALOGS_EXPORT SelectFileDialogLinux : public SelectFileDialog {
+   // BaseShellDialog implementation.
+   void ListenerDestroyed() override;
+ 
++  void ShowToast(const std::string& message) override;
++
+  protected:
+   explicit SelectFileDialogLinux(Listener* listener,
+                                  std::unique_ptr<ui::SelectFilePolicy> policy);

@@ -13,7 +13,7 @@ Line by line, and safe to run again:
   * a condition already rewritten is left as it is;
   * an assert() keeps plain is_mac: it says where a target may be built, which is not a choice
     of UI (other targets depend on it there);
-  * a line under a `# Spatiand:` comment was decided by hand, and is left alone;
+  * a line under a comment that says `# Spatiand:` was decided by hand, and is left alone;
   * the Linux sandbox's page stays Linux's: below the UI the system is macOS's own;
   * WebUI pages (chrome/browser/ui/webui) keep macOS's: they are web content.
 
@@ -40,7 +40,15 @@ def rewrite(lines):
         stripped = line.lstrip()
         if stripped.startswith("assert("):
             in_assert = True
-        hand = "# Spatiand:" in before or "sandbox" in after or "sandbox" in line
+        # Decided by hand: under a comment that says `# Spatiand:`, however many lines it runs
+        # to (only the line just under one was spared, and a note two lines long had its
+        # condition rewritten at the rebase to Chromium 157).
+        j = i - 1
+        note = False
+        while j >= 0 and lines[j].lstrip().startswith("#"):
+            note = note or "# Spatiand:" in lines[j]
+            j -= 1
+        hand = note or "sandbox" in after or "sandbox" in line
         if not in_assert and not hand and not stripped.startswith("#"):
             line = LINUX.sub("(is_linux || is_mac_linux_ui)", line)
             line = MAC.sub("(is_mac && !is_mac_linux_ui)", line)

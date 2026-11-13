@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zoraver Kang <zkang@wpi.edu>
+Date: Mon, 26 Aug 2019 17:54:28 -0400
+Subject: [PATCH 062/310] disable AdsBlockedInfoBar
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:disable-AdsBlockedInfoBar.patch
+---
+ .../content/browser/profile_interaction_manager.cc               | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/components/subresource_filter/content/browser/profile_interaction_manager.cc b/components/subresource_filter/content/browser/profile_interaction_manager.cc
+index 63e1b6c3864..58289c1fb87 100644
+--- a/components/subresource_filter/content/browser/profile_interaction_manager.cc
++++ b/components/subresource_filter/content/browser/profile_interaction_manager.cc
+@@ -129,6 +129,7 @@ mojom::ActivationLevel ProfileInteractionManager::OnPageActivationComputed(
+ }
+ 
+ void ProfileInteractionManager::MaybeShowNotification() {
++  if ((true)) return;
+   // The caller should make sure this is only called from pages that are
+   // currently primary.
+   CHECK(page_);

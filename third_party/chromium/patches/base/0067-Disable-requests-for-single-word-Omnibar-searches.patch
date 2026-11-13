@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sun, 27 Oct 2019 10:21:19 +0100
+Subject: [PATCH 067/310] Disable requests for single-word Omnibar searches
+
+Patch from https://github.com/Eloston/ungoogled-chromium/issues/814#issuecomment-526873727
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Disable-requests-for-single-word-Omnibar-searches.patch
+---
+ ...chrome_omnibox_navigation_observer_base.cc | 21 -------------------
+ 1 file changed, 21 deletions(-)
+
+diff --git a/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc b/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc
+index 6802e362f90..c25bcb5d850 100644
+--- a/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc
++++ b/chrome/browser/omnibox/chrome_omnibox_navigation_observer_base.cc
+@@ -77,19 +77,6 @@ bool OnlyChangeIsFromHTTPToHTTPS(const GURL& origin, const GURL& destination) {
+   return origin_with_https == destination;
+ }
+ 
+-// Choose the appropriate URLLoaderFactory: either an explicitly specified or a
+-// default for the given profile.
+-network::mojom::URLLoaderFactory* GetURLLoaderFactory(
+-    network::mojom::URLLoaderFactory* loader_factory,
+-    Profile* profile) {
+-  if (loader_factory) {
+-    return loader_factory;
+-  }
+-  return profile->GetDefaultStoragePartition()
+-      ->GetURLLoaderFactoryForBrowserProcess()
+-      .get();
+-}
+-
+ // Helper to keep ChromeOmniboxNavigationObserverBase alive while the initiated
+ // navigation is pending.
+ struct NavigationUserData
+@@ -264,14 +251,6 @@ ChromeOmniboxNavigationObserverBase::ChromeOmniboxNavigationObserverBase(
+       navigation_id_(navigation.GetNavigationId()),
+       profile_(profile) {
+   NavigationUserData::CreateForNavigationHandle(navigation, this);
+-  if (alternative_nav_match_.destination_url.is_valid()) {
+-    loader_ = std::make_unique<AlternativeNavigationURLLoader>(
+-        alternative_nav_match.destination_url, this,
+-        base::BindOnce(
+-            &ChromeOmniboxNavigationObserverBase::OnAlternativeLoaderDone,
+-            this),
+-        GetURLLoaderFactory(loader_factory, profile));
+-  }
+ }
+ 
+ ChromeOmniboxNavigationObserverBase::~ChromeOmniboxNavigationObserverBase() =

@@ -1,0 +1,781 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: chromium-sdk <project_26591639_bot@noreply.gitlab.com>
+Date: Fri, 14 Feb 2025 08:26:39 +0100
+Subject: [PATCH 275/310] eyeo Browser Ad filtering Solution: Android API
+ Module
+
+Based on Chromium 133.0.6943.49
+
+Pre-requisites: eyeo Browser Ad filtering Solution: Base Module
+FILE:eyeo-133.0.6943.49-android_api.patch
+---
+ chrome/browser/BUILD.gn                       |   5 +
+ .../adblock/android/adblock_controller_jni.cc | 133 ++++++++++
+ .../filtering_configuration_android.cc        | 246 ++++++++++++++++++
+ .../android/filtering_configuration_android.h |  94 +++++++
+ ...esource_classification_notifier_android.cc | 166 ++++++++++++
+ ...resource_classification_notifier_android.h |  72 +++++
+ 6 files changed, 716 insertions(+)
+ create mode 100644 components/adblock/android/adblock_controller_jni.cc
+ create mode 100644 components/adblock/android/filtering_configuration_android.cc
+ create mode 100644 components/adblock/android/filtering_configuration_android.h
+ create mode 100644 components/adblock/android/resource_classification_notifier_android.cc
+ create mode 100644 components/adblock/android/resource_classification_notifier_android.h
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 04d78bac9e8..120b4b3576f 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1876,6 +1876,11 @@ source_set("core") {
+       "platform_util_android.cc",
+       "shell_integration_android.cc",
+     ]
++    ### Android API module start
++    sources += [
++      "android/adblock/tab_id_translator_jni.cc",
++    ]
++    ### Android API module end
+     deps += [
+       "//chrome/android:jni_headers",
+       "//chrome/browser/android",
+diff --git a/components/adblock/android/adblock_controller_jni.cc b/components/adblock/android/adblock_controller_jni.cc
+new file mode 100644
+index 00000000000..aa0340dae79
+--- /dev/null
++++ b/components/adblock/android/adblock_controller_jni.cc
+@@ -0,0 +1,133 @@
++/*
++ * This file is part of eyeo Chromium SDK,
++ * Copyright (C) 2006-present eyeo GmbH
++ *
++ * eyeo Chromium SDK is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 3 as
++ * published by the Free Software Foundation.
++ *
++ * eyeo Chromium SDK is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include <algorithm>
++#include <iterator>
++#include <vector>
++
++#include "base/android/jni_android.h"
++#include "base/android/jni_array.h"
++#include "base/android/jni_string.h"
++#include "base/android/jni_weak_ref.h"
++#include "base/logging.h"
++#include "components/adblock/android/jni_headers/AdblockController_jni.h"
++#include "components/adblock/content/browser/factories/subscription_service_factory.h"
++#include "components/adblock/core/common/adblock_constants.h"
++#include "components/adblock/core/subscription/subscription_config.h"
++#include "content/public/browser/android/browser_context_handle.h"
++#include "content/public/browser/browser_thread.h"
++
++using base::android::CheckException;
++using base::android::ConvertUTF8ToJavaString;
++using base::android::GetClass;
++using base::android::JavaParamRef;
++using base::android::MethodID;
++using base::android::ScopedJavaLocalRef;
++using base::android::ToJavaArrayOfObjects;
++using base::android::ToJavaArrayOfStrings;
++
++namespace {
++
++ScopedJavaLocalRef<jobject> ToJava(JNIEnv* env,
++                                   ScopedJavaLocalRef<jclass>& url_class,
++                                   jmethodID& url_constructor,
++                                   const std::string& url,
++                                   const std::string& title,
++                                   const std::string& version,
++                                   const std::vector<std::string>& languages,
++                                   const bool autoinstalled) {
++  ScopedJavaLocalRef<jobject> url_param =
++    ScopedJavaLocalRef<jobject>::Adopt(
++      env, env->NewObject(url_class.obj(), url_constructor,
++                          ConvertUTF8ToJavaString(env, url).obj()));
++  CheckException(env);
++  return Java_Subscription_Constructor(env, url_param,
++                                       ConvertUTF8ToJavaString(env, title),
++                                       ConvertUTF8ToJavaString(env, version),
++                                       ToJavaArrayOfStrings(env, languages),
++                                       autoinstalled ? JNI_TRUE : JNI_FALSE);
++}
++
++std::vector<ScopedJavaLocalRef<jobject>> CSubscriptionsToJObjects(
++    JNIEnv* env,
++    const std::vector<scoped_refptr<adblock::Subscription>>& subscriptions) {
++  ScopedJavaLocalRef<jclass> url_class = GetClass(env, "java/net/URL");
++  jmethodID url_constructor = MethodID::Get<MethodID::TYPE_INSTANCE>(
++      env, url_class.obj(), "<init>", "(Ljava/lang/String;)V");
++  std::vector<ScopedJavaLocalRef<jobject>> jobjects;
++  jobjects.reserve(subscriptions.size());
++  for (auto& sub : subscriptions) {
++    jobjects.push_back(ToJava(
++        env, url_class, url_constructor, sub->GetSourceUrl().spec(),
++        sub->GetTitle(), sub->GetCurrentVersion(), std::vector<std::string>{},
++        sub->GetInstallationState() ==
++            adblock::InstalledSubscription::InstallationState::AutoInstalled));
++  }
++  return jobjects;
++}
++
++std::vector<ScopedJavaLocalRef<jobject>> CSubscriptionsToJObjects(
++    JNIEnv* env,
++    std::vector<adblock::KnownSubscriptionInfo>& subscriptions) {
++  ScopedJavaLocalRef<jclass> url_class = GetClass(env, "java/net/URL");
++  jmethodID url_constructor = MethodID::Get<MethodID::TYPE_INSTANCE>(
++      env, url_class.obj(), "<init>", "(Ljava/lang/String;)V");
++  std::vector<ScopedJavaLocalRef<jobject>> jobjects;
++  jobjects.reserve(subscriptions.size());
++  for (auto& sub : subscriptions) {
++    if (sub.ui_visibility == adblock::SubscriptionUiVisibility::Visible) {
++      // The checks here are when one makes f.e. adblock:custom visible
++      DCHECK(sub.url.is_valid());
++      if (sub.url.is_valid()) {
++        jobjects.push_back(ToJava(env, url_class, url_constructor,
++                                  sub.url.spec(), sub.title, "", sub.languages,
++                                  false));
++      }
++    }
++  }
++  return jobjects;
++}
++
++}  // namespace
++
++static base::android::ScopedJavaLocalRef<jobjectArray>
++JNI_AdblockController_GetInstalledSubscriptions(
++    JNIEnv* env,
++    const base::android::JavaParamRef<jobject>& jbrowser_context_handle) {
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++  auto* subscription_service =
++      adblock::SubscriptionServiceFactory::GetForBrowserContext(
++          content::BrowserContextFromJavaHandle(jbrowser_context_handle));
++  if (!subscription_service) {
++    return ToJavaArrayOfObjects(env,
++                                std::vector<ScopedJavaLocalRef<jobject>>{});
++  }
++
++  return ToJavaArrayOfObjects(
++      env, CSubscriptionsToJObjects(
++               env, subscription_service->GetCurrentSubscriptions(
++                        subscription_service->GetFilteringConfiguration(
++                            adblock::kAdblockFilteringConfigurationName))));
++}
++
++static base::android::ScopedJavaLocalRef<jobjectArray>
++JNI_AdblockController_GetRecommendedSubscriptions(JNIEnv* env) {
++  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
++
++  auto list = adblock::config::GetKnownSubscriptions();
++  return ToJavaArrayOfObjects(env, CSubscriptionsToJObjects(env, list));
++}
+diff --git a/components/adblock/android/filtering_configuration_android.cc b/components/adblock/android/filtering_configuration_android.cc
+new file mode 100644
+index 00000000000..bf8280748a1
+--- /dev/null
++++ b/components/adblock/android/filtering_configuration_android.cc
+@@ -0,0 +1,246 @@
++/*
++ * This file is part of eyeo Chromium SDK,
++ * Copyright (C) 2006-present eyeo GmbH
++ *
++ * eyeo Chromium SDK is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 3 as
++ * published by the Free Software Foundation.
++ *
++ * eyeo Chromium SDK is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "components/adblock/android/filtering_configuration_android.h"
++
++#include <iterator>
++#include <memory>
++
++#include "base/android/jni_android.h"
++#include "base/android/jni_array.h"
++#include "base/android/jni_string.h"
++#include "components/adblock/android/jni_headers/FilteringConfiguration_jni.h"
++#include "components/adblock/content/browser/factories/subscription_service_factory.h"
++#include "components/adblock/core/configuration/filtering_configuration.h"
++#include "components/adblock/core/configuration/persistent_filtering_configuration.h"
++#include "components/adblock/core/subscription/subscription_config.h"
++#include "components/user_prefs/user_prefs.h"
++#include "content/public/browser/android/browser_context_handle.h"
++
++using base::android::AttachCurrentThread;
++using base::android::ConvertJavaStringToUTF8;
++using base::android::ConvertUTF8ToJavaString;
++using base::android::JavaRef;
++using base::android::ScopedJavaLocalRef;
++using base::android::ToJavaArrayOfStrings;
++
++using namespace adblock;
++
++FilteringConfigurationAndroid::FilteringConfigurationAndroid(
++    JNIEnv* env,
++    const JavaRef<jobject>& jcontroller,
++    const std::string& configuration_name,
++    SubscriptionService* subscription_service,
++    PrefService* pref_service)
++    : subscription_service_(subscription_service),
++      pref_service_(pref_service),
++      java_weak_controller_(env, jcontroller) {
++  subscription_service_->AddObserver(this);
++  auto* existing_configuration =
++      subscription_service_->GetFilteringConfiguration(configuration_name);
++  if (existing_configuration) {
++    filtering_configuration_ptr = existing_configuration;
++  } else {
++    auto new_filtering_configuration =
++        std::make_unique<PersistentFilteringConfiguration>(pref_service_,
++                                                           configuration_name);
++    filtering_configuration_ptr = new_filtering_configuration.get();
++    subscription_service_->InstallFilteringConfiguration(
++        std::move(new_filtering_configuration));
++  }
++  filtering_configuration_ptr->AddObserver(this);
++}
++
++FilteringConfigurationAndroid::~FilteringConfigurationAndroid() {
++  filtering_configuration_ptr->RemoveObserver(this);
++  subscription_service_->UninstallFilteringConfiguration(
++      filtering_configuration_ptr->GetName());
++  subscription_service_->RemoveObserver(this);
++}
++
++void FilteringConfigurationAndroid::Destroy(JNIEnv*) {
++  delete this;
++}
++
++void FilteringConfigurationAndroid::OnEnabledStateChanged(
++    FilteringConfiguration* config) {
++  Notify(config, Java_FilteringConfiguration_enabledStateChanged);
++}
++
++void FilteringConfigurationAndroid::OnFilterListsChanged(
++    FilteringConfiguration* config) {
++  Notify(config, Java_FilteringConfiguration_filterListsChanged);
++}
++
++void FilteringConfigurationAndroid::OnAllowedDomainsChanged(
++    FilteringConfiguration* config) {
++  Notify(config, Java_FilteringConfiguration_allowedDomainsChanged);
++}
++
++void FilteringConfigurationAndroid::OnCustomFiltersChanged(
++    FilteringConfiguration* config) {
++  Notify(config, Java_FilteringConfiguration_customFiltersChanged);
++}
++
++void FilteringConfigurationAndroid::Notify(
++    FilteringConfiguration* config,
++    FilteringConfigurationAndroid::JavaEventListener event_listener_function) {
++  JNIEnv* env = AttachCurrentThread();
++  auto java_controller = java_weak_controller_.get(env);
++  if (!java_controller.is_null()) {
++    event_listener_function(env, java_controller);
++  }
++}
++
++void FilteringConfigurationAndroid::OnSubscriptionInstalled(const GURL& url) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  JNIEnv* env = AttachCurrentThread();
++  ScopedJavaLocalRef<jstring> j_url = ConvertUTF8ToJavaString(env, url.spec());
++  auto java_controller = java_weak_controller_.get(env);
++  if (!java_controller.is_null()) {
++    Java_FilteringConfiguration_onSubscriptionUpdated(env, java_controller,
++                                                      j_url);
++  }
++}
++
++jboolean FilteringConfigurationAndroid::IsEnabled(JNIEnv* env) const {
++  return filtering_configuration_ptr->IsEnabled() ? JNI_TRUE : JNI_FALSE;
++}
++
++void FilteringConfigurationAndroid::SetEnabled(JNIEnv* env,
++                                               jboolean j_enabled) {
++  filtering_configuration_ptr->SetEnabled(j_enabled == JNI_TRUE);
++}
++
++void FilteringConfigurationAndroid::AddAllowedDomain(
++    JNIEnv* env,
++    const JavaRef<jstring>& allowed_domain) {
++  filtering_configuration_ptr->AddAllowedDomain(
++      ConvertJavaStringToUTF8(allowed_domain));
++}
++
++void FilteringConfigurationAndroid::RemoveAllowedDomain(
++    JNIEnv* env,
++    const JavaRef<jstring>& allowed_domain) {
++  filtering_configuration_ptr->RemoveAllowedDomain(
++      ConvertJavaStringToUTF8(allowed_domain));
++}
++
++ScopedJavaLocalRef<jobjectArray>
++FilteringConfigurationAndroid::GetAllowedDomains(JNIEnv* env) const {
++  return ToJavaArrayOfStrings(env,
++                              filtering_configuration_ptr->GetAllowedDomains());
++}
++
++void FilteringConfigurationAndroid::AddCustomFilter(
++    JNIEnv* env,
++    const JavaRef<jstring>& custom_filter) {
++  filtering_configuration_ptr->AddCustomFilter(
++      ConvertJavaStringToUTF8(custom_filter));
++}
++
++void FilteringConfigurationAndroid::RemoveCustomFilter(
++    JNIEnv* env,
++    const JavaRef<jstring>& custom_filter) {
++  filtering_configuration_ptr->RemoveCustomFilter(
++      ConvertJavaStringToUTF8(custom_filter));
++}
++
++ScopedJavaLocalRef<jobjectArray>
++FilteringConfigurationAndroid::GetCustomFilters(JNIEnv* env) const {
++  return ToJavaArrayOfStrings(env,
++                              filtering_configuration_ptr->GetCustomFilters());
++}
++
++void FilteringConfigurationAndroid::AddFilterList(
++    JNIEnv* env,
++    const JavaRef<jstring>& url) {
++  filtering_configuration_ptr->AddFilterList(
++      GURL{ConvertJavaStringToUTF8(url)});
++}
++
++void FilteringConfigurationAndroid::RemoveFilterList(
++    JNIEnv* env,
++    const JavaRef<jstring>& url) {
++  filtering_configuration_ptr->RemoveFilterList(
++      GURL{ConvertJavaStringToUTF8(url)});
++}
++
++ScopedJavaLocalRef<jobjectArray> FilteringConfigurationAndroid::GetFilterLists(
++    JNIEnv* env) const {
++  // For simplicity, convert GURL to std::string, pass to Java, and convert
++  // from String to URL. Strings are easier to pass through JNI.
++  std::vector<std::string> urls;
++  std::ranges::transform(filtering_configuration_ptr->GetFilterLists(),
++                          std::back_inserter(urls), &GURL::spec);
++  return ToJavaArrayOfStrings(env, urls);
++}
++
++static ScopedJavaLocalRef<jstring>
++JNI_FilteringConfiguration_GetAcceptableAdsUrl(JNIEnv* env) {
++  return ConvertUTF8ToJavaString(env, adblock::AcceptableAdsUrl().spec());
++}
++
++static jlong JNI_FilteringConfiguration_Create(
++    JNIEnv* env,
++    const JavaRef<jobject>& jcontroller,
++    const JavaRef<jstring>& jstring,
++    const JavaRef<jobject>& jbrowser_context_handle) {
++  DCHECK(!jcontroller.is_null());
++  DCHECK(!jbrowser_context_handle.is_null());
++  auto* context =
++      content::BrowserContextFromJavaHandle(jbrowser_context_handle);
++  return reinterpret_cast<jlong>(new FilteringConfigurationAndroid(
++      env, std::move(jcontroller), ConvertJavaStringToUTF8(jstring),
++      adblock::SubscriptionServiceFactory::GetForBrowserContext(context),
++      user_prefs::UserPrefs::Get(context)));
++}
++
++static ScopedJavaLocalRef<jobjectArray>
++JNI_FilteringConfiguration_GetConfigurations(
++    JNIEnv* env,
++    const JavaRef<jobject>& jbrowser_context_handle) {
++  std::vector<std::string> configurations;
++  std::ranges::transform(
++      adblock::SubscriptionServiceFactory::GetForBrowserContext(
++          content::BrowserContextFromJavaHandle(jbrowser_context_handle))
++          ->GetInstalledFilteringConfigurations(),
++      std::back_inserter(configurations),
++      [](adblock::FilteringConfiguration* fc) { return fc->GetName(); });
++  return ToJavaArrayOfStrings(env, configurations);
++}
++
++static jboolean JNI_FilteringConfiguration_IsAutoInstallEnabled(
++    JNIEnv* env,
++    const JavaRef<jobject>& jbrowser_context_handle) {
++  return adblock::SubscriptionServiceFactory::GetForBrowserContext(
++             content::BrowserContextFromJavaHandle(jbrowser_context_handle))
++                 ->IsAutoInstallEnabled()
++             ? JNI_TRUE
++             : JNI_FALSE;
++}
++
++static void JNI_FilteringConfiguration_SetAutoInstallEnabled(
++    JNIEnv* env,
++    jboolean j_enabled,
++    const JavaRef<jobject>& jbrowser_context_handle) {
++  adblock::SubscriptionServiceFactory::GetForBrowserContext(
++      content::BrowserContextFromJavaHandle(jbrowser_context_handle))
++      ->SetAutoInstallEnabled(j_enabled == JNI_TRUE);
++}
++
++DEFINE_JNI(FilteringConfiguration)
+diff --git a/components/adblock/android/filtering_configuration_android.h b/components/adblock/android/filtering_configuration_android.h
+new file mode 100644
+index 00000000000..c4fb706387b
+--- /dev/null
++++ b/components/adblock/android/filtering_configuration_android.h
+@@ -0,0 +1,94 @@
++/*
++ * This file is part of eyeo Chromium SDK,
++ * Copyright (C) 2006-present eyeo GmbH
++ *
++ * eyeo Chromium SDK is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 3 as
++ * published by the Free Software Foundation.
++ *
++ * eyeo Chromium SDK is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef COMPONENTS_ADBLOCK_ANDROID_FILTERING_CONFIGURATION_ANDROID_H_
++#define COMPONENTS_ADBLOCK_ANDROID_FILTERING_CONFIGURATION_ANDROID_H_
++
++#include <map>
++#include <utility>
++#include <vector>
++#include "base/android/jni_weak_ref.h"
++#include "base/memory/raw_ptr.h"
++#include "base/sequence_checker.h"
++#include "components/adblock/core/configuration/filtering_configuration.h"
++#include "components/adblock/core/subscription/subscription_service.h"
++#include "components/keyed_service/core/keyed_service.h"
++#include "components/prefs/pref_service.h"
++
++class FilteringConfigurationAndroid
++    : public adblock::FilteringConfiguration::Observer,
++      public adblock::SubscriptionService::SubscriptionObserver {
++ public:
++  explicit FilteringConfigurationAndroid(
++      JNIEnv* env,
++      const base::android::JavaRef<jobject>& jcontroller,
++      const std::string& configuration_name,
++      adblock::SubscriptionService* subscription_service,
++      PrefService* pref_service);
++  ~FilteringConfigurationAndroid() override;
++  // Called by Java to destroy this instance.
++  void Destroy(JNIEnv*);
++  void SetEnabled(JNIEnv* env, jboolean j_enabled);
++  jboolean IsEnabled(JNIEnv* env) const;
++  void AddFilterList(JNIEnv* env,
++                     const base::android::JavaRef<jstring>& url);
++  void RemoveFilterList(JNIEnv* env,
++                        const base::android::JavaRef<jstring>& url);
++  base::android::ScopedJavaLocalRef<jobjectArray> GetFilterLists(
++      JNIEnv* env) const;
++  void AddAllowedDomain(JNIEnv* env,
++                        const base::android::JavaRef<jstring>& domain);
++  void RemoveAllowedDomain(JNIEnv* env,
++                           const base::android::JavaRef<jstring>& domain);
++  base::android::ScopedJavaLocalRef<jobjectArray> GetAllowedDomains(
++      JNIEnv* env) const;
++  void AddCustomFilter(JNIEnv* env,
++                       const base::android::JavaRef<jstring>& filter);
++  void RemoveCustomFilter(JNIEnv* env,
++                          const base::android::JavaRef<jstring>& filter);
++  base::android::ScopedJavaLocalRef<jobjectArray> GetCustomFilters(
++      JNIEnv* env) const;
++
++  // FilteringConfiguration::Observer:
++  void OnEnabledStateChanged(adblock::FilteringConfiguration* config) override;
++  void OnFilterListsChanged(adblock::FilteringConfiguration* config) override;
++  void OnAllowedDomainsChanged(
++      adblock::FilteringConfiguration* config) override;
++  void OnCustomFiltersChanged(adblock::FilteringConfiguration* config) override;
++
++  // SubcriptionService::Observer:
++  void OnSubscriptionInstalled(const GURL& subscription_url) override;
++
++ private:
++  using JavaEventListener = void(JNIEnv* env,
++                                 const base::android::JavaRef<jobject>& obj);
++  void Notify(adblock::FilteringConfiguration* config,
++              JavaEventListener event_listener_function);
++  SEQUENCE_CHECKER(sequence_checker_);
++  raw_ptr<adblock::SubscriptionService> subscription_service_;
++  raw_ptr<PrefService> pref_service_;
++  raw_ptr<adblock::FilteringConfiguration> filtering_configuration_ptr;
++
++  // Direct reference to FilteringConfiguration java class. Kept for as
++  // long as this instance of FilteringConfigurationAndroid lives:
++  // until corresponding Profile gets destroyed. Destruction of Profile triggers
++  // destruction of both C++ FilteringConfigurationAndroid and Java
++  // FilteringConfiguration objects.
++  const JavaObjectWeakGlobalRef java_weak_controller_;
++};
++
++#endif  // COMPONENTS_ADBLOCK_ANDROID_FILTERING_CONFIGURATION_ANDROID_H_
+diff --git a/components/adblock/android/resource_classification_notifier_android.cc b/components/adblock/android/resource_classification_notifier_android.cc
+new file mode 100644
+index 00000000000..0e009b15b27
+--- /dev/null
++++ b/components/adblock/android/resource_classification_notifier_android.cc
+@@ -0,0 +1,166 @@
++/*
++ * This file is part of eyeo Chromium SDK,
++ * Copyright (C) 2006-present eyeo GmbH
++ *
++ * eyeo Chromium SDK is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 3 as
++ * published by the Free Software Foundation.
++ *
++ * eyeo Chromium SDK is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "components/adblock/android/resource_classification_notifier_android.h"
++
++#include "base/android/jni_android.h"
++#include "base/android/jni_array.h"
++#include "base/android/jni_string.h"
++#include "base/android/jni_weak_ref.h"
++#include "components/adblock/content/browser/factories/resource_classification_runner_factory.h"
++#include "components/adblock/core/common/adblock_utils.h"
++#include "content/public/browser/android/browser_context_handle.h"
++#include "content/public/browser/render_process_host.h"
++#include "content/public/browser/web_contents.h"
++
++#include "components/adblock/android/jni_headers/ResourceClassificationNotifier_jni.h"
++
++using base::android::AttachCurrentThread;
++using base::android::ConvertUTF8ToJavaString;
++using base::android::JavaRef;
++using base::android::ScopedJavaLocalRef;
++using base::android::ToJavaArrayOfStrings;
++
++namespace adblock {
++
++ResourceClassificationNotifierAndroid::ResourceClassificationNotifierAndroid(
++    JNIEnv* env,
++    const JavaRef<jobject>& jcontroller,
++    ResourceClassificationRunner* classification_runner)
++    : classification_runner_(classification_runner),
++      java_weak_controller_(env, jcontroller) {
++  if (classification_runner_) {
++    classification_runner_->AddObserver(this);
++  }
++}
++
++ResourceClassificationNotifierAndroid::
++    ~ResourceClassificationNotifierAndroid() {
++  if (classification_runner_) {
++    classification_runner_->RemoveObserver(this);
++  }
++}
++
++void ResourceClassificationNotifierAndroid::OnRequestMatched(
++    const GURL& url,
++    FilterMatchResult result,
++    const std::vector<GURL>& parent_frame_urls,
++    ContentType content_type,
++    content::RenderFrameHost* render_frame_host,
++    const GURL& subscription,
++    const std::string& configuration_name) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  DCHECK(render_frame_host);
++  DCHECK(result == FilterMatchResult::kBlockRule ||
++         result == FilterMatchResult::kAllowRule);
++  const bool was_blocked = result == FilterMatchResult::kBlockRule;
++  DVLOG(3) << "[eyeo] Ad matched " << url << "(type: " << content_type
++           << (was_blocked ? ", blocked" : ", allowed") << ")";
++  JNIEnv* env = AttachCurrentThread();
++  auto java_controller = java_weak_controller_.get(env);
++  if (!java_controller.is_null()) {
++    ScopedJavaLocalRef<jstring> j_url =
++        ConvertUTF8ToJavaString(env, url.spec());
++    ScopedJavaLocalRef<jobjectArray> j_parents = ToJavaArrayOfStrings(
++        env, adblock::utils::ConvertURLs(parent_frame_urls));
++    ScopedJavaLocalRef<jstring> j_subscription =
++        ConvertUTF8ToJavaString(env, subscription.spec());
++    ScopedJavaLocalRef<jstring> j_configuration =
++        ConvertUTF8ToJavaString(env, configuration_name);
++    const content::GlobalRenderFrameHostId rfh_id =
++        render_frame_host->GetGlobalId();
++    Java_ResourceClassificationNotifier_requestMatchedCallback(
++        env, java_controller, j_url, was_blocked, j_parents, j_subscription,
++        j_configuration, static_cast<int>(content_type), rfh_id.child_id.GetUnsafeValue(),
++        rfh_id.frame_routing_id);
++  }
++}
++
++void ResourceClassificationNotifierAndroid::OnPageAllowed(
++    const GURL& url,
++    content::RenderFrameHost* render_frame_host,
++    const GURL& subscription,
++    const std::string& configuration_name) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  DCHECK(render_frame_host);
++  DVLOG(3) << "[eyeo] Page allowed " << url;
++  JNIEnv* env = AttachCurrentThread();
++  auto java_controller = java_weak_controller_.get(env);
++  if (!java_controller.is_null()) {
++    ScopedJavaLocalRef<jstring> j_url =
++        ConvertUTF8ToJavaString(env, url.spec());
++    ScopedJavaLocalRef<jstring> j_subscription =
++        ConvertUTF8ToJavaString(env, subscription.spec());
++    ScopedJavaLocalRef<jstring> j_configuration =
++        ConvertUTF8ToJavaString(env, configuration_name);
++    const content::GlobalRenderFrameHostId rfh_id =
++        render_frame_host->GetGlobalId();
++    Java_ResourceClassificationNotifier_pageAllowedCallback(
++        env, java_controller, j_url, j_subscription, j_configuration,
++        rfh_id.child_id.GetUnsafeValue(), rfh_id.frame_routing_id);
++  }
++}
++
++void ResourceClassificationNotifierAndroid::OnPopupMatched(
++    const GURL& url,
++    FilterMatchResult result,
++    const GURL& opener_url,
++    content::RenderFrameHost* render_frame_host,
++    const GURL& subscription,
++    const std::string& configuration_name) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  DCHECK(render_frame_host);
++  DCHECK(result == FilterMatchResult::kBlockRule ||
++         result == FilterMatchResult::kAllowRule);
++  const bool was_blocked = result == FilterMatchResult::kBlockRule;
++  DVLOG(3) << "[eyeo] Popup matched " << url
++           << (was_blocked ? ", blocked" : ", allowed");
++  JNIEnv* env = AttachCurrentThread();
++  auto java_controller = java_weak_controller_.get(env);
++  if (!java_controller.is_null()) {
++    ScopedJavaLocalRef<jstring> j_url =
++        ConvertUTF8ToJavaString(env, url.spec());
++    ScopedJavaLocalRef<jstring> j_opener =
++        ConvertUTF8ToJavaString(env, opener_url.spec());
++    ScopedJavaLocalRef<jstring> j_subscription =
++        ConvertUTF8ToJavaString(env, subscription.spec());
++    ScopedJavaLocalRef<jstring> j_configuration =
++        ConvertUTF8ToJavaString(env, configuration_name);
++    const content::GlobalRenderFrameHostId rfh_id =
++        render_frame_host->GetGlobalId();
++    Java_ResourceClassificationNotifier_popupMatchedCallback(
++        env, java_controller, j_url, was_blocked, j_opener, j_subscription,
++        j_configuration, rfh_id.child_id.GetUnsafeValue(), rfh_id.frame_routing_id);
++  }
++}
++
++}  // namespace adblock
++
++static jlong JNI_ResourceClassificationNotifier_Create(
++    JNIEnv* env,
++    const JavaRef<jobject>& jcontroller,
++    const base::android::JavaRef<jobject>& jbrowser_context_handle) {
++  DCHECK(!jcontroller.is_null());
++  DCHECK(!jbrowser_context_handle.is_null());
++  return reinterpret_cast<jlong>(
++      new adblock::ResourceClassificationNotifierAndroid(
++          env, std::move(jcontroller),
++          adblock::ResourceClassificationRunnerFactory::GetForBrowserContext(
++              content::BrowserContextFromJavaHandle(jbrowser_context_handle))));
++}
++
++DEFINE_JNI(ResourceClassificationNotifier)
+diff --git a/components/adblock/android/resource_classification_notifier_android.h b/components/adblock/android/resource_classification_notifier_android.h
+new file mode 100644
+index 00000000000..aa55dcaa5e7
+--- /dev/null
++++ b/components/adblock/android/resource_classification_notifier_android.h
+@@ -0,0 +1,72 @@
++/*
++ * This file is part of eyeo Chromium SDK,
++ * Copyright (C) 2006-present eyeo GmbH
++ *
++ * eyeo Chromium SDK is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 3 as
++ * published by the Free Software Foundation.
++ *
++ * eyeo Chromium SDK is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef COMPONENTS_ADBLOCK_ANDROID_RESOURCE_CLASSIFICATION_NOTIFIER_ANDROID_H_
++#define COMPONENTS_ADBLOCK_ANDROID_RESOURCE_CLASSIFICATION_NOTIFIER_ANDROID_H_
++
++#include "base/android/jni_android.h"
++#include "base/android/jni_weak_ref.h"
++#include "components/adblock/content/browser/resource_classification_runner.h"
++#include "content/public/browser/browser_context.h"
++
++class FilterMatchResult;
++
++namespace adblock {
++
++class ResourceClassificationNotifierAndroid
++    : public ResourceClassificationRunner::Observer {
++ public:
++  ResourceClassificationNotifierAndroid(
++      JNIEnv* env,
++      const base::android::JavaRef<jobject>& jcontroller,
++      ResourceClassificationRunner* classification_runner);
++  ~ResourceClassificationNotifierAndroid() override;
++
++  // ResourceClassificationRunner::Observer
++  void OnRequestMatched(const GURL& url,
++                        FilterMatchResult match_result,
++                        const std::vector<GURL>& parent_frame_urls,
++                        ContentType content_type,
++                        content::RenderFrameHost* render_frame_host,
++                        const GURL& subscription,
++                        const std::string& configuration_name) override;
++  void OnPageAllowed(const GURL& url,
++                     content::RenderFrameHost* render_frame_host,
++                     const GURL& subscription,
++                     const std::string& configuration_name) override;
++  void OnPopupMatched(const GURL& url,
++                      FilterMatchResult match_result,
++                      const GURL& opener_url,
++                      content::RenderFrameHost* render_frame_host,
++                      const GURL& subscription,
++                      const std::string& configuration_name) override;
++
++ private:
++  SEQUENCE_CHECKER(sequence_checker_);
++  raw_ptr<ResourceClassificationRunner> classification_runner_;
++
++  // Direct reference to ResourceClassificationNotifier java class. Kept for as
++  // long as this instance of ResourceClassificationNotifierAndroid lives:
++  // until corresponding Profile gets destroyed. Destruction of Profile triggers
++  // destruction of both C++ ResourceClassificationNotifierAndroid and Java
++  // ResourceClassificationNotifier objects.
++  const JavaObjectWeakGlobalRef java_weak_controller_;
++};
++
++}  // namespace adblock
++
++#endif  // COMPONENTS_ADBLOCK_ANDROID_RESOURCE_CLASSIFICATION_NOTIFIER_ANDROID_H_

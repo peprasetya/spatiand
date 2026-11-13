@@ -130,7 +130,7 @@ fn chromium_spatimesh() -> Option<String> {
         // own and on by default only where it is built as Linux, so it is named.
         return Some(format!(
             "\"{}\" --user-data-dir=\"{}\" --class=spatimesh-chromium --no-first-run --no-default-browser-check \
-             --enable-features=EnableExtensionAutoupdate,ProfilesReordering,SpatiandPageSeesItsWindow,TouchpadOverscrollHistoryNavigation,WaylandWindowDecorations \
+             --enable-features=EnableExtensionAutoupdate,ProfilesReordering,TouchpadOverscrollHistoryNavigation,WaylandWindowDecorations \
              --disable-features=SigninPromoOnAvatarPill",
             program.display(),
             data.display()

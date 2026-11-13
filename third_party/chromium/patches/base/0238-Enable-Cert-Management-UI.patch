@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Thu, 16 Jan 2025 09:43:07 +0000
+Subject: [PATCH 238/310] Enable Cert Management UI
+
+Activates the ui of certificate management in desktop platforms,
+disabling the use of system certificates by default (which can be activated from the ui).
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Enable-Cert-Management-UI.patch
+---
+ chrome/browser/net/profile_network_context_service.cc      | 7 ++++++-
+ .../chrome_features_cc/Enable-Cert-Management-UI.inc       | 1 +
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+ create mode 100644 cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc
+
+diff --git a/chrome/browser/net/profile_network_context_service.cc b/chrome/browser/net/profile_network_context_service.cc
+index 2e67dc3abde..a3cf6472670 100644
+--- a/chrome/browser/net/profile_network_context_service.cc
++++ b/chrome/browser/net/profile_network_context_service.cc
+@@ -663,7 +663,12 @@ void ProfileNetworkContextService::RegisterProfilePrefs(
+   registry->RegisterStringPref(kHttpCacheFinchExperimentGroups, "");
+ #if !BUILDFLAG(IS_CHROMEOS)
+   // Include user added platform certs by default.
+-  registry->RegisterBooleanPref(prefs::kCAPlatformIntegrationEnabled, true);
++  registry->RegisterBooleanPref(prefs::kCAPlatformIntegrationEnabled,
++#if BUILDFLAG(IS_ANDROID)
++    true);
++#else
++    false);
++#endif
+ #endif
+   // The following two prefs are registered both as local_state prefs (see
+   // SSLConfigServiceManager) and here as Profile prefs. The Profile-scoped pref
+diff --git a/cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc b/cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc
+new file mode 100644
+index 00000000000..fab17ac780e
+--- /dev/null
++++ b/cromite_flags/chrome/common/chrome_features_cc/Enable-Cert-Management-UI.inc
+@@ -0,0 +1 @@
++// Empty file

@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 22 May 2024 07:41:34 +0000
+Subject: [PATCH 223/310] Android Toolbar Scroll Ablation setting
+
+Adds a setting for blocking the toolbar hiding
+
+need: Add-cromite-flags-support.patch
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Android-Toolbar-Scroll-Ablation-setting.patch
+---
+ .../about_flags_cc/Toolbar-Scroll-Ablation-flag.inc  | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Toolbar-Scroll-Ablation-flag.inc
+
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Toolbar-Scroll-Ablation-flag.inc b/cromite_flags/chrome/browser/about_flags_cc/Toolbar-Scroll-Ablation-flag.inc
+new file mode 100644
+index 00000000000..1c696124ff9
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Toolbar-Scroll-Ablation-flag.inc
+@@ -0,0 +1,12 @@
++#if BUILDFLAG(IS_ANDROID)
++
++#ifdef FLAG_SECTION
++
++    {"android-toolbar-scroll-ablation",
++     "Android Toolbar Scroll Ablation",
++     "Always shows the toolbar", kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kAndroidToolbarScrollAblation)},
++
++#endif
++
++#endif

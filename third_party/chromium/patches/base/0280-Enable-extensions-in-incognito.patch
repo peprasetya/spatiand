@@ -1,0 +1,192 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Thu, 20 Nov 2025 12:53:28 +0000
+Subject: [PATCH 280/310] Enable extensions in incognito
+
+Full activation of incognito mode in experimental extension
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Enable-extension-in-incognito.patch
+---
+ .../developer_private_functions.cc            |  3 ++-
+ .../browser/extensions/extension_tab_util.cc  |  2 +-
+ .../page_live_state_decorator_helper.cc       | 17 +++++++++++++++++
+ .../extensions/extensions_menu_view_model.cc  |  7 ++++++-
+ .../extensions/extensions_menu_view_model.h   |  6 ++++--
+ components/tabs/impl/tab_collection.cc        | 19 +++++++++++++++++++
+ components/tabs/impl/tab_strip_collection.cc  |  4 ++--
+ 7 files changed, 51 insertions(+), 7 deletions(-)
+
+diff --git a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
+index fbfad825b26..0c4ecc65fef 100644
+--- a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
++++ b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
+@@ -1821,7 +1821,8 @@ DeveloperPrivateDismissSafetyHubExtensionsMenuNotificationFunction::Run() {
+   }
+ 
+   Profile* profile = Profile::FromBrowserContext(browser_context());
+-  SafetyHubMenuNotificationServiceFactory::GetForProfile(profile)
++  if (auto* menu_notification_service_factory = SafetyHubMenuNotificationServiceFactory::GetForProfile(profile))
++    menu_notification_service_factory
+       ->DismissActiveNotificationOfModule(
+           safety_hub::SafetyHubModuleType::EXTENSIONS);
+   return RespondNow(NoArguments());
+diff --git a/chrome/browser/extensions/extension_tab_util.cc b/chrome/browser/extensions/extension_tab_util.cc
+index 2f42ca7da9c..0df825d277b 100644
+--- a/chrome/browser/extensions/extension_tab_util.cc
++++ b/chrome/browser/extensions/extension_tab_util.cc
+@@ -1226,7 +1226,7 @@ bool ExtensionTabUtil::OpenOptionsPageFromWebContents(
+   if (!url) {
+     return false;
+   }
+-  const bool open_in_tab = ShouldOpenInTab(extension);
++  const bool open_in_tab = false; //ShouldOpenInTab(extension);
+   BrowserWindowInterface* browser =
+       browser_window_util::GetBrowserForTabContents(*web_contents);
+   if (!browser) {
+diff --git a/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc b/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc
+index 6f5e06eb84a..6de52b63d00 100644
+--- a/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc
++++ b/chrome/browser/performance_manager/decorators/helpers/page_live_state_decorator_helper.cc
+@@ -83,6 +83,14 @@ class ActiveTabTracker : public TabModelObserver {
+       }
+       active_tab_ = nullptr;
+     }
++    else if (!tab) {
++      active_tab_ = nullptr;
++    }
++  }
++
++  void Clear() {
++    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++    active_tab_ = nullptr;
+   }
+ 
+  private:
+@@ -122,6 +130,15 @@ class ActiveTabObserver : public TabModelListObserver {
+     tracker_map_.erase(tab_model);
+   }
+ 
++  void OnFinishingTabClosure() override {
++    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++    for (const auto& [tab_model, tracker] : tracker_map_) {
++      if (tracker) {
++        tracker->Clear();
++      }
++    }
++  }
++
+   absl::flat_hash_map<const TabModel*, std::unique_ptr<ActiveTabTracker>>
+       tracker_map_ GUARDED_BY_CONTEXT(sequence_checker_);
+ 
+diff --git a/chrome/browser/ui/extensions/extensions_menu_view_model.cc b/chrome/browser/ui/extensions/extensions_menu_view_model.cc
+index 07f8519e90a..e828df19eac 100644
+--- a/chrome/browser/ui/extensions/extensions_menu_view_model.cc
++++ b/chrome/browser/ui/extensions/extensions_menu_view_model.cc
+@@ -981,6 +981,7 @@ ExtensionsMenuViewModel::GetMenuEntryState(
+   content::WebContents* web_contents = GetActiveWebContents();
+ 
+   MenuEntryState entry_state;
++  if (!web_contents) return entry_state;
+   entry_state.extension_id = extension_id;
+   entry_state.action_button =
+       GetActionButtonState(extension_id, action_icon_size);
+@@ -1496,5 +1497,9 @@ content::WebContents* ExtensionsMenuViewModel::GetActiveWebContents() {
+     return nullptr;
+   }
+   auto* tab = tab_list->GetActiveTab();
+-  return tab ? tab->GetContents() : nullptr;
++  auto* web_contents = tab ? tab->GetContents() : nullptr;
++  if (!web_contents || web_contents->IsBeingDestroyed()) {
++    return nullptr;
++  }
++  return web_contents;
+ }
+diff --git a/chrome/browser/ui/extensions/extensions_menu_view_model.h b/chrome/browser/ui/extensions/extensions_menu_view_model.h
+index 8f052e6d5fa..645a815782c 100644
+--- a/chrome/browser/ui/extensions/extensions_menu_view_model.h
++++ b/chrome/browser/ui/extensions/extensions_menu_view_model.h
+@@ -210,7 +210,7 @@ class ExtensionsMenuViewModel : public extensions::PermissionsManager::Observer,
+     std::u16string label;
+     // Whether to show a tooltip explaining why the setting is in its current
+     // state (e.g. if controlled by enterprise policy).
+-    bool has_tooltip;
++    bool has_tooltip = false;
+     // The state of the site settings toggle.
+     ControlState toggle;
+   };
+@@ -235,7 +235,7 @@ class ExtensionsMenuViewModel : public extensions::PermissionsManager::Observer,
+     // The state for the site permissions button.
+     ControlState site_permissions_button;
+     // Whether the extension is installed from an enterprise policy.
+-    bool is_enterprise;
++    bool is_enterprise = false;
+     // The origin that was active when this state was computed.
+     url::Origin origin;
+   };
+@@ -336,6 +336,8 @@ class ExtensionsMenuViewModel : public extensions::PermissionsManager::Observer,
+     return action_models_;
+   }
+ 
++  void DestroyActionModels() { action_models_.clear(); }
++
+   // Returns the id's of the extensions that have valid host access requests for
+   // the current site.
+   const std::vector<extensions::ExtensionId>& host_access_requests() {
+diff --git a/components/tabs/impl/tab_collection.cc b/components/tabs/impl/tab_collection.cc
+index 4dcfbebdc04..58845af9398 100644
+--- a/components/tabs/impl/tab_collection.cc
++++ b/components/tabs/impl/tab_collection.cc
+@@ -18,6 +18,10 @@
+ #include "components/tabs/public/tab_collection_types.h"
+ #include "components/tabs/public/tab_interface.h"
+ 
++#if BUILDFLAG(IS_ANDROID)
++#include "chrome/browser/ui/android/tab_model/tab_model_list.h"
++#endif
++
+ namespace tabs {
+ 
+ DEFINE_HANDLE_FACTORY(TabCollection);
+@@ -198,6 +202,21 @@ TabCollection::TabCollection(Type type,
+ 
+ TabCollection::~TabCollection() {
+   DispatchPendingNotifications();
++
++#if BUILDFLAG(IS_ANDROID)
++  TabModelList::FinishingTabClosure();
++#endif
++  auto& childrens = GetChildren();
++  for (auto it = childrens.begin(); it != childrens.end(); ) {
++    auto& child = *it;
++    if (std::holds_alternative<std::unique_ptr<TabCollection>>(child)) {
++      TabCollection* collection =
++          std::get<std::unique_ptr<TabCollection>>(child).get();
++      auto removed_collection = MaybeRemoveCollection(collection);
++    } else {
++      it++;
++    }
++  }
+ }
+ 
+ void TabCollection::AddObserver(TabCollectionObserver* observer) const {
+diff --git a/components/tabs/impl/tab_strip_collection.cc b/components/tabs/impl/tab_strip_collection.cc
+index bfb0b512753..0a67c1be636 100644
+--- a/components/tabs/impl/tab_strip_collection.cc
++++ b/components/tabs/impl/tab_strip_collection.cc
+@@ -332,13 +332,13 @@ ScopedTab TabStripCollection::RemoveTabAtIndexRecursive(size_t index) {
+ 
+ ScopedTab TabStripCollection::MaybeRemoveTab(TabInterface* tab) {
+   CHECK(tab);
+-  return nullptr;
++  return RemoveTabImpl(tab);
+ }
+ 
+ std::unique_ptr<TabCollection> TabStripCollection::MaybeRemoveCollection(
+     TabCollection* collection) {
+   CHECK(collection);
+-  return nullptr;
++  return TabStripCollection::RemoveTabCollection(collection);
+ }
+ 
+ void TabStripCollection::InsertTabCollectionAt(

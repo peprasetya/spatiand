@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 22 Jul 2023 13:58:40 +0000
+Subject: [PATCH 191/310] Disable Feeback Collector
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-Feeback-Collector.patch
+---
+ chrome/browser/feedback/BUILD.gn | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/chrome/browser/feedback/BUILD.gn b/chrome/browser/feedback/BUILD.gn
+index 08b7aee10ef..e65f0072e52 100644
+--- a/chrome/browser/feedback/BUILD.gn
++++ b/chrome/browser/feedback/BUILD.gn
+@@ -26,10 +26,10 @@ source_set("feedback") {
+     "//google_apis",
+   ]
+   if (is_android) {
+-    sources += [
+-      "android/family_info_feedback_source.cc",
+-      "android/family_info_feedback_source.h",
+-    ]
++    # sources += [
++    #   "android/family_info_feedback_source.cc",
++    #   "android/family_info_feedback_source.h",
++    # ]
+     public_deps += [
+       "//components/supervised_user/core/browser",
+       "//components/supervised_user/core/browser:fetcher",

@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 9 Apr 2022 21:43:35 +0200
+Subject: [PATCH 118/310] Disable crash reporting
+
+FILE:Disable-crash-reporting.patch
+---
+ chrome/browser/chrome_content_browser_client.cc          | 9 ---------
+ content/browser/renderer_host/render_frame_host_impl.cc  | 1 +
+ content/browser/web_contents/web_contents_impl.cc        | 2 +-
+ .../controller/javascript_call_stack_collector.cc        | 2 +-
+ 4 files changed, 3 insertions(+), 11 deletions(-)
+
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 83eb09e070d..5a31c470918 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -3110,15 +3110,6 @@ void ChromeContentBrowserClient::AppendExtraCommandLineSwitches(
+         base::NumberToString(pid));
+   }
+ #endif
+-  std::string switch_value;
+-  std::unique_ptr<metrics::ClientInfo> client_info =
+-      GoogleUpdateSettings::LoadMetricsClientInfo();
+-  if (client_info) {
+-    switch_value = client_info->client_id;
+-  }
+-  switch_value.push_back(',');
+-  switch_value.append(chrome::GetChannelName(chrome::WithExtendedStable(true)));
+-  command_line->AppendSwitchASCII(switches::kEnableCrashReporter, switch_value);
+ #endif
+ 
+   if (logging::DialogsAreSuppressed()) {
+diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
+index 7644822472b..15ca3ffb4b8 100644
+--- a/content/browser/renderer_host/render_frame_host_impl.cc
++++ b/content/browser/renderer_host/render_frame_host_impl.cc
+@@ -17099,6 +17099,7 @@ void RenderFrameHostImpl::OnSameDocumentCommitProcessed(
+ void RenderFrameHostImpl::MaybeGenerateCrashReport(
+     base::TerminationStatus status,
+     int exit_code) {
++  if ((true)) return;
+   if (!last_committed_url_.SchemeIsHTTPOrHTTPS()) {
+     return;
+   }
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index 4d5fdf1e4fd..918043ce7dd 100644
+--- a/content/browser/web_contents/web_contents_impl.cc
++++ b/content/browser/web_contents/web_contents_impl.cc
+@@ -11498,7 +11498,7 @@ void WebContentsImpl::RendererUnresponsive(
+   base::UmaHistogramEnumeration(
+       "ReportingAndNEL.UnresponsiveRenderer.CrashReportOutcome", outcome);
+ 
+-  if (base::FeatureList::IsEnabled(
++  if (((false)) && base::FeatureList::IsEnabled(
+           blink::features::kDocumentPolicyIncludeJSCallStacksInCrashReports) &&
+       this->GetLastCommittedURL().SchemeIsHTTPOrHTTPS()) {
+     RenderProcessHost* rph = render_widget_host->GetProcess();
+diff --git a/third_party/blink/renderer/controller/javascript_call_stack_collector.cc b/third_party/blink/renderer/controller/javascript_call_stack_collector.cc
+index 90e2f3b9792..feabd49708d 100644
+--- a/third_party/blink/renderer/controller/javascript_call_stack_collector.cc
++++ b/third_party/blink/renderer/controller/javascript_call_stack_collector.cc
+@@ -98,7 +98,7 @@ void GenerateJavaScriptCallStack(v8::Isolate* isolate, void* data) {
+     return;
+   }
+   ExecutionContext* execution_context = ToExecutionContext(script_state);
+-  if (!RuntimeEnabledFeatures::
++  if (((true)) || !RuntimeEnabledFeatures::
+           DocumentPolicyIncludeJSCallStacksInCrashReportsEnabled(
+               execution_context)) {
+     PostHandleCollectedCallStackTask(collector, builder);

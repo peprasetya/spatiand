@@ -1,7 +1,8 @@
-From 739396366a80c0d3f2bf2f68d7b9d4aaf4576561 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Sun, 8 Nov 2026 08:21:34 +0700
-Subject: [PATCH] Spatiand: each tab's sound at its window built on Linux only
+Subject: [PATCH 297/310] Spatiand: each tab's sound at its window built on
+ Linux only
 
 It finds a tab's window through aura, which Android has not got, and only Linux starts it
 (browser_main_loop.cc): built there alone, so the same patches build for Android.
@@ -10,10 +11,10 @@ It finds a tab's window through aura, which Android has not got, and only Linux 
  1 file changed, 9 insertions(+), 2 deletions(-)
 
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index b2ff4f2..690e0c0 100644
+index dbdc7054516..04ea6d84fda 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
-@@ -1250,8 +1250,6 @@ source_set("browser") {
+@@ -1248,8 +1248,6 @@ source_set("browser") {
      "media/flinging_renderer.cc",
      "media/flinging_renderer.h",
      "media/forwarding_audio_stream_factory.cc",
@@ -22,7 +23,7 @@ index b2ff4f2..690e0c0 100644
      "media/forwarding_audio_stream_factory.h",
      "media/frameless_media_interface_proxy.cc",
      "media/frameless_media_interface_proxy.h",
-@@ -2564,6 +2562,15 @@ source_set("browser") {
+@@ -2599,6 +2597,15 @@ source_set("browser") {
      ]
    }
  
@@ -38,6 +39,3 @@ index b2ff4f2..690e0c0 100644
    # ChromeOS also defines linux but their memory-monitors conflict.
    if (is_chromeos) {
      sources += [
--- 
-2.53.0
-

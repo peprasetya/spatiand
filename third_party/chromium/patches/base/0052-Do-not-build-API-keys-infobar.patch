@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Fri, 23 Jul 2021 15:05:19 +0200
+Subject: [PATCH 052/310] Do not build API keys infobar
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Do-not-build-API-keys-infobar.patch
+---
+ chrome/browser/ui/startup/BUILD.gn                 |  2 --
+ chrome/browser/ui/startup/infobar_utils.cc         | 14 --------------
+ .../infobar_internals/infobar_internals_handler.cc | 10 +++-------
+ 3 files changed, 3 insertions(+), 23 deletions(-)
+
+diff --git a/chrome/browser/ui/startup/BUILD.gn b/chrome/browser/ui/startup/BUILD.gn
+index d554afbea2e..ca97b71bd26 100644
+--- a/chrome/browser/ui/startup/BUILD.gn
++++ b/chrome/browser/ui/startup/BUILD.gn
+@@ -44,7 +44,6 @@ source_set("startup") {
+     sources += [
+       "automation_infobar_delegate.h",
+       "features.h",
+-      "google_api_keys_infobar_delegate.h",
+       "google_chrome_scheme_util.h",
+       "infobar_utils.h",
+       "launch_mode_recorder.h",
+@@ -196,7 +195,6 @@ source_set("impl") {
+     sources += [
+       "automation_infobar_delegate.cc",
+       "features.cc",
+-      "google_api_keys_infobar_delegate.cc",
+       "google_chrome_scheme_util.cc",
+       "infobar_utils.cc",
+       "launch_mode_recorder.cc",
+diff --git a/chrome/browser/ui/startup/infobar_utils.cc b/chrome/browser/ui/startup/infobar_utils.cc
+index 598e361a298..6192225ceda 100644
+--- a/chrome/browser/ui/startup/infobar_utils.cc
++++ b/chrome/browser/ui/startup/infobar_utils.cc
+@@ -253,20 +253,6 @@ void AddInfoBarsIfNecessary(BrowserWindowInterface* browser,
+   infobars::ContentInfoBarManager* infobar_manager =
+       infobars::ContentInfoBarManager::FromWebContents(web_contents);
+ 
+-  if (!google_apis::HasAPIKeyConfigured()) {
+-    if (infobars::IsInfoBarMigrated(
+-            infobars::InfoBarDelegate::GOOGLE_API_KEYS_INFOBAR_DELEGATE)) {
+-      if (auto* manager =
+-              infobars::BrowserInfoBarManager::From(g_browser_process)) {
+-        manager->Show(
+-            tabs::TabInterface::GetFromContents(web_contents),
+-            infobars::InfoBarDelegate::GOOGLE_API_KEYS_INFOBAR_DELEGATE);
+-      }
+-    } else {
+-      GoogleApiKeysInfoBarDelegate::Create(infobar_manager);
+-    }
+-  }
+-
+   if (ObsoleteSystem::IsObsoleteNowOrSoon()) {
+     PrefService* local_state = g_browser_process->local_state();
+     if (!local_state ||
+diff --git a/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc b/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc
+index b4bccb0ec38..47663c1913d 100644
+--- a/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc
++++ b/chrome/browser/ui/webui/infobar_internals/infobar_internals_handler.cc
+@@ -42,7 +42,6 @@
+ #include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
+ #include "chrome/browser/ui/startup/automation_infobar_delegate.h"
+ #include "chrome/browser/ui/startup/bad_flags_prompt.h"
+-#include "chrome/browser/ui/startup/google_api_keys_infobar_delegate.h"
+ #include "chrome/browser/ui/startup/obsolete_system_infobar_delegate.h"
+ #include "chrome/browser/ui/startup/oscryptasync_availability_infobar_delegate.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+@@ -677,12 +676,9 @@ bool InfoBarInternalsHandler::PerformInfoBarActionInternal(
+             bwi->GetActiveTabInterface(),
+             infobars::InfoBarDelegate::GOOGLE_API_KEYS_INFOBAR_DELEGATE);
+       } else {
+-        infobars::ContentInfoBarManager* infobar_manager =
+-            infobars::ContentInfoBarManager::FromWebContents(web_contents);
+-        if (!infobar_manager) {
+-          return false;
+-        }
+-        GoogleApiKeysInfoBarDelegate::Create(infobar_manager);
++        // The infobar's delegate is not built ("Do not build API keys
++        // infobar").
++        return false;
+       }
+       return true;
+     }

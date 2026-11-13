@@ -1,0 +1,429 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Mon, 11 Dec 2017 22:42:11 +0100
+Subject: [PATCH 033/310] Add search engine
+
+Add a Google search engine that forces languages to English,
+disable from all its searches RLZ and field experiments querystring parameters.
+Add DuckDuckGo Lite
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Add-search-engine.patch
+---
+ .../search_engine_choice/default_favicon.png  | Bin 0 -> 903 bytes
+ components/search_engines/BUILD.gn            |   3 ++
+ components/search_engines/cromite/BUILD.gn    |  12 ++++++
+ .../cromite/cromite_prepopulated_engines.json |  37 ++++++++++++++++++
+ .../search_engine_choice_utils.cc             |   5 +--
+ .../search_engines/search_engine_type.h       |   5 +++
+ .../template_url_prepopulate_data.cc          |  21 +++++++++-
+ .../template_url_prepopulate_data.h           |   9 -----
+ tools/json_to_struct/json_to_struct.gni       |   9 +++++
+ tools/json_to_struct/json_to_struct.py        |  27 ++++++++++---
+ tools/json_to_struct/struct_generator.py      |  12 ++++--
+ tools/variations/fieldtrial_to_struct.py      |   1 +
+ 12 files changed, 117 insertions(+), 24 deletions(-)
+ create mode 100644 components/resources/default_100_percent/search_engine_choice/default_favicon.png
+ create mode 100644 components/search_engines/cromite/BUILD.gn
+ create mode 100644 components/search_engines/cromite/cromite_prepopulated_engines.json
+
+diff --git a/components/resources/default_100_percent/search_engine_choice/default_favicon.png b/components/resources/default_100_percent/search_engine_choice/default_favicon.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..6533419f2d6b40f7735054dec62c51ddf1ee1201
+GIT binary patch
+literal 903
+zcmV;219<$2P)<h;3K|Lk000e1NJLTq001xm001xu1^@s6R|5Hm0009{Nkl<Zc-rk*
+zHI&>u5dJaD%uTpU6K1Ny)MmAo?2~ki?Li;rI(@haGcz+YGo$8ZtH|rstmUBf-W*z<
+z`LqMyjQ;vbR=naxn4FxTa$SOo%Y^Yq3CiCp`IM5k@HhA$JOj`EJVrBqK*>90<Y$Z!
+zD&E1~9|C4N=Y0}PoKKzZ=aBLV-UaWB-0*4BX4X}1up41G3JAO#bVTDWd3iku6Hh={
+zlma?HmsR5(hfh(b^FD*}4@!0sS4zV2hPiHTHz{QUr=p@EW3ne<xuXf?=gfeJ_n_0B
+z@lJY|QARx>G)Ly==Qj#^Pm*zg`6NIm=nm~RX-}Ss_k_usva+)JncnmH^XI=4jNih$
+zlz0y|WF4^Se4bG8m@v`L_#mWg6DB6I3T(&-X<X(aWBDC2?f1MT|2uB(BxS%X1$a%k
+z;1;{ldEPHo!pWN$|21g&X`3k)RVSdZ`1-to+dxbxpx11tSFj1eY4p>FfHecpOCzcg
+zpNwb+@DsmO2`6iI0DN;)MGkB;0q{--kR#0r9={VIfOiJ&qgPlcQV0O=qNN%EZUkK2
+zXVWfZ`h5{40I)Gg`DG2UD<uwqtRPHQ`3e=w!vhePgFgO88URJiY>`5mlRG3V0I)IO
+z^!VFvHvp@&1;F!4TUc<Tw?P23{124aYG2{<#pZ1%U*J~{i~%4NJtI_HQU19p>56LN
+z%3gt$n(-Z(idK@zIi#qli66~IxloAGzuNPP+NSLfTs{_pT7f^J06kI9KUZ>A$&#d(
+z+ZUd3gy@cNAuWhQ3vePzWtVK-4H5_<h_y6oOLkRNRsEA)yhw>iqgo-eCg3jF08o2(
+zV+xr@B`n6nQmpYnUx3CSsDwu5Yyvoe1poxnZ<>do)Aj_?EW-9wQ^cQO=(N_*SpEcF
+zA!n{N_=ZMrDQ)uj`{u@re$c++TFQW?-c&%T<H_NEl62(&6TL7nfTD(I>Jej=5G2dk
+zc*-y0$13Q-mVE%=HZZcm54P~5#qa<$Vkc|B{qUnj<Z#y}04P$B=OI-_I^4yL*CEaE
+zjS0pJfK7T{VJFY4st5f9G(|wnQru>jUSTzPpE5qa;Lv>bM_w_-mwYy_S=Aoxnl--Y
+d#;<tA>kFnu^?NN9uE_uZ002ovPDHLkV1m60sc!%P
+
+literal 0
+HcmV?d00001
+
+diff --git a/components/search_engines/BUILD.gn b/components/search_engines/BUILD.gn
+index c49a8e7b780..fc8f8f5feea 100644
+--- a/components/search_engines/BUILD.gn
++++ b/components/search_engines/BUILD.gn
+@@ -87,6 +87,7 @@ static_library("search_engines") {
+     "//third_party/metrics_proto",
+     "//third_party/omnibox_proto",
+     "//third_party/search_engines_data:prepopulated_engines",
++    "cromite:cromite_prepopulated_engines",
+   ]
+ 
+   deps = [
+@@ -178,6 +179,7 @@ source_set("search_engine_utils") {
+     "//components/regional_capabilities",
+     "//components/regional_capabilities:switches",
+     "//third_party/search_engines_data:prepopulated_engines",
++    "cromite:cromite_prepopulated_engines",
+   ]
+ 
+   deps = [ "//url" ]
+@@ -283,6 +285,7 @@ source_set("unit_tests") {
+     "//testing/gtest",
+     "//third_party/search_engines_data:prepopulated_engines",
+     "//third_party/search_engines_data:regional_settings",
++    "cromite:cromite_prepopulated_engines",
+     "//ui/base",
+     "//url",
+   ]
+diff --git a/components/search_engines/cromite/BUILD.gn b/components/search_engines/cromite/BUILD.gn
+new file mode 100644
+index 00000000000..cacf751247a
+--- /dev/null
++++ b/components/search_engines/cromite/BUILD.gn
+@@ -0,0 +1,12 @@
++import("//tools/json_to_struct/json_to_struct.gni")
++
++json_to_struct("cromite_prepopulated_engines") {
++  visibility = [ "//components/search_engines:*" ]
++
++  source = "cromite_prepopulated_engines.json"
++  schema_file = "//third_party/search_engines_data/prepopulated_engines_schema.json"
++  namespace = "TemplateURLPrepopulateData"
++  excludetype = true
++
++  deps = [ "//base" ]
++}
+diff --git a/components/search_engines/cromite/cromite_prepopulated_engines.json b/components/search_engines/cromite/cromite_prepopulated_engines.json
+new file mode 100644
+index 00000000000..0d2ebbf08bf
+--- /dev/null
++++ b/components/search_engines/cromite/cromite_prepopulated_engines.json
+@@ -0,0 +1,37 @@
++{
++    "additionals_includes": {
++        "third_party/search_engines_data/resources/definitions/prepopulated_engines.h": ""
++    },
++    "elements": {
++        "duckduckgo_light": {
++            "name": "DuckDuckGo Light",
++            "keyword": "duckduckgo.com/lite",
++            "favicon_url": "https://duckduckgo.com/favicon.ico",
++            "search_url": "https://duckduckgo.com/lite/?q={searchTerms}",
++            "suggest_url": "https://duckduckgo.com/ac/?q={searchTerms}&type=list",
++            "type": "SEARCH_ENGINE_DUCKDUCKGOLIGHT",
++            "id": 12
++        },
++
++        "googleen": {
++            "name": "Google in English",
++            "keyword": "googleen",
++            "favicon_url": "https://www.google.com/favicon.ico",
++            "search_url": "{google:baseURL}search?q={searchTerms}&ie={inputEncoding}&hl=en",
++            "suggest_url": "{google:baseSuggestURL}search?client={google:suggestClient}&q={searchTerms}&hl=en",
++            "image_url": "{google:baseURL}searchbyimage/upload?hl=en",
++            "new_tab_url": "{google:baseURL}_/chrome/newtab?hl=en&ie={inputEncoding}",
++            "contextual_search_url": "{google:baseURL}_/contextualsearch?{google:contextualSearchVersion}{google:contextualSearchContextData}&hl=en",
++            "image_url_post_params": "encoded_image={google:imageThumbnail},image_url={google:imageURL},sbisrc={google:imageSearchSource},original_width={google:imageOriginalWidth},original_height={google:imageOriginalHeight}",
++            "alternate_urls": [
++              "{google:baseURL}?hl=en#q={searchTerms}",
++              "{google:baseURL}search?hl=en#q={searchTerms}",
++              "{google:baseURL}webhp?hl=en#q={searchTerms}",
++              "{google:baseURL}s?hl=en#q={searchTerms}",
++              "{google:baseURL}s?hl=en&q={searchTerms}"
++            ],
++            "type": "SEARCH_ENGINE_GOOGLE_EN",
++            "id": 13
++        }
++    }
++}
+diff --git a/components/search_engines/search_engine_choice/search_engine_choice_utils.cc b/components/search_engines/search_engine_choice/search_engine_choice_utils.cc
+index d0df9ba08e3..39f7a5f0a67 100644
+--- a/components/search_engines/search_engine_choice/search_engine_choice_utils.cc
++++ b/components/search_engines/search_engine_choice/search_engine_choice_utils.cc
+@@ -193,10 +193,7 @@ void RecordChoiceScreenDefaultSearchProviderType(
+ }
+ 
+ void RecordChoiceScreenSelectedIndex(int selected_engine_index) {
+-  base::UmaHistogramExactLinear(
+-      kSearchEngineChoiceScreenSelectedEngineIndexHistogram,
+-      selected_engine_index,
+-      TemplateURLPrepopulateData::kMaxEeaPrepopulatedEngines);
++  // do nothing in Cromite
+ }
+ 
+ void RecordChoiceScreenPositionsCountryMismatch(bool has_mismatch) {
+diff --git a/components/search_engines/search_engine_type.h b/components/search_engines/search_engine_type.h
+index 37f105afa97..6a0dfa9380d 100644
+--- a/components/search_engines/search_engine_type.h
++++ b/components/search_engines/search_engine_type.h
+@@ -100,11 +100,16 @@ enum SearchEngineType {
+   SEARCH_ENGINE_STARTER_PACK_AI_MODE = 80,
+   SEARCH_ENGINE_YAHOO_JP = 81,
+   SEARCH_ENGINE_PERPLEXITY = 82,
++  SEARCH_ENGINE_GOOGLE_EN = 82,
++  SEARCH_ENGINE_DUCKDUCKGOLIGHT = 83,
+ 
+   SEARCH_ENGINE_MAX  // Bounding value needed for UMA histogram macro.
+ };
+ // LINT.ThenChange(//tools/metrics/histograms/enums.xml:OmniboxSearchEngineType)
+ 
++static_assert(SEARCH_ENGINE_DUCKDUCKGOLIGHT == (SEARCH_ENGINE_MAX - 1),
++              "Please check this patch");
++
+ // Enum to record the type of search engine a user used in keyword mode. This
+ // should be kept aligned with the `OmniboxBuiltinEngineType` enum in enums.xml.
+ // Entries should not be renumbered and numeric values should never be reused.
+diff --git a/components/search_engines/template_url_prepopulate_data.cc b/components/search_engines/template_url_prepopulate_data.cc
+index 85b0c960533..c58c7e06bf2 100644
+--- a/components/search_engines/template_url_prepopulate_data.cc
++++ b/components/search_engines/template_url_prepopulate_data.cc
+@@ -30,6 +30,8 @@
+ #include "components/search_engines/template_url_data_util.h"
+ #include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
+ 
++#include "components/search_engines/cromite/cromite_prepopulated_engines.h"
++
+ namespace TemplateURLPrepopulateData {
+ 
+ // Helpers --------------------------------------------------------------------
+@@ -180,7 +182,7 @@ int GetDataVersion(PrefService* prefs) {
+   return kCurrentDataVersion;
+ }
+ 
+-std::vector<std::unique_ptr<TemplateURLData>> GetPrepopulatedEngines(
++std::vector<std::unique_ptr<TemplateURLData>> GetPrepopulatedEnginesChromium(
+     PrefService& prefs,
+     const std::vector<raw_ptr<const PrepopulatedEngine>>&
+         regional_prepopulated_engines) {
+@@ -196,6 +198,17 @@ std::vector<std::unique_ptr<TemplateURLData>> GetPrepopulatedEngines(
+                         &PrepopulatedEngineToTemplateURLData);
+ }
+ 
++std::vector<std::unique_ptr<TemplateURLData>> GetPrepopulatedEngines(
++    PrefService& prefs,
++    const std::vector<raw_ptr<const PrepopulatedEngine>>&
++        regional_prepopulated_engines) {
++  std::vector<std::unique_ptr<TemplateURLData>> t_urls =
++      GetPrepopulatedEnginesChromium(prefs, regional_prepopulated_engines);
++  t_urls.push_back(TemplateURLDataFromPrepopulatedEngine(googleen));
++  t_urls.push_back(TemplateURLDataFromPrepopulatedEngine(duckduckgo_light));
++  return t_urls;
++}
++
+ std::unique_ptr<TemplateURLData> GetPrepopulatedEngine(
+     PrefService& prefs,
+     const std::vector<raw_ptr<const PrepopulatedEngine>>&
+@@ -217,10 +230,14 @@ std::vector<std::unique_ptr<TemplateURLData>> GetLocalPrepopulatedEngines(
+     return std::vector<std::unique_ptr<TemplateURLData>>();
+   }
+ 
+-  return base::ToVector(regional_capabilities::GetPrepopulatedEngines(
++  std::vector<std::unique_ptr<TemplateURLData>> t_urls =
++    base::ToVector(regional_capabilities::GetPrepopulatedEngines(
+                             country_id, prefs,
+                             regional_capabilities::SearchEngineListType::kTopN),
+                         &PrepopulatedEngineToTemplateURLData);
++  t_urls.push_back(TemplateURLDataFromPrepopulatedEngine(googleen));
++  t_urls.push_back(TemplateURLDataFromPrepopulatedEngine(duckduckgo_light));
++  return t_urls;
+ }
+ 
+ #endif
+diff --git a/components/search_engines/template_url_prepopulate_data.h b/components/search_engines/template_url_prepopulate_data.h
+index 7940349428c..407e1e738f9 100644
+--- a/components/search_engines/template_url_prepopulate_data.h
++++ b/components/search_engines/template_url_prepopulate_data.h
+@@ -28,15 +28,6 @@ struct PrepopulatedEngine;
+ 
+ extern const int kMaxPrepopulatedEngineID;
+ 
+-// The maximum number of prepopulated search engines that can be returned in
+-// any of the EEA countries by `GetPrepopulatedEngines()`.
+-//
+-// Note: If this is increased, please also increase the declared variant count
+-// for the `Search.ChoiceScreenShowedEngineAt.Index{Index}` histogram.
+-// TODO(crbug.com/408932087): Investigate moving it to the file that actually
+-// populates these, `//c/regional_capabilities/r*c*_util.cc`.
+-inline constexpr size_t kMaxEeaPrepopulatedEngines = 8;
+-
+ // The maximum number of prepopulated search engines that can be returned in
+ // in the rest of the world by `GetPrepopulatedEngines()`.
+ // TODO(crbug.com/408932087): Investigate deduping it with the constant
+diff --git a/tools/json_to_struct/json_to_struct.gni b/tools/json_to_struct/json_to_struct.gni
+index 9988b34bf34..2533fe71531 100644
+--- a/tools/json_to_struct/json_to_struct.gni
++++ b/tools/json_to_struct/json_to_struct.gni
+@@ -40,6 +40,11 @@ template("json_to_struct") {
+   action_name = target_name + "_action"
+   source_set_name = target_name
+ 
++  excludetype = false
++  if (defined(invoker.excludetype)) {
++    excludetype = invoker.excludetype
++  }
++
+   action(action_name) {
+     visibility = [ ":$source_set_name" ]
+     script = "//tools/json_to_struct/json_to_struct.py"
+@@ -62,6 +67,10 @@ template("json_to_struct") {
+       "--namespace=" + invoker.namespace,
+       "--schema=" + rebase_path(invoker.schema_file, root_build_dir),
+     ]
++
++    if (excludetype) {
++      args += [ "--excludetype=yes" ]
++    }
+   }
+ 
+   source_set(source_set_name) {
+diff --git a/tools/json_to_struct/json_to_struct.py b/tools/json_to_struct/json_to_struct.py
+index 054f722956e..b1c7929c402 100755
+--- a/tools/json_to_struct/json_to_struct.py
++++ b/tools/json_to_struct/json_to_struct.py
+@@ -103,7 +103,8 @@ def _GenerateHeaderGuard(h_filename):
+   return re.sub('^_*', '', result) + '_'  # Remove leading underscores.
+ 
+ 
+-def _GenerateH(basepath, fileroot, head, namespace, schema, description):
++def _GenerateH(basepath, fileroot, head, namespace, schema, description,
++               excludetype):
+   """Generates the .h file containing the definition of the structure specified
+   by the schema.
+ 
+@@ -150,12 +151,17 @@ def _GenerateH(basepath, fileroot, head, namespace, schema, description):
+       f.write('#include "%s"\n' % header)
+     f.write('\n')
+ 
++    for header in description.get('additionals_includes', []):
++      f.write('#include "%s"\n' % header)
++    f.write('\n')
++
+     if namespace:
+       f.write('namespace %s {\n' % namespace)
+       f.write('\n')
+ 
+     f.write(
+-      struct_generator.GenerateStruct(schema['type_name'], schema['schema'])
++      struct_generator.GenerateStruct(excludetype, schema['type_name'],
++                                      schema['schema'])
+     )
+     f.write('\n')
+ 
+@@ -180,7 +186,8 @@ def _GenerateH(basepath, fileroot, head, namespace, schema, description):
+     f.write('#endif  // %s\n' % header_guard)
+ 
+ 
+-def _GenerateCC(basepath, fileroot, head, namespace, schema, description):
++def _GenerateCC(basepath, fileroot, head, namespace, schema, description,
++                excludetype):
+   """Generates the .cc file containing the static initializers for the
+   of the elements specified in the description.
+ 
+@@ -209,7 +216,7 @@ def _GenerateCC(basepath, fileroot, head, namespace, schema, description):
+ 
+     aggregation = GetAggregationDetails(description)
+ 
+-    if not aggregation.export_items:
++    if excludetype == False and not aggregation.export_items:
+       f.write('namespace {\n')
+       f.write('\n')
+ 
+@@ -318,6 +325,7 @@ def GenerateStruct(
+   description,
+   description_filename,
+   schema_filename,
++  excludetype,
+   year=None,
+ ):
+   """Generates a C++ struct from a JSON description.
+@@ -338,8 +346,10 @@ def GenerateStruct(
+   """
+   year = int(year) if year else datetime.now().year
+   head = HEAD % (year, schema_filename, description_filename)
+-  _GenerateH(basepath, output_root, head, namespace, schema, description)
+-  _GenerateCC(basepath, output_root, head, namespace, schema, description)
++  _GenerateH(basepath, output_root, head, namespace, schema, description,
++             excludetype)
++  _GenerateCC(basepath, output_root, head, namespace, schema, description,
++              excludetype)
+ 
+ 
+ if __name__ == '__main__':
+@@ -364,11 +374,14 @@ if __name__ == '__main__':
+     '-s', '--schema', help='path to the schema file, mandatory.'
+   )
+   parser.add_option('-o', '--output', help='output filename, ')
++  parser.add_option('-x', '--excludetype', help='exclude type generator, ')
+   (opts, args) = parser.parse_args()
+ 
+   if not opts.schema:
+     parser.error('You must specify a --schema.')
+ 
++  opts.excludetype = bool(opts.excludetype)
++
+   description_filename = os.path.normpath(args[0])
+   root, ext = os.path.splitext(description_filename)
+   shortroot = opts.output if opts.output else os.path.split(root)[1]
+@@ -392,4 +405,6 @@ if __name__ == '__main__':
+     description,
+     description_filename,
+     opts.schema,
++    opts.excludetype,
++    datetime.now().year,
+   )
+diff --git a/tools/json_to_struct/struct_generator.py b/tools/json_to_struct/struct_generator.py
+index 9f0b7ab3285..5ac8172265e 100644
+--- a/tools/json_to_struct/struct_generator.py
++++ b/tools/json_to_struct/struct_generator.py
+@@ -34,23 +34,29 @@ def GenerateField(field_info):
+     raise RuntimeError('Unknown field type "%s"' % type)
+ 
+ 
+-def GenerateStruct(type_name, schema):
++def GenerateStruct(excludetype, type_name, schema):
+   """Generate a string defining a structure containing the fields specified in
+   the schema list.
+   """
+   lines = []
++  if excludetype:
++    lines.append('struct %s;' % type_name)
++    return '\n'.join(lines) + '\n'
++
+   lines.append('struct %s {' % type_name)
+   for field_info in schema:
+     if field_info['type'] == 'struct':
+       lines.insert(
+-        0, GenerateStruct(field_info['type_name'], field_info['fields'])
++        0, GenerateStruct(excludetype, field_info['type_name'],
++                          field_info['fields'])
+       )
+     elif (
+       field_info['type'] == 'array'
+       and field_info['contents']['type'] == 'struct'
+     ):
+       contents = field_info['contents']
+-      lines.insert(0, GenerateStruct(contents['type_name'], contents['fields']))
++      lines.insert(0, GenerateStruct(excludetype, contents['type_name'],
++                                     contents['fields']))
+     lines.append('  ' + GenerateField(field_info) + ';')
+   lines.append('};')
+   return '\n'.join(lines) + '\n'
+diff --git a/tools/variations/fieldtrial_to_struct.py b/tools/variations/fieldtrial_to_struct.py
+index 4c1ecb080ab..7f18aeb7278 100755
+--- a/tools/variations/fieldtrial_to_struct.py
++++ b/tools/variations/fieldtrial_to_struct.py
+@@ -248,6 +248,7 @@ def main(arguments):
+     description,
+     os.path.split(description_filename)[1],
+     os.path.split(opts.schema)[1],
++    False,
+     opts.year,
+   )
+ 

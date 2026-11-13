@@ -1,0 +1,221 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <spatiand@localhost>
+Date: Fri, 13 Nov 2026 22:55:13 +0700
+Subject: [PATCH] Enables deactivation of the js debugger statement
+
+---
+ front_end/core/sdk/DebuggerModel.ts           | 11 +++++++++
+ front_end/core/sdk/SDKSettings.ts             |  6 +++++
+ .../generated/InspectorBackendCommands.ts     |  4 ++++
+ front_end/generated/protocol-mapping.d.ts     |  4 ++++
+ front_end/generated/protocol-proxy-api.d.ts   |  2 ++
+ front_end/generated/protocol.ts               |  4 ++++
+ front_end/panels/sources/sources-meta.ts      | 24 +++++++++++++++++++
+ .../devtools_protocol/browser_protocol.json   | 15 +++++++++---
+ 8 files changed, 67 insertions(+), 3 deletions(-)
+
+diff --git a/front_end/core/sdk/DebuggerModel.ts b/front_end/core/sdk/DebuggerModel.ts
+index 1f5d8705..b52ecf56 100644
+--- a/front_end/core/sdk/DebuggerModel.ts
++++ b/front_end/core/sdk/DebuggerModel.ts
+@@ -18,6 +18,7 @@ import {SDKModel} from './SDKModel.js';
+ import {
+   breakpointsActiveSettingDescriptor,
+   disableAsyncStackTracesSettingDescriptor,
++  disableDebuggerStatementSettingDescriptor,
+   jsSourceMapsEnabledSettingDescriptor,
+   pauseOnCaughtExceptionSettingDescriptor,
+   pauseOnExceptionEnabledSettingDescriptor,
+@@ -191,6 +192,7 @@ export class DebuggerModel extends SDKModel<EventTypes> {
+   readonly #pauseOnCaughtExceptionSetting: Common.Settings.Setting<boolean>;
+   readonly #pauseOnUncaughtExceptionSetting: Common.Settings.Setting<boolean>;
+   readonly #disableAsyncStackTracesSetting: Common.Settings.Setting<boolean>;
++  readonly #disableDebuggerStatementSetting: Common.Settings.Setting<boolean>;
+   readonly #breakpointsActiveSetting: Common.Settings.Setting<boolean>;
+   readonly #jsSourceMapsEnabledSetting: Common.Settings.Setting<boolean>;
+   readonly #skipAllPausesSetting: Common.Settings.Setting<boolean>;
+@@ -227,6 +229,8 @@ export class DebuggerModel extends SDKModel<EventTypes> {
+     this.#pauseOnUncaughtExceptionSetting.addChangeListener(this.pauseOnExceptionStateChanged, this);
+     this.#disableAsyncStackTracesSetting = settings.resolve(disableAsyncStackTracesSettingDescriptor);
+     this.#disableAsyncStackTracesSetting.addChangeListener(this.asyncStackTracesStateChanged, this);
++    this.#disableDebuggerStatementSetting = settings.resolve(disableDebuggerStatementSettingDescriptor);
++    this.#disableDebuggerStatementSetting.addChangeListener(this.debuggerStatementChanged, this);
+     this.#breakpointsActiveSetting = settings.resolve(breakpointsActiveSettingDescriptor);
+     this.#breakpointsActiveSetting.addChangeListener(this.breakpointsActiveChanged, this);
+     this.#skipAllPausesSetting = settings.resolve(skipAllPausesSettingDescriptor);
+@@ -234,6 +238,7 @@ export class DebuggerModel extends SDKModel<EventTypes> {
+ 
+     this.#jsSourceMapsEnabledSetting = settings.resolve(jsSourceMapsEnabledSettingDescriptor);
+     this.#jsSourceMapsEnabledSetting.addChangeListener(this.jsSourceMapsStateChanged, this);
++    void this.debuggerStatementChanged();
+     this.#sourceMapManager.setEnabled(this.#jsSourceMapsEnabledSetting.get());
+ 
+     if (!target.suspended()) {
+@@ -449,6 +454,11 @@ export class DebuggerModel extends SDKModel<EventTypes> {
+     return this.agent.invoke_setAsyncCallStackDepth({maxDepth});
+   }
+ 
++  private debuggerStatementChanged(): Promise<Protocol.ProtocolResponseWithError> {
++    const enabled = !this.#disableDebuggerStatementSetting.get();
++    return this.agent.invoke_setDebuggerStatementEnabled({enabled});
++  }
++
+   private breakpointsActiveChanged(): void {
+     void this.agent.invoke_setBreakpointsActive({active: this.#breakpointsActiveSetting.get()});
+   }
+@@ -957,6 +967,7 @@ export class DebuggerModel extends SDKModel<EventTypes> {
+     this.#skipAllPausesSetting.removeChangeListener(this.skipAllPausesChanged, this);
+     this.#pauseOnUncaughtExceptionSetting.removeChangeListener(this.pauseOnExceptionStateChanged, this);
+     this.#disableAsyncStackTracesSetting.removeChangeListener(this.asyncStackTracesStateChanged, this);
++    this.#disableDebuggerStatementSetting.removeChangeListener(this.debuggerStatementChanged, this);
+     this.#breakpointsActiveSetting.removeChangeListener(this.breakpointsActiveChanged, this);
+     this.#jsSourceMapsEnabledSetting.removeChangeListener(this.jsSourceMapsStateChanged, this);
+   }
+diff --git a/front_end/core/sdk/SDKSettings.ts b/front_end/core/sdk/SDKSettings.ts
+index e7212b5f..02681ef3 100644
+--- a/front_end/core/sdk/SDKSettings.ts
++++ b/front_end/core/sdk/SDKSettings.ts
+@@ -53,6 +53,12 @@ export const javaScriptDisabledSettingDescriptor: Common.Settings.SettingDescrip
+   storageType: Common.Settings.SettingStorageType.SESSION,
+ };
+ 
++export const disableDebuggerStatementSettingDescriptor: Common.Settings.SettingDescriptor<boolean> = {
++  name: 'disableDebuggerStatement',
++  type: Common.Settings.SettingType.BOOLEAN,
++  defaultValue: false,
++};
++
+ export const disableAsyncStackTracesSettingDescriptor: Common.Settings.SettingDescriptor<boolean> = {
+   name: 'disable-async-stack-traces',
+   type: Common.Settings.SettingType.BOOLEAN,
+diff --git a/front_end/generated/InspectorBackendCommands.ts b/front_end/generated/InspectorBackendCommands.ts
+index 29d4f969..bd6622d8 100644
+--- a/front_end/generated/InspectorBackendCommands.ts
++++ b/front_end/generated/InspectorBackendCommands.ts
+@@ -1552,6 +1552,10 @@ inspectorBackend.registerCommand("Debugger.resume", [{"name": "terminateOnResume
+ inspectorBackend.registerCommand("Debugger.searchInContent", [{"name": "scriptId", "type": "string", "optional": false, "description": "Id of the script to search in.", "typeRef": "Runtime.ScriptId"}, {"name": "query", "type": "string", "optional": false, "description": "String to search for.", "typeRef": null}, {"name": "caseSensitive", "type": "boolean", "optional": true, "description": "If true, search is case sensitive.", "typeRef": null}, {"name": "isRegex", "type": "boolean", "optional": true, "description": "If true, treats string parameter as regex.", "typeRef": null}], ["result"], "Searches for given string in script content.");
+ inspectorBackend.registerCommand("Debugger.setAsyncCallStackDepth", [{"name": "maxDepth", "type": "number", "optional": false, "description": "Maximum depth of async call stacks. Setting to `0` will effectively disable collecting async call stacks (default).", "typeRef": null}], [], "Enables or disables async call stacks tracking.");
+ inspectorBackend.registerCommand("Debugger.setBlackboxExecutionContexts", [{"name": "uniqueIds", "type": "array", "optional": false, "description": "Array of execution context unique ids for the debugger to ignore.", "typeRef": "string"}], [], "Replace previous blackbox execution contexts with passed ones. Forces backend to skip stepping/pausing in scripts in these execution contexts. VM will try to leave blackboxed script by performing 'step in' several times, finally resorting to 'step out' if unsuccessful.");
++inspectorBackend.registerCommand("Debugger.setDebuggerStatementEnabled", [
++    {"name": "value", "type": "boolean", "optional": false,
++    "description": "",
++    "typeRef": null}], [], "");
+ inspectorBackend.registerCommand("Debugger.setBlackboxPatterns", [{"name": "patterns", "type": "array", "optional": false, "description": "Array of regexps that will be used to check script url for blackbox state.", "typeRef": "string"}, {"name": "skipAnonymous", "type": "boolean", "optional": true, "description": "If true, also ignore scripts with no source url.", "typeRef": null}], [], "Replace previous blackbox patterns with passed ones. Forces backend to skip stepping/pausing in scripts with url matching one of the patterns. VM will try to leave blackboxed script by performing 'step in' several times, finally resorting to 'step out' if unsuccessful.");
+ inspectorBackend.registerCommand("Debugger.setBlackboxedRanges", [{"name": "scriptId", "type": "string", "optional": false, "description": "Id of the script.", "typeRef": "Runtime.ScriptId"}, {"name": "positions", "type": "array", "optional": false, "description": "", "typeRef": "Debugger.ScriptPosition"}], [], "Makes backend skip steps in the script in blackboxed ranges. VM will try leave blacklisted scripts by performing 'step in' several times, finally resorting to 'step out' if unsuccessful. Positions array contains positions where blackbox state is changed. First interval isn't blackboxed. Array should be sorted.");
+ inspectorBackend.registerCommand("Debugger.setBreakpoint", [{"name": "location", "type": "object", "optional": false, "description": "Location to set breakpoint in.", "typeRef": "Debugger.Location"}, {"name": "condition", "type": "string", "optional": true, "description": "Expression to use as a breakpoint condition. When specified, debugger will only stop on the breakpoint if this expression evaluates to true.", "typeRef": null}], ["breakpointId", "actualLocation"], "Sets JavaScript breakpoint at a given location.");
+diff --git a/front_end/generated/protocol-mapping.d.ts b/front_end/generated/protocol-mapping.d.ts
+index 80b07f8a..a350e9f6 100644
+--- a/front_end/generated/protocol-mapping.d.ts
++++ b/front_end/generated/protocol-mapping.d.ts
+@@ -5572,6 +5572,10 @@ export namespace ProtocolMapping {
+       paramsType: [Protocol.Debugger.SetBlackboxExecutionContextsRequest];
+       returnType: void;
+     };
++    'Debugger.setDebuggerStatementEnabled': {
++      paramsType: [Protocol.Debugger.setDebuggerStatementEnabledRequest];
++      returnType: void;
++    };
+     /**
+      * Replace previous blackbox patterns with passed ones. Forces backend to skip stepping/pausing in
+      * scripts with url matching one of the patterns. VM will try to leave blackboxed script by
+diff --git a/front_end/generated/protocol-proxy-api.d.ts b/front_end/generated/protocol-proxy-api.d.ts
+index ebc4a5b2..6c5dc4cc 100644
+--- a/front_end/generated/protocol-proxy-api.d.ts
++++ b/front_end/generated/protocol-proxy-api.d.ts
+@@ -5034,6 +5034,8 @@ declare namespace ProtocolProxyApi {
+      */
+     invoke_setBlackboxExecutionContexts(params: Protocol.Debugger.SetBlackboxExecutionContextsRequest): Promise<Protocol.ProtocolResponseWithError>;
+ 
++    invoke_setDebuggerStatementEnabled(params: Protocol.Debugger.SetDebuggerStatementEnabledRequest): Promise<Protocol.ProtocolResponseWithError>;
++
+     /**
+      * Replace previous blackbox patterns with passed ones. Forces backend to skip stepping/pausing in
+      * scripts with url matching one of the patterns. VM will try to leave blackboxed script by
+diff --git a/front_end/generated/protocol.ts b/front_end/generated/protocol.ts
+index d47401bf..10f5b440 100644
+--- a/front_end/generated/protocol.ts
++++ b/front_end/generated/protocol.ts
+@@ -21163,6 +21163,10 @@ export namespace Debugger {
+     uniqueIds: string[];
+   }
+ 
++  export interface SetDebuggerStatementEnabledRequest {
++    enabled: boolean;
++  }
++
+   export interface SetBlackboxPatternsRequest {
+     /**
+      * Array of regexps that will be used to check script url for blackbox state.
+diff --git a/front_end/panels/sources/sources-meta.ts b/front_end/panels/sources/sources-meta.ts
+index 112a180d..081a6ee6 100644
+--- a/front_end/panels/sources/sources-meta.ts
++++ b/front_end/panels/sources/sources-meta.ts
+@@ -27,6 +27,14 @@ const UIStrings = {
+    * @description Tooltip text for a setting that controls whether external resource can be loaded in DevTools.
+    */
+   remoteFileLoadingInfo: 'Example resources are source maps. Disabled by default for security reasons.',
++  /**
++   * @description Title of a setting under the Debugger category in Settings.
++   */
++  disableDebuggerStatement: 'Disable debugger statement',
++  /**
++   * @description Option that keeps JavaScript debugger statements enabled.
++   */
++  enableDebuggerStatement: 'Enable debugger statement',
+   /**
+    * @description Title of a setting under the Debugger category in Settings.
+    */
+@@ -1626,6 +1634,22 @@ SettingsUI.SettingUIRegistration.register(SDK.SDKSettings.javaScriptDisabledSett
+   ],
+ });
+ 
++SettingsUI.SettingUIRegistration.register(SDK.SDKSettings.disableDebuggerStatementSettingDescriptor, {
++  category: Common.Settings.SettingCategory.DEBUGGER,
++  title: i18nLazyString(UIStrings.disableDebuggerStatement),
++  order: 999,
++  options: [
++    {
++      value: true,
++      title: i18nLazyString(UIStrings.disableDebuggerStatement),
++    },
++    {
++      value: false,
++      title: i18nLazyString(UIStrings.enableDebuggerStatement),
++    },
++  ],
++});
++
+ SettingsUI.SettingUIRegistration.register(SDK.SDKSettings.disableAsyncStackTracesSettingDescriptor, {
+   category: Common.Settings.SettingCategory.DEBUGGER,
+   title: i18nLazyString(UIStrings.disableAsyncStackTraces),
+diff --git a/third_party/blink/public/devtools_protocol/browser_protocol.json b/third_party/blink/public/devtools_protocol/browser_protocol.json
+index c718eb66..9c0544b3 100644
+--- a/third_party/blink/public/devtools_protocol/browser_protocol.json
++++ b/third_party/blink/public/devtools_protocol/browser_protocol.json
+@@ -31798,8 +31798,17 @@
+                             "$ref": "WasmDisassemblyChunk"
+                         }
+                     ]
+-                },
+-                {
++                },{
++                    "name": "setDebuggerStatementEnabled",
++                    "description": "Enables or disables debugger javascript statement.",
++                    "parameters": [
++                        {
++                            "name": "enabled",
++                            "description": "Enables or disables debugger javascript statement",
++                            "type": "boolean"
++                        }
++                    ]
++                },{
+                     "name": "nextWasmDisassemblyChunk",
+                     "description": "Disassemble the next chunk of lines for the module corresponding to the\nstream. If disassembly is complete, this API will invalidate the streamId\nand return an empty chunk. Any subsequent calls for the now invalid stream\nwill return errors.",
+                     "experimental": true,
+@@ -35003,4 +35012,4 @@
+             ]
+         }
+     ]
+-}
+\ No newline at end of file
++}

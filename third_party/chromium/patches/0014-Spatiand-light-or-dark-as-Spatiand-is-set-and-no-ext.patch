@@ -1,21 +1,21 @@
-From d258e75f5669a33679719eb85921b465fdecaeaa Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Sat, 31 Oct 2026 11:39:19 +0700
-Subject: [PATCH 14/14] Spatiand: light or dark as Spatiand is set, and no
+Subject: [PATCH 294/310] Spatiand: light or dark as Spatiand is set, and no
  extensions from the machine
 
 The dark mode manager reads the look Spatiand's other applications read, every second, in place of the desktop portal. What the machine's packages put in /usr/share/chromium/extensions (KDE's Plasma Integration on a Deck) is not installed.
 ---
  .../extensions/external_provider_impl.cc      |  4 +-
- ui/linux/dark_mode_manager_linux.cc           | 84 ++++++++++++++++++-
- ui/linux/dark_mode_manager_linux.h            |  7 ++
- 3 files changed, 91 insertions(+), 4 deletions(-)
+ ui/linux/portal_settings_linux.cc             | 85 ++++++++++++++++++-
+ ui/linux/portal_settings_linux.h              |  7 ++
+ 3 files changed, 91 insertions(+), 5 deletions(-)
 
 diff --git a/chrome/browser/extensions/external_provider_impl.cc b/chrome/browser/extensions/external_provider_impl.cc
-index de142296b3..a52dee3ba7 100644
+index 81dd40bc0fd..4ced42c874d 100644
 --- a/chrome/browser/extensions/external_provider_impl.cc
 +++ b/chrome/browser/extensions/external_provider_impl.cc
-@@ -852,7 +852,9 @@ void ExternalProviderImpl::CreateExternalProviders(
+@@ -882,7 +882,9 @@ void ExternalProviderImpl::CreateExternalProviders(
  
  #endif  // BUILDFLAG(IS_CHROMEOS)
    if (!profile->GetPrefs()->GetBoolean(pref_names::kBlockExternalExtensions)) {
@@ -26,13 +26,13 @@ index de142296b3..a52dee3ba7 100644
      provider_list->push_back(std::make_unique<ExternalProviderImpl>(
          service,
          base::MakeRefCounted<ExternalPrefLoader>(
-diff --git a/ui/linux/dark_mode_manager_linux.cc b/ui/linux/dark_mode_manager_linux.cc
-index 316897e7cb..868fda4bf8 100644
---- a/ui/linux/dark_mode_manager_linux.cc
-+++ b/ui/linux/dark_mode_manager_linux.cc
+diff --git a/ui/linux/portal_settings_linux.cc b/ui/linux/portal_settings_linux.cc
+index d897dd0b318..9d35aff4e9b 100644
+--- a/ui/linux/portal_settings_linux.cc
++++ b/ui/linux/portal_settings_linux.cc
 @@ -4,6 +4,19 @@
  
- #include "ui/linux/dark_mode_manager_linux.h"
+ #include "ui/linux/portal_settings_linux.h"
  
 +#include <memory>
 +#include <optional>
@@ -101,37 +101,38 @@ index 316897e7cb..868fda4bf8 100644
 +
 +}  // namespace
 +
- DarkModeManagerLinux::DarkModeManagerLinux()
-     : DarkModeManagerLinux(dbus_thread_linux::GetSharedSessionBus(),
-                            &ui::GetLinuxUiThemes()) {}
-@@ -38,9 +98,11 @@ DarkModeManagerLinux::DarkModeManagerLinux(
+ PortalSettingsLinux::PortalSettingsLinux()
+     : PortalSettingsLinux(dbus_thread_linux::GetSharedSessionBus(),
+                           &ui::GetLinuxUiThemes()) {}
+@@ -38,10 +98,11 @@ PortalSettingsLinux::PortalSettingsLinux(
        settings_proxy_(bus_->GetObjectProxy(
            kFreedesktopSettingsService,
            dbus::ObjectPath(kFreedesktopSettingsObjectPath))) {
 -  dbus_xdg::RequestXdgDesktopPortal(
--      bus_.get(), base::BindOnce(&DarkModeManagerLinux::OnPortalRequestResult,
--                                 weak_ptr_factory_.GetWeakPtr()));
+-      bus_.get(), kFreedesktopSettingsInterface,
+-      base::BindOnce(&PortalSettingsLinux::OnPortalRequestResult,
+-                     weak_ptr_factory_.GetWeakPtr()));
 +  // Not the portal: Spatiand's own setting, which outranks the desktop's, and is read as often as
 +  // its other applications read it.
 +  CheckSpatiandLook();
 +  spatiand_look_timer_.Start(FROM_HERE, base::Seconds(1), this,
-+                             &DarkModeManagerLinux::CheckSpatiandLook);
++                             &PortalSettingsLinux::CheckSpatiandLook);
    // No seeding is needed: until the portal preference (if any) arrives, the
    // toolkit OsSettingsProviders source the toolkit-derived color scheme for
    // the web NativeTheme.
-@@ -48,6 +110,22 @@ DarkModeManagerLinux::DarkModeManagerLinux(
+@@ -49,6 +110,22 @@ PortalSettingsLinux::PortalSettingsLinux(
  
- DarkModeManagerLinux::~DarkModeManagerLinux() = default;
+ PortalSettingsLinux::~PortalSettingsLinux() = default;
  
-+void DarkModeManagerLinux::CheckSpatiandLook() {
++void PortalSettingsLinux::CheckSpatiandLook() {
 +  base::ThreadPool::PostTaskAndReplyWithResult(
 +      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
 +      base::BindOnce(&ReadSpatiandDark),
-+      base::BindOnce(&DarkModeManagerLinux::OnSpatiandLook,
++      base::BindOnce(&PortalSettingsLinux::OnSpatiandLook,
 +                     weak_ptr_factory_.GetWeakPtr()));
 +}
 +
-+void DarkModeManagerLinux::OnSpatiandLook(bool dark) {
++void PortalSettingsLinux::OnSpatiandLook(bool dark) {
 +  if (spatiand_dark_ != dark) {
 +    spatiand_dark_ = dark;
 +    SetColorScheme(dark ? NativeTheme::PreferredColorScheme::kDark
@@ -141,11 +142,11 @@ index 316897e7cb..868fda4bf8 100644
 +
  // static
  NativeTheme::PreferredColorScheme
- DarkModeManagerLinux::FreedesktopColorSchemeToNativeThemeColorScheme(
-diff --git a/ui/linux/dark_mode_manager_linux.h b/ui/linux/dark_mode_manager_linux.h
-index 85bad19f97..4d665e2265 100644
---- a/ui/linux/dark_mode_manager_linux.h
-+++ b/ui/linux/dark_mode_manager_linux.h
+ PortalSettingsLinux::FreedesktopColorSchemeToNativeThemeColorScheme(
+diff --git a/ui/linux/portal_settings_linux.h b/ui/linux/portal_settings_linux.h
+index bd941983577..104ab948125 100644
+--- a/ui/linux/portal_settings_linux.h
++++ b/ui/linux/portal_settings_linux.h
 @@ -13,6 +13,7 @@
  #include "base/memory/raw_ptr.h"
  #include "base/memory/scoped_refptr.h"
@@ -154,7 +155,7 @@ index 85bad19f97..4d665e2265 100644
  #include "components/dbus/utils/call_method.h"
  #include "components/dbus/utils/connect_to_signal.h"
  #include "components/dbus/utils/variant.h"
-@@ -89,6 +90,12 @@ class DarkModeManagerLinux {
+@@ -91,6 +92,12 @@ class PortalSettingsLinux {
  
    void SetAccentColor(dbus_utils::Variant variant);
  
@@ -167,6 +168,3 @@ index 85bad19f97..4d665e2265 100644
    raw_ptr<const std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>>
        linux_ui_themes_;
  
--- 
-2.53.0
-

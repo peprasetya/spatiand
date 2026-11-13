@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 24 Jan 2025 14:32:14 +0000
+Subject: [PATCH 237/310] Disable Web Bluetooth by default in desktop platforms
+
+On desktop platforms, disable Bluetooth by default and activate the user-manageable content setting ui.
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-Web-Bluetooth-by-default-in-desktop-platforms.patch
+---
+ .../core/browser/content_settings_registry.cc                | 5 +++++
+ .../content_features_cc/Disable-Web-Bluetooth-by-default.inc | 3 +++
+ 2 files changed, 8 insertions(+)
+ create mode 100644 cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc
+
+diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
+index f569f2ab4ef..f9799b561b9 100644
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -325,8 +325,13 @@ void ContentSettingsRegistry::Init() {
+            ContentSettingsInfo::INHERIT_IF_LESS_PERMISSIVE,
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_AND_INSECURE_ORIGINS);
+ 
++#if BUILDFLAG(IS_ANDROID)
+   Register(ContentSettingsType::BLUETOOTH_GUARD, "bluetooth-guard",
+            CONTENT_SETTING_ASK, WebsiteSettingsInfo::UNSYNCABLE,
++#else
++  Register(ContentSettingsType::BLUETOOTH_GUARD, "bluetooth-guard2",
++           CONTENT_SETTING_BLOCK, WebsiteSettingsInfo::UNSYNCABLE,
++#endif
+            /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/{CONTENT_SETTING_ASK, CONTENT_SETTING_BLOCK},
+            WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
+diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc b/cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc
+new file mode 100644
+index 00000000000..7a22b10ffee
+--- /dev/null
++++ b/cromite_flags/content/public/common/content_features_cc/Disable-Web-Bluetooth-by-default.inc
+@@ -0,0 +1,3 @@
++#if !BUILDFLAG(IS_ANDROID)
++SET_CROMITE_FEATURE_ENABLED(kWebBluetoothNewPermissionsBackend);
++#endif

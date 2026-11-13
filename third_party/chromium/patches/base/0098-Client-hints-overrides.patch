@@ -1,0 +1,301 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Thu, 22 Jul 2021 23:10:52 +0200
+Subject: [PATCH 098/310] Client hints overrides
+
+Disable critical client hints and network early hints
+Use Google Chrome branding for client hints
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Client-hints-overrides.patch
+---
+ components/client_hints/browser/client_hints.cc |  5 +++--
+ components/embedder_support/user_agent_utils.cc |  5 ++---
+ content/browser/client_hints/client_hints.cc    | 17 +++++++++++++++--
+ .../about_flags_cc/Client-hints-overrides.inc   |  9 +++++++++
+ .../features_cc/Client-hints-overrides.inc      |  1 +
+ .../cpp/features_cc/Client-hints-overrides.inc  |  1 +
+ net/http/http_network_transaction.cc            |  1 +
+ services/network/public/cpp/client_hints.cc     |  2 +-
+ .../blink/common/client_hints/client_hints.cc   |  6 ++++--
+ .../common/client_hints/enabled_client_hints.cc |  8 ++++++++
+ .../blink/renderer/core/frame/navigator_ua.idl  |  4 +++-
+ .../renderer/core/frame/navigator_ua_data.cc    |  1 +
+ .../renderer/core/frame/navigator_ua_data.idl   |  5 ++++-
+ .../renderer/core/loader/frame_fetch_context.cc |  4 +++-
+ .../platform/runtime_enabled_features.json5     |  5 +++++
+ 15 files changed, 61 insertions(+), 13 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Client-hints-overrides.inc
+ create mode 100644 cromite_flags/content/common/features_cc/Client-hints-overrides.inc
+ create mode 100644 cromite_flags/services/network/public/cpp/features_cc/Client-hints-overrides.inc
+
+diff --git a/components/client_hints/browser/client_hints.cc b/components/client_hints/browser/client_hints.cc
+index f6509a97555..41313acfc3c 100644
+--- a/components/client_hints/browser/client_hints.cc
++++ b/components/client_hints/browser/client_hints.cc
+@@ -35,7 +35,7 @@ ParseInitializeClientHintsStorage() {
+   auto results =
+       base::flat_map<url::Origin,
+                      std::vector<network::mojom::WebClientHintsType>>();
+-
++  if ((true)) return results;
+   std::string raw_client_hint_json =
+       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+           switches::kInitializeClientHintsStorage);
+@@ -197,7 +197,8 @@ void ClientHints::PersistClientHints(
+   // TODO(tbansal): crbug.com/735518. Disable updates to client hints settings
+   // when cookies are disabled for |primary_origin|.
+   content_settings::ContentSettingConstraints constraints;
+-  constraints.set_session_model(content_settings::mojom::SessionModel::DURABLE);
++  constraints.set_session_model(content_settings::mojom::SessionModel::USER_SESSION);
++  constraints.set_lifetime(base::Minutes(1));
+   settings_map_->SetWebsiteSettingDefaultScope(
+       primary_url, GURL(), ContentSettingsType::CLIENT_HINTS,
+       base::Value(std::move(client_hints_dictionary)), constraints);
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index 774f64c11b3..2e3de0361b9 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -159,9 +159,7 @@ const blink::UserAgentBrandList GetUserAgentBrandList(
+   bool parse_result = base::StringToInt(major_version, &major_version_number);
+   DCHECK(parse_result);
+   std::optional<std::string> brand;
+-#if !BUILDFLAG(CHROMIUM_BRANDING)
+-  brand = version_info::GetProductName();
+-#endif
++  brand = "Google Chrome";
+ 
+   std::string brand_version =
+       output_version_type == blink::UserAgentBrandVersionType::kFullVersion
+@@ -659,6 +657,7 @@ blink::UserAgentMetadata GetUserAgentMetadata(bool only_low_entropy_ch) {
+   }
+ 
+   // High entropy client hints.
++  if ((true)) return metadata;
+   metadata.brand_full_version_list =
+       GetUserAgentBrandFullVersionListInternal(std::nullopt);
+   metadata.full_version = std::string(version_info::GetVersionNumber());
+diff --git a/content/browser/client_hints/client_hints.cc b/content/browser/client_hints/client_hints.cc
+index 1eae0a9aa96..3b1b0ee4473 100644
+--- a/content/browser/client_hints/client_hints.cc
++++ b/content/browser/client_hints/client_hints.cc
+@@ -57,6 +57,7 @@
+ #include "third_party/blink/public/common/features.h"
+ #include "third_party/blink/public/common/page/page_zoom.h"
+ #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
++#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+ #include "ui/display/display.h"
+ #include "ui/display/screen.h"
+ #include "url/origin.h"
+@@ -603,10 +604,21 @@ bool IsClientHintEnabled(const ClientHintsExtendedData& data,
+ 
+ bool IsClientHintAllowed(const ClientHintsExtendedData& data,
+                          WebClientHintsType type) {
++  if (!blink::RuntimeEnabledFeatures::UserAgentClientHintEnabled())
++    return false;
++
++  bool allowed = false;
++  if (type == WebClientHintsType::kUA ||
++      type == WebClientHintsType::kUAMobile ||
++      type == WebClientHintsType::kUAPlatform ||
++      type == WebClientHintsType::kUAModel ||
++      type == WebClientHintsType::kUAPlatformVersion) {
++    allowed = true;
++  }
+   if (data.is_outermost_main_frame) {
+-    return true;
++    return allowed;
+   }
+-  return (data.permissions_policy->IsFeatureEnabledForOrigin(
++  return ((false)) && (data.permissions_policy->IsFeatureEnabledForOrigin(
+       network::GetClientHintToPolicyFeatureMap().at(type),
+       data.resource_origin));
+ }
+@@ -631,6 +643,7 @@ bool IsJavascriptEnabled(FrameTreeNode* frame_tree_node) {
+ void UpdateIFramePermissionsPolicyWithDelegationSupportForClientHints(
+     ClientHintsExtendedData& data,
+     const network::ParsedPermissionsPolicy& container_policy) {
++  if ((true)) return;
+   if (container_policy.empty()) {
+     return;
+   }
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Client-hints-overrides.inc b/cromite_flags/chrome/browser/about_flags_cc/Client-hints-overrides.inc
+new file mode 100644
+index 00000000000..470892eaf87
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Client-hints-overrides.inc
+@@ -0,0 +1,9 @@
++#ifdef FLAG_SECTION
++
++    {"enable-ua-client-hint",
++     "Enable UA client hint",
++     "Allow sending base low entropy client hints as "
++     "UA, UAMobile and UAPlatform for compatibility", kOsAll,
++     FEATURE_VALUE_TYPE(blink::features::kUserAgentClientHint)},
++
++#endif
+diff --git a/cromite_flags/content/common/features_cc/Client-hints-overrides.inc b/cromite_flags/content/common/features_cc/Client-hints-overrides.inc
+new file mode 100644
+index 00000000000..66b64aa2303
+--- /dev/null
++++ b/cromite_flags/content/common/features_cc/Client-hints-overrides.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_ENABLED(kCriticalClientHint);
+diff --git a/cromite_flags/services/network/public/cpp/features_cc/Client-hints-overrides.inc b/cromite_flags/services/network/public/cpp/features_cc/Client-hints-overrides.inc
+new file mode 100644
+index 00000000000..a3dbe9b11b8
+--- /dev/null
++++ b/cromite_flags/services/network/public/cpp/features_cc/Client-hints-overrides.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_ENABLED(kAcceptCHFrame);
+diff --git a/net/http/http_network_transaction.cc b/net/http/http_network_transaction.cc
+index 21e8bcf3e73..c7a4505eb3a 100644
+--- a/net/http/http_network_transaction.cc
++++ b/net/http/http_network_transaction.cc
+@@ -128,6 +128,7 @@ const size_t kMaxRestarts = 32;
+ 
+ // Returns true when Early Hints are allowed on the given protocol.
+ bool EarlyHintsAreAllowedOn(HttpConnectionInfo connection_info) {
++  if ((true)) return false;
+   switch (connection_info) {
+     case HttpConnectionInfo::kHTTP0_9:
+     case HttpConnectionInfo::kHTTP1_0:
+diff --git a/services/network/public/cpp/client_hints.cc b/services/network/public/cpp/client_hints.cc
+index b169f581978..8e6ed557b9a 100644
+--- a/services/network/public/cpp/client_hints.cc
++++ b/services/network/public/cpp/client_hints.cc
+@@ -111,7 +111,7 @@ const DecodeMap& GetDecodeMap() {
+ }  // namespace
+ 
+ std::optional<std::vector<network::mojom::WebClientHintsType>>
+-ParseClientHintsHeader(const std::string& header) {
++ParseClientHintsHeader(const std::string& header) { // Parse Client Hints Header
+   // Accept-CH is an sh-list of tokens; see:
+   // https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-header-structure-19#section-3.1
+   std::optional<net::structured_headers::List> maybe_list =
+diff --git a/third_party/blink/common/client_hints/client_hints.cc b/third_party/blink/common/client_hints/client_hints.cc
+index ab8af78c7a4..db31a0dcdf2 100644
+--- a/third_party/blink/common/client_hints/client_hints.cc
++++ b/third_party/blink/common/client_hints/client_hints.cc
+@@ -14,6 +14,7 @@
+ #include "base/strings/string_util.h"
+ #include "services/network/public/cpp/client_hints.h"
+ #include "services/network/public/cpp/permissions_policy/client_hints_permissions_policy_mapping.h"
++#include "third_party/blink/public/common/features_generated.h"
+ #include "services/network/public/cpp/permissions_policy/permissions_policy.h"
+ #include "third_party/blink/public/common/features.h"
+ #include "url/origin.h"
+@@ -22,11 +23,12 @@ namespace blink {
+ 
+ bool IsClientHintSentByDefault(network::mojom::WebClientHintsType type) {
+   switch (type) {
+-    case network::mojom::WebClientHintsType::kSaveData:
+     case network::mojom::WebClientHintsType::kUA:
+     case network::mojom::WebClientHintsType::kUAMobile:
+     case network::mojom::WebClientHintsType::kUAPlatform:
+-      return true;
++      return base::FeatureList::IsEnabled(blink::features::kUserAgentClientHint);
++    case network::mojom::WebClientHintsType::kSaveData:
++      return false;
+     default:
+       return false;
+   }
+diff --git a/third_party/blink/common/client_hints/enabled_client_hints.cc b/third_party/blink/common/client_hints/enabled_client_hints.cc
+index 2f000524c52..206c5d62f87 100644
+--- a/third_party/blink/common/client_hints/enabled_client_hints.cc
++++ b/third_party/blink/common/client_hints/enabled_client_hints.cc
+@@ -15,6 +15,14 @@ namespace {
+ using ::network::mojom::WebClientHintsType;
+ 
+ bool IsDisabledByFeature(const WebClientHintsType type) {
++  if (type == WebClientHintsType::kUA ||
++        type == WebClientHintsType::kUAMobile ||
++        type == WebClientHintsType::kUAPlatform ||
++        type == WebClientHintsType::kUAModel ||
++        type == WebClientHintsType::kUAPlatformVersion) {
++    return false;
++  }
++  if ((true)) return true;
+   switch (type) {
+     case WebClientHintsType::kUA:
+     case WebClientHintsType::kUAArch:
+diff --git a/third_party/blink/renderer/core/frame/navigator_ua.idl b/third_party/blink/renderer/core/frame/navigator_ua.idl
+index 3a74d659650..00669e1ddce 100644
+--- a/third_party/blink/renderer/core/frame/navigator_ua.idl
++++ b/third_party/blink/renderer/core/frame/navigator_ua.idl
+@@ -4,6 +4,8 @@
+ 
+ // https://github.com/WICG/ua-client-hints
+ 
+-interface mixin NavigatorUA {
++[
++    RuntimeEnabled=UserAgentClientHint
++] interface mixin NavigatorUA {
+   [SecureContext] readonly attribute NavigatorUAData userAgentData;
+ };
+diff --git a/third_party/blink/renderer/core/frame/navigator_ua_data.cc b/third_party/blink/renderer/core/frame/navigator_ua_data.cc
+index d75832c657c..440d03bb7b6 100644
+--- a/third_party/blink/renderer/core/frame/navigator_ua_data.cc
++++ b/third_party/blink/renderer/core/frame/navigator_ua_data.cc
+@@ -112,6 +112,7 @@ const String& NavigatorUAData::platform() const {
+ }
+ 
+ bool AllowedToCollectHighEntropyValues(ExecutionContext* execution_context) {
++  if ((true)) return false;
+   // To determine whether a document is allowed to get high-entropy
+   // client hints returned by navigator.userAgentData.getHighEntropyValues(),
+   // we need to check the "ch-ua-high-entropy-values" policy:
+diff --git a/third_party/blink/renderer/core/frame/navigator_ua_data.idl b/third_party/blink/renderer/core/frame/navigator_ua_data.idl
+index 5edd01e17a7..102913c5f25 100644
+--- a/third_party/blink/renderer/core/frame/navigator_ua_data.idl
++++ b/third_party/blink/renderer/core/frame/navigator_ua_data.idl
+@@ -4,7 +4,10 @@
+ 
+ // https://github.com/WICG/ua-client-hints
+ 
+-[Exposed=(Window,Worker)] interface NavigatorUAData {
++[
++    RuntimeEnabled=UserAgentClientHint,
++    Exposed=(Window,Worker)
++] interface NavigatorUAData {
+   [MeasureAs=NavigatorUAData_Brands] readonly attribute FrozenArray<NavigatorUABrandVersion> brands;
+   [MeasureAs=NavigatorUAData_Mobile]  readonly attribute boolean mobile;
+   [MeasureAs=NavigatorUAData_Platform] readonly attribute DOMString platform;
+diff --git a/third_party/blink/renderer/core/loader/frame_fetch_context.cc b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
+index d891fa16a6c..530d05e0e7b 100644
+--- a/third_party/blink/renderer/core/loader/frame_fetch_context.cc
++++ b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
+@@ -226,6 +226,8 @@ bool ShouldSendClientHint(const network::PermissionsPolicy& policy,
+                           const url::Origin& resource_origin,
+                           network::mojom::blink::WebClientHintsType type,
+                           const ClientHintsPreferences& hints_preferences) {
++  if (!RuntimeEnabledFeatures::UserAgentClientHintEnabled())
++    return false;
+   // For subresource requests, sending the hint in the fetch request based on
+   // the permissions policy.
+   if (!policy.IsFeatureEnabledForOrigin(
+@@ -730,7 +732,7 @@ void FrameFetchContext::AddClientHintsIfNecessary(
+   }
+ 
+   // Only send User Agent hints if the info is available
+-  if (ua) {
++  if (RuntimeEnabledFeatures::UserAgentClientHintEnabled() && ua) {
+     bool ua_changed = !last_ua_ || *last_ua_ != *ua;
+     if (ua_changed) {
+       last_ua_ = *ua;
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index 2b19592cc09..83e3fc84d2f 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -763,6 +763,11 @@
+       name: "AriaNotifyV2",
+       status: {"Android": "test", "Win": "test", "Mac": "test", "Linux": "test"},
+     },
++    {
++      name: "UserAgentClientHint",
++      status: "stable",
++      base_feature: "UserAgentClientHint",
++    },
+     {
+       name: "AriaRowColIndexText",
+       status: "stable",

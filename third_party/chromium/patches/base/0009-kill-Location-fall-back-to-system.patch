@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: thermatk <thermatk@thermatk.com>
+Date: Fri, 22 Jun 2018 17:05:17 +0200
+Subject: [PATCH 009/310] kill Location, fall back to system
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:kill-Location-fall-back-to-system.patch
+---
+ services/device/geolocation/BUILD.gn          | 1 -
+ services/device/public/cpp/device_features.cc | 3 ++-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/services/device/geolocation/BUILD.gn b/services/device/geolocation/BUILD.gn
+index 870d9f9464f..44485d88411 100644
+--- a/services/device/geolocation/BUILD.gn
++++ b/services/device/geolocation/BUILD.gn
+@@ -159,7 +159,6 @@ if (is_android) {
+       "android/java/src/org/chromium/device/geolocation/LocationProviderAdapter.java",
+       "android/java/src/org/chromium/device/geolocation/LocationProviderAndroid.java",
+       "android/java/src/org/chromium/device/geolocation/LocationProviderFactory.java",
+-      "android/java/src/org/chromium/device/geolocation/LocationProviderGmsCore.java",
+     ]
+ 
+     deps = [
+diff --git a/services/device/public/cpp/device_features.cc b/services/device/public/cpp/device_features.cc
+index e2313bd66c6..176556afa54 100644
+--- a/services/device/public/cpp/device_features.cc
++++ b/services/device/public/cpp/device_features.cc
+@@ -119,6 +119,7 @@ BASE_FEATURE(kLocationProviderManager, base::FEATURE_ENABLED_BY_DEFAULT);
+ #else
+ BASE_FEATURE(kLocationProviderManager, base::FEATURE_DISABLED_BY_DEFAULT);
+ #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
++SET_CROMITE_FEATURE_DISABLED(kLocationProviderManager);
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ // Enables registering & unregistering of the Battery Status Manager broadcast
+@@ -172,7 +173,7 @@ const base::FeatureParam<device::mojom::LocationProviderManagerMode>
+ const base::FeatureParam<device::mojom::LocationProviderManagerMode>
+     kLocationProviderManagerParam{
+         &kLocationProviderManager, "LocationProviderManagerMode",
+-        device::mojom::LocationProviderManagerMode::kNetworkOnly,
++        device::mojom::LocationProviderManagerMode::kPlatformOnly,
+         &location_provider_manager_mode_options};
+ #endif  // BUILDFLAG(IS_MAC)
+ 

@@ -1,10 +1,10 @@
 #!/bin/bash
 # The Mac's Linux-UI SpatiMesh build, on littleotter (docs/spatimesh-mac-port.md): copied to
-# ~/Developer/spatiand-chromium-mac/ozbuild.sh there and run as
+# ~/Developer/spatimesh-mac/ozbuild.sh there and run as
 #   nohup caffeinate -i -s bash ozbuild.sh > logs/build-ozoneN.log 2>&1 &
 # It goes on from what was built before, so a pass stopped by a shutdown is simply run again.
-cd ~/Developer/spatiand-chromium-mac/chromium/src
-export PATH="$HOME/Developer/spatiand-chromium-mac/depot_tools:$PWD/third_party/cpython3/host/bin:$PATH" DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0
+cd ~/Developer/spatimesh-mac/chromium/src
+export PATH="$HOME/Developer/spatimesh-mac/depot_tools:$PWD/third_party/cpython3/host/bin:$PATH" DEPOT_TOOLS_UPDATE=0 DEPOT_TOOLS_METRICS=0
 echo "start $(date)"
 # The keyboard's xkbcommon: the room's own (mac/xkbcommon/build.sh), linked into SpatiMesh as the
 # Beam Pro links the compositor's (its headers are kept in the tree: mac/wip).

@@ -1,25 +1,29 @@
 #!/bin/bash
-# SpatiMesh's Chromium: Chromium at the version Cromite's patches are made for, Cromite's patches,
-# then Spatiand's own (patches/, in order), built as Cromite builds it: for Linux (the Deck), with
-# CHROMIUM_TARGET=android for Android on arm64 (the Beam Pro), or with CHROMIUM_TARGET=mac on a Mac
-# itself, for macOS on Apple silicon (littleotter; the port is docs/spatimesh-mac-port.md).
+# SpatiMesh's Chromium: Chromium at the version pinned below, with Spatiand's patches (patches/,
+# README.md there: base/ first, then the numbered ones, and sub/ in the dependencies that are
+# repositories of their own), built for Linux (the Deck), with CHROMIUM_TARGET=android for Android
+# on arm64 (the Beam Pro), or with CHROMIUM_TARGET=mac on a Mac itself, for macOS on Apple silicon
+# (littleotter; the port is docs/spatimesh-mac-port.md). Every month the version moves to the newest
+# stable Chromium, on all three: docs/spatimesh.md, "The monthly update".
 #
 #   [CHROMIUM_TARGET=android] third_party/chromium/build.sh <work folder> [fetch|patch|build|package|all]
 #
-# Run on a Linux machine with ~120 GB free (deepmagpie: /media/shared/Linux/App/spatiand-chromium,
-# and spatiand-chromium-android: a tree cannot be synced for another target once the patches are in).
-# Each step runs inside an Ubuntu 22.04 root (as Cromite's own build image is), given as
-# CHROMIUM_ROOT (default: SpatiWorld's), with the work folder at /cr; bubblewrap, no root needed.
+# Run on a Linux machine with ~60 GB free for each tree (deepmagpie: /media/shared/Linux/App/
+# spatimesh-linux and spatimesh-android: Android's libc changes go into the tree itself).
+# Each step runs inside an Ubuntu 22.04 root, given as CHROMIUM_ROOT (default: SpatiWorld's), with
+# the work folder at /cr; bubblewrap, no root needed.
 # The result is <work>/package/spatiand-chromium.tar.gz: the browser and a launcher (run.sh)
 # that opens it as a Wayland window of the room. For Android, the same browser built for Android's
 # libc (android-libc/), <work>/package/spatimesh-android.tar.gz, for Spatiand's APK to carry.
+#
+# Never edit this file while a copy of it is running: bash reads a script as it goes.
 set -e
 
 # Every pinned version, in one place.
-# At the next update (the owner's decision, 2026-11-09): Web Bluetooth on by default on all three
-# platforms. Blink's WebBluetooth is "experimental" on Linux, which the Deck's and the Beam Pro's
-# builds are: make it stable there, and Cromite's bluetooth_guard2 ask instead of block. The
-# Mac's comes with its Chromium (docs/mac-plan.md). docs/spatimesh.md.
+# Still to do at an update (the owner's decision, 2026-11-09): Web Bluetooth on by default on all
+# three platforms. Blink's WebBluetooth is "experimental" on Linux, which the Deck's and the Beam
+# Pro's builds are: make it stable there, and base/'s "Disable Web Bluetooth by default" ask
+# instead of block. docs/spatimesh.md.
 CHROMIUM_VERSION=157.0.8103.78   # stable on Linux, 2026-11-11; Termux's patches (android-libc/termux) are made for 157
 DEPOT_TOOLS_COMMIT=7083aadfb
 
@@ -97,19 +101,20 @@ EOF
 patch_tree() {
     inside bash -s <<'EOF'
 set -e
-cd "$CR"
-# Cromite's own script (it folds v8, devtools-frontend, skia, perfetto and boringssl into the
-# main repository, which its patches need), without its apt step. gclient cannot sync this tree
-# afterwards: fetch again into a fresh folder for another version.
-# On a Mac, its one line of GNU sed by perl (mac/first-dashes.pl): macOS's sed cannot.
-if [ "$CHROMIUM_TARGET" = mac ]; then
-    sed -e '/^sudo apt install sed/d' -e 's#sed \$REPL#perl "$CR/first-dashes.pl" "FILE:$(basename $file)"#' \
-        $CR/cromite/tools/images/cromite-source/apply-cromite-patches.sh | bash
-else
-    sed '/^sudo apt install sed/d' $CR/cromite/tools/images/cromite-source/apply-cromite-patches.sh | bash
-fi
+# Spatiand's patches, all of them its own to keep (patches/README.md): base/ first -- the privacy
+# and ad-blocking changes taken over from Cromite at Chromium 153, with the files no Linux-UI build
+# compiles left out -- then the numbered ones. Those of base/ that reach into a dependency which is
+# a repository of its own (V8, Skia, DevTools, BoringSSL, Perfetto) are in sub/<name>/, applied and
+# committed in the folder its PATH file names, so that gclient can still sync the tree for the
+# next version.
 cd $CR/chromium/src
-for p in $CR/spatiand-patches/*.patch; do git am -q "$p"; done
+for p in $CR/spatiand-patches/base/*.patch $CR/spatiand-patches/*.patch; do git am -q "$p"; done
+for d in $CR/spatiand-patches/sub/*/; do
+    [ -d "$d" ] || continue
+    ( cd "$CR/chromium/src/$(cat "$d/PATH")"
+      git config user.email "spatiand@localhost"; git config user.name "Spatiand build"
+      for p in "$d"/*.patch; do git am -q "$p"; done )
+done
 # For Android's libc, what Termux changes and then ours (android-libc/README.md). With patch(1),
 # fuzz and all, as Termux applies them: some reach into dependencies that are repositories of
 # their own, where git am cannot follow.
@@ -202,7 +207,7 @@ set -e
 cd /cr/chromium/src
 # Chromium's FFmpeg for the system's, as for Linux: Spatiand's.
 grep -q spatiand_ffmpeg third_party/ffmpeg/BUILD.gn || python3 build/linux/unbundle/replace_gn_files.py --system-libraries ffmpeg
-# Cromite's arguments, its Linux ones changed in place for arm64 on Android's libc (GN refuses a
+# The arguments of args.gn, its Linux ones changed in place for arm64 on Android's libc (GN refuses a
 # value set twice): no sysroot of Debian's, no PGO (there is no profile for this), and no software
 # AV1, as on the Deck -- nor any AV1 until Android's decoder is wired in.
 ARGS=$(sed -e 's/^  target_cpu = "x64"/  target_cpu = "arm64"/' \
@@ -210,7 +215,7 @@ ARGS=$(sed -e 's/^  target_cpu = "x64"/  target_cpu = "arm64"/' \
            -e 's/^  chrome_pgo_phase = 2 # enable pgo/  chrome_pgo_phase = 0/' \
            -e 's/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/' \
            -e 's/^enable_av1_decoder=true/enable_av1_decoder=false/' \
-           /cr/cromite/build/cromite.gn_args)
+           /cr/args.gn)
 CLANG=/cr/chromium/src/third_party/llvm-build/Release+Asserts
 mkdir -p out/android
 cat > out/android/args.gn <<GN
@@ -287,7 +292,7 @@ GN
 gn gen out/android
 # The machine also serves spatiand-host: the lowest priority. Everything that fails, not only the first.
 nice -n 19 ionice -c 3 python3 /cr/depot_tools/siso.py ninja -C out/android chrome --offline -k 0
-cp /cr/cromite/build/RELEASE out/android/
+echo "$CHROMIUM_VERSION" > out/android/RELEASE
 EOF
 }
 
@@ -307,7 +312,7 @@ cd $CR/chromium/src
 mkdir -p out/mac
 ln -sfn ../../third_party/spatiand_ffmpeg/lib out/mac/ffmpeg
 grep -q spatiand_ffmpeg third_party/ffmpeg/BUILD.gn || python3 build/linux/unbundle/replace_gn_files.py --system-libraries ffmpeg
-# Cromite's arguments as its Linux build has them, for Apple silicon, changed in place (GN refuses a
+# The arguments of args.gn as the Linux build has them, for Apple silicon, changed in place (GN refuses a
 # value set twice): Chromium's Mac profile for PGO, no symbols, the PDF viewer; no software AV1 (the
 # owner's choice, as on the Deck: the M6 decodes AV1 itself); Dolby by Spatiand's FFmpeg. Warnings
 # are not errors: Xcode's SDK is newer than this Chromium's. Linked by Apple's ld, not Chromium's
@@ -317,14 +322,14 @@ ARGS=$(sed -e 's/^chrome_pgo_phase=0/chrome_pgo_phase=2/' \
            -e 's/^symbol_level=1/symbol_level=0/' \
            -e 's/^treat_warnings_as_errors=true/treat_warnings_as_errors=false/' \
            -e 's/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/' \
-           $CR/cromite/build/cromite.gn_args)
+           $CR/args.gn)
 gn gen --args="target_os = \"mac\" $ARGS target_cpu = \"arm64\" enable_pdf = true enable_plugins = true enable_platform_ac3_eac3_audio = true use_lld = false use_thin_lto = false" out/mac
 # A real python3 first: the tools the build runs by "env python3" (the linker's driver) otherwise
 # get macOS's stub, which looks for one in Xcode, and Xcode has none.
 export PATH="$CR/chromium/src/third_party/cpython3/host/bin:$PATH"
 # -k 0: on with everything else past a failure, so that a port sees all of what fails at once.
 nice -n 10 python3 $CR/depot_tools/siso.py ninja -C out/mac -k 0 chrome --offline
-cp $CR/cromite/build/RELEASE out/mac/
+echo "$CHROMIUM_VERSION" > out/mac/RELEASE
 EOF
 }
 
@@ -348,17 +353,17 @@ mkdir -p out/deck
 ln -sfn ../../third_party/spatiand_ffmpeg/lib out/deck/ffmpeg
 # Chromium's own way to build on an FFmpeg of the system's: //third_party/ffmpeg becomes the shim.
 grep -q spatiand_ffmpeg third_party/ffmpeg/BUILD.gn || python3 build/linux/unbundle/replace_gn_files.py --system-libraries ffmpeg
-# Cromite's Linux arguments; Spatiand's changes made in place (GN refuses a value set twice):
+# args.gn's Linux arguments; this target's changes made in place (GN refuses a value set twice):
 # no software AV1 (the owner's choice) -- AV1 is read and offered, and decoded only on the GPU by
 # Spatiand's FFmpeg (patch 0006; the Deck's GPU decodes AV1).
-ARGS=$(sed -e "s/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/" /cr/cromite/build/cromite.gn_args)
+ARGS=$(sed -e "s/^enable_dav1d_decoder=true/enable_dav1d_decoder=false/" /cr/args.gn)
 # Dolby Digital and Dolby Digital Plus, decoded by Spatiand's FFmpeg.
 ARGS="$ARGS
 enable_platform_ac3_eac3_audio = true"
 gn gen --args="target_os = \"linux\" $ARGS target_cpu = \"x64\" " out/deck
 # The machine also serves spatiand-host: the lowest priority.
 nice -n 19 ionice -c 3 python3 /cr/depot_tools/siso.py ninja -C out/deck chrome chrome_sandbox --offline
-cp /cr/cromite/build/RELEASE out/deck/
+echo "$CHROMIUM_VERSION" > out/deck/RELEASE
 EOF
 }
 
@@ -406,8 +411,9 @@ package_android() {
     echo "packaged $(du -sh "$P" | cut -f1) in $P.tar.gz"
 }
 
-mkdir -p "$work/spatiand-patches"
-cp "$here"/patches/*.patch "$work/spatiand-patches/"
+rm -rf "$work/spatiand-patches"; mkdir -p "$work/spatiand-patches"
+cp -a "$here"/patches/. "$work/spatiand-patches/"
+[ -f "$here/args.gn" ] && cp "$here/args.gn" "$work/args.gn"
 rm -rf "$work/android-libc"; cp -a "$here/android-libc" "$work/android-libc"
 cp "$here/mac/first-dashes.pl" "$work/first-dashes.pl"
 rm -rf "$work/mac-patches"; mkdir -p "$work/mac-patches"; cp "$here"/mac/0*.patch "$work/mac-patches/"

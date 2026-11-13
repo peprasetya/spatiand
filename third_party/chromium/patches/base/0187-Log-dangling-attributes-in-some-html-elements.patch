@@ -1,0 +1,364 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 5 Jun 2023 17:06:03 +0000
+Subject: [PATCH 187/310] Log dangling attributes in some html elements
+
+Log for iframes and the base tag all attributes
+containing newlines or the less-then sign that can be exploited
+to extract or send otherwise inaccessible information.
+under enable-log-dangling-attributes about flag
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Log-dangling-attributes-in-some-html-elements.patch
+---
+ ...gling-attributes-in-some-html-elements.inc |  8 +++++++
+ .../blink/renderer/core/dom/document.cc       | 18 ++++++++++++++++
+ .../blink/renderer/core/dom/element.cc        | 20 +++++++++++++++++-
+ third_party/blink/renderer/core/dom/element.h |  3 ++-
+ .../editing/serializers/markup_formatter.cc   | 12 +++++++++++
+ .../core/html/forms/html_form_element.cc      |  2 +-
+ .../renderer/core/html/html_base_element.cc   |  6 ++++++
+ .../renderer/core/html/html_base_element.h    |  2 ++
+ .../core/html/html_frame_element_base.cc      | 10 +++++++++
+ .../renderer/core/html/html_iframe_element.cc | 16 ++++++++++++++
+ .../renderer/core/html/html_iframe_element.h  |  2 ++
+ .../core/loader/frame_load_request.cc         |  9 ++++++++
+ .../blink/renderer/core/page/frame_tree.cc    | 21 +++++++++++++++++++
+ .../platform/runtime_enabled_features.json5   |  6 ++++++
+ 14 files changed, 132 insertions(+), 3 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Log-dangling-attributes-in-some-html-elements.inc
+
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Log-dangling-attributes-in-some-html-elements.inc b/cromite_flags/chrome/browser/about_flags_cc/Log-dangling-attributes-in-some-html-elements.inc
+new file mode 100644
+index 00000000000..a624e9e8aa8
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Log-dangling-attributes-in-some-html-elements.inc
+@@ -0,0 +1,8 @@
++#ifdef FLAG_SECTION
++
++    {"enable-log-dangling-attributes",
++     "Log some dangling attributes",
++     "NOTE: log only", kOsAll,
++     FEATURE_VALUE_TYPE(blink::features::kLogDanglingAttributes)},
++
++#endif
+diff --git a/third_party/blink/renderer/core/dom/document.cc b/third_party/blink/renderer/core/dom/document.cc
+index bc422547f0b..ac530a0a97b 100644
+--- a/third_party/blink/renderer/core/dom/document.cc
++++ b/third_party/blink/renderer/core/dom/document.cc
+@@ -5160,6 +5160,14 @@ void Document::ProcessBaseElement() {
+   KURL base_element_url;
+   if (!href.IsNull()) {
+     StringView stripped_href = StripLeadingAndTrailingHtmlSpaces(href);
++    if (stripped_href.contains('\n') || stripped_href.contains('<')) {
++      AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++          mojom::ConsoleMessageSource::kSecurity,
++          mojom::ConsoleMessageLevel::kInfo,
++          "Bromite Dangling Markup Prevention: '" + stripped_href +
++              "' is not allowed as base href value."));
++      //stripped_href = g_empty_atom;
++    }
+     if (!stripped_href.empty())
+       base_element_url = KURL(FallbackBaseURL(), stripped_href);
+   }
+@@ -5177,6 +5185,14 @@ void Document::ProcessBaseElement() {
+         !GetExecutionContext()->GetSecurityOrigin()->CanRequest(
+             base_element_url)) {
+       UseCounter::Count(*this, WebFeature::kBaseWithCrossOriginHref);
++      if (RuntimeEnabledFeatures::LogDanglingAttributesEnabled()) {
++        AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++            mojom::ConsoleMessageSource::kSecurity,
++            mojom::ConsoleMessageLevel::kInfo,
++            "Bromite Dangling Markup Prevention: '" + base_element_url.GetString() +
++                "' URL is cross origin and cannot be used as base URLs for a document."));
++      }
++      // base_element_url = BlankURL();
+     }
+   }
+ 
+@@ -5210,6 +5226,8 @@ void Document::ProcessBaseElement() {
+       UseCounter::Count(*this, WebFeature::kBaseWithOpenBracketInTarget);
+     }
+     base_target_ = target;
++    if (target.contains('\n') || target.contains('\r') || target.contains('<'))
++      base_target_ = g_null_atom;
+   } else {
+     base_target_ = g_null_atom;
+   }
+diff --git a/third_party/blink/renderer/core/dom/element.cc b/third_party/blink/renderer/core/dom/element.cc
+index 755950af16f..bfc19f87092 100644
+--- a/third_party/blink/renderer/core/dom/element.cc
++++ b/third_party/blink/renderer/core/dom/element.cc
+@@ -4187,8 +4187,26 @@ void Element::StripScriptingAttributes(
+   attribute_vector.Shrink(destination);
+ }
+ 
++void Element::RemoveDanglingAttributes(
++    Vector<Attribute, kAttributePrealloc>& attribute_vector) {
++  for (auto& attribute : attribute_vector) {
++    auto value = attribute.Value();
++    if (value.contains('\n') || value.contains('<')) {
++      if (RuntimeEnabledFeatures::LogDanglingAttributesEnabled()) {
++        GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++            mojom::ConsoleMessageSource::kSecurity,
++            mojom::ConsoleMessageLevel::kWarning,
++            "'" + value + "' is removed from attribute '" +
++                attribute.GetName().ToString() + "' of element '" +
++                tagName() + "' as may contains dangling markup"));
++      }
++      //attribute.SetValue(g_empty_atom);
++    }
++  }
++}
++
+ void Element::ParserSetAttributes(
+-    const Vector<Attribute, kAttributePrealloc>& attribute_vector) {
++    Vector<Attribute, kAttributePrealloc>& attribute_vector) {
+   // We must start with a newly-created element.  If we don't, it would not be
+   // safe to batch the AttributeChanged notifications the way we do, since on
+   // elements that are not newly-created, AttributeChanged might run script.
+diff --git a/third_party/blink/renderer/core/dom/element.h b/third_party/blink/renderer/core/dom/element.h
+index 3f61c16dac7..70a2bc582f7 100644
+--- a/third_party/blink/renderer/core/dom/element.h
++++ b/third_party/blink/renderer/core/dom/element.h
+@@ -888,7 +888,8 @@ class CORE_EXPORT Element : public ContainerNode {
+   virtual bool HasLegalLinkAttribute(const QualifiedName&) const;
+ 
+   // Only called by the parser immediately after element construction.
+-  void ParserSetAttributes(const Vector<Attribute, kAttributePrealloc>&);
++  virtual void ParserSetAttributes(Vector<Attribute, kAttributePrealloc>&);
++  void RemoveDanglingAttributes(Vector<Attribute, kAttributePrealloc>&);
+ 
+   // Remove attributes that might introduce scripting from the vector leaving
+   // the element unchanged.
+diff --git a/third_party/blink/renderer/core/editing/serializers/markup_formatter.cc b/third_party/blink/renderer/core/editing/serializers/markup_formatter.cc
+index 4dd00344464..0e3f151cafe 100644
+--- a/third_party/blink/renderer/core/editing/serializers/markup_formatter.cc
++++ b/third_party/blink/renderer/core/editing/serializers/markup_formatter.cc
+@@ -29,6 +29,8 @@
+ 
+ #include "base/memory/raw_ptr_exclusion.h"
+ #include "third_party/blink/renderer/core/dom/cdata_section.h"
++#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
++#include "third_party/blink/renderer/core/inspector/console_message.h"
+ #include "third_party/blink/renderer/core/dom/comment.h"
+ #include "third_party/blink/renderer/core/dom/document.h"
+ #include "third_party/blink/renderer/core/dom/document_fragment.h"
+@@ -247,6 +249,16 @@ void MarkupFormatter::AppendEndMarkup(const Element& element,
+ void MarkupFormatter::AppendAttributeValue(const String& attribute,
+                                            SerializationType type,
+                                            StringBuilder& result) {
++  // https://chromium-review.googlesource.com/c/chromium/src/+/6905283
++  // if (RuntimeEnabledFeatures::LogDanglingAttributesEnabled()) {
++  //   if (attribute.Contains('<') || attribute.Contains('>')) {
++  //     document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++  //             mojom::ConsoleMessageSource::kSecurity,
++  //             mojom::ConsoleMessageLevel::kInfo,
++  //             "Bromite Dangling Markup Prevention: '" + attribute +
++  //                 "' is not allowed as parameter value."));
++  //   }
++  // }
+   EntityMask entity_mask = type == SerializationType::kHtml
+                                ? kEntityMaskInHtmlAttributeValue
+                                : kEntityMaskInAttributeValue;
+diff --git a/third_party/blink/renderer/core/html/forms/html_form_element.cc b/third_party/blink/renderer/core/html/forms/html_form_element.cc
+index 6163aeaff30..ead00f88a09 100644
+--- a/third_party/blink/renderer/core/html/forms/html_form_element.cc
++++ b/third_party/blink/renderer/core/html/forms/html_form_element.cc
+@@ -703,7 +703,7 @@ void HTMLFormElement::PrepareForSubmission(const Event* event,
+     if (form_control_element && form_control_element->BlocksFormSubmission()) {
+       UseCounter::Count(GetDocument(),
+                         WebFeature::kFormSubmittedWithUnclosedFormControl);
+-      if (RuntimeEnabledFeatures::UnclosedFormControlIsInvalidEnabled()) {
++      if (((true)) || RuntimeEnabledFeatures::UnclosedFormControlIsInvalidEnabled()) {
+         String tag_name = To<HTMLFormControlElement>(element)->tagName();
+         GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
+             mojom::ConsoleMessageSource::kSecurity,
+diff --git a/third_party/blink/renderer/core/html/html_base_element.cc b/third_party/blink/renderer/core/html/html_base_element.cc
+index 2a233fef364..edf48c348ab 100644
+--- a/third_party/blink/renderer/core/html/html_base_element.cc
++++ b/third_party/blink/renderer/core/html/html_base_element.cc
+@@ -64,6 +64,12 @@ bool HTMLBaseElement::IsURLAttribute(const Attribute& attribute) const {
+          HTMLElement::IsURLAttribute(attribute);
+ }
+ 
++void HTMLBaseElement::ParserSetAttributes(
++    Vector<Attribute, kAttributePrealloc>& attribute_vector) {
++  Element::RemoveDanglingAttributes(attribute_vector);
++  Element::ParserSetAttributes(attribute_vector);
++}
++
+ String HTMLBaseElement::href() const {
+   // This does not use the GetURLAttribute function because that will resolve
+   // relative to the document's base URL; base elements like this one can be
+diff --git a/third_party/blink/renderer/core/html/html_base_element.h b/third_party/blink/renderer/core/html/html_base_element.h
+index 3a74249316e..54411fc1bfa 100644
+--- a/third_party/blink/renderer/core/html/html_base_element.h
++++ b/third_party/blink/renderer/core/html/html_base_element.h
+@@ -41,6 +41,8 @@ class CORE_EXPORT HTMLBaseElement final : public HTMLElement {
+   String href() const;
+   void setHref(const AtomicString&);
+ 
++  void ParserSetAttributes(Vector<Attribute, kAttributePrealloc>&) override;
++
+  private:
+   bool IsURLAttribute(const Attribute&) const override;
+   void ParseAttribute(const AttributeModificationParams&) override;
+diff --git a/third_party/blink/renderer/core/html/html_frame_element_base.cc b/third_party/blink/renderer/core/html/html_frame_element_base.cc
+index 5a885b4e223..b97c93d519e 100644
+--- a/third_party/blink/renderer/core/html/html_frame_element_base.cc
++++ b/third_party/blink/renderer/core/html/html_frame_element_base.cc
+@@ -138,6 +138,16 @@ void HTMLFrameElementBase::ParseAttribute(
+     frame_name_ = value;
+   } else if (name == html_names::kNameAttr) {
+     frame_name_ = value;
++    if (value.contains('\n') || value.contains('<')) {
++      if (RuntimeEnabledFeatures::LogDanglingAttributesEnabled()) {
++        GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++            mojom::ConsoleMessageSource::kSecurity,
++            mojom::ConsoleMessageLevel::kInfo,
++            "Bromite Dangling Markup Prevention: '" + frame_name_ +
++                "' is not allowed as name value."));
++      }
++      //frame_name_ = g_empty_atom;
++    }
+   } else if (name == html_names::kMarginwidthAttr) {
+     SetMarginWidth(ParseMarginAttribute(value));
+   } else if (name == html_names::kMarginheightAttr) {
+diff --git a/third_party/blink/renderer/core/html/html_iframe_element.cc b/third_party/blink/renderer/core/html/html_iframe_element.cc
+index 932e1814dc0..8d943e1f4bb 100644
+--- a/third_party/blink/renderer/core/html/html_iframe_element.cc
++++ b/third_party/blink/renderer/core/html/html_iframe_element.cc
+@@ -209,6 +209,12 @@ void HTMLIFrameElement::CollectStyleForPresentationAttribute(
+   }
+ }
+ 
++void HTMLIFrameElement::ParserSetAttributes(
++    Vector<Attribute, kAttributePrealloc>& attribute_vector) {
++  Element::RemoveDanglingAttributes(attribute_vector);
++  Element::ParserSetAttributes(attribute_vector);
++}
++
+ void HTMLIFrameElement::ParseAttribute(
+     const AttributeModificationParams& params) {
+   const QualifiedName& name = params.name;
+@@ -223,6 +229,16 @@ void HTMLIFrameElement::ParseAttribute(
+     }
+     AtomicString old_name = name_;
+     name_ = value;
++    if (name_.contains('\n') || name_.contains('<')) {
++      if (RuntimeEnabledFeatures::LogDanglingAttributesEnabled()) {
++        GetDocument().AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++            mojom::ConsoleMessageSource::kSecurity,
++            mojom::ConsoleMessageLevel::kInfo,
++            "Bromite Dangling Markup Prevention: '" + name_ +
++                "' is not allowed as name value."));
++      }
++      //name_ = g_empty_atom;
++    }
+     if (name_ != old_name) {
+       FrameOwnerPropertiesChanged();
+       should_call_did_change_attributes = true;
+diff --git a/third_party/blink/renderer/core/html/html_iframe_element.h b/third_party/blink/renderer/core/html/html_iframe_element.h
+index e8f1e6ec013..e8d8f278ec8 100644
+--- a/third_party/blink/renderer/core/html/html_iframe_element.h
++++ b/third_party/blink/renderer/core/html/html_iframe_element.h
+@@ -73,6 +73,8 @@ class CORE_EXPORT HTMLIFrameElement : public HTMLFrameElementBase,
+   String srcdoc() const;
+   void setSrcdoc(const V8UnionStringOrTrustedHTML*, ExceptionState&);
+ 
++  void ParserSetAttributes(Vector<Attribute, kAttributePrealloc>&) override;
++
+  private:
+   void SetCollapsed(bool) override;
+ 
+diff --git a/third_party/blink/renderer/core/loader/frame_load_request.cc b/third_party/blink/renderer/core/loader/frame_load_request.cc
+index 36282f866ed..8e1b21b9540 100644
+--- a/third_party/blink/renderer/core/loader/frame_load_request.cc
++++ b/third_party/blink/renderer/core/loader/frame_load_request.cc
+@@ -11,6 +11,7 @@
+ #include "third_party/blink/public/platform/web_url_request.h"
+ #include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
+ #include "third_party/blink/renderer/core/events/current_input_event.h"
++#include "third_party/blink/renderer/core/inspector/console_message.h"
+ #include "third_party/blink/renderer/core/fileapi/public_url_manager.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+ #include "third_party/blink/renderer/core/frame/local_frame.h"
+@@ -179,6 +180,14 @@ void FrameLoadRequest::ResolveBlobURLIfNeeded() {
+ const AtomicString& FrameLoadRequest::CleanNavigationTarget(
+     const AtomicString& target) const {
+   if (ContainsNewLineAndLessThan(target)) {
++    if (RuntimeEnabledFeatures::LogDanglingAttributesEnabled()) {
++      if (origin_window_->GetFrame() && origin_window_->GetFrame()->GetDocument()) {
++            origin_window_->GetFrame()->GetDocument()->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++          mojom::ConsoleMessageSource::kSecurity,
++          mojom::ConsoleMessageLevel::kWarning,
++          "Bromite Dangling Markup Prevention: '" + target + "' is not allowed as navigation target"));
++      }
++    }
+     LogDanglingMarkupHistogram(origin_window_, target);
+     if (RuntimeEnabledFeatures::RemoveDanglingMarkupInTargetEnabled()) {
+       DEFINE_STATIC_LOCAL(const AtomicString, blank, ("_blank"));
+diff --git a/third_party/blink/renderer/core/page/frame_tree.cc b/third_party/blink/renderer/core/page/frame_tree.cc
+index 0dd29716324..33e549fe23b 100644
+--- a/third_party/blink/renderer/core/page/frame_tree.cc
++++ b/third_party/blink/renderer/core/page/frame_tree.cc
+@@ -22,6 +22,9 @@
+ 
+ #include "base/compiler_specific.h"
+ #include "third_party/blink/renderer/core/dom/document.h"
++#include "third_party/blink/renderer/core/execution_context/execution_context.h"
++#include "third_party/blink/renderer/platform/heap/garbage_collected.h"
++#include "third_party/blink/renderer/core/inspector/console_message.h"
+ #include "third_party/blink/renderer/core/frame/frame_client.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+ #include "third_party/blink/renderer/core/frame/local_frame.h"
+@@ -43,6 +46,11 @@ namespace {
+ 
+ const unsigned kInvalidChildCount = ~0U;
+ 
++bool ContainsNewLineAndLessThan(const AtomicString& target) {
++  return (target.contains('\n') || target.contains('\r') ||
++          target.contains('\t')) && target.contains('<');
++}
++
+ }  // namespace
+ 
+ namespace features {
+@@ -245,6 +253,19 @@ FrameTree::FindResult FrameTree::FindOrCreateFrameForNavigation(
+   if (request.GetNavigationPolicy() != kNavigationPolicyCurrentTab)
+     return FindResult(current_frame, false);
+ 
++  if (ContainsNewLineAndLessThan(name)) {
++    // if the name contains a \n or <, the search is always deactivated
++    if (RuntimeEnabledFeatures::LogDanglingAttributesEnabled()) {
++      if (current_frame->GetDocument()) {
++        current_frame->GetDocument()->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
++          mojom::ConsoleMessageSource::kSecurity,
++          mojom::ConsoleMessageLevel::kWarning,
++          "Bromite Dangling Markup Prevention: '" + name.GetString() + "' is not allowed as frame name destination"));
++      }
++      // return FindResult(nullptr, false);
++    }
++  }
++
+   const KURL& url = request.GetResourceRequest().Url();
+   Frame* frame = FindFrameForNavigationInternal(name, url, &request);
+   bool new_window = false;
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index ca38d0858d9..56c3ea3f3c9 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -4258,6 +4258,12 @@
+       name: "MacFontWeightFromOS2",
+       status: "stable",
+     },
++    {
++      // Enables log of some dangling attributes
++      // on the javascript console
++      name: "LogDanglingAttributes",
++      status: "experimental"
++    },
+     {
+       name: "MachineLearningNeuralNetwork",
+       // Enabled by webnn::mojom::features::kWebMachineLearningNeuralNetwork.

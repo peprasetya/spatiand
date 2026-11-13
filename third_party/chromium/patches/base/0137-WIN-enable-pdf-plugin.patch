@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 28 Dec 2022 15:46:38 +0000
+Subject: [PATCH 137/310] WIN enable pdf plugin
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:WIN-enable-pdf-plugin.patch
+---
+ third_party/blink/renderer/core/frame/local_frame.cc | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/third_party/blink/renderer/core/frame/local_frame.cc b/third_party/blink/renderer/core/frame/local_frame.cc
+index 87d8658811a..976be40ac78 100644
+--- a/third_party/blink/renderer/core/frame/local_frame.cc
++++ b/third_party/blink/renderer/core/frame/local_frame.cc
+@@ -2487,7 +2487,9 @@ WebAutofillClient* LocalFrame::GetAutofillClient() {
+ }
+ 
+ PluginData* LocalFrame::GetPluginData() const {
+-  return nullptr;
++  if (!Loader().AllowPlugins())
++    return nullptr;
++  return GetPage()->GetPluginData();
+ }
+ 
+ ScriptInitiationMonitor* LocalFrame::GetScriptInitiationMonitor() const {

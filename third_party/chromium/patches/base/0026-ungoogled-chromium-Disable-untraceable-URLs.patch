@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Mon, 12 Feb 2018 21:28:11 +0100
+Subject: [PATCH 026/310] ungoogled-chromium: Disable untraceable URLs
+
+Disable additional URLs that are not caught by the "trk" scheme
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:ungoogled-chromium-Disable-untraceable-URLs.patch
+---
+ rlz/lib/financial_ping.cc | 5 +++--
+ rlz/lib/lib_values.cc     | 1 -
+ rlz/lib/lib_values.h      | 1 -
+ 3 files changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/rlz/lib/financial_ping.cc b/rlz/lib/financial_ping.cc
+index 23b505ddb31..46fa8caf9f7 100644
+--- a/rlz/lib/financial_ping.cc
++++ b/rlz/lib/financial_ping.cc
+@@ -230,6 +230,7 @@ bool FinancialPing::SetURLLoaderFactory(
+ 
+ void PingRlzServer(std::string url,
+                    scoped_refptr<RefCountedWaitableEvent> event) {
++  if ((true)) return;
+   // Copy the pointer to stack because g_URLLoaderFactory may be set to NULL
+   // in different thread. The instance is guaranteed to exist while
+   // the method is running.
+@@ -292,13 +293,13 @@ void PingRlzServer(std::string url,
+ 
+ FinancialPing::PingResponse FinancialPing::PingServer(const char* request,
+                                                       std::string* response) {
+-  if (!response)
++  if ((true))
+     return PING_FAILURE;
+ 
+   response->clear();
+ 
+   std::string url =
+-      base::StringPrintf("https://%s%s", kFinancialServer, request);
++      base::StringPrintf("about:blank");
+ 
+   // Use a waitable event to cause this function to block, to match the
+   // wininet implementation.
+diff --git a/rlz/lib/lib_values.cc b/rlz/lib/lib_values.cc
+index 21533afa755..8f71842a28e 100644
+--- a/rlz/lib/lib_values.cc
++++ b/rlz/lib/lib_values.cc
+@@ -43,7 +43,6 @@ const char kSetDccResponseVariable[] = "set_dcc";
+ //
+ 
+ const char kFinancialPingPath[] = "/tools/pso/ping";
+-const char kFinancialServer[]   = "clients1.google.com";
+ const int kFinancialPort = 443;
+ 
+ // Ping times in 100-nanosecond intervals.
+diff --git a/rlz/lib/lib_values.h b/rlz/lib/lib_values.h
+index bdf7c626996..13ba3d65924 100644
+--- a/rlz/lib/lib_values.h
++++ b/rlz/lib/lib_values.h
+@@ -75,7 +75,6 @@ extern const char kSetDccResponseVariable[];
+ //
+ 
+ extern const char kFinancialPingPath[];
+-extern const char kFinancialServer[];
+ 
+ extern const int kFinancialPort;
+ 

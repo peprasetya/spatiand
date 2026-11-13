@@ -1,0 +1,293 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Tue, 28 Jul 2020 12:28:58 +0200
+Subject: [PATCH 077/310] Block gateway attacks via websockets
+
+This approach is not comprehensive, see also:
+* https://bugs.chromium.org/p/chromium/issues/detail?id=590714
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Block-gateway-attacks-via-websockets.patch
+---
+ .../execution_context/execution_context.h     |  1 +
+ .../renderer/core/loader/base_fetch_context.h |  2 ++
+ .../core/loader/frame_fetch_context.cc        | 20 ++++++++++++
+ .../core/loader/frame_fetch_context.h         |  3 ++
+ .../core/loader/worker_fetch_context.cc       | 21 +++++++++++++
+ .../core/loader/worker_fetch_context.h        |  3 ++
+ .../core/workers/installed_scripts_manager.cc |  2 +-
+ .../background_fetch_manager.cc               | 31 +++++++++++++++++++
+ .../websockets/websocket_channel_impl.cc      |  6 ++++
+ .../modules/websockets/websocket_common.cc    | 30 ++++++++++++++++++
+ .../modules/websockets/websocket_common.h     |  4 +++
+ 11 files changed, 122 insertions(+), 1 deletion(-)
+
+diff --git a/third_party/blink/renderer/core/execution_context/execution_context.h b/third_party/blink/renderer/core/execution_context/execution_context.h
+index 5287f6128b2..7e039f43153 100644
+--- a/third_party/blink/renderer/core/execution_context/execution_context.h
++++ b/third_party/blink/renderer/core/execution_context/execution_context.h
+@@ -402,6 +402,7 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
+   void SetAddressSpace(network::mojom::blink::IPAddressSpace ip_address_space);
+ 
+   HeapObserverList<ContextLifecycleObserver>& ContextLifecycleObserverSet();
++  String addressSpaceForBindings() const;
+   unsigned ContextLifecycleStateObserverCountForTesting() const;
+ 
+   // Implementation of WindowOrWorkerGlobalScope.crossOriginIsolated.
+diff --git a/third_party/blink/renderer/core/loader/base_fetch_context.h b/third_party/blink/renderer/core/loader/base_fetch_context.h
+index b5443c323a4..b4a3efc1e7f 100644
+--- a/third_party/blink/renderer/core/loader/base_fetch_context.h
++++ b/third_party/blink/renderer/core/loader/base_fetch_context.h
+@@ -88,6 +88,8 @@ class CORE_EXPORT BaseFetchContext : public FetchContext {
+   virtual bool ShouldBlockWebSocketByMixedContentCheck(
+       const KURL&,
+       network::mojom::blink::IPAddressSpace target_address_space) const = 0;
++  virtual bool ShouldBlockGateWayAttacks(
++      network::mojom::IPAddressSpace requestor_space, const KURL&) const = 0;
+   virtual std::unique_ptr<WebSocketHandshakeThrottle>
+   CreateWebSocketHandshakeThrottle() = 0;
+ 
+diff --git a/third_party/blink/renderer/core/loader/frame_fetch_context.cc b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
+index 17fce4d9e02..d891fa16a6c 100644
+--- a/third_party/blink/renderer/core/loader/frame_fetch_context.cc
++++ b/third_party/blink/renderer/core/loader/frame_fetch_context.cc
+@@ -1132,6 +1132,26 @@ bool FrameFetchContext::ShouldBlockRequestByInspector(const KURL& url) const {
+   return should_block_request;
+ }
+ 
++bool FrameFetchContext::ShouldBlockGateWayAttacks(network::mojom::IPAddressSpace requestor_space, const KURL& request_url) const {
++  // TODO(mkwst): This only checks explicit IP addresses. We'll have to move
++  // all this up to //net and //content in order to have any real impact on
++  // gateway attacks. That turns out to be a TON of work (crbug.com/378566).
++  if (requestor_space == network::mojom::IPAddressSpace::kUnknown)
++    requestor_space = network::mojom::IPAddressSpace::kPublic;
++  network::mojom::IPAddressSpace target_space =
++      network::mojom::IPAddressSpace::kPublic;
++  if (network_utils::IsReservedIPAddress(request_url.Host()))
++    target_space = network::mojom::IPAddressSpace::kLocal;
++  if (SecurityOrigin::Create(request_url)->IsLocalhost())
++    target_space = network::mojom::IPAddressSpace::kLocal;
++
++  bool is_external_request = requestor_space > target_space;
++  if (is_external_request)
++    return true;
++
++  return false;
++}
++
+ void FrameFetchContext::DispatchDidBlockRequest(
+     const ResourceRequest& resource_request,
+     const ResourceLoaderOptions& options,
+diff --git a/third_party/blink/renderer/core/loader/frame_fetch_context.h b/third_party/blink/renderer/core/loader/frame_fetch_context.h
+index 914960471c8..8ef950db977 100644
+--- a/third_party/blink/renderer/core/loader/frame_fetch_context.h
++++ b/third_party/blink/renderer/core/loader/frame_fetch_context.h
+@@ -199,6 +199,9 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
+       network::mojom::blink::IPAddressSpace) const override;
+   std::unique_ptr<WebSocketHandshakeThrottle> CreateWebSocketHandshakeThrottle()
+       override;
++  bool ShouldBlockGateWayAttacks(
++      network::mojom::IPAddressSpace requestor_space,
++      const KURL&) const override;
+   bool ShouldBlockFetchByMixedContentCheck(
+       mojom::blink::RequestContextType request_context,
+       network::mojom::blink::IPAddressSpace target_address_space,
+diff --git a/third_party/blink/renderer/core/loader/worker_fetch_context.cc b/third_party/blink/renderer/core/loader/worker_fetch_context.cc
+index 8173b168830..1945140c552 100644
+--- a/third_party/blink/renderer/core/loader/worker_fetch_context.cc
++++ b/third_party/blink/renderer/core/loader/worker_fetch_context.cc
+@@ -26,6 +26,7 @@
+ #include "third_party/blink/renderer/platform/loader/fetch/url_loader/url_loader_factory.h"
+ #include "third_party/blink/renderer/platform/loader/fetch/worker_resource_timing_notifier.h"
+ #include "third_party/blink/renderer/platform/network/network_state_notifier.h"
++#include "third_party/blink/renderer/platform/network/network_utils.h"
+ #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+ #include "third_party/blink/renderer/platform/scheduler/public/virtual_time_controller.h"
+ #include "third_party/blink/renderer/platform/supplementable.h"
+@@ -92,6 +93,26 @@ bool WorkerFetchContext::ShouldBlockRequestByInspector(const KURL& url) const {
+   return should_block_request;
+ }
+ 
++bool WorkerFetchContext::ShouldBlockGateWayAttacks(network::mojom::IPAddressSpace requestor_space, const KURL& request_url) const {
++  // TODO(mkwst): This only checks explicit IP addresses. We'll have to move
++  // all this up to //net and //content in order to have any real impact on
++  // gateway attacks. That turns out to be a TON of work (crbug.com/378566).
++  if (requestor_space == network::mojom::IPAddressSpace::kUnknown)
++    requestor_space = network::mojom::IPAddressSpace::kPublic;
++  network::mojom::IPAddressSpace target_space =
++      network::mojom::IPAddressSpace::kPublic;
++  if (network_utils::IsReservedIPAddress(request_url.Host()))
++    target_space = network::mojom::IPAddressSpace::kLocal;
++  if (SecurityOrigin::Create(request_url)->IsLocalhost())
++    target_space = network::mojom::IPAddressSpace::kLocal;
++
++  bool is_external_request = requestor_space > target_space;
++  if (is_external_request)
++    return true;
++
++  return false;
++}
++
+ void WorkerFetchContext::DispatchDidBlockRequest(
+     const ResourceRequest& resource_request,
+     const ResourceLoaderOptions& options,
+diff --git a/third_party/blink/renderer/core/loader/worker_fetch_context.h b/third_party/blink/renderer/core/loader/worker_fetch_context.h
+index 5429c9fc020..63b09c40571 100644
+--- a/third_party/blink/renderer/core/loader/worker_fetch_context.h
++++ b/third_party/blink/renderer/core/loader/worker_fetch_context.h
+@@ -66,6 +66,9 @@ class CORE_EXPORT WorkerFetchContext final : public BaseFetchContext {
+       network::mojom::blink::IPAddressSpace) const override;
+   std::unique_ptr<WebSocketHandshakeThrottle> CreateWebSocketHandshakeThrottle()
+       override;
++  bool ShouldBlockGateWayAttacks(
++      network::mojom::IPAddressSpace requestor_space,
++      const KURL&) const override;
+   bool ShouldBlockFetchByMixedContentCheck(
+       mojom::blink::RequestContextType request_context,
+       network::mojom::blink::IPAddressSpace target_address_space,
+diff --git a/third_party/blink/renderer/core/workers/installed_scripts_manager.cc b/third_party/blink/renderer/core/workers/installed_scripts_manager.cc
+index c6ef497c3c5..59cab4494ff 100644
+--- a/third_party/blink/renderer/core/workers/installed_scripts_manager.cc
++++ b/third_party/blink/renderer/core/workers/installed_scripts_manager.cc
+@@ -37,7 +37,7 @@ InstalledScriptsManager::ScriptData::ScriptData(
+   if (network_utils::IsReservedIPAddress(script_url_.Host()))
+     response_address_space_ = network::mojom::IPAddressSpace::kLocal;
+   if (SecurityOrigin::Create(script_url_)->IsLocalhost())
+-    response_address_space_ = network::mojom::IPAddressSpace::kLoopback;
++    response_address_space_ = network::mojom::IPAddressSpace::kLocal;
+ }
+ 
+ ContentSecurityPolicyResponseHeaders
+diff --git a/third_party/blink/renderer/modules/background_fetch/background_fetch_manager.cc b/third_party/blink/renderer/modules/background_fetch/background_fetch_manager.cc
+index 2faa8c1b32e..827f364d1c9 100644
+--- a/third_party/blink/renderer/modules/background_fetch/background_fetch_manager.cc
++++ b/third_party/blink/renderer/modules/background_fetch/background_fetch_manager.cc
+@@ -108,6 +108,30 @@ bool ShouldBlockDanglingMarkup(const KURL& request_url) {
+          request_url.ProtocolIsInHttpFamily();
+ }
+ 
++bool ShouldBlockGateWayAttacks(ExecutionContext* execution_context,
++                               const KURL& request_url) {
++    network::mojom::IPAddressSpace requestor_space =
++        execution_context->AddressSpace();
++    if (requestor_space == network::mojom::IPAddressSpace::kUnknown)
++      requestor_space = network::mojom::IPAddressSpace::kPublic;
++
++    // TODO(mkwst): This only checks explicit IP addresses. We'll have to move
++    // all this up to //net and //content in order to have any real impact on
++    // gateway attacks. That turns out to be a TON of work (crbug.com/378566).
++    network::mojom::IPAddressSpace target_space =
++        network::mojom::IPAddressSpace::kPublic;
++    if (network_utils::IsReservedIPAddress(request_url.Host()))
++      target_space = network::mojom::IPAddressSpace::kLocal;
++    if (SecurityOrigin::Create(request_url)->IsLocalhost())
++      target_space = network::mojom::IPAddressSpace::kLocal;
++
++    bool is_external_request = requestor_space > target_space;
++    if (is_external_request)
++      return true;
++
++  return false;
++}
++
+ scoped_refptr<BlobDataHandle> ExtractBlobHandle(
+     Request* request,
+     ExceptionState& exception_state) {
+@@ -269,6 +293,13 @@ ScriptPromise<BackgroundFetchRegistration> BackgroundFetchManager::fetch(
+                                  exception_state);
+     }
+ 
++    if (ShouldBlockGateWayAttacks(execution_context, request_url)) {
++      return RejectWithTypeError(script_state, request_url,
++                                 "Requestor IP address space doesn't match the "
++                                 "target address space.",
++                                 exception_state);
++    }
++
+     if (ShouldBlockPort(request_url)) {
+       return RejectWithTypeError(script_state, request_url,
+                                  "that port is not allowed", exception_state);
+diff --git a/third_party/blink/renderer/modules/websockets/websocket_channel_impl.cc b/third_party/blink/renderer/modules/websockets/websocket_channel_impl.cc
+index 2703401f819..ff4fab7059f 100644
+--- a/third_party/blink/renderer/modules/websockets/websocket_channel_impl.cc
++++ b/third_party/blink/renderer/modules/websockets/websocket_channel_impl.cc
+@@ -296,6 +296,12 @@ bool WebSocketChannelImpl::Connect(
+     return false;
+   }
+ 
++  if (GetBaseFetchContext()->ShouldBlockGateWayAttacks(
++          execution_context_->AddressSpace(), url)) {
++    has_initiated_opening_handshake_ = false;
++    return false;
++  }
++
+   if (auto* scheduler = execution_context_->GetScheduler()) {
+     if (!RuntimeEnabledFeatures::DisconnectWebSocketOnBFCacheEnabled() ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+diff --git a/third_party/blink/renderer/modules/websockets/websocket_common.cc b/third_party/blink/renderer/modules/websockets/websocket_common.cc
+index 7c76463e7d3..22cd62c85a3 100644
+--- a/third_party/blink/renderer/modules/websockets/websocket_common.cc
++++ b/third_party/blink/renderer/modules/websockets/websocket_common.cc
+@@ -142,9 +142,39 @@ WebSocketCommon::ConnectResult WebSocketCommon::Connect(
+     return ConnectResult::kException;
+   }
+ 
++  network::mojom::IPAddressSpace requestor_space =
++      execution_context->AddressSpace();
++  if (ShouldBlockGateWayAttacks(requestor_space, url_)) {
++    state_ = kClosed;
++    exception_state.ThrowSecurityError(
++        "Access to address of '" + url_.Host() +
++        "' is not allowed from current address space.");
++    return ConnectResult::kException;
++  }
++
+   return ConnectResult::kSuccess;
+ }
+ 
++bool WebSocketCommon::ShouldBlockGateWayAttacks(network::mojom::IPAddressSpace requestor_space, const KURL& request_url) const {
++  // TODO(mkwst): This only checks explicit IP addresses. We'll have to move
++  // all this up to //net and //content in order to have any real impact on
++  // gateway attacks. That turns out to be a TON of work (crbug.com/378566).
++  if (requestor_space == network::mojom::IPAddressSpace::kUnknown)
++    requestor_space = network::mojom::IPAddressSpace::kPublic;
++  network::mojom::IPAddressSpace target_space =
++      network::mojom::IPAddressSpace::kPublic;
++  if (network_utils::IsReservedIPAddress(request_url.Host()))
++    target_space = network::mojom::IPAddressSpace::kLocal;
++  if (SecurityOrigin::Create(request_url)->IsLocalhost())
++    target_space = network::mojom::IPAddressSpace::kLocal;
++
++  bool is_external_request = requestor_space > target_space;
++  if (is_external_request)
++    return true;
++
++  return false;
++}
++
+ void WebSocketCommon::CloseInternal(std::optional<uint16_t> code,
+                                     const String& reason,
+                                     WebSocketChannel* channel,
+diff --git a/third_party/blink/renderer/modules/websockets/websocket_common.h b/third_party/blink/renderer/modules/websockets/websocket_common.h
+index 0ee16cb1a00..90c806577a8 100644
+--- a/third_party/blink/renderer/modules/websockets/websocket_common.h
++++ b/third_party/blink/renderer/modules/websockets/websocket_common.h
+@@ -11,7 +11,9 @@
+ 
+ #include <optional>
+ 
++#include "services/network/public/mojom/ip_address_space.mojom.h"
+ #include "services/network/public/mojom/ip_address_space.mojom-blink.h"
++#include "third_party/blink/renderer/platform/network/network_utils.h"
+ #include "third_party/blink/renderer/modules/modules_export.h"
+ #include "third_party/blink/renderer/platform/weborigin/kurl.h"
+ #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
+@@ -62,6 +64,8 @@ class MODULES_EXPORT WebSocketCommon {
+   void SetState(State state) { state_ = state; }
+   const KURL& Url() const { return url_; }
+ 
++  bool ShouldBlockGateWayAttacks(network::mojom::IPAddressSpace requestor_space, const KURL& url) const;
++
+   // The following methods are public for testing.
+ 
+   // Returns true if |protocol| is a valid WebSocket subprotocol name.

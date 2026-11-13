@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Mon, 9 Nov 2026 12:15:00 +0700
-Subject: [PATCH] Spatiand: light or dark with no toolkit, and the UI's type at
- a toolkit's size
+Subject: [PATCH 298/310] Spatiand: light or dark with no toolkit, and the UI's
+ type at a toolkit's size
 
 Patch 0014 hands Spatiand's look to the toolkits' settings providers, and a build with no
 toolkit -- Chromium's Linux browser built for Android's libc, SpatiMesh on the Beam Pro -- has
@@ -12,15 +12,31 @@ the system's settings itself, a settings provider of its own. With a toolkit, as
 nothing changes. And the toolkit-less UI's type is 13 pixels, the size KDE's toolkit gives it on
 the Deck, where Chromium's own default is 12.
 ---
- ui/linux/dark_mode_manager_linux.cc | 41 ++++++++++++++++++++++++++++++++++++-
- ui/linux/dark_mode_manager_linux.h  |  4 ++++
- ui/linux/fallback_linux_ui.cc       |  5 ++++-
+ ui/linux/fallback_linux_ui.cc     |  5 +++-
+ ui/linux/portal_settings_linux.cc | 41 ++++++++++++++++++++++++++++++-
+ ui/linux/portal_settings_linux.h  |  4 +++
  3 files changed, 48 insertions(+), 2 deletions(-)
 
-diff --git a/ui/linux/dark_mode_manager_linux.cc b/ui/linux/dark_mode_manager_linux.cc
-index 868fda4bf8..9be7b7c912 100644
---- a/ui/linux/dark_mode_manager_linux.cc
-+++ b/ui/linux/dark_mode_manager_linux.cc
+diff --git a/ui/linux/fallback_linux_ui.cc b/ui/linux/fallback_linux_ui.cc
+index e9f8975c82d..d88a4b7b461 100644
+--- a/ui/linux/fallback_linux_ui.cc
++++ b/ui/linux/fallback_linux_ui.cc
+@@ -53,7 +53,10 @@ bool FallbackLinuxUi::Initialize() {
+ 
+ void FallbackLinuxUi::InitializeFontSettings() {
+   gfx::FontRenderParamsQuery query;
+-  query.pixel_size = gfx::PlatformFont::kDefaultBaseFontSize;
++  // Spatiand: 13 pixels, the size a toolkit gives Chromium's UI on the Deck (KDE's Noto Sans at 10
++  // points and 96 dots an inch), so that SpatiMesh's own UI is the same size on the Beam Pro, which
++  // has no toolkit, as there. Chromium's own default is 12.
++  query.pixel_size = 13;
+   query.style = gfx::Font::NORMAL;
+   query.weight = gfx::Font::Weight::NORMAL;
+   query.device_scale_factor = display_config().primary_scale;
+diff --git a/ui/linux/portal_settings_linux.cc b/ui/linux/portal_settings_linux.cc
+index 9d35aff4e9b..51f9e2f4b6e 100644
+--- a/ui/linux/portal_settings_linux.cc
++++ b/ui/linux/portal_settings_linux.cc
 @@ -35,6 +35,7 @@
  #include "ui/linux/linux_ui.h"
  #include "ui/linux/linux_ui_factory.h"
@@ -39,7 +55,7 @@ index 868fda4bf8..9be7b7c912 100644
 +// every second and went nowhere -- SpatiMesh was light, and its profile's colour beige, whatever
 +// Spatiand was set to (owner, 2026-11-09). The newest provider is the one asked, so this stands
 +// in front of the default one, and is made only where there is no toolkit's to stand in front of.
-+class DarkModeManagerLinux::SpatiandLook : public OsSettingsProvider {
++class PortalSettingsLinux::SpatiandLook : public OsSettingsProvider {
 + public:
 +  SpatiandLook() = default;
 +  SpatiandLook(const SpatiandLook&) = delete;
@@ -64,10 +80,10 @@ index 868fda4bf8..9be7b7c912 100644
 +  bool dark_ = true;
 +};
 +
- DarkModeManagerLinux::DarkModeManagerLinux()
-     : DarkModeManagerLinux(dbus_thread_linux::GetSharedSessionBus(),
-                            &ui::GetLinuxUiThemes()) {}
-@@ -99,7 +131,11 @@ DarkModeManagerLinux::DarkModeManagerLinux(
+ PortalSettingsLinux::PortalSettingsLinux()
+     : PortalSettingsLinux(dbus_thread_linux::GetSharedSessionBus(),
+                           &ui::GetLinuxUiThemes()) {}
+@@ -99,7 +131,11 @@ PortalSettingsLinux::PortalSettingsLinux(
            kFreedesktopSettingsService,
            dbus::ObjectPath(kFreedesktopSettingsObjectPath))) {
    // Not the portal: Spatiand's own setting, which outranks the desktop's, and is read as often as
@@ -79,9 +95,9 @@ index 868fda4bf8..9be7b7c912 100644
 +  }
    CheckSpatiandLook();
    spatiand_look_timer_.Start(FROM_HERE, base::Seconds(1), this,
-                              &DarkModeManagerLinux::CheckSpatiandLook);
-@@ -121,6 +157,9 @@ void DarkModeManagerLinux::CheckSpatiandLook() {
- void DarkModeManagerLinux::OnSpatiandLook(bool dark) {
+                              &PortalSettingsLinux::CheckSpatiandLook);
+@@ -121,6 +157,9 @@ void PortalSettingsLinux::CheckSpatiandLook() {
+ void PortalSettingsLinux::OnSpatiandLook(bool dark) {
    if (spatiand_dark_ != dark) {
      spatiand_dark_ = dark;
 +    if (spatiand_look_) {
@@ -90,19 +106,19 @@ index 868fda4bf8..9be7b7c912 100644
      SetColorScheme(dark ? NativeTheme::PreferredColorScheme::kDark
                          : NativeTheme::PreferredColorScheme::kLight);
    }
-diff --git a/ui/linux/dark_mode_manager_linux.h b/ui/linux/dark_mode_manager_linux.h
-index 4d665e2265..7e4af475fe 100644
---- a/ui/linux/dark_mode_manager_linux.h
-+++ b/ui/linux/dark_mode_manager_linux.h
+diff --git a/ui/linux/portal_settings_linux.h b/ui/linux/portal_settings_linux.h
+index 104ab948125..8e827b90f80 100644
+--- a/ui/linux/portal_settings_linux.h
++++ b/ui/linux/portal_settings_linux.h
 @@ -5,6 +5,7 @@
- #ifndef UI_LINUX_DARK_MODE_MANAGER_LINUX_H_
- #define UI_LINUX_DARK_MODE_MANAGER_LINUX_H_
+ #ifndef UI_LINUX_PORTAL_SETTINGS_LINUX_H_
+ #define UI_LINUX_PORTAL_SETTINGS_LINUX_H_
  
 +#include <memory>
  #include <optional>
  #include <string>
  #include <vector>
-@@ -95,6 +96,9 @@ class DarkModeManagerLinux {
+@@ -97,6 +98,9 @@ class PortalSettingsLinux {
    void OnSpatiandLook(bool dark);
    std::optional<bool> spatiand_dark_;
    base::RepeatingTimer spatiand_look_timer_;
@@ -112,22 +128,3 @@ index 4d665e2265..7e4af475fe 100644
  
    raw_ptr<const std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>>
        linux_ui_themes_;
-diff --git a/ui/linux/fallback_linux_ui.cc b/ui/linux/fallback_linux_ui.cc
-index e9f8975c82..d88a4b7b46 100644
---- a/ui/linux/fallback_linux_ui.cc
-+++ b/ui/linux/fallback_linux_ui.cc
-@@ -53,7 +53,10 @@ bool FallbackLinuxUi::Initialize() {
- 
- void FallbackLinuxUi::InitializeFontSettings() {
-   gfx::FontRenderParamsQuery query;
--  query.pixel_size = gfx::PlatformFont::kDefaultBaseFontSize;
-+  // Spatiand: 13 pixels, the size a toolkit gives Chromium's UI on the Deck (KDE's Noto Sans at 10
-+  // points and 96 dots an inch), so that SpatiMesh's own UI is the same size on the Beam Pro, which
-+  // has no toolkit, as there. Chromium's own default is 12.
-+  query.pixel_size = 13;
-   query.style = gfx::Font::NORMAL;
-   query.weight = gfx::Font::Weight::NORMAL;
-   query.device_scale_factor = display_config().primary_scale;
--- 
-2.53.0
-

@@ -1,0 +1,166 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 12 Jan 2024 15:04:40 +0000
+Subject: [PATCH 214/310] Enable gwp asan on Android
+
+the patch enables gwp asan in android and changes the activation
+conditions to 50% for all build configs.
+in android there is a test function accessible in the developer settings.
+FILE:Enable-gwp-asan-on-Android.patch
+---
+ build/config/compiler/compiler.gni        |  3 ++-
+ chrome/app/chrome_main_delegate.cc        |  2 +-
+ chrome/browser/platform_util_android.cc   | 33 +++++++++++++++++++++++
+ components/gwp_asan/client/gwp_asan.cc    | 13 ++++-----
+ components/memory_system/memory_system.cc |  2 ++
+ 5 files changed, 45 insertions(+), 8 deletions(-)
+
+diff --git a/build/config/compiler/compiler.gni b/build/config/compiler/compiler.gni
+index a312b04c074..0959cb38cfb 100644
+--- a/build/config/compiler/compiler.gni
++++ b/build/config/compiler/compiler.gni
+@@ -308,10 +308,11 @@ if (is_chromeos || (enable_cast_receiver && is_linux)) {
+     enable_frame_pointers = true
+   }
+ } else if (is_android) {
+-  enable_frame_pointers =
++  enable_frame_pointers = true ||
+       enable_profiling ||
+       # Ensure that stacks from arm64 crash dumps are usable (crbug.com/391706).
+       current_cpu == "arm64" ||
++      current_cpu == "x86" ||
+       # For x86 Android, unwind tables are huge without frame pointers
+       # (crbug.com/762629). Enabling frame pointers grows the code size slightly
+       # but overall shrinks binaries considerably by avoiding huge unwind
+diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
+index 641ec29b5a0..0ca4f22bed0 100644
+--- a/chrome/app/chrome_main_delegate.cc
++++ b/chrome/app/chrome_main_delegate.cc
+@@ -2004,7 +2004,7 @@ void ChromeMainDelegate::InitializeMemorySystem() {
+   const std::string process_type =
+       command_line->GetSwitchValueASCII(switches::kProcessType);
+   const bool is_browser_process = process_type.empty();
+-  const bool gwp_asan_boost_sampling = is_browser_process || IsCanaryDev();
++  const bool gwp_asan_boost_sampling = ((true)) || is_browser_process || IsCanaryDev();
+   const memory_system::DispatcherParameters::AllocationTraceRecorderInclusion
+       allocation_recorder_inclusion =
+           is_browser_process ? memory_system::DispatcherParameters::
+diff --git a/chrome/browser/platform_util_android.cc b/chrome/browser/platform_util_android.cc
+index a5ad2091e4e..01c4f59772d 100644
+--- a/chrome/browser/platform_util_android.cc
++++ b/chrome/browser/platform_util_android.cc
+@@ -10,6 +10,7 @@
+ #include "base/android/jni_string.h"
+ #include "base/files/file_path.h"
+ #include "base/files/file_util.h"
++#include "base/logging.h"
+ #include "base/notimplemented.h"
+ #include "chrome/browser/platform_util_internal.h"
+ #include "ui/android/view_android.h"
+@@ -81,4 +82,36 @@ bool IsVisible(gfx::NativeView view) {
+ 
+ } // namespace platform_util
+ 
++namespace {
++
++jstring native_get_string(JNIEnv* env) {
++#pragma GCC diagnostic ignored "-Wdangling-gsl"
++   std::string s = "Hellooooooooooooooo ";
++   std::string_view sv = s + "World\n";
++
++   // BUG: Use-after-free. `sv` holds a dangling reference to the ephemeral
++   // string created by `s + "World\n"`. Accessing the data here is a
++   // use-after-free.
++   return env->NewStringUTF(sv.data());
++}
++
++}
++
++static base::android::ScopedJavaLocalRef<jstring> JNI_PlatformUtil_TestGwpAsan(JNIEnv* env) {
++  // Repeat the buggy code a few thousand times. GWP-ASan has a small chance
++  // of detecting the use-after-free every time it happens. A single user who
++  // triggers the use-after-free thousands of times will catch the bug once.
++  // Alternatively, if a few thousand users each trigger the bug a single time,
++  // you'll also get one report (this is the assumed model).
++  jstring return_string;
++  for (unsigned i = 0; i < 0x10000; ++i) {
++    return_string = native_get_string(env);
++    LOG(INFO) << "Testing GwpAsan " << return_string;
++  }
++
++  base::android::ScopedJavaGlobalRef<jstring> obj;
++  obj.Reset(env, jni_zero::JavaRef<jstring>::CreateLeaky(env, return_string));
++  return ScopedJavaLocalRef<jstring>(obj);
++}
++
+ DEFINE_JNI(PlatformUtil)
+diff --git a/components/gwp_asan/client/gwp_asan.cc b/components/gwp_asan/client/gwp_asan.cc
+index 02099298986..96643279a44 100644
+--- a/components/gwp_asan/client/gwp_asan.cc
++++ b/components/gwp_asan/client/gwp_asan.cc
+@@ -93,21 +93,21 @@ constexpr int kDefaultMaxMetadata = 210;
+ constexpr int kDefaultTotalPages = kCpuIs64Bit ? 2048 : kDefaultMaxMetadata * 2;
+ constexpr int kDefaultAllocationSamplingMultiplier = 1500;
+ constexpr int kDefaultAllocationSamplingRange = 16;
+-constexpr double kDefaultProcessSamplingProbability = 0.01;
++constexpr double kDefaultProcessSamplingProbability = 0.5;
+ #elif BUILDFLAG(IS_ANDROID)
+ constexpr int kDefaultMaxAllocations = 70;
+ constexpr int kDefaultMaxMetadata = 255;
+ constexpr int kDefaultTotalPages = 512;
+ constexpr int kDefaultAllocationSamplingMultiplier = 2000;
+ constexpr int kDefaultAllocationSamplingRange = 20;
+-constexpr double kDefaultProcessSamplingProbability = 0.015;
++constexpr double kDefaultProcessSamplingProbability = 0.5;
+ #else
+ constexpr int kDefaultMaxAllocations = 70;
+ constexpr int kDefaultMaxMetadata = 255;
+ constexpr int kDefaultTotalPages = kCpuIs64Bit ? 2048 : kDefaultMaxMetadata * 2;
+ constexpr int kDefaultAllocationSamplingMultiplier = 1000;
+ constexpr int kDefaultAllocationSamplingRange = 16;
+-constexpr double kDefaultProcessSamplingProbability = 0.015;
++constexpr double kDefaultProcessSamplingProbability = 0.5;
+ #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
+         // BUILDFLAG(IS_FUCHSIA)
+ constexpr int kDefaultProcessSamplingBoost2 = 10;
+@@ -540,8 +540,8 @@ void EnableForMalloc(bool boost_sampling, std::string_view process_type) {
+   std::ignore = init_once;
+ #else
+   std::ignore = internal::kGwpAsanMalloc;
+-  DLOG(WARNING) << "GWP-ASan for malloc is disabled without PartitionAlloc as "
+-                   "malloc.";
++  LOG(WARNING) << "MemorySystem: GWP-ASan for malloc is disabled without "
++                  "PartitionAlloc as malloc.";
+ #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+ }
+ 
+@@ -572,7 +572,8 @@ void EnableForPartitionAlloc(bool boost_sampling,
+   std::ignore = init_once;
+ #else
+   std::ignore = internal::kGwpAsanPartitionAlloc;
+-  DLOG(WARNING) << "GWP-ASan for PartitionAlloc is disabled in this build.";
++  LOG(WARNING) << "MemorySystem: GWP-ASan for PartitionAlloc is disabled in "
++                  "this build.";
+ #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC) &&
+         // !PA_BUILDFLAG(MEMORY_TOOL_REPLACES_ALLOCATOR)
+ }
+diff --git a/components/memory_system/memory_system.cc b/components/memory_system/memory_system.cc
+index 2f7ab169f7e..43f1c09173e 100644
+--- a/components/memory_system/memory_system.cc
++++ b/components/memory_system/memory_system.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "components/memory_system/memory_system.h"
+ 
++#include "base/logging.h"
+ #include "base/allocator/dispatcher/dispatcher.h"
+ #include "base/allocator/dispatcher/initializer.h"
+ #include "base/debug/crash_logging.h"
+@@ -209,6 +210,7 @@ void MemorySystem::Impl::Initialize(
+ 
+   if (gwp_asan_parameters) {
+     InitializeGwpASan(*gwp_asan_parameters, initialization_data);
++    DLOG(INFO) << "MemorySystem: Gwp Asan Initialized.";
+   }
+ 
+   if (profiling_client_parameters) {

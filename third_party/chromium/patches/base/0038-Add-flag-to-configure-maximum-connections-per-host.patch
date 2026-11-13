@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sun, 8 Jul 2018 22:42:04 +0200
+Subject: [PATCH 038/310] Add flag to configure maximum connections per host
+
+With the introduction of this flag it is possible to increase the maximum
+allowed connections per host; this can however be detrimental to devices
+with limited CPU/memory resources and it is disabled by default.
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-flag-to-configure-maximum-connections-per-host.patch
+---
+ .../common/network_switch_list.h                |  4 ++++
+ .../spoof_checks/top_domains/BUILD.gn           |  1 +
+ ...o-configure-maximum-connections-per-host.inc | 17 +++++++++++++++++
+ net/socket/client_socket_pool_manager.cc        | 16 ++++++++++++++++
+ 4 files changed, 38 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc
+
+diff --git a/components/network_session_configurator/common/network_switch_list.h b/components/network_session_configurator/common/network_switch_list.h
+index d3583c91be3..e7675b7e94c 100644
+--- a/components/network_session_configurator/common/network_switch_list.h
++++ b/components/network_session_configurator/common/network_switch_list.h
+@@ -19,6 +19,10 @@ NETWORK_SWITCH(kEnableUserAlternateProtocolPorts,
+ // Enables the QUIC protocol.  This is a temporary testing flag.
+ NETWORK_SWITCH(kEnableQuic, "enable-quic")
+ 
++// Allows specifying a higher number of maximum connections per host
++// (15 instead of 6, mirroring the value Mozilla uses).
++NETWORK_SWITCH(kMaxConnectionsPerHost, "max-connections-per-host")
++
+ // Ignores certificate-related errors.
+ // Note: In tests using net::EmbeddedTestServer with a custom hostname not
+ // covered by the default test certs, using this switch is usually incorrect.
+diff --git a/components/url_formatter/spoof_checks/top_domains/BUILD.gn b/components/url_formatter/spoof_checks/top_domains/BUILD.gn
+index 5ac88924376..3d12fd484ef 100644
+--- a/components/url_formatter/spoof_checks/top_domains/BUILD.gn
++++ b/components/url_formatter/spoof_checks/top_domains/BUILD.gn
+@@ -96,6 +96,7 @@ executable("make_top_domain_list_variables") {
+     "//base:i18n",
+     "//components/url_formatter/spoof_checks/common_words:common",
+     "//third_party/icu",
++    "//components/network_session_configurator/common"
+   ]
+   if (is_ios) {
+     frameworks = [ "UIKit.framework" ]
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc b/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc
+new file mode 100644
+index 00000000000..5d2d5be765f
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/add-flag-to-configure-maximum-connections-per-host.inc
+@@ -0,0 +1,17 @@
++#ifdef FEATURE_PARAM_SECTION
++
++const FeatureEntry::Choice kMaxConnectionsPerHostChoices[] = {
++    {/*features::kMaxConnectionsPerHostChoiceDefault*/ "6", "", ""},
++    {/*features::kMaxConnectionsPerHostChoice15*/ "15", switches::kMaxConnectionsPerHost, "15"},
++};
++
++#endif
++
++#ifdef FLAG_SECTION
++
++    {"max-connections-per-host",
++     "Maximum connections per host",
++     "Customize maximum allowed connections per host.", kOsAll,
++     MULTI_VALUE_TYPE(kMaxConnectionsPerHostChoices)},
++
++#endif
+diff --git a/net/socket/client_socket_pool_manager.cc b/net/socket/client_socket_pool_manager.cc
+index 7c7946b3b98..64c8fc5e837 100644
+--- a/net/socket/client_socket_pool_manager.cc
++++ b/net/socket/client_socket_pool_manager.cc
+@@ -22,6 +22,10 @@
+ #include "net/socket/client_socket_handle.h"
+ #include "net/socket/client_socket_pool.h"
+ #include "net/socket/connect_job.h"
++#include "components/network_session_configurator/common/network_switches.h"
++
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+ #include "net/ssl/ssl_config.h"
+ #include "url/gurl.h"
+ #include "url/scheme_host_port.h"
+@@ -157,6 +161,18 @@ void ClientSocketPoolManager::set_socket_soft_cap_per_pool_for_test(
+ // static
+ size_t ClientSocketPoolManager::max_sockets_per_group(
+     HttpNetworkSession::SocketPoolType pool_type) {
++  if (pool_type == net::HttpNetworkSession::SocketPoolType::kNormal) {
++      int maxConnectionsPerHost = 0;
++      auto value = base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(switches::kMaxConnectionsPerHost);
++      if (!value.empty() && !base::StringToInt(value, &maxConnectionsPerHost)) {
++        LOG(DFATAL) << "--" << switches::kMaxConnectionsPerHost << " only accepts integers as arguments (\"" << value << "\" is invalid)";
++      }
++      if (maxConnectionsPerHost != 0) {
++        return maxConnectionsPerHost;
++      }
++      // fallthrough for default value
++  }
++
+   return g_max_sockets_per_group[std::to_underlying(pool_type)];
+ }
+ 

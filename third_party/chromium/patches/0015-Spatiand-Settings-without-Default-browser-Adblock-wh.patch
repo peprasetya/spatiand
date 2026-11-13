@@ -1,21 +1,21 @@
-From 57e8ffb439e46dfe326ef091b8a37c12431024a1 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Sat, 31 Oct 2026 15:16:35 +0700
-Subject: [PATCH] Spatiand: Settings without Default browser, Adblock where it
- is seen, and the spell-check dictionary let through
+Subject: [PATCH 295/310] Spatiand: Settings without Default browser, Adblock
+ where it is seen, and the spell-check dictionary let through
 
 ---
  chrome/browser/resources/settings/route.ts    |  8 --------
- .../settings/settings_main/settings_main.html | 11 -----------
- .../settings/settings_menu/settings_menu.html | 19 +++++--------------
+ .../settings/settings_main/settings_main.html | 11 ----------
+ .../settings/settings_menu/settings_menu.html | 20 +++++--------------
  services/firewall/tools/rules.xml             |  1 +
- 4 files changed, 6 insertions(+), 33 deletions(-)
+ 4 files changed, 6 insertions(+), 34 deletions(-)
 
 diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
-index 14a71882cb..86053e89b5 100644
+index ea3824cd754..5e8dfa972d7 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
-@@ -246,14 +246,6 @@ function createRoutes(): SettingsRoutes {
+@@ -249,14 +249,6 @@ function createRoutes(): SettingsRoutes {
      addPrivacyChildRoutes(r);
    }
  
@@ -31,10 +31,10 @@ index 14a71882cb..86053e89b5 100644
      r.ON_STARTUP = r.BASIC.createSection(
          '/onStartup', 'onStartup', loadTimeData.getString('onStartup'));
 diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
-index 0a6cef07d1..e8b94057cf 100644
+index 8a4a2dfdff5..d4ff71736f1 100644
 --- a/chrome/browser/resources/settings/settings_main/settings_main.html
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.html
-@@ -127,17 +127,6 @@
+@@ -119,17 +119,6 @@
      </template>
    </div>
  
@@ -53,51 +53,52 @@ index 0a6cef07d1..e8b94057cf 100644
      <div slot="view" id="onStartup">
        <template is="dom-if" if="[[renderPlugin_(
 diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-index 041c4a70a9..985ec0f4a5 100644
+index 8014c545a0f..eb30c967d12 100644
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-@@ -84,6 +84,11 @@
-           $i18n{privacyPageTitle}
+@@ -30,6 +30,11 @@
+           <span class="menu-label">$i18n{privacyPageTitle}</span>
            <cr-ripple></cr-ripple>
          </a>
 +        <a role="menuitem" id="adblock" href="/adblock" class="cr-nav-menu-item">
 +          <cr-icon icon="settings:block"></cr-icon>
-+          Adblock
++          <span class="menu-label">Adblock</span>
 +          <cr-ripple></cr-ripple>
 +        </a>
          <a role="menuitem" id="performance" href="/performance"
              class="cr-nav-menu-item"
-             hidden="[[!pageVisibility_.performance]]">
-@@ -110,15 +115,6 @@
-           $i18n{searchPageTitle}
+             ?hidden="${this.shouldHideMenuItem_(this.pageVisibility_?.performance)}">
+@@ -56,15 +61,6 @@
+           <span class="menu-label">$i18n{searchPageTitle}</span>
            <cr-ripple></cr-ripple>
          </a>
 -<if expr="not is_chromeos">
 -        <a role="menuitem" id="defaultBrowser" class="cr-nav-menu-item"
 -          href="/defaultBrowser"
--          hidden="[[!pageVisibility_.defaultBrowser]]">
+-          ?hidden="${this.shouldHideMenuItem_(this.pageVisibility_?.defaultBrowser)}">
 -          <cr-icon icon="settings:web-asset"></cr-icon>
--          $i18n{defaultBrowser}
+-          <span class="menu-label">$i18n{defaultBrowser}</span>
 -          <cr-ripple></cr-ripple>
 -        </a>
 -</if>
          <a role="menuitem" id="onStartup" href="/onStartup"
              class="cr-nav-menu-item"
-             hidden="[[!pageVisibility_.onStartup]]">
-@@ -148,11 +144,6 @@
-           $i18n{a11yPageTitle}
+             ?hidden="${this.shouldHideMenuItem_(this.pageVisibility_?.onStartup)}">
+@@ -94,12 +90,6 @@
+           <span class="menu-label">$i18n{a11yPageTitle}</span>
            <cr-ripple></cr-ripple>
          </a>
--        <a role="menuitem" id="adblock" href="/adblock" class="cr-nav-menu-item" hidden="[[!pageVisibility.adblock]]">
+-        <a role="menuitem" id="adblock" href="/adblock" class="cr-nav-menu-item"
+-            ?hidden="${this.shouldHideMenuItem_(this.pageVisibility_?.adblock)}">
 -          <cr-icon icon="settings:block"></cr-icon>
 -          Adblock
 -          <cr-ripple></cr-ripple>
 -        </a>
  <if expr="not is_chromeos">
          <a role="menuitem" id="system" href="/system" class="cr-nav-menu-item"
-             hidden="[[!pageVisibility_.system]]">
+             ?hidden="${this.shouldHideMenuItem_(this.pageVisibility_?.system)}">
 diff --git a/services/firewall/tools/rules.xml b/services/firewall/tools/rules.xml
-index 033df73051..4880ebb088 100644
+index 033df730515..4880ebb0889 100644
 --- a/services/firewall/tools/rules.xml
 +++ b/services/firewall/tools/rules.xml
 @@ -96,4 +96,5 @@
@@ -106,6 +107,3 @@ index 033df73051..4880ebb088 100644
   <item id="update_client" allowed="1"/>
 + <item id="spellcheck_hunspell_dictionary" allowed="1"/>
  </rules>
--- 
-2.53.0
-

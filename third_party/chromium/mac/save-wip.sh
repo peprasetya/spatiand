@@ -14,8 +14,8 @@
 # Applied again with `git apply` in the Mac tree (and `patch -p1` in third_party/wayland/src).
 set -eu
 cd "$(dirname "$0")"
-MAC=Developer/spatiand-chromium-mac/chromium/src
-DECK=/media/shared/Linux/App/spatiand-chromium/chromium/src
+MAC=Developer/spatimesh-mac/chromium/src
+DECK=/media/shared/Linux/App/spatimesh-linux/chromium/src
 mkdir -p wip
 
 # The port's new files, which git does not know of yet, said by name: the tree has other

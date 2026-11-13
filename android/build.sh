@@ -76,7 +76,7 @@ cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" $OUT/assets/
 # web browser.
 CR=${SPATIAND_CHROMIUM_ANDROID:-$HOME/Developer/spatimesh-android}
 # Or where deepmagpie builds it, beside this repository (third_party/chromium/build.sh, its package step).
-[ -f "$CR/spatimesh" ] || [ -n "${SPATIAND_CHROMIUM_ANDROID:-}" ] || CR=$(cd ../.. && pwd)/spatiand-chromium-android/package/spatimesh-android
+[ -f "$CR/spatimesh" ] || [ -n "${SPATIAND_CHROMIUM_ANDROID:-}" ] || CR=$(cd ../.. && pwd)/spatimesh-android/package/spatimesh-android
 if [ -f "$CR/spatimesh" ]; then
     mkdir -p $OUT/assets/spatimesh-chromium/locales
     cp "$CR"/*.pak "$CR/icudtl.dat" "$CR/snapshot_blob.bin" $OUT/assets/spatimesh-chromium/

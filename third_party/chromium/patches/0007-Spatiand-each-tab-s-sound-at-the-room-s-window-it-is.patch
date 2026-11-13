@@ -1,7 +1,8 @@
-From 09ee0a35f6eec2e43d03aded4c21a79ec80edbc5 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Fri, 30 Oct 2026 12:18:05 +0700
-Subject: [PATCH] Spatiand: each tab's sound at the room's window it is in
+Subject: [PATCH 287/310] Spatiand: each tab's sound at the room's window it is
+ in
 
 Routed only when something changes, never on a timer: the room's map of sinks
 changing (a file watch), a page beginning a sound with no output chosen
@@ -16,8 +17,10 @@ window's sink, so its streams switch as it moves to another window.
 ---
  content/browser/BUILD.gn                      |   2 +
  content/browser/browser_main_loop.cc          |   6 +
- .../browser/media/spatiand_window_audio.cc    | 130 ++++++++++++++++++
- content/browser/media/spatiand_window_audio.h |  20 +++
+ .../browser/media/spatiand_window_audio.cc    | 170 ++++++++++++++++++
+ content/browser/media/spatiand_window_audio.h |  30 ++++
+ .../preferred_audio_output_device_manager.cc  |  13 ++
+ .../web_contents/web_contents_view_aura.cc    |   6 +
  ui/aura/window_tree_host.cc                   |   4 +
  ui/aura/window_tree_host.h                    |   4 +
  ui/aura/window_tree_host_platform.cc          |   4 +
@@ -26,15 +29,15 @@ window's sink, so its streams switch as it moves to another window.
  .../platform/wayland/host/wayland_window.h    |   1 +
  ui/platform_window/platform_window.cc         |   4 +
  ui/platform_window/platform_window.h          |   4 +
- 12 files changed, 184 insertions(+)
+ 14 files changed, 253 insertions(+)
  create mode 100644 content/browser/media/spatiand_window_audio.cc
  create mode 100644 content/browser/media/spatiand_window_audio.h
 
 diff --git a/content/browser/BUILD.gn b/content/browser/BUILD.gn
-index 040006272e..244bf65d19 100644
+index 99386464e9f..bf20ec0d628 100644
 --- a/content/browser/BUILD.gn
 +++ b/content/browser/BUILD.gn
-@@ -1249,6 +1249,8 @@ source_set("browser") {
+@@ -1247,6 +1247,8 @@ source_set("browser") {
      "media/flinging_renderer.cc",
      "media/flinging_renderer.h",
      "media/forwarding_audio_stream_factory.cc",
@@ -44,7 +47,7 @@ index 040006272e..244bf65d19 100644
      "media/frameless_media_interface_proxy.cc",
      "media/frameless_media_interface_proxy.h",
 diff --git a/content/browser/browser_main_loop.cc b/content/browser/browser_main_loop.cc
-index 78f29c0e4d..e2b7ba6d3e 100644
+index 8ae26ded672..d252c3445cf 100644
 --- a/content/browser/browser_main_loop.cc
 +++ b/content/browser/browser_main_loop.cc
 @@ -4,6 +4,8 @@
@@ -56,7 +59,7 @@ index 78f29c0e4d..e2b7ba6d3e 100644
  #include <stddef.h>
  
  #include <algorithm>
-@@ -1122,6 +1124,10 @@ int BrowserMainLoop::PreMainMessageLoopRun() {
+@@ -1123,6 +1125,10 @@ int BrowserMainLoop::PreMainMessageLoopRun() {
    base::DisallowUnresponsiveTasks();
    responsiveness_watcher_ = new responsiveness::Watcher;
    responsiveness_watcher_->SetUp();
@@ -69,7 +72,7 @@ index 78f29c0e4d..e2b7ba6d3e 100644
  
 diff --git a/content/browser/media/spatiand_window_audio.cc b/content/browser/media/spatiand_window_audio.cc
 new file mode 100644
-index 0000000000..9abb7e851c
+index 00000000000..9abb7e851ce
 --- /dev/null
 +++ b/content/browser/media/spatiand_window_audio.cc
 @@ -0,0 +1,170 @@
@@ -245,7 +248,7 @@ index 0000000000..9abb7e851c
 +}  // namespace content
 diff --git a/content/browser/media/spatiand_window_audio.h b/content/browser/media/spatiand_window_audio.h
 new file mode 100644
-index 0000000000..62e0e922d2
+index 00000000000..62e0e922d26
 --- /dev/null
 +++ b/content/browser/media/spatiand_window_audio.h
 @@ -0,0 +1,30 @@
@@ -279,118 +282,8 @@ index 0000000000..62e0e922d2
 +}  // namespace content
 +
 +#endif  // CONTENT_BROWSER_MEDIA_SPATIAND_WINDOW_AUDIO_H_
-diff --git a/ui/aura/window_tree_host.cc b/ui/aura/window_tree_host.cc
-index 7d3ae00b69..ce7bc67247 100644
---- a/ui/aura/window_tree_host.cc
-+++ b/ui/aura/window_tree_host.cc
-@@ -855,4 +855,8 @@ void WindowTreeHost::OnFirstSurfaceActivation(
-                     window()->GetLocalSurfaceId());
- }
- 
-+uint32_t WindowTreeHost::GetSpatiandSurfaceId() const {
-+  return 0;
-+}
-+
- }  // namespace aura
-diff --git a/ui/aura/window_tree_host.h b/ui/aura/window_tree_host.h
-index e859d77fe1..6209d0137d 100644
---- a/ui/aura/window_tree_host.h
-+++ b/ui/aura/window_tree_host.h
-@@ -228,6 +228,10 @@ class AURA_EXPORT WindowTreeHost : public ui::ImeKeyEventDispatcher,
-   virtual void SetBoundsInPixels(const gfx::Rect& bounds_in_pixels) = 0;
-   virtual gfx::Rect GetBoundsInPixels() const = 0;
- 
-+  // Spatiand: the platform window's own surface's protocol id, where it has one (see
-+  // ui::PlatformWindow::GetSpatiandSurfaceId); 0 elsewhere.
-+  virtual uint32_t GetSpatiandSurfaceId() const;
-+
-   // Gets the bounds in DIP.
-   virtual gfx::Rect GetBoundsInDIP() const;
- 
-diff --git a/ui/aura/window_tree_host_platform.cc b/ui/aura/window_tree_host_platform.cc
-index 122e8b50e2..4ec519b22b 100644
---- a/ui/aura/window_tree_host_platform.cc
-+++ b/ui/aura/window_tree_host_platform.cc
-@@ -127,6 +127,10 @@ void WindowTreeHostPlatform::HideImpl() {
-   platform_window_->Hide();
- }
- 
-+uint32_t WindowTreeHostPlatform::GetSpatiandSurfaceId() const {
-+  return platform_window_ ? platform_window_->GetSpatiandSurfaceId() : 0u;
-+}
-+
- gfx::Rect WindowTreeHostPlatform::GetBoundsInPixels() const {
-   return platform_window_->GetBoundsInPixels();
- }
-diff --git a/ui/aura/window_tree_host_platform.h b/ui/aura/window_tree_host_platform.h
-index 20b1f3b112..8d0cc18fd1 100644
---- a/ui/aura/window_tree_host_platform.h
-+++ b/ui/aura/window_tree_host_platform.h
-@@ -44,6 +44,7 @@ class AURA_EXPORT WindowTreeHostPlatform : public WindowTreeHost,
-   void ShowImpl() override;
-   void HideImpl() override;
-   gfx::Rect GetBoundsInPixels() const override;
-+  uint32_t GetSpatiandSurfaceId() const override;
-   void SetBoundsInPixels(const gfx::Rect& bounds) override;
-   void SetCapture() override;
-   void ReleaseCapture() override;
-diff --git a/ui/ozone/platform/wayland/host/wayland_window.cc b/ui/ozone/platform/wayland/host/wayland_window.cc
-index 81a046be49..d1f0fbb345 100644
---- a/ui/ozone/platform/wayland/host/wayland_window.cc
-+++ b/ui/ozone/platform/wayland/host/wayland_window.cc
-@@ -562,6 +562,10 @@ void WaylandWindow::Close() {
-   delegate_->OnClosed();
- }
- 
-+uint32_t WaylandWindow::GetSpatiandSurfaceId() const {
-+  return root_surface() ? root_surface()->get_surface_id() : 0u;
-+}
-+
- bool WaylandWindow::IsVisible() const {
-   NOTREACHED();
- }
-diff --git a/ui/ozone/platform/wayland/host/wayland_window.h b/ui/ozone/platform/wayland/host/wayland_window.h
-index 7d82e02ad1..fa23a940e9 100644
---- a/ui/ozone/platform/wayland/host/wayland_window.h
-+++ b/ui/ozone/platform/wayland/host/wayland_window.h
-@@ -210,6 +210,7 @@ class WaylandWindow : public PlatformWindow,
-   void Hide() override;
-   void Close() override;
-   bool IsVisible() const override;
-+  uint32_t GetSpatiandSurfaceId() const override;
-   void PrepareForShutdown() override;
-   void SetBoundsInPixels(const gfx::Rect& bounds) override;
-   gfx::Rect GetBoundsInPixels() const override;
-diff --git a/ui/platform_window/platform_window.cc b/ui/platform_window/platform_window.cc
-index 8b5964d3c9..eddababc20 100644
---- a/ui/platform_window/platform_window.cc
-+++ b/ui/platform_window/platform_window.cc
-@@ -76,4 +76,8 @@ bool PlatformWindow::IsClientControlledWindowMovementSupported() const {
- 
- void PlatformWindow::NotifyStartupComplete(const std::string& startup_id) {}
- 
-+uint32_t PlatformWindow::GetSpatiandSurfaceId() const {
-+  return 0;
-+}
-+
- }  // namespace ui
-diff --git a/ui/platform_window/platform_window.h b/ui/platform_window/platform_window.h
-index e9eb27e497..57c2325dad 100644
---- a/ui/platform_window/platform_window.h
-+++ b/ui/platform_window/platform_window.h
-@@ -45,6 +45,10 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
- 
-   virtual bool IsVisible() const = 0;
- 
-+  // Spatiand: the protocol id of the window's own surface where there is one (a Wayland
-+  // toplevel's), which Spatiand's room keys the window's sound by; 0 elsewhere.
-+  virtual uint32_t GetSpatiandSurfaceId() const;
-+
-   // Informs the window it is going to be destroyed sometime soon. This is only
-   // called for specific code paths, for example by Ash, so it shouldn't be
-   // assumed this will get called before destruction.
 diff --git a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
-index 5ec0724a8a..536faa11a9 100644
+index 53496168210..76f58767c57 100644
 --- a/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
 +++ b/content/browser/renderer_host/media/preferred_audio_output_device_manager.cc
 @@ -11,6 +11,12 @@
@@ -421,7 +314,7 @@ index 5ec0724a8a..536faa11a9 100644
  }
  
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 8e9457fe57..144c0c9ce1 100644
+index 1ef552b30e8..6b652423307 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
 @@ -4,6 +4,8 @@
@@ -433,7 +326,7 @@ index 8e9457fe57..144c0c9ce1 100644
  #include <stddef.h>
  #include <stdint.h>
  
-@@ -565,6 +567,10 @@ class WebContentsViewAura::WindowObserver
+@@ -570,6 +572,10 @@ class WebContentsViewAura::WindowObserver
      window->GetHost()->AddObserver(this);
      if (view_->web_contents_->IsBeingCaptured())
        view_->video_capture_lock_ = window->GetHost()->CreateVideoCaptureLock();
@@ -444,6 +337,113 @@ index 8e9457fe57..144c0c9ce1 100644
    }
  
    void OnWindowRemovingFromRootWindow(aura::Window* window,
--- 
-2.53.0
-
+diff --git a/ui/aura/window_tree_host.cc b/ui/aura/window_tree_host.cc
+index 9596b0ed528..e99f0530af5 100644
+--- a/ui/aura/window_tree_host.cc
++++ b/ui/aura/window_tree_host.cc
+@@ -854,4 +854,8 @@ void WindowTreeHost::OnFirstSurfaceActivation(
+                     window()->GetLocalSurfaceId());
+ }
+ 
++uint32_t WindowTreeHost::GetSpatiandSurfaceId() const {
++  return 0;
++}
++
+ }  // namespace aura
+diff --git a/ui/aura/window_tree_host.h b/ui/aura/window_tree_host.h
+index e859d77fe10..6209d0137d6 100644
+--- a/ui/aura/window_tree_host.h
++++ b/ui/aura/window_tree_host.h
+@@ -228,6 +228,10 @@ class AURA_EXPORT WindowTreeHost : public ui::ImeKeyEventDispatcher,
+   virtual void SetBoundsInPixels(const gfx::Rect& bounds_in_pixels) = 0;
+   virtual gfx::Rect GetBoundsInPixels() const = 0;
+ 
++  // Spatiand: the platform window's own surface's protocol id, where it has one (see
++  // ui::PlatformWindow::GetSpatiandSurfaceId); 0 elsewhere.
++  virtual uint32_t GetSpatiandSurfaceId() const;
++
+   // Gets the bounds in DIP.
+   virtual gfx::Rect GetBoundsInDIP() const;
+ 
+diff --git a/ui/aura/window_tree_host_platform.cc b/ui/aura/window_tree_host_platform.cc
+index 639d93efbb5..b08cccec596 100644
+--- a/ui/aura/window_tree_host_platform.cc
++++ b/ui/aura/window_tree_host_platform.cc
+@@ -127,6 +127,10 @@ void WindowTreeHostPlatform::HideImpl() {
+   platform_window_->Hide();
+ }
+ 
++uint32_t WindowTreeHostPlatform::GetSpatiandSurfaceId() const {
++  return platform_window_ ? platform_window_->GetSpatiandSurfaceId() : 0u;
++}
++
+ gfx::Rect WindowTreeHostPlatform::GetBoundsInPixels() const {
+   return platform_window_->GetBoundsInPixels();
+ }
+diff --git a/ui/aura/window_tree_host_platform.h b/ui/aura/window_tree_host_platform.h
+index 20b1f3b112a..8d0cc18fd1a 100644
+--- a/ui/aura/window_tree_host_platform.h
++++ b/ui/aura/window_tree_host_platform.h
+@@ -44,6 +44,7 @@ class AURA_EXPORT WindowTreeHostPlatform : public WindowTreeHost,
+   void ShowImpl() override;
+   void HideImpl() override;
+   gfx::Rect GetBoundsInPixels() const override;
++  uint32_t GetSpatiandSurfaceId() const override;
+   void SetBoundsInPixels(const gfx::Rect& bounds) override;
+   void SetCapture() override;
+   void ReleaseCapture() override;
+diff --git a/ui/ozone/platform/wayland/host/wayland_window.cc b/ui/ozone/platform/wayland/host/wayland_window.cc
+index 010e823ac14..2a402c042a3 100644
+--- a/ui/ozone/platform/wayland/host/wayland_window.cc
++++ b/ui/ozone/platform/wayland/host/wayland_window.cc
+@@ -553,6 +553,10 @@ void WaylandWindow::Close() {
+   delegate_->OnClosed();
+ }
+ 
++uint32_t WaylandWindow::GetSpatiandSurfaceId() const {
++  return root_surface() ? root_surface()->get_surface_id() : 0u;
++}
++
+ bool WaylandWindow::IsVisible() const {
+   NOTREACHED();
+ }
+diff --git a/ui/ozone/platform/wayland/host/wayland_window.h b/ui/ozone/platform/wayland/host/wayland_window.h
+index e0e6bb8d525..6e15bac918d 100644
+--- a/ui/ozone/platform/wayland/host/wayland_window.h
++++ b/ui/ozone/platform/wayland/host/wayland_window.h
+@@ -209,6 +209,7 @@ class WaylandWindow : public PlatformWindow,
+   void Hide() override;
+   void Close() override;
+   bool IsVisible() const override;
++  uint32_t GetSpatiandSurfaceId() const override;
+   void PrepareForShutdown() override;
+   void SetBoundsInPixels(const gfx::Rect& bounds) override;
+   gfx::Rect GetBoundsInPixels() const override;
+diff --git a/ui/platform_window/platform_window.cc b/ui/platform_window/platform_window.cc
+index 8b5964d3c99..eddababc20a 100644
+--- a/ui/platform_window/platform_window.cc
++++ b/ui/platform_window/platform_window.cc
+@@ -76,4 +76,8 @@ bool PlatformWindow::IsClientControlledWindowMovementSupported() const {
+ 
+ void PlatformWindow::NotifyStartupComplete(const std::string& startup_id) {}
+ 
++uint32_t PlatformWindow::GetSpatiandSurfaceId() const {
++  return 0;
++}
++
+ }  // namespace ui
+diff --git a/ui/platform_window/platform_window.h b/ui/platform_window/platform_window.h
+index e9eb27e497a..57c2325dade 100644
+--- a/ui/platform_window/platform_window.h
++++ b/ui/platform_window/platform_window.h
+@@ -45,6 +45,10 @@ class COMPONENT_EXPORT(PLATFORM_WINDOW) PlatformWindow
+ 
+   virtual bool IsVisible() const = 0;
+ 
++  // Spatiand: the protocol id of the window's own surface where there is one (a Wayland
++  // toplevel's), which Spatiand's room keys the window's sound by; 0 elsewhere.
++  virtual uint32_t GetSpatiandSurfaceId() const;
++
+   // Informs the window it is going to be destroyed sometime soon. This is only
+   // called for specific code paths, for example by Ash, so it shouldn't be
+   // assumed this will get called before destruction.

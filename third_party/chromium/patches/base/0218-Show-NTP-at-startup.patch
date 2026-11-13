@@ -1,0 +1,199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 27 Feb 2024 16:20:43 +0000
+Subject: [PATCH 218/310] Show NTP at startup
+
+Adds an active option by default to automatically open the
+NTP at each reboot and allows the user to continue the old browsing.
+Until the real tab is opened, no data is retrieved.
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Show-NTP-at-startup.patch
+---
+ chrome/app/settings_strings.grdp               |  2 +-
+ .../policies/background_tab_loading_policy.cc  |  2 ++
+ .../on_startup_page/on_startup_page.ts         |  1 +
+ chrome/browser/sessions/session_restore.cc     |  8 ++++++++
+ chrome/browser/ui/browser_tabrestore.cc        |  2 +-
+ .../ui/startup/startup_browser_creator_impl.cc |  8 ++++++++
+ chrome/browser/ui/tabs/tab_strip_model.cc      | 18 +++++++++++++++++-
+ .../about_flags_cc/show-ntp-at-startup.inc     | 12 ++++++++++++
+ .../show-ntp-at-startup.inc                    |  5 +++++
+ .../show-ntp-at-startup.inc                    |  1 +
+ 10 files changed, 56 insertions(+), 3 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/show-ntp-at-startup.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/show-ntp-at-startup.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc
+
+diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
+index 05f9f4d8152..1cbee60222f 100644
+--- a/chrome/app/settings_strings.grdp
++++ b/chrome/app/settings_strings.grdp
+@@ -1053,7 +1053,7 @@
+       Open a specific page or set of pages
+     </message>
+     <message name="IDS_SETTINGS_ON_STARTUP_CONTINUE_AND_OPEN_SPECIFIC" desc="Radio button option to continue where you left off and open a specific set of pages.">
+-      Continue where you left off and open a specific set of pages
++      Continue where you left off and open a New Tab page
+     </message>
+     <message name="IDS_SETTINGS_ON_STARTUP_USE_CURRENT" desc="Button to use current pages.">
+       Use current pages
+diff --git a/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc b/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc
+index 5af2184d710..a0865f97301 100644
+--- a/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc
++++ b/chrome/browser/performance_manager/policies/background_tab_loading_policy.cc
+@@ -400,6 +400,7 @@ base::DictValue BackgroundTabLoadingPolicy::DescribeSystemNodeData(
+ 
+ bool BackgroundTabLoadingPolicy::ShouldLoad(
+     const PageNodeToLoadData& page_node_data) {
++  if ((true)) return false;
+   if (tab_loads_started_ < min_tabs_to_load_) {
+     return true;
+   }
+@@ -595,6 +596,7 @@ void BackgroundTabLoadingPolicy::MaybeLoadSomeTabs() {
+   // Continue to load tabs while possible. This is in a loop with a
+   // recalculation of GetMaxNewTabLoads() as reentrancy can cause conditions
+   // to change as each tab load is initiated.
++  if ((false))
+   while (GetMaxNewTabLoads() > 0) {
+     LoadNextTab();
+   }
+diff --git a/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts b/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
+index 5f3a3249704..b10d54d49a4 100644
+--- a/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
++++ b/chrome/browser/resources/settings/on_startup_page/on_startup_page.ts
+@@ -113,6 +113,7 @@ export class SettingsOnStartupPageElement extends
+    *     policy.
+    */
+   protected showContinueAndOpenSpecific_(): boolean {
++    if ((true)) return true;
+     if (!this.restoreOnStartupPref_) {
+       return false;
+     }
+diff --git a/chrome/browser/sessions/session_restore.cc b/chrome/browser/sessions/session_restore.cc
+index 816c2a017bd..a438c5c95ad 100644
+--- a/chrome/browser/sessions/session_restore.cc
++++ b/chrome/browser/sessions/session_restore.cc
+@@ -1098,6 +1098,13 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
+       // be selected as ShowBrowser() will load the selected tab.
+       bool is_selected_tab =
+           (initial_tab_count == 0) && (i == selected_tab_index);
++      if (is_selected_tab && !startup_tabs_.empty()) {
++        is_selected_tab = false;
++        if (browser != browser_) {
++          BrowserInitState::From(browser)->set_is_session_restore(false);
++          did_show_browser = true;
++        }
++      }
+ 
+       // Convert the last active time because WebContents needs a TimeTicks.
+       const base::TimeTicks last_active_time_ticks =
+@@ -1460,6 +1467,7 @@ class SessionRestoreImpl : public BrowserCollectionObserver {
+     }
+     if (last_normal_browser && !normal_startup_tabs.empty()) {
+       AppendURLsToBrowser(last_normal_browser, normal_startup_tabs);
++      last_normal_browser->GetWindow()->Show();
+     }
+     if (!startup_tabs_from_last_and_urls_pref.empty()) {
+       BrowserWindowCreateParams params(profile_, /*from_user_gesture=*/false);
+diff --git a/chrome/browser/ui/browser_tabrestore.cc b/chrome/browser/ui/browser_tabrestore.cc
+index 6aca93a4507..d4dc8248a46 100644
+--- a/chrome/browser/ui/browser_tabrestore.cc
++++ b/chrome/browser/ui/browser_tabrestore.cc
+@@ -244,7 +244,7 @@ WebContents* AddRestoredTabImpl(std::unique_ptr<WebContents> web_contents,
+ 
+   // Immediate load if the browser activeness is true or unknown. That is, do
+   // not do immediate load for browsers that are known to be inactive.
+-  bool should_load = is_active_browser.value_or(true);
++  bool should_load = false;
+ 
+ // On OS_MAC, `LoadRestoredTabIfVisible` by default so that its tab loading
+ // behaves like other platforms to make FirstWebContentsProfiler wor
+diff --git a/chrome/browser/ui/startup/startup_browser_creator_impl.cc b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
+index 1e34f398af7..2541d5f5bd7 100644
+--- a/chrome/browser/ui/startup/startup_browser_creator_impl.cc
++++ b/chrome/browser/ui/startup/startup_browser_creator_impl.cc
+@@ -721,6 +721,14 @@ StartupBrowserCreatorImpl::DetermineStartupTabs(
+     if (prefs_tabs_originally_empty) {
+       AppendTabs(provider.GetNewTabPageTabs(*command_line_, profile_), &tabs);
+     }
++
++    SessionStartupPref session_startup_pref =
++        SessionStartupPref::GetStartupPref(profile_);
++    if (session_startup_pref.type == SessionStartupPref::LAST_AND_URLS) {
++      StartupTabs new_tabs;
++      new_tabs.emplace_back(GURL(chrome::kChromeUINewTabURL));
++      AppendTabs(new_tabs, &tabs);
++    }
+   }
+ 
+   // Maybe add any tabs which the user has previously pinned.
+diff --git a/chrome/browser/ui/tabs/tab_strip_model.cc b/chrome/browser/ui/tabs/tab_strip_model.cc
+index c8c7e124660..0a5c77814e9 100644
+--- a/chrome/browser/ui/tabs/tab_strip_model.cc
++++ b/chrome/browser/ui/tabs/tab_strip_model.cc
+@@ -5915,11 +5915,27 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
+ 
+     // Third preference is the block's opener.
+     for (size_t i = block_tabs.start(); i < block_tabs.end(); ++i) {
+-      tabs::TabInterface* opener = GetTabModelAtIndex(i)->opener();
++      tabs::TabModel* tab = GetTabModelAtIndex(i);
++      tabs::TabInterface* opener = tab->opener();
+       int opener_index = opener ? GetIndexOfTab(opener) : kNoTab;
+       if (opener_index != kNoTab &&
+           !block_tabs.Contains(gfx::Range(opener_index)) &&
+           is_eligible(opener_index)) {
++        tabs::TabInterface* tab_interface = tab;
++        const tabs::TabCollection* parent =
++            tab_interface ? tab_interface->GetParentCollection() : nullptr;
++
++        bool is_detached_root_tab =
++            parent && parent->type() != tabs::TabCollection::Type::GROUP &&
++            parent->type() != tabs::TabCollection::Type::SPLIT;
++
++        if (opener_index == 0 && is_detached_root_tab) {
++          if (block_tabs.start() > 0) {
++            int left_tab_index = static_cast<int>(block_tabs.start()) - 1;
++            return GetTabIndexAfterClosing(left_tab_index, block_tabs);
++          }
++        }
++
+         return GetTabIndexAfterClosing(opener_index, block_tabs);
+       }
+     }
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/show-ntp-at-startup.inc b/cromite_flags/chrome/browser/about_flags_cc/show-ntp-at-startup.inc
+new file mode 100644
+index 00000000000..8c92a1c461e
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/show-ntp-at-startup.inc
+@@ -0,0 +1,12 @@
++#if BUILDFLAG(IS_ANDROID)
++
++#ifdef FLAG_SECTION
++
++    {"enable-show-ntp-at-startup",
++     "Show a NewTabPage at startup",
++     "Enable showing a NewTabPage at startup after leaving Cromite for a while.", kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kShowNtpAtStartupAndroid)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/show-ntp-at-startup.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/show-ntp-at-startup.inc
+new file mode 100644
+index 00000000000..c55731cd554
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/show-ntp-at-startup.inc
+@@ -0,0 +1,5 @@
++SET_CROMITE_FEATURE_ENABLED(kStartSurfaceReturnTime);
++
++CROMITE_FEATURE(kShowNtpAtStartupAndroid,
++                "ShowNtpAtStartupAndroid",
++                base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc
+new file mode 100644
+index 00000000000..3a553007a9b
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/show-ntp-at-startup.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kShowNtpAtStartupAndroid);

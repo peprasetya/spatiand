@@ -1,0 +1,161 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sat, 7 Nov 2020 23:51:29 +0100
+Subject: [PATCH 081/310] Restore Simplified NTP launch
+
+This reverts commit 4d0e4483c5f77c66a8b6193e8a3bec5d0624d6ad.
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Restore-Simplified-NTP-launch.patch
+---
+ chrome/browser/engagement/important_sites_util.cc    |  2 +-
+ chrome/browser/flags/android/chrome_feature_list.cc  |  1 +
+ .../ntp_tiles/chrome_most_visited_sites_factory.cc   |  4 ----
+ .../history/core/browser/top_sites_constants.h       |  2 +-
+ components/ntp_tiles/custom_links_store.cc           |  2 --
+ components/omnibox/common/omnibox_features.cc        |  2 ++
+ components/search_engines/template_url.h             |  4 ++--
+ .../about_flags_cc/Restore-Simplified-NTP-launch.inc | 12 ++++++++++++
+ .../Restore-Simplified-NTP-launch.inc                |  3 +++
+ .../Restore-Simplified-NTP-launch.inc                |  1 +
+ 10 files changed, 23 insertions(+), 10 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Restore-Simplified-NTP-launch.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-Simplified-NTP-launch.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc
+
+diff --git a/chrome/browser/engagement/important_sites_util.cc b/chrome/browser/engagement/important_sites_util.cc
+index 533cbf1fca4..1ebd61adf2f 100644
+--- a/chrome/browser/engagement/important_sites_util.cc
++++ b/chrome/browser/engagement/important_sites_util.cc
+@@ -58,7 +58,7 @@ static const int kTimesIgnoredForSuppression = 3;
+ // These are the maximum # of bookmarks we can use as signals. If the user has
+ // <= kMaxBookmarks, then we just use those bookmarks. Otherwise we filter all
+ // bookmarks on site engagement > 0, sort, and trim to kMaxBookmarks.
+-static const int kMaxBookmarks = 5;
++static const int kMaxBookmarks = 4 * 4 + 2;
+ 
+ void RecordIgnore(base::DictValue& dict) {
+   int times_ignored = dict.FindInt(kNumTimesIgnoredName).value_or(0);
+diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
+index 6a427386151..92372bf8084 100644
+--- a/chrome/browser/flags/android/chrome_feature_list.cc
++++ b/chrome/browser/flags/android/chrome_feature_list.cc
+@@ -452,6 +452,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
+     &kInterruptiveIphCooldownGroup,
+     &kKeyboardEscBackNavigation,
+     &kLensOnQuickActionSearchWidget,
++    &kSimplifiedNTP,
+     &kLinkHoverStatusBar,
+     &kLoadAllTabsAtStartup,
+     &kLockTopControlsOnLargeTabletsV2,
+diff --git a/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc b/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc
+index e97af3e79ba..b2d47c38bac 100644
+--- a/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc
++++ b/chrome/browser/ntp_tiles/chrome_most_visited_sites_factory.cc
+@@ -79,10 +79,6 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
+ 
+   std::unique_ptr<data_decoder::DataDecoder> data_decoder;
+ 
+-#if BUILDFLAG(IS_ANDROID)
+-  data_decoder = std::make_unique<data_decoder::DataDecoder>();
+-#endif
+-
+   bool is_default_chrome_app_migrated;
+ 
+ #if BUILDFLAG(IS_ANDROID)
+diff --git a/components/history/core/browser/top_sites_constants.h b/components/history/core/browser/top_sites_constants.h
+index 686772a4cfd..3ba47c70594 100644
+--- a/components/history/core/browser/top_sites_constants.h
++++ b/components/history/core/browser/top_sites_constants.h
+@@ -9,7 +9,7 @@
+ 
+ namespace history {
+ // How many top sites to store in the cache.
+-static constexpr size_t kTopSitesNumber = 10;
++static constexpr size_t kTopSitesNumber = 4 * 4 + 2;
+ }  // namespace history
+ 
+ #endif  // COMPONENTS_HISTORY_CORE_BROWSER_TOP_SITES_CONSTANTS_H_
+diff --git a/components/ntp_tiles/custom_links_store.cc b/components/ntp_tiles/custom_links_store.cc
+index c0f292fe513..bdfd20e60f0 100644
+--- a/components/ntp_tiles/custom_links_store.cc
++++ b/components/ntp_tiles/custom_links_store.cc
+@@ -67,8 +67,6 @@ std::vector<CustomLinksManager::Link> CustomLinksStore::RetrieveLinks() {
+ 
+   if (!has_recorded_first_load_stats) {
+     has_recorded_first_load_stats = true;
+-    ntp_tiles::metrics::RecordNumberOfCustomTilesOnFirstNtp(
+-        static_cast<int>(links.size()));
+   }
+ 
+   return links;
+diff --git a/components/omnibox/common/omnibox_features.cc b/components/omnibox/common/omnibox_features.cc
+index 5f7afdbfc77..8df5d367d86 100644
+--- a/components/omnibox/common/omnibox_features.cc
++++ b/components/omnibox/common/omnibox_features.cc
+@@ -375,6 +375,7 @@ BASE_FEATURE(kOmniboxDebounceKeyboardVisibility, ENABLED);
+ BASE_FEATURE(kDefaultTypedNavigationsToHttps,
+              "OmniboxDefaultTypedNavigationsToHttps",
+              enable_if(IS_IOS));
++SET_CROMITE_FEATURE_ENABLED(kDefaultTypedNavigationsToHttps);
+ 
+ // Override the delay to create a spare renderer when the omnibox is focused
+ // on Android.
+@@ -475,6 +476,7 @@ BASE_FEATURE(kOmniboxMobileParityUpdate, ENABLED);
+ // Updates various NTP/Omnibox assets and descriptions for visual alignment on
+ // Android and iOS, V2.
+ BASE_FEATURE(kOmniboxMobileParityUpdateV2, ENABLED);
++SET_CROMITE_FEATURE_DISABLED(kOmniboxMobileParityUpdateV2);
+ 
+ // If enabled, the X-Geo header will include permission granularity.
+ BASE_FEATURE(kOmniboxXGeoPermissionGranularity, ENABLED);
+diff --git a/components/search_engines/template_url.h b/components/search_engines/template_url.h
+index ba68f265cef..968b40bc62d 100644
+--- a/components/search_engines/template_url.h
++++ b/components/search_engines/template_url.h
+@@ -839,9 +839,9 @@ class TemplateURL {
+   }
+   const GURL& favicon_url() const { return data().favicon_url; }
+ 
+-  const GURL& logo_url() const { return data().logo_url; }
++  const GURL logo_url() const { return GURL(); }
+ 
+-  const GURL& doodle_url() const { return data().doodle_url; }
++  const GURL doodle_url() const { return GURL(); }
+ 
+   const GURL& originating_url() const { return data().originating_url; }
+ 
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Restore-Simplified-NTP-launch.inc b/cromite_flags/chrome/browser/about_flags_cc/Restore-Simplified-NTP-launch.inc
+new file mode 100644
+index 00000000000..a4131d8386e
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Restore-Simplified-NTP-launch.inc
+@@ -0,0 +1,12 @@
++#if BUILDFLAG(IS_ANDROID)
++
++#ifdef FLAG_SECTION
++
++    {"simplified-ntp",
++     "Simplified NTP",
++     "Show a simplified New Tab Page.", kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kSimplifiedNTP)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-Simplified-NTP-launch.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-Simplified-NTP-launch.inc
+new file mode 100644
+index 00000000000..6b23d308da0
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-Simplified-NTP-launch.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kSimplifiedNTP,
++                "SimplifiedNTP",
++                base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc
+new file mode 100644
+index 00000000000..ff2542f25c2
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-Simplified-NTP-launch.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kSimplifiedNTP);

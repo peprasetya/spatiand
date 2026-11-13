@@ -1,8 +1,8 @@
-From 0000000000000000000000000000000000000025 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Thu, 12 Nov 2026 06:10:00 +0700
-Subject: [PATCH] Spatiand: a page visited on one machine is a visited link on
- the others
+Subject: [PATCH 305/310] Spatiand: a page visited on one machine is a visited
+ link on the others
 
 Visits taken in from the other machines (HistorySync, patch 0009) were in the
 history page and never coloured as visited: Chromium colours a link by its
@@ -16,14 +16,14 @@ shared until now), on its own site; and what was in history before this gets
 the same once (a marker in the profile's local folder,
 visited-links-made).
 ---
- chrome/browser/spatiand/history_sync.cc   | 177 ++++++++++++++++++++-
- chrome/browser/spatiand/history_sync.h    |  18 +++
- .../history/core/browser/history_service.cc        |  14 ++
- .../history/core/browser/history_service.h         |   8 +
+ chrome/browser/spatiand/history_sync.cc       | 177 +++++++++++++++++-
+ chrome/browser/spatiand/history_sync.h        |  18 ++
+ .../history/core/browser/history_service.cc   |  14 ++
+ .../history/core/browser/history_service.h    |   8 +
  4 files changed, 215 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
-index 34c3fe9..8d13080 100644
+index 34c3fe94311..8d13080019e 100644
 --- a/chrome/browser/spatiand/history_sync.cc
 +++ b/chrome/browser/spatiand/history_sync.cc
 @@ -19,6 +19,10 @@
@@ -263,7 +263,7 @@ index 34c3fe9..8d13080 100644
  
  void HistorySync::OnURLsModified(history::HistoryService* history_service,
 diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
-index 825ff9c..9d76dcc 100644
+index 825ff9cb2c3..9d76dcccfb8 100644
 --- a/chrome/browser/spatiand/history_sync.h
 +++ b/chrome/browser/spatiand/history_sync.h
 @@ -19,6 +19,7 @@
@@ -313,10 +313,10 @@ index 825ff9c..9d76dcc 100644
    base::OneShotTimer save_timer_;
    std::optional<Visit> last_;
 diff --git a/components/history/core/browser/history_service.cc b/components/history/core/browser/history_service.cc
-index 106df05..3ab470d 100644
+index e161d4a2a85..7f51e50558d 100644
 --- a/components/history/core/browser/history_service.cc
 +++ b/components/history/core/browser/history_service.cc
-@@ -670,6 +670,20 @@ void HistoryService::AddPage(HistoryAddPageArgs add_page_args) {
+@@ -720,6 +720,20 @@ void HistoryService::AddPage(HistoryAddPageArgs add_page_args) {
                                add_page_args));
  }
  
@@ -338,10 +338,10 @@ index 106df05..3ab470d 100644
      const HistoryAddPageArgs& args) {
    // Ensure that we can communicate to our in-memory hashtable.
 diff --git a/components/history/core/browser/history_service.h b/components/history/core/browser/history_service.h
-index 15f9447..df83ed1 100644
+index 048e106d216..cc70fe0a4da 100644
 --- a/components/history/core/browser/history_service.h
 +++ b/components/history/core/browser/history_service.h
-@@ -220,6 +220,14 @@ class HistoryService : public KeyedService,
+@@ -221,6 +221,14 @@ class HistoryService : public KeyedService,
    // history db (it never gets cleaned).
    void AddPageNoVisitForBookmark(const GURL& url, const std::u16string& title);
  
@@ -356,6 +356,3 @@ index 15f9447..df83ed1 100644
    // Sets the title for the given page. The page should be in history. If it
    // is not, this operation is ignored.
    void SetPageTitle(const GURL& url, const std::u16string& title);
--- 
-2.53.0
-

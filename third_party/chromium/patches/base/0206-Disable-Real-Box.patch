@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 5 Nov 2023 17:59:54 +0000
+Subject: [PATCH 206/310] Disable Real Box
+
+Real-box is search box in ntp
+FILE:Disable-Real-Box.patch
+---
+ chrome/browser/prefs/browser_prefs.cc         |  2 +-
+ .../browser/resources/new_tab_page/app.html   | 22 +------------------
+ .../searchbox/searchbox_handler.cc            |  2 ++
+ components/search/ntp_features.cc             | 11 +++-------
+ 4 files changed, 7 insertions(+), 30 deletions(-)
+
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index c3f27677530..b0ea874b490 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -2442,7 +2442,7 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+ #endif
+ #if BUILDFLAG(ENABLE_LENS_DESKTOP) || BUILDFLAG(ENABLE_WEBUI_NTP)
+-  registry->RegisterBooleanPref(prefs::kLensDesktopNTPSearchEnabled, true);
++  registry->RegisterBooleanPref(prefs::kLensDesktopNTPSearchEnabled, false);
+ #endif
+ 
+   registry->RegisterBooleanPref(prefs::kDisableScreenshots, false);
+diff --git a/chrome/browser/resources/new_tab_page/app.html b/chrome/browser/resources/new_tab_page/app.html
+index c26a80fee1f..b7c5e7fe29f 100644
+--- a/chrome/browser/resources/new_tab_page/app.html
++++ b/chrome/browser/resources/new_tab_page/app.html
+@@ -44,27 +44,7 @@ import {SubmitButtonIconType} from '//resources/cr_components/composebox/compose
+       <div id="searchboxContainer"
+           @focusin="${this.onSearchboxContainerFocusin_}"
+           @focusout="${this.onSearchboxContainerFocusout_}">
+-        <ntp-searchbox id="searchbox" ?is-dark="${this.isThemeDark_()}"
+-            placeholder-text="$i18n{searchBoxPlaceholder}"
+-            ?color-source-is-baseline="${this.colorSourceIsBaseline}"
+-            @open-composebox="${this.onOpenComposebox_}"
+-            @open-lens-search="${this.onOpenLensSearch_}"
+-            @open-voice-search="${this.onOpenVoiceSearch_}" ?shown="${this.realboxShown_}"
+-            @context-menu-entrypoint-click="${this.onContextMenuEntrypointClick_}"
+-            ?can-show-secondary-side="${this.realboxCanShowSecondarySide}"
+-            ?compose-button-enabled="${this.composeButtonEnabled}"
+-            ?composebox-enabled="${this.composeboxEnabled}"
+-            .hasVoiceSearchError="${this.hasVoiceSearchError}"
+-            searchbox-layout-mode="${this.ntpRealboxNextEnabled_ ? 'Compact' : ''}"
+-            .inVoiceSearchMode="${this.showVoiceSearchOverlay_}"
+-            ?ntp-realbox-next-enabled="${this.ntpRealboxNextEnabled_}"
+-            ?cycling-placeholders="${this.searchboxCyclingPlaceholders_}"
+-            context-menu-glif-animation-state="${this.contextMenuGlifAnimationState_}"
+-            .energyEffectAnimationEnabled="${this.energyEffectAnimationEnabled_}"
+-            .contextManagementInComposeboxEnabled="${this.contextManagementInComposeboxEnabled_}"
+-            ?multi-line-enabled="${this.multiLineEnabled_}"
+-            ?inert="${!this.realboxShown_}">
+-        </ntp-searchbox>
++        <div id="searchbox"></div>
+         <div id="dialogAnchor"></div>
+         ${this.showComposebox_ ? html`
+           <div id="composeboxDialog">
+diff --git a/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc b/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc
+index d817230d7e0..28f72e77b45 100644
+--- a/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc
++++ b/chrome/browser/ui/webui/cr_components/searchbox/searchbox_handler.cc
+@@ -328,6 +328,8 @@ bool SearchboxHandler::GetVoiceSearchCoherenceAnySearchboxExperimentEnabled() {
+ base::DictValue SearchboxHandler::GetWebUIDataSourceDict(
+     Profile* profile,
+     WebUIDataSourceOptions options) {
++  options.enable_lens_search = false;
++  options.enable_voice_search = false;
+   base::DictValue dict;
+ 
+   // The WebUI Omnibox code will override this to `true` to adjust various
+diff --git a/components/search/ntp_features.cc b/components/search/ntp_features.cc
+index 79ef7a78401..527d75dac61 100644
+--- a/components/search/ntp_features.cc
++++ b/components/search/ntp_features.cc
+@@ -140,7 +140,7 @@ BASE_FEATURE(kNtpGoogleLogo26, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // If enabled, logo will be shown.
+ // This is a kill switch. Keep indefinitely.
+-BASE_FEATURE(kNtpLogo, base::FEATURE_ENABLED_BY_DEFAULT);
++BASE_FEATURE(kNtpLogo, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // If enabled, middle slot promo will be shown.
+ // This is a kill switch. Keep indefinitely.
+@@ -173,14 +173,9 @@ BASE_FEATURE(kNtpModulesLoad, base::FEATURE_DISABLED_BY_DEFAULT);
+ // requirement for all modules.
+ BASE_FEATURE(kNtpModuleSignInRequirement, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+-// If enabled, OneGoogleBar will be shown. Disabled on Android to save memory.
++// If enabled, OneGoogleBar will be shown.
+ // This is a kill switch. Keep indefinitely.
+-BASE_FEATURE(kNtpOneGoogleBar,
+-#if BUILDFLAG(IS_ANDROID)
+-             base::FEATURE_DISABLED_BY_DEFAULT);
+-#else
+-             base::FEATURE_ENABLED_BY_DEFAULT);
+-#endif
++BASE_FEATURE(kNtpOneGoogleBar, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // If enabled, outlook calendar module will be shown.
+ BASE_FEATURE(kNtpOutlookCalendarModule,

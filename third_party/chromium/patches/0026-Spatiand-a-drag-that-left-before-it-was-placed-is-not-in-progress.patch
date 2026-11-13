@@ -1,8 +1,8 @@
-From 0000000000000000000000000000000000000026 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Thu, 12 Nov 2026 06:00:00 +0700
-Subject: [PATCH] Spatiand: a drag that left before it was placed is not in
- progress
+Subject: [PATCH 306/310] Spatiand: a drag that left before it was placed is
+ not in progress
 
 WebContentsViewAura finds what a drag entered over asynchronously (another
 site's frame under the pointer has to be asked), and DragEnteredCallback set
@@ -15,15 +15,15 @@ it was loaded again, while the browser's own UI went on. Each entering has a
 number now; a callback of an entering that is over does nothing. Found on the
 Mac in the room (2026-11-12); the code is every platform's.
 ---
- .../browser/web_contents/web_contents_view_aura.cc     | 18 +++++++++++++++---
- .../browser/web_contents/web_contents_view_aura.h      | 12 +++++++++++-
+ .../web_contents/web_contents_view_aura.cc     | 18 +++++++++++++++---
+ .../web_contents/web_contents_view_aura.h      | 12 +++++++++++-
  2 files changed, 26 insertions(+), 4 deletions(-)
 
 diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
-index 39fc54a..22197ab 100644
+index 6b652423307..92e00d7c66c 100644
 --- a/content/browser/web_contents/web_contents_view_aura.cc
 +++ b/content/browser/web_contents/web_contents_view_aura.cc
-@@ -1497,10 +1497,16 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
+@@ -1507,10 +1507,16 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
  // WebContentsViewAura, aura::client::DragDropDelegate implementation:
  
  void WebContentsViewAura::DragEnteredCallback(
@@ -40,7 +40,7 @@ index 39fc54a..22197ab 100644
    drag_in_progress_ = true;
    dropped_in_this_web_contents_ = false;
    if (!target) {
-@@ -1578,7 +1584,8 @@ void WebContentsViewAura::OnDragEntered(const ui::DropTargetEvent& event) {
+@@ -1588,7 +1594,8 @@ void WebContentsViewAura::OnDragEntered(const ui::DropTargetEvent& event) {
        web_contents_->GetRenderViewHost()->GetWidget()->GetView(),
        event.location_f(),
        base::BindOnce(&WebContentsViewAura::DragEnteredCallback,
@@ -50,7 +50,7 @@ index 39fc54a..22197ab 100644
                       std::move(drop_data)));
  }
  
-@@ -1628,7 +1635,8 @@ void WebContentsViewAura::DragUpdatedCallback(
+@@ -1638,7 +1645,8 @@ void WebContentsViewAura::DragUpdatedCallback(
        current_rwh_for_drag_->DragTargetDragLeave(transformed_leave_point,
                                                   screen_pt);
      }
@@ -60,7 +60,7 @@ index 39fc54a..22197ab 100644
                          transformed_pt);
    }
  
-@@ -1685,6 +1693,7 @@ void WebContentsViewAura::OnDragExited() {
+@@ -1695,6 +1703,7 @@ void WebContentsViewAura::OnDragExited() {
      // Don't compute the results of exiting, but clean up the flag to avoid
      // hanging the renderer process. See crbug.com/434130454.
      drag_in_progress_ = false;
@@ -68,7 +68,7 @@ index 39fc54a..22197ab 100644
      return;
    }
    CompleteDragExit();
-@@ -1692,6 +1701,7 @@ void WebContentsViewAura::OnDragExited() {
+@@ -1702,6 +1711,7 @@ void WebContentsViewAura::OnDragExited() {
  
  void WebContentsViewAura::CompleteDragExit() {
    drag_in_progress_ = false;
@@ -76,7 +76,7 @@ index 39fc54a..22197ab 100644
  
    web_contents_->PreHandleDragExit();
  
-@@ -1714,6 +1724,7 @@ void WebContentsViewAura::CompleteDragExit() {
+@@ -1724,6 +1734,7 @@ void WebContentsViewAura::CompleteDragExit() {
  
  void WebContentsViewAura::OnDropExit() {
    drag_in_progress_ = false;
@@ -84,7 +84,7 @@ index 39fc54a..22197ab 100644
    auto end_drag_runner = std::move(end_drag_runner_);
  }
  
-@@ -1793,7 +1804,8 @@ void WebContentsViewAura::PerformDropCallback(
+@@ -1803,7 +1814,8 @@ void WebContentsViewAura::PerformDropCallback(
  
      std::unique_ptr<DropData> drop_data = std::make_unique<DropData>();
      PrepareDropData(drop_data.get(), *data.get());
@@ -95,10 +95,10 @@ index 39fc54a..22197ab 100644
    }
  
 diff --git a/content/browser/web_contents/web_contents_view_aura.h b/content/browser/web_contents/web_contents_view_aura.h
-index d84267b..aa5093f 100644
+index f9000188dd9..7c8102878e1 100644
 --- a/content/browser/web_contents/web_contents_view_aura.h
 +++ b/content/browser/web_contents/web_contents_view_aura.h
-@@ -336,7 +336,8 @@ class CONTENT_EXPORT WebContentsViewAura
+@@ -340,7 +340,8 @@ class CONTENT_EXPORT WebContentsViewAura
    aura::client::DragDropDelegate::DropCallback GetDropCallback(
        const ui::DropTargetEvent& event) override;
  
@@ -108,7 +108,7 @@ index d84267b..aa5093f 100644
                             std::unique_ptr<DropData> drop_data,
                             base::WeakPtr<RenderWidgetHostViewBase> target,
                             std::optional<gfx::PointF> transformed_pt);
-@@ -448,6 +449,15 @@ class CONTENT_EXPORT WebContentsViewAura
+@@ -452,6 +453,15 @@ class CONTENT_EXPORT WebContentsViewAura
    // drop happens or drag exits.
    bool drag_in_progress_;
  
@@ -124,6 +124,3 @@ index d84267b..aa5093f 100644
    // Used to determine which enum value to fire for the "Event.DragDrop.Surface"
    // histogram.
    bool dropped_in_this_web_contents_ = false;
--- 
-2.53.0
-

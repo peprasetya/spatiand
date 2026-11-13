@@ -1,7 +1,8 @@
-From 4d550d40691619c30411070c859c7e169531ae11 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Fri, 30 Oct 2026 11:08:48 +0700
-Subject: [PATCH 6/6] Spatiand: video decoded by Spatiand's FFmpeg on VA-API
+Subject: [PATCH 286/310] Spatiand: video decoded by Spatiand's FFmpeg on
+ VA-API
 
 SpatiandVideoDecoder takes VaapiVideoDecoder's place in the GPU process: the pipeline's frame
 pool allocates its buffers as VA surfaces through VaapiWrapper, FFmpeg decodes each picture into
@@ -11,17 +12,17 @@ nothing copied. H.264, HEVC (8 and 10 bit), VP8, VP9 and AV1, as far as the GPU 
  media/gpu/chromeos/video_decoder_pipeline.cc |   4 +-
  media/gpu/vaapi/BUILD.gn                     |   3 +
  media/gpu/vaapi/spatiand_video_decoder.cc    | 589 +++++++++++++++++++
- media/gpu/vaapi/spatiand_video_decoder.h     | 140 +++++
+ media/gpu/vaapi/spatiand_video_decoder.h     | 141 +++++
  media/gpu/vaapi/vaapi_wrapper.h              |   4 +
- 5 files changed, 739 insertions(+), 1 deletion(-)
+ 5 files changed, 740 insertions(+), 1 deletion(-)
  create mode 100644 media/gpu/vaapi/spatiand_video_decoder.cc
  create mode 100644 media/gpu/vaapi/spatiand_video_decoder.h
 
 diff --git a/media/gpu/chromeos/video_decoder_pipeline.cc b/media/gpu/chromeos/video_decoder_pipeline.cc
-index 7fa0c0787a..3502b281b0 100644
+index 0b9f7f46421..5a167e2c523 100644
 --- a/media/gpu/chromeos/video_decoder_pipeline.cc
 +++ b/media/gpu/chromeos/video_decoder_pipeline.cc
-@@ -39,6 +39,7 @@
+@@ -38,6 +38,7 @@
  
  #if BUILDFLAG(USE_VAAPI)
  #include <drm_fourcc.h>
@@ -29,7 +30,7 @@ index 7fa0c0787a..3502b281b0 100644
  #include "media/gpu/vaapi/vaapi_video_decoder.h"
  #endif  // BUILDFLAG(USE_VAAPI)
  
-@@ -239,8 +240,9 @@ std::unique_ptr<VideoDecoder> VideoDecoderPipeline::Create(
+@@ -245,8 +246,9 @@ std::unique_ptr<VideoDecoder> VideoDecoderPipeline::Create(
      DCHECK(frame_pool);
      switch (ActiveLinuxVideoDecoderType()) {
  #if BUILDFLAG(USE_VAAPI)
@@ -41,7 +42,7 @@ index 7fa0c0787a..3502b281b0 100644
  #endif  // BUILDFLAG(USE_VAAPI)
  #if BUILDFLAG(USE_V4L2_CODEC)
 diff --git a/media/gpu/vaapi/BUILD.gn b/media/gpu/vaapi/BUILD.gn
-index 0dae890813..43736ea341 100644
+index 0dae890813c..43736ea3419 100644
 --- a/media/gpu/vaapi/BUILD.gn
 +++ b/media/gpu/vaapi/BUILD.gn
 @@ -51,6 +51,8 @@ source_set("vaapi") {
@@ -63,7 +64,7 @@ index 0dae890813..43736ea341 100644
      "//third_party/libyuv",
 diff --git a/media/gpu/vaapi/spatiand_video_decoder.cc b/media/gpu/vaapi/spatiand_video_decoder.cc
 new file mode 100644
-index 0000000000..883405357f
+index 00000000000..5767233bd18
 --- /dev/null
 +++ b/media/gpu/vaapi/spatiand_video_decoder.cc
 @@ -0,0 +1,589 @@
@@ -392,7 +393,7 @@ index 0000000000..883405357f
 +}
 +
 +// static
-+CroStatus::Or<scoped_refptr<FrameResource>> SpatiandVideoDecoder::AllocateFrameProxy(
++base::expected<scoped_refptr<FrameResource>, CroStatus> SpatiandVideoDecoder::AllocateFrameProxy(
 +    base::WeakPtr<SpatiandVideoDecoder> decoder,
 +    VideoPixelFormat format,
 +    const gfx::Size& coded_size,
@@ -403,12 +404,12 @@ index 0000000000..883405357f
 +    bool /*needs_detiling*/,
 +    base::TimeDelta timestamp) {
 +  if (!decoder) {
-+    return CroStatus::Codes::kFailedToCreateVideoFrame;
++    return base::unexpected(CroStatus::Codes::kFailedToCreateVideoFrame);
 +  }
 +  return decoder->AllocateFrame(format, coded_size, visible_rect, natural_size, timestamp);
 +}
 +
-+CroStatus::Or<scoped_refptr<FrameResource>> SpatiandVideoDecoder::AllocateFrame(
++base::expected<scoped_refptr<FrameResource>, CroStatus> SpatiandVideoDecoder::AllocateFrame(
 +    VideoPixelFormat format,
 +    const gfx::Size& coded_size,
 +    const gfx::Rect& visible_rect,
@@ -424,22 +425,22 @@ index 0000000000..883405357f
 +      rt_format = VA_RT_FORMAT_YUV420_10;
 +      break;
 +    default:
-+      return CroStatus::Codes::kFailedToCreateVideoFrame;
++      return base::unexpected(CroStatus::Codes::kFailedToCreateVideoFrame);
 +  }
 +  std::unique_ptr<ScopedVASurface> surface = vaapi_wrapper_->CreateVASurfaceWithUsageHints(
 +      rt_format, coded_size, {VaapiWrapper::SurfaceUsageHint::kVideoDecoder});
 +  if (!surface) {
-+    return CroStatus::Codes::kFailedToCreateVideoFrame;
++    return base::unexpected(CroStatus::Codes::kFailedToCreateVideoFrame);
 +  }
 +  auto exported = vaapi_wrapper_->ExportVASurfaceAsNativePixmapDmaBuf(*surface);
 +  if (!exported.has_value()) {
-+    return CroStatus::Codes::kFailedToCreateVideoFrame;
++    return base::unexpected(CroStatus::Codes::kFailedToCreateVideoFrame);
 +  }
 +  scoped_refptr<FrameResource> frame = NativePixmapFrameResource::Create(
 +      visible_rect, natural_size, timestamp, gfx::BufferUsage::SCANOUT_VDA_WRITE,
 +      std::move(std::move(exported).value()->pixmap));
 +  if (!frame) {
-+    return CroStatus::Codes::kFailedToCreateVideoFrame;
++    return base::unexpected(CroStatus::Codes::kFailedToCreateVideoFrame);
 +  }
 +  surfaces_.insert_or_assign(frame->tracking_token(), std::move(surface));
 +  return frame;
@@ -658,10 +659,10 @@ index 0000000000..883405357f
 +}  // namespace media
 diff --git a/media/gpu/vaapi/spatiand_video_decoder.h b/media/gpu/vaapi/spatiand_video_decoder.h
 new file mode 100644
-index 0000000000..e8d61a8f00
+index 00000000000..c2308da2f27
 --- /dev/null
 +++ b/media/gpu/vaapi/spatiand_video_decoder.h
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,141 @@
 +// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
@@ -676,6 +677,7 @@ index 0000000000..e8d61a8f00
 +#include "base/memory/scoped_refptr.h"
 +#include "base/memory/weak_ptr.h"
 +#include "base/sequence_checker.h"
++#include "base/types/expected.h"
 +#include "base/unguessable_token.h"
 +#include "media/base/video_aspect_ratio.h"
 +#include "media/base/video_color_space.h"
@@ -757,7 +759,7 @@ index 0000000000..e8d61a8f00
 +  int GetBufferForFrame(AVFrame* frame);
 +
 +  // The frame pool's allocator: a VA surface, exported as the pool's buffer.
-+  static CroStatus::Or<scoped_refptr<FrameResource>> AllocateFrameProxy(
++  static base::expected<scoped_refptr<FrameResource>, CroStatus> AllocateFrameProxy(
 +      base::WeakPtr<SpatiandVideoDecoder> decoder,
 +      VideoPixelFormat format,
 +      const gfx::Size& coded_size,
@@ -767,7 +769,7 @@ index 0000000000..e8d61a8f00
 +      bool use_linear_buffers,
 +      bool needs_detiling,
 +      base::TimeDelta timestamp);
-+  CroStatus::Or<scoped_refptr<FrameResource>> AllocateFrame(VideoPixelFormat format,
++  base::expected<scoped_refptr<FrameResource>, CroStatus> AllocateFrame(VideoPixelFormat format,
 +                                                            const gfx::Size& coded_size,
 +                                                            const gfx::Rect& visible_rect,
 +                                                            const gfx::Size& natural_size,
@@ -803,7 +805,7 @@ index 0000000000..e8d61a8f00
 +
 +#endif  // MEDIA_GPU_VAAPI_SPATIAND_VIDEO_DECODER_H_
 diff --git a/media/gpu/vaapi/vaapi_wrapper.h b/media/gpu/vaapi/vaapi_wrapper.h
-index f14aea396e..af73f3beaf 100644
+index 8c5c3482ae5..acfbf7ca832 100644
 --- a/media/gpu/vaapi/vaapi_wrapper.h
 +++ b/media/gpu/vaapi/vaapi_wrapper.h
 @@ -471,6 +471,10 @@ class MEDIA_GPU_EXPORT VaapiWrapper
@@ -817,6 +819,3 @@ index f14aea396e..af73f3beaf 100644
    // Calls SubmitBuffer_Locked() to request libva to allocate a new VABufferID
    // of |va_buffer_type| and |size|, and to map-and-copy the |data| into it. The
    // allocated VABufferIDs stay alive until DestroyPendingBuffers_Locked(). Note
--- 
-2.53.0
-

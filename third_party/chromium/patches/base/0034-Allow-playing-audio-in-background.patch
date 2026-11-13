@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: AlexeyBarabash <alexey@brave.com>
+Date: Thu, 2 Nov 2017 18:21:16 +0200
+Subject: [PATCH 034/310] Allow playing audio in background
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Allow-playing-audio-in-background.patch
+---
+ .../renderer/render_frame_media_playback_options.cc |  1 +
+ .../platform/media/web_media_player_impl.cc         | 13 ++++++++++++-
+ .../renderer/platform/media/web_media_player_impl.h |  4 ++++
+ 3 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/content/public/renderer/render_frame_media_playback_options.cc b/content/public/renderer/render_frame_media_playback_options.cc
+index 5074b48ec9d..307b12497b1 100644
+--- a/content/public/renderer/render_frame_media_playback_options.cc
++++ b/content/public/renderer/render_frame_media_playback_options.cc
+@@ -14,6 +14,7 @@
+ 
+ namespace content {
+ bool IsBackgroundMediaSuspendEnabled() {
++  if ((true)) return false;
+ #if BUILDFLAG(IS_ANDROID)
+   // For Android devices, do not suspend background media for devices with large
+   // displays. Exception is for Webview.
+diff --git a/third_party/blink/renderer/platform/media/web_media_player_impl.cc b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
+index 268a51238a3..92c47e86a15 100644
+--- a/third_party/blink/renderer/platform/media/web_media_player_impl.cc
++++ b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
+@@ -1349,6 +1349,14 @@ bool WebMediaPlayerImpl::HasAudio() const {
+   return pipeline_metadata_.has_audio;
+ }
+ 
++bool WebMediaPlayerImpl::HasVideoNonEmptySize() const {
++  DCHECK(main_task_runner_->BelongsToCurrentThread());
++
++  return pipeline_metadata_.has_video &&
++         pipeline_metadata_.natural_size.width() != 0 &&
++         pipeline_metadata_.natural_size.height() != 0;
++}
++
+ bool WebMediaPlayerImpl::IsHDR() const {
+   DCHECK(main_task_runner_->BelongsToCurrentThread());
+ 
+@@ -3737,7 +3745,10 @@ bool WebMediaPlayerImpl::ShouldPausePlaybackWhenHidden() const {
+       audio_source_provider_->IsAudioBeingCaptured();
+ 
+   // Audio only stream is allowed to play when in background.
+-  if (!HasVideo() && preserve_audio)
++  //pipeline_metadata_.has_video is true for MediaPlayerRenderer,
++  //see media/base/pipeline_metadata.h. This is a workaround to allow audio
++  //streams be played in background.
++  if (!HasVideoNonEmptySize() && preserve_audio)
+     return false;
+ 
+   // Video PiP is the only exception when background video playback is disabled.
+diff --git a/third_party/blink/renderer/platform/media/web_media_player_impl.h b/third_party/blink/renderer/platform/media/web_media_player_impl.h
+index 40e0e7c3769..7d2e10d4a3e 100644
+--- a/third_party/blink/renderer/platform/media/web_media_player_impl.h
++++ b/third_party/blink/renderer/platform/media/web_media_player_impl.h
+@@ -220,6 +220,10 @@ class PLATFORM_EXPORT WebMediaPlayerImpl
+   // True if the loaded media has a playable video/audio track.
+   bool HasVideo() const override;
+   bool HasAudio() const override;
++
++  // True is has video and it's frame size is not zero
++  bool HasVideoNonEmptySize() const;
++
+   bool IsHDR() const override;
+   bool IsVideoBeingCaptured() const override;
+ 

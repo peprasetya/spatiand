@@ -1,0 +1,1242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Thu, 28 Dec 2023 14:58:09 +0000
+Subject: [PATCH 210/310] Chrome web store protection
+
+The amount of information sent is minimized without disabling
+the ability to install extensions (which is under user control)
+It became possible to activate the autoupdate of extensions by sending the minimum of values.
+Installation with the chrome web store is allowed, but the website
+by default cannot retrieve the list of installed extensions and their status (under flag)
+All http calls related to requesting and downloading updates are cookie-free,
+but the ip and the list of extensions are traceable, that information cannot be omitted.
+Auto-update is disabled by default: it is possible to activate it with chrome://extensions/
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Chrome-web-store-protection.patch
+---
+ chrome/app/extensions_strings.grdp            |  6 ++
+ .../developer_private_api.cc                  | 28 +++++++++
+ .../developer_private/developer_private_api.h |  3 +
+ .../developer_private_functions.cc            |  8 ++-
+ .../profile_info_generator.cc                 |  3 +
+ .../extensions/chrome_extension_system.cc     |  1 +
+ .../extensions/cws_info_service_factory.cc    |  3 +-
+ .../extensions/extension_management.cc        |  1 +
+ .../extension_safety_check_utils.cc           |  3 +-
+ .../browser/extensions/extension_service.cc   |  5 +-
+ .../chrome_extension_downloader_factory.cc    |  1 -
+ .../extensions/updater/extension_updater.cc   | 26 ++++++--
+ .../extensions/updater/extension_updater.h    |  4 ++
+ .../resources/extensions/manager.html.ts      |  1 +
+ .../browser/resources/extensions/manager.ts   |  4 ++
+ .../browser/resources/extensions/service.ts   |  5 ++
+ .../browser/resources/extensions/toolbar.css  |  5 ++
+ .../resources/extensions/toolbar.html.ts      |  7 +++
+ .../browser/resources/extensions/toolbar.ts   | 17 +++++
+ .../resources/webstore_app/manifest.json      |  7 +--
+ .../ui/webui/extensions/extensions_ui.cc      |  5 ++
+ .../chrome_update_query_params_delegate.cc    | 11 +---
+ .../extensions/api/developer_private.webidl   |  2 +
+ .../update_client/update_query_params.cc      |  5 +-
+ .../about_flags_cc/Webstore-protection.inc    | 19 ++++++
+ .../browser/api/management/management_api.cc  | 62 +++++++++++++------
+ .../webstore_private/webstore_private_api.cc  | 22 ++++++-
+ .../browser/updater/extension_downloader.cc   | 53 ++++++----------
+ .../browser/updater/extension_downloader.h    |  1 -
+ .../browser/updater/manifest_fetch_data.cc    |  8 +--
+ .../browser/updater/safe_manifest_parser.cc   |  1 +
+ extensions/browser/webstore_install_helper.cc |  2 +-
+ extensions/browser/webstore_installer.cc      |  2 +-
+ extensions/common/extension_features.cc       |  8 +++
+ extensions/common/extension_features.h        | 11 ++++
+ .../definitions/developer_private.d.ts        |  2 +
+ 36 files changed, 256 insertions(+), 96 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc
+
+diff --git a/chrome/app/extensions_strings.grdp b/chrome/app/extensions_strings.grdp
+index 93ef8c153e7..f83c63e258e 100644
+--- a/chrome/app/extensions_strings.grdp
++++ b/chrome/app/extensions_strings.grdp
+@@ -79,6 +79,12 @@
+   <message name="IDS_EXTENSIONS_DISABLED_UNSUPPORTED_DEVELOPER_MODE_TOAST" desc="Text displayed in a toast popup message when extensions are disabled due to unsupported developer mode.">
+     Developer Mode Off. Some extensions were disabled.
+   </message>
++  <message name="IDS_EXTENSIONS_EXTENSION_UPDATE_ENABLED" desc="The text displayed next to the checkbox to toggle extension auto update.">
++    Enable Auto-Update
++  </message>
++  <message name="IDS_EXTENSIONS_EXTENSION_UPDATE_ENABLED_NR" desc="The text displayed next to the checkbox to toggle extension auto update.">
++    Need restart
++  </message>
+   <message name="IDS_EXTENSIONS_DISABLED_UPDATE_REQUIRED_BY_POLICY" desc="Text shown in the extensions settings for extensions disabled due to minimum version requirement from enterprise policy">
+     This extension is outdated and disabled by enterprise policy. It might become enabled automatically when a newer version is available.
+   </message>
+diff --git a/chrome/browser/extensions/api/developer_private/developer_private_api.cc b/chrome/browser/extensions/api/developer_private/developer_private_api.cc
+index 023a3d09c8f..16519c8a6cd 100644
+--- a/chrome/browser/extensions/api/developer_private/developer_private_api.cc
++++ b/chrome/browser/extensions/api/developer_private/developer_private_api.cc
+@@ -28,6 +28,12 @@
+ 
+ static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+ 
++#include "chrome/browser/about_flags.h"
++#include "chrome/browser/browser_process.h"
++#include "components/webui/flags/pref_service_flags_storage.h"
++#include "components/webui/flags/feature_entry.h"
++#include "components/webui/flags/flags_storage.h"
++
+ namespace extensions {
+ 
+ namespace developer = api::developer_private;
+@@ -70,6 +76,28 @@ DeveloperPrivateAPI::GetFactoryInstance() {
+   return g_developer_private_api_factory.Pointer();
+ }
+ 
++// static
++bool DeveloperPrivateAPI::IsExtensionAutoupdateEnabled() {
++  const std::string enabled_entry = "enable-extension-autoupdate@1";
++  flags_ui::PrefServiceFlagsStorage flags_storage(
++      g_browser_process->local_state());
++  std::set<std::string> entries = flags_storage.GetFlags();
++  return entries.count(enabled_entry) > 0;
++}
++
++// static
++void DeveloperPrivateAPI::SetExtensionAutoupdateEnabled(bool enable) {
++  flags_ui::PrefServiceFlagsStorage flags_storage(
++      g_browser_process->local_state());
++  if (enable) {
++    about_flags::SetFeatureEntryEnabled(
++      &flags_storage, "enable-extension-autoupdate@1", true);
++  } else {
++    about_flags::SetFeatureEntryEnabled(
++      &flags_storage, "enable-extension-autoupdate", false);
++  }
++}
++
+ template <>
+ void BrowserContextKeyedAPIFactory<
+     DeveloperPrivateAPI>::DeclareFactoryDependencies() {
+diff --git a/chrome/browser/extensions/api/developer_private/developer_private_api.h b/chrome/browser/extensions/api/developer_private/developer_private_api.h
+index 7a3dc30fd78..30066a1b14f 100644
+--- a/chrome/browser/extensions/api/developer_private/developer_private_api.h
++++ b/chrome/browser/extensions/api/developer_private/developer_private_api.h
+@@ -37,6 +37,9 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
+   static BrowserContextKeyedAPIFactory<DeveloperPrivateAPI>*
+   GetFactoryInstance();
+ 
++  static bool IsExtensionAutoupdateEnabled();
++  static void SetExtensionAutoupdateEnabled(bool enable);
++
+   // Convenience method to get the DeveloperPrivateAPI for a profile.
+   static DeveloperPrivateAPI* Get(content::BrowserContext* context);
+ 
+diff --git a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
+index d77921a19ce..fbfad825b26 100644
+--- a/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
++++ b/chrome/browser/extensions/api/developer_private/developer_private_functions.cc
+@@ -455,6 +455,7 @@ ExtensionFunction::ResponseAction DeveloperPrivateAutoUpdateFunction::Run() {
+     ExtensionUpdater::CheckParams params;
+     params.fetch_priority = DownloadFetchPriority::kForeground;
+     params.install_immediately = true;
++    params.user_initiated = true;
+     params.callback =
+         base::BindOnce(&DeveloperPrivateAutoUpdateFunction::OnComplete, this);
+     updater->CheckNow(std::move(params));
+@@ -594,7 +595,7 @@ DeveloperPrivateUpdateProfileConfigurationFunction::Run() {
+   Profile* profile = Profile::FromBrowserContext(browser_context());
+   CHECK(profile);
+ 
+-  if (update.in_developer_mode) {
++  if (update.in_developer_mode.has_value() && update.in_developer_mode) {
+     if (supervised_user::AreExtensionsPermissionsEnabled(profile)) {
+       return RespondNow(Error(kCannotUpdateChildAccountProfileSettingsError));
+     }
+@@ -613,6 +614,11 @@ DeveloperPrivateUpdateProfileConfigurationFunction::Run() {
+         ->MarkNoticeAsAcknowledgedGlobally();
+   }
+ 
++  if (update.is_extension_autoupdate_enabled.has_value()) {
++    DeveloperPrivateAPI::SetExtensionAutoupdateEnabled(
++      *update.is_extension_autoupdate_enabled);
++  }
++
+   return RespondNow(NoArguments());
+ }
+ 
+diff --git a/chrome/browser/extensions/api/developer_private/profile_info_generator.cc b/chrome/browser/extensions/api/developer_private/profile_info_generator.cc
+index 42d6b20224b..74434811b45 100644
+--- a/chrome/browser/extensions/api/developer_private/profile_info_generator.cc
++++ b/chrome/browser/extensions/api/developer_private/profile_info_generator.cc
+@@ -9,6 +9,7 @@
+ #include "chrome/browser/prefs/incognito_mode_prefs.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/supervised_user/supervised_user_browser_utils.h"
++#include "chrome/browser/extensions/api/developer_private/developer_private_api.h"
+ #include "chrome/common/pref_names.h"
+ #include "components/policy/core/common/policy_pref_names.h"
+ #include "components/prefs/pref_service.h"
+@@ -42,6 +43,8 @@ developer::ProfileInfo CreateProfileInfo(Profile* profile) {
+       ManifestV2Handler::Get(profile)->DidUserAcknowledgeNoticeGlobally();
+   info.extensions_pinned_by_default =
+       prefs->GetBoolean(prefs::kExtensionsPinnedByDefault);
++  info.is_extension_autoupdate_enabled =
++      DeveloperPrivateAPI::IsExtensionAutoupdateEnabled();
+ 
+   return info;
+ }
+diff --git a/chrome/browser/extensions/chrome_extension_system.cc b/chrome/browser/extensions/chrome_extension_system.cc
+index 53e2ad0e842..415267b9d42 100644
+--- a/chrome/browser/extensions/chrome_extension_system.cc
++++ b/chrome/browser/extensions/chrome_extension_system.cc
+@@ -101,6 +101,7 @@ UninstallPingSender::FilterResult ShouldSendUninstallPing(
+     Profile* profile,
+     const Extension* extension,
+     UninstallReason reason) {
++  if ((true)) return UninstallPingSender::DO_NOT_SEND_PING;
+   ExtensionManagement* extension_management =
+       ExtensionManagementFactory::GetForBrowserContext(profile);
+   if (extension && (extension->from_webstore() ||
+diff --git a/chrome/browser/extensions/cws_info_service_factory.cc b/chrome/browser/extensions/cws_info_service_factory.cc
+index e9a9cec0ae3..8843b560960 100644
+--- a/chrome/browser/extensions/cws_info_service_factory.cc
++++ b/chrome/browser/extensions/cws_info_service_factory.cc
+@@ -51,7 +51,8 @@ CWSInfoServiceFactory::CWSInfoServiceFactory()
+ std::unique_ptr<KeyedService>
+ CWSInfoServiceFactory::BuildServiceInstanceForBrowserContext(
+     content::BrowserContext* context) const {
+-  return std::make_unique<CWSInfoService>(Profile::FromBrowserContext(context));
++  // Disallow periodic retrieval of extensions metadata from the Chrome Web Store
++  return nullptr;
+ }
+ 
+ bool CWSInfoServiceFactory::ServiceIsCreatedWithBrowserContext() const {
+diff --git a/chrome/browser/extensions/extension_management.cc b/chrome/browser/extensions/extension_management.cc
+index b15e80f839a..ee455994edb 100644
+--- a/chrome/browser/extensions/extension_management.cc
++++ b/chrome/browser/extensions/extension_management.cc
+@@ -424,6 +424,7 @@ bool ExtensionManagement::IsAllowedManifestType(
+ 
+ bool ExtensionManagement::IsAllowedByUnpublishedAvailabilityPolicy(
+     const Extension* extension) {
++  if ((true)) return true;
+   // This policy only applies to extensions that update from CWS.
+   if (!UpdatesFromWebstore(*extension)) {
+     return true;
+diff --git a/chrome/browser/extensions/extension_safety_check_utils.cc b/chrome/browser/extensions/extension_safety_check_utils.cc
+index 5e61e9e45cc..49d4b412e9e 100644
+--- a/chrome/browser/extensions/extension_safety_check_utils.cc
++++ b/chrome/browser/extensions/extension_safety_check_utils.cc
+@@ -244,8 +244,7 @@ developer::SafetyCheckWarningReason GetSafetyCheckWarningReasonHelper(
+   developer::SafetyCheckWarningReason acknowledged_reason =
+       GetPrefAcknowledgeSafetyCheckWarningReason(extension,
+                                                  ExtensionPrefs::Get(profile));
+-  std::optional<CWSInfoService::CWSInfo> cws_info =
+-      cws_info_service->GetCWSInfo(extension);
++  std::optional<CWSInfoService::CWSInfo> cws_info;
+   bool valid_cws_info = cws_info.has_value() && cws_info->is_present;
+   if (unpublished_only) {
+     if (valid_cws_info && cws_info->unpublished_long_ago) {
+diff --git a/chrome/browser/extensions/extension_service.cc b/chrome/browser/extensions/extension_service.cc
+index 2d3c496c7ca..775c32ae601 100644
+--- a/chrome/browser/extensions/extension_service.cc
++++ b/chrome/browser/extensions/extension_service.cc
+@@ -255,9 +255,6 @@ ExtensionService::ExtensionService(
+   UpgradeDetector::GetInstance()->AddObserver(this);
+ #endif
+ 
+-  cws_info_service_observation_.Observe(
+-      CWSInfoServiceFactory::GetForProfile(profile_));
+-
+   ExtensionManagementFactory::GetForBrowserContext(profile_)->AddObserver(this);
+ 
+   if (auto* extension_install_policy_service =
+@@ -772,7 +769,7 @@ void ExtensionService::OnExtensionManagementSettingsChanged() {
+   // unpublished extensions should not be enabled. This update allows
+   // unpublished extensions to be disabled sooner rather than waiting till the
+   // next regularly scheduled fetch.
+-  if (profile_->GetPrefs()->GetInteger(
++  if (((false)) && profile_->GetPrefs()->GetInteger(
+           pref_names::kExtensionUnpublishedAvailability) !=
+       kAllowUnpublishedExtensions) {
+     CWSInfoServiceFactory::GetForProfile(profile_)->CheckAndMaybeFetchInfo();
+diff --git a/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc b/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc
+index fc052a6b4b1..74a6a185f04 100644
+--- a/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc
++++ b/chrome/browser/extensions/updater/chrome_extension_downloader_factory.cc
+@@ -53,7 +53,6 @@ ChromeExtensionDownloaderFactory::CreateForURLLoaderFactory(
+     manifest_query_params += "&testrequest=1";
+   }
+   downloader->set_manifest_query_params(manifest_query_params);
+-  downloader->set_ping_enabled_domain("google.com");
+   return downloader;
+ }
+ 
+diff --git a/chrome/browser/extensions/updater/extension_updater.cc b/chrome/browser/extensions/updater/extension_updater.cc
+index fd6684c9250..17d17f2e1af 100644
+--- a/chrome/browser/extensions/updater/extension_updater.cc
++++ b/chrome/browser/extensions/updater/extension_updater.cc
+@@ -56,6 +56,7 @@
+ #include "extensions/common/constants.h"
+ #include "extensions/common/extension.h"
+ #include "extensions/common/extension_id.h"
++#include "extensions/common/extension_features.h"
+ #include "extensions/common/extension_set.h"
+ #include "extensions/common/extension_updater_uma.h"
+ #include "extensions/common/extension_urls.h"
+@@ -230,6 +231,10 @@ void ExtensionUpdater::Start() {
+   CHECK(!weak_ptr_factory_.HasWeakPtrs(), base::NotFatalUntil::M161);
+   CHECK(registry_, base::NotFatalUntil::M161);
+   alive_ = true;
++  if (first_start_) {
++    first_start_ = false;
++    CheckSoon();
++  }
+   // Check soon, and set up the first delayed check.
+   if (!g_skip_scheduled_checks_for_tests) {
+     CheckSoon();
+@@ -420,6 +425,8 @@ void ExtensionUpdater::EraseUnupdatableIds(std::set<ExtensionId>& ids) const {
+       }
+       // Remove extensions that aren't in an autoupdatable location.
+       if (!Manifest::IsAutoUpdateableLocation(extension->location())) {
++        LOG(INFO) << "Extension " << extension->id() << " is not auto updateable: "
++                  << "location=" << extension->location();
+         return true;
+       }
+     } else {
+@@ -436,6 +443,12 @@ void ExtensionUpdater::EraseUnupdatableIds(std::set<ExtensionId>& ids) const {
+ }
+ 
+ void ExtensionUpdater::CheckNow(CheckParams params) {
++  if (!params.user_initiated &&
++      !base::FeatureList::IsEnabled(
++            extensions_features::kEnableExtensionAutoupdate)) {
++    LOG(INFO) << "Extensions autoupdate is disabled.";
++    return;
++  }
+   std::unique_ptr<ScopedProfileKeepAlive> keep_alive =
+       ScopedProfileKeepAlive::TryAcquire(
+           profile_, ProfileKeepAliveOrigin::kExtensionUpdater);
+@@ -449,7 +462,7 @@ void ExtensionUpdater::CheckNow(CheckParams params) {
+   CHECK(pending_extension_manager_);
+ 
+   int request_id = next_request_id_++;
+-  VLOG(2) << "Starting update check " << request_id;
++  LOG(INFO) << "Starting extensions update check id: " << request_id;
+ 
+   EnsureDownloaderCreated();
+ 
+@@ -525,7 +538,7 @@ void ExtensionUpdater::CheckNow(CheckParams params) {
+ 
+     // Note: If an extension is both installed and pending, but can't use
+     // update_service, pending_info takes priority.
+-    if (CanUseUpdateService(extension, pending_info)) {
++    if ((false) && CanUseUpdateService(extension, pending_info)) {
+       update_check_params.update_info[id] = GetExtensionUpdateData(id);
+       update_check_params.update_info[id].is_corrupt_reinstall =
+           is_corrupt_reinstall;
+@@ -537,6 +550,8 @@ void ExtensionUpdater::CheckNow(CheckParams params) {
+       InstallStageTrackerFactory::GetForBrowserContext(profile_)
+           ->ReportInstallationStage(id,
+                                     InstallStageTracker::Stage::DOWNLOADING);
++      LOG(INFO) << "Extension " << id << " is auto updateable "
++                << "from " << pending_info->update_url();
+     } else if (pending_info) {
+       InstallStageTrackerFactory::GetForBrowserContext(profile_)->ReportFailure(
+           id, InstallStageTracker::FailureReason::DOWNLOADER_ADD_FAILED);
+@@ -688,7 +703,7 @@ void ExtensionUpdater::OnExtensionDownloadFinished(
+                                 InstallStageTracker::Stage::INSTALLING);
+   UpdatePingData(file.extension_id, ping);
+ 
+-  VLOG(2) << download_url << " written to " << file.path.value();
++  LOG(INFO) << download_url << " written to " << file.path.value();
+ 
+   FetchedCRXFile fetched(file, file_ownership_passed, request_ids,
+                          std::move(callback));
+@@ -699,6 +714,7 @@ void ExtensionUpdater::OnExtensionDownloadFinished(
+ 
+ bool ExtensionUpdater::GetPingDataForExtension(const ExtensionId& id,
+                                                DownloadPingData* ping_data) {
++  if ((true)) return false;
+   CHECK(alive_, base::NotFatalUntil::M161);
+   ping_data->rollcall_days =
+       CalculatePingDaysForExtension(extension_prefs_->LastPingDay(id));
+@@ -810,7 +826,7 @@ bool ExtensionUpdater::CanUseUpdateService(
+ void ExtensionUpdater::InstallCRXFile(FetchedCRXFile crx_file) {
+   std::set<int> request_ids;
+ 
+-  VLOG(2) << "updating " << crx_file.info.extension_id << " with "
++  LOG(INFO) << "Updating " << crx_file.info.extension_id << " with "
+           << crx_file.info.path.value();
+ 
+   // The delegate is now responsible for cleaning up the temp file at
+@@ -1021,7 +1037,7 @@ void ExtensionUpdater::NotifyIfFinished(int request_id) {
+   if (!request.in_progress_ids.empty() || request.awaiting_update_service) {
+     return;  // This request is not done yet.
+   }
+-  VLOG(2) << "Finished update check " << request_id;
++  LOG(INFO) << "Finished update check id: " << request_id;
+   if (!request.callback.is_null()) {
+     std::move(request.callback).Run();
+   }
+diff --git a/chrome/browser/extensions/updater/extension_updater.h b/chrome/browser/extensions/updater/extension_updater.h
+index c5cb7f14045..9d62ad277dd 100644
+--- a/chrome/browser/extensions/updater/extension_updater.h
++++ b/chrome/browser/extensions/updater/extension_updater.h
+@@ -91,6 +91,8 @@ class ExtensionUpdater : public KeyedService,
+     // right away.
+     bool install_immediately = false;
+ 
++    bool user_initiated = false;
++
+     // An extension update check can be originated by a user or by a scheduled
+     // task. When the value of |fetch_priority| is FOREGROUND, the update
+     // request was initiated by a user.
+@@ -403,6 +405,8 @@ class ExtensionUpdater : public KeyedService,
+   base::TimeDelta frequency_;
+   bool will_check_soon_ = false;
+ 
++  bool first_start_ = true;
++
+   raw_ptr<ExtensionPrefs> extension_prefs_ = nullptr;
+   raw_ptr<PrefService> prefs_ = nullptr;
+   raw_ptr<Profile> profile_ = nullptr;
+diff --git a/chrome/browser/resources/extensions/manager.html.ts b/chrome/browser/resources/extensions/manager.html.ts
+index 2d8fea7941d..c7d2dd79edc 100644
+--- a/chrome/browser/resources/extensions/manager.html.ts
++++ b/chrome/browser/resources/extensions/manager.html.ts
+@@ -12,6 +12,7 @@ export function getHtml(this: ExtensionsManagerElement) {
+ <extensions-drop-overlay ?drag-enabled="${this.inDevMode}">
+ </extensions-drop-overlay>
+ <extensions-toolbar id="toolbar" ?in-dev-mode="${this.inDevMode}"
++    ?is-ext-update-enabled="${this.isExtUpdateEnabled}"
+     ?can-load-unpacked="${this.canLoadUnpacked}"
+     ?is-child-account="${this.isChildAccount_}"
+     ?dev-mode-controlled-by-policy="${this.devModeControlledByPolicy}"
+diff --git a/chrome/browser/resources/extensions/manager.ts b/chrome/browser/resources/extensions/manager.ts
+index 522e280c936..1f4fa33a469 100644
+--- a/chrome/browser/resources/extensions/manager.ts
++++ b/chrome/browser/resources/extensions/manager.ts
+@@ -145,6 +145,8 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
+        */
+       didInitPage_: {type: Boolean},
+ 
++      isExtUpdateEnabled: {type: Boolean},
++
+       narrow_: {type: Boolean},
+ 
+       showDrawer_: {type: Boolean},
+@@ -167,6 +169,8 @@ export class ExtensionsManagerElement extends ExtensionsManagerElementBase {
+   accessor isMv2DeprecationNoticeDismissed: boolean =
+       loadTimeData.getBoolean('MV2DeprecationNoticeDismissed');
+   accessor extensionsPinnedByDefault: boolean = true;
++  accessor isExtUpdateEnabled: boolean =
++      loadTimeData.getBoolean('isExtUpdateEnabled');
+   accessor showActivityLog: boolean =
+       loadTimeData.getBoolean('showActivityLog');
+   accessor enableEnhancedSiteControls: boolean =
+diff --git a/chrome/browser/resources/extensions/service.ts b/chrome/browser/resources/extensions/service.ts
+index b70ac01c6aa..c0e2d313dbf 100644
+--- a/chrome/browser/resources/extensions/service.ts
++++ b/chrome/browser/resources/extensions/service.ts
+@@ -394,6 +394,11 @@ export class Service implements ServiceInterface {
+         {inDeveloperMode: inDevMode});
+   }
+ 
++  setExtUpdateEnabled(enabled: boolean) {
++     chrome.developerPrivate.updateProfileConfiguration(
++         {isExtensionAutoupdateEnabled: enabled});
++  }
++
+   loadUnpacked(): Promise<boolean> {
+     return this.loadUnpackedHelper_();
+   }
+diff --git a/chrome/browser/resources/extensions/toolbar.css b/chrome/browser/resources/extensions/toolbar.css
+index 881317e1cfe..2e5a72b5756 100644
+--- a/chrome/browser/resources/extensions/toolbar.css
++++ b/chrome/browser/resources/extensions/toolbar.css
+@@ -73,6 +73,11 @@ cr-tooltip-icon {
+   margin-inline-end: 16px;
+ }
+ 
++#need-update {
++  color: red;
++  margin-inline: 0;
++}
++
+ cr-toolbar {
+   --cr-toolbar-center-basis: 680px;
+   --cr-toolbar-field-max-width: var(--cr-toolbar-center-basis);
+diff --git a/chrome/browser/resources/extensions/toolbar.html.ts b/chrome/browser/resources/extensions/toolbar.html.ts
+index f2de5b086dd..872f107f015 100644
+--- a/chrome/browser/resources/extensions/toolbar.html.ts
++++ b/chrome/browser/resources/extensions/toolbar.html.ts
+@@ -33,6 +33,13 @@ export function getHtml(this: ToolbarElement) {
+     <img srcset="images/product_logo.png" role="presentation">
+   </picture>
+ </if>
++  <div class="more-actions">
++    <span>$i18n{toolbarExtensionUpdateEnabled}
++      <span id="need-update" ?hidden="${!this.shouldShowRelaunchDialog}">$i18n{toolbarExtensionUpdateEnabledNeedRestart}</span>
++    </span>
++    <cr-toggle @change="${this.onExtUpdateEnabledChange_}" ?checked="${this.isExtUpdateEnabled}">
++    </cr-toggle>
++  </div>
+ </cr-toolbar>
+ ${this.showPackDialog_ ? html`
+   <extensions-pack-dialog .delegate="${this.delegate as ServiceInterface}"
+diff --git a/chrome/browser/resources/extensions/toolbar.ts b/chrome/browser/resources/extensions/toolbar.ts
+index 178a09a2e5a..b4c0b36132d 100644
+--- a/chrome/browser/resources/extensions/toolbar.ts
++++ b/chrome/browser/resources/extensions/toolbar.ts
+@@ -26,6 +26,8 @@ export interface ToolbarDelegate {
+    */
+   setProfileInDevMode(inDevMode: boolean): void;
+ 
++  setExtUpdateEnabled(enabled: boolean): void;
++
+   /** Opens the dialog to load unpacked extensions. */
+   loadUnpacked(): Promise<boolean>;
+ 
+@@ -42,6 +44,7 @@ class DummyToolbarDelegate {
+   updateAllExtensions(_extensions: chrome.developerPrivate.ExtensionInfo[]) {
+     return Promise.resolve();
+   }
++  setExtUpdateEnabled(_enabled: boolean) {}
+ }
+ 
+ export interface ExtensionsToolbarElement {
+@@ -80,6 +83,11 @@ export class ExtensionsToolbarElement extends ExtensionsToolbarElementBase {
+         reflect: true,
+       },
+ 
++      isExtUpdateEnabled: {
++        type: Boolean,
++        reflect: true,
++      },
++
+       devModeControlledByPolicy: {type: Boolean},
+       isChildAccount: {type: Boolean},
+ 
+@@ -92,6 +100,7 @@ export class ExtensionsToolbarElement extends ExtensionsToolbarElementBase {
+ 
+       expanded_: {type: Boolean},
+       showPackDialog_: {type: Boolean},
++      shouldShowRelaunchDialog: {type: Boolean},
+ 
+       /**
+        * Prevents initiating update while update is in progress.
+@@ -103,6 +112,8 @@ export class ExtensionsToolbarElement extends ExtensionsToolbarElementBase {
+   accessor extensions: chrome.developerPrivate.ExtensionInfo[] = [];
+   accessor delegate: ToolbarDelegate = new DummyToolbarDelegate();
+   accessor inDevMode: boolean = false;
++  accessor isExtUpdateEnabled: boolean = false;
++  accessor shouldShowRelaunchDialog: boolean = false;
+   accessor devModeControlledByPolicy: boolean = false;
+   accessor isChildAccount: boolean = false;
+ 
+@@ -155,6 +166,12 @@ export class ExtensionsToolbarElement extends ExtensionsToolbarElementBase {
+         'Options_ToggleDeveloperMode_' + (e.detail ? 'Enabled' : 'Disabled'));
+   }
+ 
++  protected onExtUpdateEnabledChange_(e: CustomEvent<boolean>) {
++    this.delegate.setExtUpdateEnabled(e.detail);
++    this.shouldShowRelaunchDialog = true;
++    this.isExtUpdateEnabled = e.detail;
++  }
++
+   private onInDevModeChanged_(_current: boolean, previous: boolean) {
+     const drawer = this.$.devDrawer;
+     if (this.inDevMode) {
+diff --git a/chrome/browser/resources/webstore_app/manifest.json b/chrome/browser/resources/webstore_app/manifest.json
+index 598455a84eb..c1e192fd247 100644
+--- a/chrome/browser/resources/webstore_app/manifest.json
++++ b/chrome/browser/resources/webstore_app/manifest.json
+@@ -17,11 +17,6 @@
+   },
+   "permissions": [
+     "webstorePrivate",
+-    "management",
+-    "system.cpu",
+-    "system.display",
+-    "system.memory",
+-    "system.network",
+-    "system.storage"
++    "management"
+   ]
+ }
+diff --git a/chrome/browser/ui/webui/extensions/extensions_ui.cc b/chrome/browser/ui/webui/extensions/extensions_ui.cc
+index 0513e23fd14..60ec82463ea 100644
+--- a/chrome/browser/ui/webui/extensions/extensions_ui.cc
++++ b/chrome/browser/ui/webui/extensions/extensions_ui.cc
+@@ -16,6 +16,7 @@
+ #include "base/values.h"
+ #include "build/build_config.h"
+ #include "chrome/browser/browser_process.h"
++#include "chrome/browser/extensions/api/developer_private/developer_private_api.h"
+ #include "chrome/browser/extensions/permissions_url_constants.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/ui/ui_features.h"
+@@ -392,6 +393,8 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
+       {"itemSuspiciousInstallLearnMore",
+        IDS_EXTENSIONS_ADDED_WITHOUT_KNOWLEDGE_LEARN_MORE},
+       {"toolbarDevMode", IDS_EXTENSIONS_DEVELOPER_MODE},
++      {"toolbarExtensionUpdateEnabled", IDS_EXTENSIONS_EXTENSION_UPDATE_ENABLED},
++      {"toolbarExtensionUpdateEnabledNeedRestart", IDS_EXTENSIONS_EXTENSION_UPDATE_ENABLED_NR},
+       {"toolbarLoadUnpacked", IDS_EXTENSIONS_TOOLBAR_LOAD_UNPACKED},
+       {"toolbarLoadUnpackedDone", IDS_EXTENSIONS_TOOLBAR_LOAD_UNPACKED_DONE},
+       {"toolbarPack", IDS_EXTENSIONS_TOOLBAR_PACK},
+@@ -477,6 +480,8 @@ content::WebUIDataSource* CreateAndAddExtensionsSource(Profile* profile,
+       "hostPermissionsLearnMoreLink",
+       extension_permissions_constants::kRuntimeHostPermissionsHelpURL);
+   source->AddBoolean(kInDevModeKey, in_dev_mode);
++  source->AddBoolean("isExtUpdateEnabled",
++                     DeveloperPrivateAPI::IsExtensionAutoupdateEnabled());
+   source->AddBoolean(
+       "enableExtensionsPinnedByDefault",
+       base::FeatureList::IsEnabled(features::kExtensionsPinnedByDefault));
+diff --git a/chrome/browser/update_client/chrome_update_query_params_delegate.cc b/chrome/browser/update_client/chrome_update_query_params_delegate.cc
+index c397eaf1494..37f23da63d8 100644
+--- a/chrome/browser/update_client/chrome_update_query_params_delegate.cc
++++ b/chrome/browser/update_client/chrome_update_query_params_delegate.cc
+@@ -34,15 +34,8 @@ ChromeUpdateQueryParamsDelegate::GetInstance() {
+ }
+ 
+ std::string ChromeUpdateQueryParamsDelegate::GetExtraParams() {
+-  std::string channel_name;
+-#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+-  channel_name = extensions::GetChannelForExtensionUpdates();
+-#else
+-  channel_name = chrome::GetChannelName(chrome::WithExtendedStable(true));
+-#endif
+-
+-  return base::StrCat({"&prodchannel=", channel_name, "&prodversion=",
+-                       version_info::GetVersionNumber(), "&lang=", GetLang()});
++  return base::StrCat({"&prodversion=",
++                       version_info::GetMajorVersionNumber().c_str(), ".0.0.0"});
+ }
+ 
+ // static
+diff --git a/chrome/common/extensions/api/developer_private.webidl b/chrome/common/extensions/api/developer_private.webidl
+index 7969e26c3bf..e83f4d54cb5 100644
+--- a/chrome/common/extensions/api/developer_private.webidl
++++ b/chrome/common/extensions/api/developer_private.webidl
+@@ -267,6 +267,7 @@ dictionary ProfileInfo {
+   required boolean isChildAccount;
+   required boolean isMv2DeprecationNoticeDismissed;
+   required boolean extensionsPinnedByDefault;
++  boolean isExtensionAutoupdateEnabled;
+ };
+ 
+ dictionary GetExtensionsInfoOptions {
+@@ -291,6 +292,7 @@ dictionary ProfileConfigurationUpdate {
+   boolean inDeveloperMode;
+   boolean isMv2DeprecationNoticeDismissed;
+   boolean extensionsPinnedByDefault;
++  boolean? isExtensionAutoupdateEnabled;
+ };
+ 
+ dictionary ExtensionCommandUpdate {
+diff --git a/components/update_client/update_query_params.cc b/components/update_client/update_query_params.cc
+index b865f09a022..999fbd51b2b 100644
+--- a/components/update_client/update_query_params.cc
++++ b/components/update_client/update_query_params.cc
+@@ -86,8 +86,7 @@ UpdateQueryParamsDelegate* g_delegate = nullptr;
+ 
+ // static
+ std::string UpdateQueryParams::Get(ProdId prod) {
+-  return absl::StrFormat("os=%s&arch=%s&prod=%s%s&acceptformat=crx3,puff", kOs,
+-                         kArch, GetProdIdString(prod),
++  return absl::StrFormat("prod=%s%s&acceptformat=crx3", GetProdIdString(prod),
+                          g_delegate ? g_delegate->GetExtraParams() : "");
+ }
+ 
+@@ -118,7 +117,7 @@ std::string_view UpdateQueryParams::GetArch() {
+ 
+ // static
+ std::string UpdateQueryParams::GetProdVersion() {
+-  return std::string(version_info::GetVersionNumber());
++  return version_info::GetMajorVersionNumber();
+ }
+ 
+ // static
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc b/cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc
+new file mode 100644
+index 00000000000..680629c6b02
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Webstore-protection.inc
+@@ -0,0 +1,19 @@
++#ifdef FLAG_SECTION
++
++#if !BUILDFLAG(IS_ANDROID)
++
++    {"enable-extension-autoupdate",
++     "Enable Extensions Autoupdate",
++     "Allows the auto-updating of installed extensions by sending the "
++     "minimum required data.", kOsDesktop,
++     FEATURE_VALUE_TYPE(extensions_features::kEnableExtensionAutoupdate)},
++
++    {"enable-extension-management-to-chrome-store",
++     "Allow full use of management api to chrome web store",
++     "When deactivated (default) allows installation but hide "
++     "to the webstore which extensions are installed on the device.", kOsDesktop,
++     FEATURE_VALUE_TYPE(extensions_features::kEnableExtensionManagementToChromeStore)},
++
++#endif // !BUILDFLAG(IS_ANDROID)
++
++#endif // ifdef FLAG_SECTION
+diff --git a/extensions/browser/api/management/management_api.cc b/extensions/browser/api/management/management_api.cc
+index ef9c8e58e15..3e60f78f58e 100644
+--- a/extensions/browser/api/management/management_api.cc
++++ b/extensions/browser/api/management/management_api.cc
+@@ -27,6 +27,9 @@
+ #include "components/supervised_user/core/common/buildflags.h"
+ #include "components/supervised_user/core/common/features.h"
+ #include "content/public/browser/browser_context.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/common/url_constants.h"
+ #include "extensions/browser/api/extensions_api_client.h"
+ #include "extensions/browser/api/management/management_api_constants.h"
+ #include "extensions/browser/disable_reason.h"
+@@ -45,6 +48,7 @@
+ #include "extensions/common/api/management.h"
+ #include "extensions/common/error_utils.h"
+ #include "extensions/common/extension.h"
++#include "extensions/common/extension_features.h"
+ #include "extensions/common/extension_id.h"
+ #include "extensions/common/extension_urls.h"
+ #include "extensions/common/icons/extension_icon_set.h"
+@@ -108,6 +112,29 @@ std::vector<std::string> CreateWarningsList(const Extension* extension) {
+   return warnings_list;
+ }
+ 
++const Extension* GetExtensionById(content::WebContents* web_contents,
++                                  content::BrowserContext* context,
++                                  const std::string& id,
++                                  int include_mask) {
++  bool enabled = base::FeatureList::IsEnabled(extensions_features::kEnableExtensionManagementToChromeStore);
++  if (web_contents) {
++    if (content::RenderFrameHost* rfh = web_contents->GetPrimaryMainFrame()) {
++      url::Origin top_frame_origin = rfh->GetMainFrame()->GetLastCommittedOrigin();
++      std::string scheme = top_frame_origin.scheme();
++      if (scheme == content::kChromeUIScheme) {
++        enabled = true;
++      }
++    }
++  }
++  if (!enabled)
++    return nullptr;
++
++  ExtensionRegistry* registry = ExtensionRegistry::Get(context);
++  const Extension* target_extension =
++      registry->GetExtensionById(id, include_mask);
++  return target_extension;
++}
++
+ std::vector<management::LaunchType> GetAvailableLaunchTypes(
+     const Extension& extension) {
+   std::vector<management::LaunchType> launch_type_list;
+@@ -283,6 +310,8 @@ void AddExtensionInfo(const Extension* source_extension,
+                       const ExtensionSet& extensions,
+                       ExtensionInfoList* extension_list,
+                       content::BrowserContext* context) {
++  if (!base::FeatureList::IsEnabled(extensions_features::kEnableExtensionManagementToChromeStore))
++    return;
+   for (ExtensionSet::const_iterator iter = extensions.begin();
+        iter != extensions.end(); ++iter) {
+     const Extension& extension = **iter;
+@@ -316,10 +345,9 @@ ExtensionFunction::ResponseAction ManagementGetFunction::Run() {
+   std::optional<management::Get::Params> params =
+       management::Get::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
+-  ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context());
+ 
+   const Extension* target_extension =
+-      registry->GetExtensionById(params->id, ExtensionRegistry::EVERYTHING);
++      GetExtensionById(GetSenderWebContents(), browser_context(), params->id, ExtensionRegistry::EVERYTHING);
+   if (!target_extension) {
+     return RespondNow(Error(keys::kNoExtensionError, params->id));
+   }
+@@ -340,8 +368,7 @@ ManagementGetPermissionWarningsByIdFunction::Run() {
+   EXTENSION_FUNCTION_VALIDATE(params);
+ 
+   const Extension* extension =
+-      ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(params->id, ExtensionRegistry::EVERYTHING);
++      GetExtensionById(GetSenderWebContents(), browser_context(), params->id, ExtensionRegistry::EVERYTHING);
+   if (!extension) {
+     return RespondNow(Error(keys::kNoExtensionError, params->id));
+   }
+@@ -396,8 +423,7 @@ ExtensionFunction::ResponseAction ManagementLaunchAppFunction::Run() {
+   }
+ 
+   const Extension* extension =
+-      ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(params->id, ExtensionRegistry::EVERYTHING);
++      GetExtensionById(GetSenderWebContents(), browser_context(), params->id, ExtensionRegistry::EVERYTHING);
+   if (!extension) {
+     return RespondNow(Error(keys::kNoExtensionError, params->id));
+   }
+@@ -555,8 +581,8 @@ void ManagementSetEnabledFunction::CheckPermissionsIncrease() {
+   // Extension could have been uninstalled externally while previous check was
+   // happening.
+   const Extension* extension =
+-      ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(extension_id_, ExtensionRegistry::EVERYTHING);
++      GetExtensionById(GetSenderWebContents(), browser_context(), extension_id_,
++                       ExtensionRegistry::EVERYTHING);
+   if (!extension) {
+     FinishEnable(Error(keys::kNoExtensionError));
+     return;
+@@ -599,8 +625,8 @@ void ManagementSetEnabledFunction::CheckManifestV2Deprecation() {
+   // Extension can be uninstalled externally while the previous check was
+   // happening async.
+   const Extension* extension =
+-      ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(extension_id_, ExtensionRegistry::EVERYTHING);
++      GetExtensionById(GetSenderWebContents(), browser_context(), extension_id_,
++                       ExtensionRegistry::EVERYTHING);
+   if (!extension) {
+     FinishEnable(Error(keys::kNoExtensionError));
+     return;
+@@ -710,8 +736,8 @@ void ManagementSetEnabledFunction::OnSupervisedExtensionApprovalDone(
+ }
+ 
+ const Extension* ManagementSetEnabledFunction::GetExtension() {
+-  return ExtensionRegistry::Get(browser_context())
+-      ->GetExtensionById(extension_id_, ExtensionRegistry::EVERYTHING);
++  return GetExtensionById(GetSenderWebContents(), browser_context(), extension_id_,
++                          ExtensionRegistry::EVERYTHING);
+ }
+ 
+ ManagementUninstallFunctionBase::ManagementUninstallFunctionBase() = default;
+@@ -736,8 +762,7 @@ ExtensionFunction::ResponseAction ManagementUninstallFunctionBase::Uninstall(
+                                               ->GetDelegate();
+   target_extension_id_ = target_extension_id;
+   const Extension* target_extension =
+-      extensions::ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(target_extension_id_,
++      GetExtensionById(GetSenderWebContents(), browser_context(), target_extension_id_,
+                              ExtensionRegistry::EVERYTHING);
+   if (!target_extension || !ShouldExposeViaManagementAPI(*target_extension)) {
+     return RespondNow(Error(keys::kNoExtensionError, target_extension_id_));
+@@ -802,8 +827,7 @@ void ManagementUninstallFunctionBase::UninstallExtension() {
+   // The extension can be uninstalled in another window while the UI was
+   // showing. Do nothing in that case.
+   const Extension* target_extension =
+-      extensions::ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(target_extension_id_,
++      GetExtensionById(GetSenderWebContents(), browser_context(), target_extension_id_,
+                              ExtensionRegistry::EVERYTHING);
+   std::string error;
+   bool success = false;
+@@ -887,8 +911,7 @@ ExtensionFunction::ResponseAction ManagementCreateAppShortcutFunction::Run() {
+       management::CreateAppShortcut::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
+   const Extension* extension =
+-      ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(params->id, ExtensionRegistry::EVERYTHING);
++      GetExtensionById(GetSenderWebContents(), browser_context(), params->id, ExtensionRegistry::EVERYTHING);
+   if (!extension) {
+     return RespondNow(Error(
+         ErrorUtils::FormatErrorMessage(keys::kNoExtensionError, params->id)));
+@@ -942,8 +965,7 @@ ExtensionFunction::ResponseAction ManagementSetLaunchTypeFunction::Run() {
+       management::SetLaunchType::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
+   const Extension* extension =
+-      ExtensionRegistry::Get(browser_context())
+-          ->GetExtensionById(params->id, ExtensionRegistry::EVERYTHING);
++      GetExtensionById(GetSenderWebContents(), browser_context(), params->id, ExtensionRegistry::EVERYTHING);
+   const ManagementAPIDelegate* delegate = ManagementAPI::GetFactoryInstance()
+                                               ->Get(browser_context())
+                                               ->GetDelegate();
+diff --git a/extensions/browser/api/webstore_private/webstore_private_api.cc b/extensions/browser/api/webstore_private/webstore_private_api.cc
+index f6c467f4b7a..07515ba8fcf 100644
+--- a/extensions/browser/api/webstore_private/webstore_private_api.cc
++++ b/extensions/browser/api/webstore_private/webstore_private_api.cc
+@@ -302,6 +302,10 @@ content::BrowserContext* GetContextForAlwaysIncognito(
+ // there was previously stored data, or an empty string otherwise. The Set will
+ // overwrite any previous login.
+ std::string GetWebstoreLogin(content::BrowserContext* browser_context) {
++  if (!base::FeatureList::IsEnabled(
++          extensions_features::kEnableExtensionManagementToChromeStore)) {
++    return std::string();
++  }
+   PrefService* prefs = user_prefs::UserPrefs::Get(browser_context);
+   if (prefs->HasPrefPath(kWebstoreLogin)) {
+     return prefs->GetString(kWebstoreLogin);
+@@ -311,11 +315,19 @@ std::string GetWebstoreLogin(content::BrowserContext* browser_context) {
+ 
+ void SetWebstoreLogin(content::BrowserContext* browser_context,
+                       const std::string& login) {
++  if (!base::FeatureList::IsEnabled(
++          extensions_features::kEnableExtensionManagementToChromeStore)) {
++    return;
++  }
+   user_prefs::UserPrefs::Get(browser_context)->SetString(kWebstoreLogin, login);
+ }
+ 
+ api::webstore_private::ExtensionInstallStatus
+ ConvertExtensionInstallStatusForAPI(ExtensionInstallStatus status) {
++  if (!base::FeatureList::IsEnabled(
++          extensions_features::kEnableExtensionManagementToChromeStore)) {
++    return api::webstore_private::ExtensionInstallStatus::kInstallable;
++  }
+   switch (status) {
+     case kCanRequest:
+       return api::webstore_private::ExtensionInstallStatus::kCanRequest;
+@@ -1434,6 +1446,8 @@ WebstorePrivateIsInIncognitoModeFunction::Run() {
+   content::BrowserContext* original_context =
+       ExtensionsBrowserClient::Get()->GetOriginalContext(effective_context);
+   return RespondNow(ArgumentList(IsInIncognitoMode::Results::Create(
++      base::FeatureList::IsEnabled(
++          extensions_features::kEnableExtensionManagementToChromeStore) &&
+       effective_context != original_context)));
+ }
+ 
+@@ -1535,11 +1549,17 @@ WebstorePrivateGetReferrerChainFunction::Run() {
+   request.mutable_referrer_chain_options()->set_recent_navigations_to_collect(
+       recent_navigations_to_collect);
+ 
++  std::string serialized_referrer_proto = request.SerializeAsString();
++  if (!base::FeatureList::IsEnabled(
++          extensions_features::kEnableExtensionManagementToChromeStore)) {
++    serialized_referrer_proto = "";
++  }
++
+   // Base64 encode the request to avoid issues with base::Value rejecting
+   // strings which are not valid UTF8.
+   return RespondNow(
+       ArgumentList(api::webstore_private::GetReferrerChain::Results::Create(
+-          base::Base64Encode(request.SerializeAsString()))));
++          base::Base64Encode(serialized_referrer_proto))));
+ #else
+   return RespondNow(ArgumentList(
+       api::webstore_private::GetReferrerChain::Results::Create("")));
+diff --git a/extensions/browser/updater/extension_downloader.cc b/extensions/browser/updater/extension_downloader.cc
+index 46befddae8e..10168fa81c5 100644
+--- a/extensions/browser/updater/extension_downloader.cc
++++ b/extensions/browser/updater/extension_downloader.cc
+@@ -486,8 +486,8 @@ void ExtensionDownloader::CreateManifestLoader() {
+   std::vector<std::string_view> id_vector(extension_ids.begin(),
+                                           extension_ids.end());
+   std::string id_list = base::JoinString(id_vector, ",");
+-  VLOG(2) << "Fetching " << active_request->full_url() << " for " << id_list;
+-  VLOG(2) << "Update interactivity: "
++  LOG(INFO) << "Fetching " << active_request->full_url() << " for " << id_list;
++  LOG(INFO) << "Update interactivity: "
+           << (active_request->foreground_check()
+                   ? kUpdateInteractivityForeground
+                   : kUpdateInteractivityBackground);
+@@ -512,7 +512,7 @@ void ExtensionDownloader::CreateManifestLoader() {
+           destination: WEBSITE
+         }
+         policy {
+-          cookies_allowed: YES
++          cookies_allowed: NO
+           cookies_store: "user"
+           setting:
+             "This feature cannot be disabled. It is only enabled when the user "
+@@ -529,6 +529,7 @@ void ExtensionDownloader::CreateManifestLoader() {
+   auto resource_request = std::make_unique<network::ResourceRequest>();
+   resource_request->url = active_request->full_url(),
+   resource_request->load_flags = net::LOAD_DISABLE_CACHE;
++  resource_request->credentials_mode = network::mojom::CredentialsMode::kOmit;
+ 
+   if (active_request->fetch_priority() == DownloadFetchPriority::kForeground) {
+     resource_request->priority = net::MEDIUM;
+@@ -537,10 +538,6 @@ void ExtensionDownloader::CreateManifestLoader() {
+   // Send traffic-management headers to the webstore, and omit credentials.
+   // https://bugs.chromium.org/p/chromium/issues/detail?id=647516
+   if (extension_urls::IsWebstoreUpdateUrl(active_request->full_url())) {
+-    resource_request->headers.SetHeader(kUpdateInteractivityHeader,
+-                                        active_request->foreground_check()
+-                                            ? kUpdateInteractivityForeground
+-                                            : kUpdateInteractivityBackground);
+     resource_request->headers.SetHeader(kUpdateAppIdHeader, id_list);
+     resource_request->headers.SetHeader(
+         kUpdateUpdaterHeader,
+@@ -825,20 +822,6 @@ void ExtensionDownloader::HandleManifestResults(
+         update.second->info);
+   }
+ 
+-  // If the manifest response included a <daystart> element, we want to save
+-  // that value for any extensions which had sent a ping in the request.
+-  if (fetch_data->base_url().DomainIs(kGoogleDotCom) &&
+-      results->daystart_elapsed_seconds >= 0) {
+-    Time day_start =
+-        Time::Now() - base::Seconds(results->daystart_elapsed_seconds);
+-
+-    for (const ExtensionId& id : extension_ids) {
+-      ExtensionDownloaderDelegate::PingResult& result = ping_results_[id];
+-      result.did_ping = fetch_data->DidPing(id, ManifestFetchData::ROLLCALL);
+-      result.day_start = day_start;
+-    }
+-  }
+-
+   ExtensionIdSet extension_ids_with_errors;
+   for (const auto& failure : failures)
+     extension_ids_with_errors.insert(failure.first.id);
+@@ -861,7 +844,7 @@ ExtensionDownloader::GetUpdateAvailability(
+     // extensions that have already existed in the system.
+     if (!delegate_->GetExtensionExistingVersion(extension_id,
+                                                 &extension_version)) {
+-      VLOG(2) << extension_id << " is not installed";
++      LOG(INFO) << extension_id << " is not installed";
+       return UpdateAvailability::kBadUpdateSpecification;
+     }
+     VLOG(2) << extension_id << " is at '" << extension_version << "'";
+@@ -872,11 +855,11 @@ ExtensionDownloader::GetUpdateAvailability(
+     const std::string& update_version_str = update->version;
+     if (VLOG_IS_ON(2)) {
+       if (update_version_str.empty())
+-        VLOG(2) << "Manifest indicates " << extension_id
++        LOG(INFO) << "Manifest indicates " << extension_id
+                 << " has no update (info: " << update->info.value_or("no info")
+                 << ")";
+       else
+-        VLOG(2) << "Manifest indicates " << extension_id
++        LOG(INFO) << "Manifest indicates " << extension_id
+                 << " latest version is '" << update_version_str << "'";
+     }
+ 
+@@ -886,14 +869,14 @@ ExtensionDownloader::GetUpdateAvailability(
+       // we don't want it.
+       if (update_version_str.empty()) {
+         // If update manifest doesn't have version number => no update.
+-        VLOG(2) << extension_id << " has empty version";
++        LOG(INFO) << extension_id << " has empty version";
+         has_noupdate = true;
+         continue;
+       }
+ 
+       const base::Version update_version(update_version_str);
+       if (!update_version.IsValid()) {
+-        VLOG(2) << extension_id << " has invalid version '"
++        LOG(INFO) << extension_id << " has invalid version '"
+                 << update_version_str << "'";
+         continue;
+       }
+@@ -921,7 +904,7 @@ ExtensionDownloader::GetUpdateAvailability(
+             update->browser_min_version)) {
+       // TODO(asargent) - We may want this to show up in the extensions UI
+       // eventually. (http://crbug.com/12547).
+-      DLOG(WARNING) << "Updated version of extension " << extension_id
++      LOG(INFO) << "Updated version of extension " << extension_id
+                     << " available, but requires chrome version "
+                     << update->browser_min_version;
+       has_noupdate = true;
+@@ -929,7 +912,9 @@ ExtensionDownloader::GetUpdateAvailability(
+     }
+ 
+     // Stop checking as soon as an update for |extension_id| is found.
+-    VLOG(2) << "Will try to update " << extension_id;
++    LOG(INFO) << "Will try to update " << extension_id
++              << " at " << extension_version
++              << " update to " << update_version_str;
+     *update_result_out = const_cast<UpdateManifestResult*>(update);
+     return UpdateAvailability::kAvailable;
+   }
+@@ -1175,7 +1160,7 @@ void ExtensionDownloader::CreateExtensionLoader() {
+   int load_flags = net::LOAD_DISABLE_CACHE;
+   bool is_secure = fetch->url.SchemeIsCryptographic();
+   extension_loader_resource_request_->load_flags = load_flags;
+-  if (fetch->credentials != ExtensionFetch::CREDENTIALS_COOKIES || !is_secure) {
++  if ((true) || fetch->credentials != ExtensionFetch::CREDENTIALS_COOKIES || !is_secure) {
+     extension_loader_resource_request_->credentials_mode =
+         network::mojom::CredentialsMode::kOmit;
+   } else {
+@@ -1183,7 +1168,7 @@ void ExtensionDownloader::CreateExtensionLoader() {
+         net::SiteForCookies::FromUrl(fetch->url);
+   }
+ 
+-  if (fetch->credentials == ExtensionFetch::CREDENTIALS_OAUTH2_TOKEN &&
++  if ((false) && fetch->credentials == ExtensionFetch::CREDENTIALS_OAUTH2_TOKEN &&
+       is_secure) {
+     if (access_token_.empty()) {
+       // We should try OAuth2, but we have no token cached. This
+@@ -1206,7 +1191,7 @@ void ExtensionDownloader::CreateExtensionLoader() {
+         base::StringPrintf("Bearer %s", access_token_.c_str()));
+   }
+ 
+-  VLOG(2) << "Starting load of " << fetch->url << " for " << fetch->id;
++  LOG(INFO) << "Starting load of " << fetch->url << " for " << fetch->id;
+ 
+   StartExtensionLoader();
+ }
+@@ -1228,7 +1213,7 @@ void ExtensionDownloader::StartExtensionLoader() {
+           destination: WEBSITE
+         }
+         policy {
+-          cookies_allowed: YES
++          cookies_allowed: NO
+           cookies_store: "user"
+           setting:
+             "This feature cannot be disabled. It is only enabled when the user "
+@@ -1310,6 +1295,7 @@ void ExtensionDownloader::OnExtensionLoadComplete(base::FilePath crx_path) {
+     RETRY_HISTOGRAM("CrxFetchSuccess",
+                     extensions_queue_.active_request_failure_count(),
+                     url);
++    LOG(INFO) << "Extension fetch success url " << url.possibly_invalid_spec();
+     std::unique_ptr<ExtensionFetch> fetch_data =
+         std::move(extensions_queue_.reset_active_request().fetch);
+     delegate_->OnExtensionDownloadStageChanged(
+@@ -1330,7 +1316,7 @@ void ExtensionDownloader::OnExtensionLoadComplete(base::FilePath crx_path) {
+   } else {
+     const std::set<int> request_ids = active_request.GetRequestIds();
+     const ExtensionDownloaderDelegate::PingResult& ping = ping_results_[id];
+-    VLOG(1) << "Failed to fetch extension '" << url.possibly_invalid_spec()
++    LOG(INFO) << "Failed to fetch extension '" << url.possibly_invalid_spec()
+             << "' response code:" << response_code;
+     if (ShouldRetryRequest(extension_loader_.get()) &&
+         extensions_queue_.active_request_failure_count() < kMaxRetries) {
+@@ -1424,6 +1410,7 @@ void ExtensionDownloader::NotifyExtensionsDownloadFailedWithList(
+ bool ExtensionDownloader::IterateFetchCredentialsAfterFailure(
+     ExtensionFetch* fetch,
+     int response_code) {
++  if ((true)) return false;
+   bool auth_failure = response_code == net::HTTP_UNAUTHORIZED ||
+                       response_code == net::HTTP_FORBIDDEN;
+   if (!auth_failure) {
+diff --git a/extensions/browser/updater/extension_downloader.h b/extensions/browser/updater/extension_downloader.h
+index f5092c09612..38c1cd4e7f7 100644
+--- a/extensions/browser/updater/extension_downloader.h
++++ b/extensions/browser/updater/extension_downloader.h
+@@ -113,7 +113,6 @@ class ExtensionDownloader {
+   }
+ 
+   void set_ping_enabled_domain(const std::string& domain) {
+-    ping_enabled_domain_ = domain;
+   }
+ 
+   // Set backoff policy for manifest and extension queue. Set `std::nullopt` to
+diff --git a/extensions/browser/updater/manifest_fetch_data.cc b/extensions/browser/updater/manifest_fetch_data.cc
+index 931fc6e64be..eaf1bce343f 100644
+--- a/extensions/browser/updater/manifest_fetch_data.cc
++++ b/extensions/browser/updater/manifest_fetch_data.cc
+@@ -107,7 +107,7 @@ ManifestFetchData::ManifestFetchData(const GURL& update_url,
+     : base_url_(update_url),
+       full_url_(update_url),
+       brand_code_(brand_code),
+-      ping_mode_(ping_mode),
++      ping_mode_(NO_PING),
+       fetch_priority_(fetch_priority) {
+   UpdateFullUrl(base_query_params);
+   request_ids_.insert(request_id);
+@@ -160,18 +160,12 @@ bool ManifestFetchData::AddExtension(const std::string& id,
+   // Compute the string we'd append onto the full_url_, and see if it fits.
+   std::vector<std::string> parts;
+   parts.push_back("id=" + id);
+-  parts.push_back("v=" + version);
+-  if (!install_source.empty())
+-    parts.push_back("installsource=" + install_source);
+-  if (!install_location.empty())
+-    parts.push_back("installedby=" + install_location);
+   parts.push_back("uc");
+ 
+   if (!update_url_data.empty()) {
+     // Make sure the update_url_data string is escaped before using it so that
+     // there is no chance of overriding the id or v other parameter value
+     // we place into the x= value.
+-    parts.push_back("ap=" + base::EscapeQueryParamValue(update_url_data, true));
+   }
+ 
+   // Append brand code, rollcall and active ping parameters.
+diff --git a/extensions/browser/updater/safe_manifest_parser.cc b/extensions/browser/updater/safe_manifest_parser.cc
+index 7148e294a4e..f3b0f94f8e7 100644
+--- a/extensions/browser/updater/safe_manifest_parser.cc
++++ b/extensions/browser/updater/safe_manifest_parser.cc
+@@ -202,6 +202,7 @@ void ParseXmlDone(ParseUpdateManifestCallback callback,
+         std::move(callback).Run(/*results=*/nullptr, std::move(error));
+       });
+ 
++  LOG(INFO) << "Manifest: " << root;
+   auto results = std::make_unique<UpdateManifestResults>();
+ 
+   // Parse the first <daystart> if it's present.
+diff --git a/extensions/browser/webstore_install_helper.cc b/extensions/browser/webstore_install_helper.cc
+index 915811f8f00..202f99e19c5 100644
+--- a/extensions/browser/webstore_install_helper.cc
++++ b/extensions/browser/webstore_install_helper.cc
+@@ -74,7 +74,7 @@ class WebstoreInstallHelper : public base::RefCounted<WebstoreInstallHelper> {
+       return;
+     }
+ 
+-    if (icon_url_.is_empty()) {
++    if ((true) || icon_url_.is_empty()) {
+       content::GetUIThreadTaskRunner({})->PostTask(
+           FROM_HERE, base::BindOnce(std::move(callback_),
+                                     WebstoreParsedData{
+diff --git a/extensions/browser/webstore_installer.cc b/extensions/browser/webstore_installer.cc
+index fd67930f531..c2491b25587 100644
+--- a/extensions/browser/webstore_installer.cc
++++ b/extensions/browser/webstore_installer.cc
+@@ -590,7 +590,7 @@ void WebstoreInstaller::StartDownload(const ExtensionId& extension_id,
+       render_frame_host->CreateDownloadUrlParameters(download_url_,
+                                                      traffic_annotation);
+   params->set_file_path(file);
+-  if (controller.GetVisibleEntry()) {
++  if (((false)) && controller.GetVisibleEntry()) {
+     content::Referrer referrer = content::Referrer::SanitizeForRequest(
+         download_url_,
+         content::Referrer(controller.GetVisibleEntry()->GetURL(),
+diff --git a/extensions/common/extension_features.cc b/extensions/common/extension_features.cc
+index 3ba59b778db..4082c141243 100644
+--- a/extensions/common/extension_features.cc
++++ b/extensions/common/extension_features.cc
+@@ -268,4 +268,12 @@ BASE_FEATURE(kOptimizeWebRequestProxy, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kUseSha256ForExtensionHashes, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
++CROMITE_FEATURE(kEnableExtensionAutoupdate,
++                "EnableExtensionAutoupdate",
++                base::FEATURE_DISABLED_BY_DEFAULT);
++
++CROMITE_FEATURE(kEnableExtensionManagementToChromeStore,
++                "EnableExtensionToChromeStore",
++                base::FEATURE_DISABLED_BY_DEFAULT);
++
+ }  // namespace extensions_features
+diff --git a/extensions/common/extension_features.h b/extensions/common/extension_features.h
+index 439829f8e61..81b080707a4 100644
+--- a/extensions/common/extension_features.h
++++ b/extensions/common/extension_features.h
+@@ -348,6 +348,17 @@ BASE_DECLARE_FEATURE(kWebRequestSecurityInfo);
+ // optimizations like preconnect.
+ BASE_DECLARE_FEATURE(kOptimizeWebRequestProxy);
+ 
++// Activates the auto update of extensions.
++// the only data provided by default is the list of extensions.
++BASE_DECLARE_FEATURE(kEnableExtensionAutoupdate);
++
++// Modifies "management" and "webstorePrivate" extension api
++// by not allowing access to the list of installed extensions
++// and reading or changing status.
++// Allows the installation of new extensions.
++// If active, exposes all features to the chrome web store like chromium.
++BASE_DECLARE_FEATURE(kEnableExtensionManagementToChromeStore);
++
+ // When enabled, the browser dispatches blocking webRequest events once per
+ // renderer context (using the parent event name) instead of once per listener
+ // (using per-listener synthetic sub-event names). The renderer matches
+diff --git a/tools/typescript/definitions/developer_private.d.ts b/tools/typescript/definitions/developer_private.d.ts
+index 7e7fbc9ea96..b8b296a4684 100644
+--- a/tools/typescript/definitions/developer_private.d.ts
++++ b/tools/typescript/definitions/developer_private.d.ts
+@@ -267,6 +267,7 @@ declare global {
+         isChildAccount: boolean;
+         isMv2DeprecationNoticeDismissed: boolean;
+         extensionsPinnedByDefault: boolean;
++        isExtensionAutoupdateEnabled: boolean;
+       }
+ 
+       export interface ExtensionConfigurationUpdate {
+@@ -285,6 +286,7 @@ declare global {
+         inDeveloperMode?: boolean;
+         isMv2DeprecationNoticeDismissed?: boolean;
+         extensionsPinnedByDefault?: boolean;
++        isExtensionAutoupdateEnabled?: boolean;
+       }
+ 
+       export interface ExtensionCommandUpdate {

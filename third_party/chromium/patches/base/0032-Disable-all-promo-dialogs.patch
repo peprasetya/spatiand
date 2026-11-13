@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 12 Jun 2018 15:09:26 +0200
+Subject: [PATCH 032/310] Disable all promo dialogs
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-all-promo-dialogs.patch
+---
+ chrome/browser/ui/browser_ui_prefs.cc                           | 2 +-
+ chrome/browser/user_education/user_education_service_factory.cc | 1 +
+ .../common/feature_promo/feature_promo_registry.cc              | 2 ++
+ .../common/feature_promo/impl/feature_promo_queue.cc            | 1 +
+ 4 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index 5f4a2859cbc..cfcf46dedbc 100644
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -203,7 +203,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+ 
+   registry->RegisterBooleanPref(prefs::kEnterpriseHardwarePlatformAPIEnabled,
+                                 false);
+-  registry->RegisterBooleanPref(prefs::kUserFeedbackAllowed, true);
++  registry->RegisterBooleanPref(prefs::kUserFeedbackAllowed, false);
+   registry->RegisterBooleanPref(
+       prefs::kExternalProtocolDialogShowAlwaysOpenCheckbox, true);
+   registry->RegisterBooleanPref(prefs::kScreenCaptureAllowed, true);
+diff --git a/chrome/browser/user_education/user_education_service_factory.cc b/chrome/browser/user_education/user_education_service_factory.cc
+index 41d1ff9404f..6011c679a61 100644
+--- a/chrome/browser/user_education/user_education_service_factory.cc
++++ b/chrome/browser/user_education/user_education_service_factory.cc
+@@ -113,6 +113,7 @@ UserEducationServiceFactory::BuildServiceInstanceForBrowserContextImpl(
+ 
+ // static
+ bool UserEducationServiceFactory::ProfileAllowsUserEducation(Profile* profile) {
++  if ((true)) return false;
+ #if BUILDFLAG(CHROME_FOR_TESTING)
+   if (!chrome_for_testing::IsEnableUserEducationUI()) {
+     return false;
+diff --git a/components/user_education/common/feature_promo/feature_promo_registry.cc b/components/user_education/common/feature_promo/feature_promo_registry.cc
+index 3925a2f3d3c..07d3c34e77f 100644
+--- a/components/user_education/common/feature_promo/feature_promo_registry.cc
++++ b/components/user_education/common/feature_promo/feature_promo_registry.cc
+@@ -19,6 +19,7 @@ FeaturePromoRegistry& FeaturePromoRegistry::operator=(
+ FeaturePromoRegistry::~FeaturePromoRegistry() = default;
+ 
+ void FeaturePromoRegistry::RegisterFeature(FeaturePromoSpecification spec) {
++  if ((true)) return;
+   const base::Feature* const iph_feature = spec.feature();
+   CHECK(iph_feature);
+   CHECK_NE(FeaturePromoSpecification::PromoType::kUnspecified,
+@@ -34,6 +35,7 @@ NewBadgeRegistry& NewBadgeRegistry::operator=(
+ NewBadgeRegistry::~NewBadgeRegistry() = default;
+ 
+ void NewBadgeRegistry::RegisterFeature(NewBadgeSpecification spec) {
++  if ((true)) return;
+   const base::Feature* const iph_feature = spec.feature;
+   CHECK(iph_feature);
+   FeatureRegistry<NewBadgeSpecification>::RegisterFeature(*iph_feature,
+diff --git a/components/user_education/common/feature_promo/impl/feature_promo_queue.cc b/components/user_education/common/feature_promo/impl/feature_promo_queue.cc
+index f6a35bd152b..ae80d5d9544 100644
+--- a/components/user_education/common/feature_promo/impl/feature_promo_queue.cc
++++ b/components/user_education/common/feature_promo/impl/feature_promo_queue.cc
+@@ -76,6 +76,7 @@ FeaturePromoResult FeaturePromoQueue::CanShow(
+     const FeaturePromoSpecification& spec,
+     const FeaturePromoParams& promo_params,
+     const UserEducationContextPtr& context) const {
++  if ((true)) return user_education::FeaturePromoResult::kBlockedByUi;
+   auto required = required_preconditions_provider_->GetPreconditions(
+       spec, promo_params, context);
+   UnownedTypedDataCollection data;

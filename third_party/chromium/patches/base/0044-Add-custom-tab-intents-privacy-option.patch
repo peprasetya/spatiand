@@ -1,0 +1,38 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Wed, 29 Aug 2018 11:03:44 +0200
+Subject: [PATCH 044/310] Add custom tab intents privacy option
+
+Add custom tab intents privacy option and force
+open external links in incognito flag.
+Use the CCT ephemeral mode.
+
+Flags are mutually exclusive.
+
+See also: https://github.com/bromite/bromite/issues/1474
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-custom-tab-intents-privacy-option.patch
+---
+ components/language/core/common/language_experiments.cc          | 1 +
+ .../add-custom-tab-intents-privacy-option.inc                    | 1 +
+ 2 files changed, 2 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc
+
+diff --git a/components/language/core/common/language_experiments.cc b/components/language/core/common/language_experiments.cc
+index d9a556a9c81..9a900d26829 100644
+--- a/components/language/core/common/language_experiments.cc
++++ b/components/language/core/common/language_experiments.cc
+@@ -17,4 +17,5 @@ BASE_FEATURE(kDisableGeoLanguageModel, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ BASE_FEATURE(kGmsCoreUlp, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
++SET_CROMITE_FEATURE_DISABLED(kCctAutoTranslate);
+ }  // namespace language
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc
+new file mode 100644
+index 00000000000..bcd6982e5bc
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-custom-tab-intents-privacy-option.inc
+@@ -0,0 +1 @@
++// explicitly empty

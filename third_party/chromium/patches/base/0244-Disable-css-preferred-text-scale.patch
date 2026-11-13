@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 28 Jun 2025 08:16:28 +0000
+Subject: [PATCH 244/310] Disable css preferred text scale
+
+Do not expose the user's preferred font scale to CSS.
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-css-preferred-text-scale.patch
+---
+ .../common/features_cc/Disable-CSSPreferredTextScale.inc      | 1 +
+ .../renderer/core/css/document_style_environment_variables.cc | 1 +
+ .../blink/renderer/core/css/style_environment_variables.cc    | 4 +++-
+ third_party/blink/renderer/core/page/page.cc                  | 4 +++-
+ .../blink/renderer/platform/runtime_enabled_features.json5    | 3 +++
+ 5 files changed, 11 insertions(+), 2 deletions(-)
+ create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disable-CSSPreferredTextScale.inc
+
+diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-CSSPreferredTextScale.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-CSSPreferredTextScale.inc
+new file mode 100644
+index 00000000000..b551c64c02b
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_cc/Disable-CSSPreferredTextScale.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_DISABLED(kCSSPreferredTextScale);
+diff --git a/third_party/blink/renderer/core/css/document_style_environment_variables.cc b/third_party/blink/renderer/core/css/document_style_environment_variables.cc
+index ff8127792aa..33bd28b5b8a 100644
+--- a/third_party/blink/renderer/core/css/document_style_environment_variables.cc
++++ b/third_party/blink/renderer/core/css/document_style_environment_variables.cc
+@@ -95,6 +95,7 @@ void DocumentStyleEnvironmentVariables::RecordVariableUsage(
+ }
+ 
+ void DocumentStyleEnvironmentVariables::UpdatePreferredTextScaleFromDocument() {
++  if (!RuntimeEnabledFeatures::CSSPreferredTextScaleEnabled()) return;
+   double scale_factor;
+ 
+   Settings* settings = document_->GetSettings();
+diff --git a/third_party/blink/renderer/core/css/style_environment_variables.cc b/third_party/blink/renderer/core/css/style_environment_variables.cc
+index fac008246a1..17603b31153 100644
+--- a/third_party/blink/renderer/core/css/style_environment_variables.cc
++++ b/third_party/blink/renderer/core/css/style_environment_variables.cc
+@@ -50,7 +50,9 @@ void SetDefaultEnvironmentVariables(StyleEnvironmentVariables* instance) {
+   instance->SetVariable(UADefinedVariable::kKeyboardInsetHeight,
+                         kKeyboardInsetDefault);
+ 
+-  instance->SetVariable(UADefinedVariable::kPreferredTextScale, "1");
++  if (RuntimeEnabledFeatures::CSSPreferredTextScaleEnabled()) {
++    instance->SetVariable(UADefinedVariable::kPreferredTextScale, "1");
++  }
+ }
+ 
+ }  // namespace.
+diff --git a/third_party/blink/renderer/core/page/page.cc b/third_party/blink/renderer/core/page/page.cc
+index bed7908c76f..84b6c9e3cb8 100644
+--- a/third_party/blink/renderer/core/page/page.cc
++++ b/third_party/blink/renderer/core/page/page.cc
+@@ -1037,7 +1037,9 @@ void Page::SettingsChanged(ChangeType change_type) {
+       }
+       break;
+     case ChangeType::kFontScaleFactor:
+-
++      if (!RuntimeEnabledFeatures::CSSPreferredTextScaleEnabled()) {
++        break;
++      }
+       for (Frame* frame = MainFrame(); frame;
+            frame = frame->Tree().TraverseNext()) {
+         LocalFrame* local_frame = DynamicTo<LocalFrame>(frame);
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index e07146d990c..345ffa7173c 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -1987,6 +1987,9 @@
+       name: "CSSPrivate",
+       status: "experimental",
+     },
++    {
++      name: "CSSPreferredTextScale", status: "test", public: true
++    },
+     // https://drafts.csswg.org/css-values-5/#progress
+     // progress()
+     {

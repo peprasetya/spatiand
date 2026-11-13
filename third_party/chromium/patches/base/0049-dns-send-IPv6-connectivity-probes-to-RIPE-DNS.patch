@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jan Engelhardt <jengelh@inai.de>
+Date: Mon, 15 Sep 2014 10:58:42 +0200
+Subject: [PATCH 049/310] dns: send IPv6 connectivity probes to RIPE DNS
+
+Short of disabling the code (we may do that in a subsequent patch
+anyway), avoid sending to Google.
+
+Increase probe period from 1s to 15s
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:dns-send-IPv6-connectivity-probes-to-RIPE-DNS.patch
+---
+ net/dns/host_resolver_manager.cc              | 10 +++++-----
+ net/dns/host_resolver_manager_request_impl.cc |  5 +++++
+ 2 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/net/dns/host_resolver_manager.cc b/net/dns/host_resolver_manager.cc
+index ab286b869b8..ccf7fed6042 100644
+--- a/net/dns/host_resolver_manager.cc
++++ b/net/dns/host_resolver_manager.cc
+@@ -152,12 +152,12 @@ const size_t kMaxHostLength = 4096;
+ 
+ // Time between IPv6 probes, i.e. for how long results of each IPv6 probe are
+ // cached.
+-const int kIPv6ProbePeriodMs = 1000;
++const int kIPv6ProbePeriodMs = 15000;
+ 
+-// Google DNS address used for IPv6 probes.
+-const uint8_t kIPv6ProbeAddress[] = {0x20, 0x01, 0x48, 0x60, 0x48, 0x60,
+-                                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+-                                     0x00, 0x00, 0x88, 0x88};
++// RIPE NCC k.root-servers.net. 2001:7fd::1 (anycasted)
++const uint8_t kIPv6ProbeAddress[] =
++    { 0x20, 0x01, 0x07, 0xfd, 0x00, 0x00, 0x00, 0x00,
++      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+ 
+ // True if |hostname| ends with either ".local" or ".local.".
+ bool ResemblesMulticastDNSName(std::string_view hostname) {
+diff --git a/net/dns/host_resolver_manager_request_impl.cc b/net/dns/host_resolver_manager_request_impl.cc
+index 14e9e1db950..22a11af993a 100644
+--- a/net/dns/host_resolver_manager_request_impl.cc
++++ b/net/dns/host_resolver_manager_request_impl.cc
+@@ -35,6 +35,8 @@
+ #include "net/socket/client_socket_factory.h"
+ #include "net/url_request/url_request_context.h"
+ 
++#include "services/network/public/cpp/features.h"
++
+ namespace net {
+ 
+ HostResolverManager::RequestImpl::RequestImpl(
+@@ -290,6 +292,9 @@ void HostResolverManager::RequestImpl::OnIOComplete(int rv) {
+ 
+ int HostResolverManager::RequestImpl::DoIPv6Reachability() {
+   next_state_ = STATE_GET_PARAMETERS;
++  if (!base::FeatureList::IsEnabled(features::kIPv6Probing)) {
++    return OK;
++  }
+   // If a single reachability probe has not been completed, and the latest
+   // probe will return asynchronously, return ERR_NAME_NOT_RESOLVED when the
+   // request source is LOCAL_ONLY. This is due to LOCAL_ONLY requiring a

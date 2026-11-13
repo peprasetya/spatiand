@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sat, 9 May 2020 14:42:37 +0200
+Subject: [PATCH 023/310] webRTC: do not expose local IP addresses
+
+Prevent leaks of local IP address and public IP address (when using VPN)
+
+See also:
+* https://github.com/bromite/bromite/issues/553
+* https://github.com/bromite/bromite/issues/589
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:webRTC-do-not-expose-local-IP-addresses.patch
+---
+ chrome/browser/ui/browser_ui_prefs.cc                        | 2 +-
+ .../blink/common/peerconnection/webrtc_ip_handling_policy.cc | 5 ++++-
+ .../peerconnection/peer_connection_dependency_factory.cc     | 2 +-
+ 3 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index 82253815922..d83fdc2bbf1 100644
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -158,7 +158,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+                                 false);
+ #endif
+   registry->RegisterStringPref(prefs::kWebRTCIPHandlingPolicy,
+-                               blink::kWebRTCIPHandlingDefault);
++                               blink::kWebRTCIPHandlingDisableNonProxiedUdp);
+   registry->RegisterListPref(prefs::kWebRTCIPHandlingUrl, base::ListValue());
+   registry->RegisterBooleanPref(prefs::kWebRTCPostQuantumKeyAgreement, false);
+   registry->RegisterStringPref(prefs::kWebRTCUDPPortRange, std::string());
+diff --git a/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc b/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc
+index 3c2475d75f4..a342c816278 100644
+--- a/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc
++++ b/third_party/blink/common/peerconnection/webrtc_ip_handling_policy.cc
+@@ -30,7 +30,10 @@ blink::mojom::WebRtcIpHandlingPolicy ToWebRTCIPHandlingPolicy(
+   if (preference == kWebRTCIPHandlingDisableNonProxiedUdp) {
+     return blink::mojom::WebRtcIpHandlingPolicy::kDisableNonProxiedUdp;
+   }
+-  return blink::mojom::WebRtcIpHandlingPolicy::kDefault;
++  if (preference == kWebRTCIPHandlingDefault) {
++    return blink::mojom::WebRtcIpHandlingPolicy::kDefault;
++  }
++  return blink::mojom::WebRtcIpHandlingPolicy::kDisableNonProxiedUdp;
+ }
+ 
+ const char* ToString(blink::mojom::WebRtcIpHandlingPolicy policy) {
+diff --git a/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc b/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
+index ba3d20ad798..d99253b2940 100644
+--- a/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
++++ b/third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.cc
+@@ -1111,7 +1111,7 @@ PeerConnectionDependencyFactory::CreatePortAllocator(
+           break;
+       }
+ 
+-      VLOG(3) << "WebRTC routing preferences: " << "policy: "
++      LOG(INFO) << "WebRTC routing preferences: " << "policy: "
+               << ToString(webrtc_ip_handling_policy)
+               << ", multiple_routes: " << port_config.enable_multiple_routes
+               << ", nonproxied_udp: " << port_config.enable_nonproxied_udp

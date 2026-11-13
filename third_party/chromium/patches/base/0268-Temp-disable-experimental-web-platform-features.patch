@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 2 Sep 2024 07:05:25 +0000
+Subject: [PATCH 268/310] Temp disable experimental-web-platform-features
+
+FILE:Temp-disable-experimental-web-platform-features.patch
+---
+ chrome/browser/about_flags.cc | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
+index 904b2bbe50e..654342c9666 100644
+--- a/chrome/browser/about_flags.cc
++++ b/chrome/browser/about_flags.cc
+@@ -5422,10 +5422,10 @@ const FeatureEntry kFeatureEntries[] = {
+      flag_descriptions::kVariableSystemFontSupportOnWindowsDescription, kOsWin,
+      FEATURE_VALUE_TYPE(blink::features::kVariableSystemFontSupportOnWindows)},
+ #endif  // BUILDFLAG(IS_WIN)
+-    {"enable-experimental-web-platform-features",
+-     flag_descriptions::kExperimentalWebPlatformFeaturesName,
+-     flag_descriptions::kExperimentalWebPlatformFeaturesDescription, kOsAll,
+-     SINGLE_VALUE_TYPE(switches::kEnableExperimentalWebPlatformFeatures)},
++    // {"enable-experimental-web-platform-features",
++    //  flag_descriptions::kExperimentalWebPlatformFeaturesName,
++    //  flag_descriptions::kExperimentalWebPlatformFeaturesDescription, kOsAll,
++    //  SINGLE_VALUE_TYPE(switches::kEnableExperimentalWebPlatformFeatures)},
+     {"top-chrome-touch-ui", flag_descriptions::kTopChromeTouchUiName,
+      flag_descriptions::kTopChromeTouchUiDescription, kOsDesktop,
+      MULTI_VALUE_TYPE(kTopChromeTouchUiChoices)},

@@ -1,0 +1,111 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 21 Apr 2023 13:10:20 +0000
+Subject: [PATCH 168/310] Add a flag to disable GamePad API
+
+Adds restrict-gamepad-access flag (default active) to disable GamePad API.
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Add-a-flag-to-disable-GamePad-API.patch
+---
+ content/child/runtime_features.cc                         | 2 ++
+ .../about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc  | 7 +++++++
+ device/gamepad/public/cpp/gamepad_features.cc             | 8 ++++++++
+ device/gamepad/public/cpp/gamepad_features.h              | 2 ++
+ .../blink/renderer/modules/gamepad/navigator_gamepad.cc   | 6 ++++++
+ 5 files changed, 25 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc
+
+diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
+index b82ab5e52ff..94a8fbf6944 100644
+--- a/content/child/runtime_features.cc
++++ b/content/child/runtime_features.cc
+@@ -191,6 +191,8 @@ void SetRuntimeFeaturesFromChromiumFeatures() {
+            media::kMediaEngagementBypassAutoplayPolicies},
+           {wf::EnablePaymentApp, features::kServiceWorkerPaymentApps},
+           {wf::EnablePeriodicBackgroundSync, features::kPeriodicBackgroundSync},
++          {wf::EnableRestrictGamepadAccess,
++           raw_ref(features::kRestrictGamepadAccess)},
+           {wf::EnableSecurePaymentConfirmation,
+            features::kSecurePaymentConfirmation},
+           {wf::EnableSecurePaymentConfirmationDebug,
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc
+new file mode 100644
+index 00000000000..27fed0d1c81
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Add-a-flag-to-disable-GamePad-API.inc
+@@ -0,0 +1,7 @@
++#ifdef FLAG_SECTION
++
++    {"restrict-gamepad-access", "Restrict gamepad access",
++     "Disable the Gamepad API", kOsAll,
++     FEATURE_VALUE_TYPE(features::kRestrictGamepadAccess)},
++
++#endif
+diff --git a/device/gamepad/public/cpp/gamepad_features.cc b/device/gamepad/public/cpp/gamepad_features.cc
+index c625ddc61aa..641f95e8f46 100644
+--- a/device/gamepad/public/cpp/gamepad_features.cc
++++ b/device/gamepad/public/cpp/gamepad_features.cc
+@@ -71,4 +71,12 @@ bool IsGamepadMultitouchEnabled() {
+   return false;
+ }
+ 
++CROMITE_FEATURE(kRestrictGamepadAccess,
++                "RestrictGamepadAccess",
++                base::FEATURE_ENABLED_BY_DEFAULT);
++
++bool IsRestrictGamepadAccessEnabled() {
++  return base::FeatureList::IsEnabled(kRestrictGamepadAccess);
++}
++
+ }  // namespace features
+diff --git a/device/gamepad/public/cpp/gamepad_features.h b/device/gamepad/public/cpp/gamepad_features.h
+index e5dc4babaeb..f5f7d0566e6 100644
+--- a/device/gamepad/public/cpp/gamepad_features.h
++++ b/device/gamepad/public/cpp/gamepad_features.h
+@@ -17,6 +17,7 @@ GAMEPAD_FEATURES_EXPORT BASE_DECLARE_FEATURE(
+ GAMEPAD_FEATURES_EXPORT BASE_DECLARE_FEATURE(kGamepadRawInputChangeEvent);
+ GAMEPAD_FEATURES_EXPORT BASE_DECLARE_FEATURE(
+     kClaimDuplicateGamepadsProductIdentifier);
++GAMEPAD_FEATURES_EXPORT BASE_DECLARE_FEATURE(kRestrictGamepadAccess);
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ GAMEPAD_FEATURES_EXPORT BASE_DECLARE_FEATURE(kAndroidUnknownGamepadExtraAxes);
+@@ -43,6 +44,7 @@ GAMEPAD_FEATURES_EXPORT BASE_DECLARE_FEATURE(
+ #endif  // BUILDFLAG(IS_WIN)
+ 
+ GAMEPAD_FEATURES_EXPORT bool IsGamepadMultitouchEnabled();
++GAMEPAD_FEATURES_EXPORT bool IsRestrictGamepadAccessEnabled();
+ 
+ }  // namespace features
+ 
+diff --git a/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc b/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
+index cce530646bf..0244f3b70ae 100644
+--- a/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
++++ b/third_party/blink/renderer/modules/gamepad/navigator_gamepad.cc
+@@ -28,6 +28,7 @@
+ #include "base/auto_reset.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "device/gamepad/public/cpp/gamepads.h"
++#include "device/gamepad/public/cpp/gamepad_features.h"
+ #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-blink.h"
+ #include "third_party/blink/public/platform/task_type.h"
+ #include "third_party/blink/renderer/bindings/modules/v8/v8_gamepad_mapping_type.h"
+@@ -89,6 +90,9 @@ NavigatorGamepad& NavigatorGamepad::From(Navigator& navigator) {
+ HeapVector<Member<Gamepad>> NavigatorGamepad::getGamepads(
+     Navigator& navigator,
+     ExceptionState& exception_state) {
++  if (::features::IsRestrictGamepadAccessEnabled()) {
++    return HeapVector<Member<Gamepad>>();
++  }
+   if (!navigator.DomWindow()) {
+     // Using an existing NavigatorGamepad if one exists, but don't create one
+     // for a detached window, as its subclasses depend on a non-null window.
+@@ -440,6 +444,8 @@ void NavigatorGamepad::MaybeDispatchGamepadEvents(
+ void NavigatorGamepad::DispatchGamepadConnectionChangedEvent(
+     const AtomicString& event_name,
+     Gamepad* gamepad) {
++  if (::features::IsRestrictGamepadAccessEnabled())
++    return;
+   // Ensure that we're blocking re-entrancy.
+   DCHECK(processing_events_);
+   DCHECK(has_connection_event_listener_);

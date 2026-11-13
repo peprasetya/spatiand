@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Mon, 10 Feb 2020 23:13:13 +0100
+Subject: [PATCH 075/310] Guard for user-agent reduction
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Guard-for-user-agent-reduction.patch
+---
+ components/embedder_support/user_agent_utils.cc              | 5 +++++
+ .../blink/renderer/platform/runtime_enabled_features.json5   | 4 ++--
+ 2 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index bf4a8960a0d..774f64c11b3 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -818,6 +818,7 @@ std::string BuildUnifiedPlatformUserAgentFromProduct(
+ }
+ 
+ std::string BuildModelInfo() {
++  if ((true)) return std::string();
+ #if BUILDFLAG(IS_ANDROID)
+   // Model information is not exposed on Android desktop.
+   if (base::android::device_info::is_desktop()) {
+@@ -852,6 +853,10 @@ std::string GetAndroidOSInfo(
+     IncludeAndroidModel include_android_model) {
+   std::string android_info_str;
+ 
++  // Do not send information about the device.
++  include_android_model = IncludeAndroidModel::Exclude;
++  include_android_build_number = IncludeAndroidBuildNumber::Exclude;
++
+   // Send information about the device.
+   bool semicolon_inserted = false;
+   if (include_android_model == IncludeAndroidModel::Include) {
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index a5fffc4c384..58b8bbb05ee 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -5349,8 +5349,8 @@
+     // This User-Agent Reduction feature has been enabled starting from M101,
+     // but we still keep this flag for future phase tests.
+     {
+-      name: "ReduceUserAgentMinorVersion",
+-      status: "stable",
++      name: "ReduceUserAgentMinorVersion",                // keep enabled
++      status: "stable",                                   // in bromite
+     },
+     {
+       public: true,

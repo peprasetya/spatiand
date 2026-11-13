@@ -1,0 +1,234 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Mon, 21 Feb 2022 01:24:11 +0100
+Subject: [PATCH 221/310] Allow building without supervised users
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Allow-building-without-supervised-users.patch
+---
+ chrome/browser/prefs/chrome_pref_service_factory.cc    |  6 ------
+ chrome/browser/profiles/profile_attributes_entry.cc    |  2 +-
+ chrome/browser/profiles/profile_impl.cc                | 10 +++-------
+ chrome/browser/profiles/profile_manager.cc             |  7 -------
+ .../supervised_user/supervised_user_browser_utils.cc   |  1 +
+ chrome/browser/ui/webui/managed_ui_handler.cc          |  4 ----
+ .../ui/webui/management/management_ui_handler.cc       |  4 ----
+ .../browser/android/content_filters_observer_bridge.cc |  2 +-
+ .../core/browser/supervised_user_pref_store.cc         |  1 +
+ .../core/browser/supervised_user_preferences.cc        |  6 +++++-
+ components/supervised_user/core/common/features.cc     |  1 +
+ extensions/browser/api/management/management_api.cc    |  1 +
+ 12 files changed, 14 insertions(+), 31 deletions(-)
+
+diff --git a/chrome/browser/prefs/chrome_pref_service_factory.cc b/chrome/browser/prefs/chrome_pref_service_factory.cc
+index cff3803cf3a..3c4ee9442dc 100644
+--- a/chrome/browser/prefs/chrome_pref_service_factory.cc
++++ b/chrome/browser/prefs/chrome_pref_service_factory.cc
+@@ -350,12 +350,6 @@ void PrepareFactory(
+   PrepareFactory(factory, pref_filename, policy_service,
+                  std::move(user_pref_store), std::move(extension_prefs), async,
+                  policy_connector);
+-
+-  scoped_refptr<PrefStore> supervised_user_prefs =
+-      base::MakeRefCounted<SupervisedUserPrefStore>(
+-          family_link_settings_service, device_parental_controls);
+-  DCHECK(async || supervised_user_prefs->IsInitializationComplete());
+-  factory->set_supervised_user_prefs(supervised_user_prefs);
+ }
+ 
+ class ResetOnLoadObserverImpl : public prefs::mojom::ResetOnLoadObserver {
+diff --git a/chrome/browser/profiles/profile_attributes_entry.cc b/chrome/browser/profiles/profile_attributes_entry.cc
+index a6dccad9777..42a5b656765 100644
+--- a/chrome/browser/profiles/profile_attributes_entry.cc
++++ b/chrome/browser/profiles/profile_attributes_entry.cc
+@@ -468,7 +468,7 @@ bool ProfileAttributesEntry::IsSigninRequired() const {
+ }
+ 
+ std::string ProfileAttributesEntry::GetSupervisedUserId() const {
+-  return GetString(kSupervisedUserId);
++  return "";
+ }
+ 
+ bool ProfileAttributesEntry::IsEphemeral() const {
+diff --git a/chrome/browser/profiles/profile_impl.cc b/chrome/browser/profiles/profile_impl.cc
+index d5badceb0ac..1e7799c18af 100644
+--- a/chrome/browser/profiles/profile_impl.cc
++++ b/chrome/browser/profiles/profile_impl.cc
+@@ -71,7 +71,6 @@
+ #include "chrome/browser/password_manager/factories/account_password_store_factory.h"
+ #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
+ #include "chrome/browser/permissions/permission_manager_factory.h"
+-#include "chrome/browser/permissions/prediction_service/prediction_model_handler_provider_factory.h"
+ #include "chrome/browser/policy/chrome_browser_policy_connector.h"
+ #include "chrome/browser/policy/profile_policy_connector.h"
+ #include "chrome/browser/policy/profile_policy_connector_builder.h"
+@@ -752,10 +751,6 @@ void ProfileImpl::DoFinalInit(CreateMode create_mode) {
+     prefs->SetTime(prefs::kProfileCreationTime, path_creation_time_);
+ 
+   pref_change_registrar_.Init(prefs);
+-  pref_change_registrar_.Add(
+-      prefs::kSupervisedUserId,
+-      base::BindRepeating(&ProfileImpl::UpdateSupervisedUserIdInStorage,
+-                          base::Unretained(this)));
+ 
+   // Changes in the profile avatar.
+   pref_change_registrar_.Add(
+@@ -951,8 +946,8 @@ void ProfileImpl::DoFinalInit(CreateMode create_mode) {
+               AutocompleteScoringModelServiceFactory::GetForProfile(
+                   profile.get());
+               OnDeviceTailModelServiceFactory::GetForProfile(profile.get());
+-              PredictionModelHandlerProviderFactory::GetForBrowserContext(
+-                  profile.get());
++              // No permission prediction models: the factory is not built
++              // ("Disable all predictors code").
+             },
+             GetWeakPtr()));
+   }
+@@ -1746,6 +1741,7 @@ GURL ProfileImpl::GetHomePage() {
+ }
+ 
+ void ProfileImpl::UpdateSupervisedUserIdInStorage() {
++  if ((true)) return;
+   ProfileManager* profile_manager = g_browser_process->profile_manager();
+   ProfileAttributesEntry* entry = profile_manager->GetProfileAttributesStorage()
+                                       .GetProfileAttributesWithPath(GetPath());
+diff --git a/chrome/browser/profiles/profile_manager.cc b/chrome/browser/profiles/profile_manager.cc
+index f9b77d9bd44..2e441094335 100644
+--- a/chrome/browser/profiles/profile_manager.cc
++++ b/chrome/browser/profiles/profile_manager.cc
+@@ -1299,10 +1299,6 @@ void ProfileManager::InitProfileUserPrefs(Profile* profile) {
+     profile->GetPrefs()->SetString(prefs::kProfileName, profile_name);
+   }
+ 
+-  if (!profile->GetPrefs()->HasPrefPath(prefs::kSupervisedUserId)) {
+-    profile->GetPrefs()->SetString(prefs::kSupervisedUserId,
+-                                   supervised_user_id);
+-  }
+ }
+ 
+ void ProfileManager::RegisterTestingProfile(std::unique_ptr<Profile> profile,
+@@ -2110,9 +2106,6 @@ void ProfileManager::AddProfileToStorage(Profile* profile) {
+   init_params.icon_index = profiles::GetSanitizedAvatarIndex(
+       profile->GetPrefs()->GetInteger(prefs::kProfileAvatarIndex));
+ 
+-  init_params.supervised_user_id =
+-      profile->GetPrefs()->GetString(prefs::kSupervisedUserId);
+-
+ #if BUILDFLAG(IS_CHROMEOS)
+   user_manager::User* user =
+       ash::ProfileHelper::Get()->GetUserByProfile(profile);
+diff --git a/chrome/browser/supervised_user/supervised_user_browser_utils.cc b/chrome/browser/supervised_user/supervised_user_browser_utils.cc
+index 8f6655459d0..9946603082c 100644
+--- a/chrome/browser/supervised_user/supervised_user_browser_utils.cc
++++ b/chrome/browser/supervised_user/supervised_user_browser_utils.cc
+@@ -99,6 +99,7 @@ bool SupervisedUserCanSkipExtensionParentApprovals(const Profile* profile) {
+ }
+ 
+ bool AreExtensionsPermissionsEnabled(Profile* profile) {
++  if ((true)) return false;
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   return profile->IsChild();
+ #else
+diff --git a/chrome/browser/ui/webui/managed_ui_handler.cc b/chrome/browser/ui/webui/managed_ui_handler.cc
+index 370a9c0f54d..b1608a46717 100644
+--- a/chrome/browser/ui/webui/managed_ui_handler.cc
++++ b/chrome/browser/ui/webui/managed_ui_handler.cc
+@@ -88,10 +88,6 @@ void ManagedUIHandler::AddObservers() {
+     auto domain = static_cast<policy::PolicyDomain>(i);
+     policy_service->AddObserver(domain, this);
+   }
+-
+-  pref_registrar_.Add(prefs::kSupervisedUserId,
+-                      base::BindRepeating(&ManagedUIHandler::NotifyIfChanged,
+-                                          base::Unretained(this)));
+ }
+ 
+ void ManagedUIHandler::RemoveObservers() {
+diff --git a/chrome/browser/ui/webui/management/management_ui_handler.cc b/chrome/browser/ui/webui/management/management_ui_handler.cc
+index 5829b606735..8ebca5ac9ad 100644
+--- a/chrome/browser/ui/webui/management/management_ui_handler.cc
++++ b/chrome/browser/ui/webui/management/management_ui_handler.cc
+@@ -665,10 +665,6 @@ bool ManagementUIHandler::managed() const {
+ 
+ void ManagementUIHandler::RegisterPrefChange(
+     PrefChangeRegistrar& pref_registrar) {
+-  pref_registrar_.Add(
+-      prefs::kSupervisedUserId,
+-      base::BindRepeating(&ManagementUIHandler::UpdateManagedState,
+-                          base::Unretained(this)));
+ }
+ 
+ void ManagementUIHandler::UpdateManagedState() {
+diff --git a/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc b/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc
+index c930b9faeca..5611c7c8a0c 100644
+--- a/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc
++++ b/components/supervised_user/core/browser/android/content_filters_observer_bridge.cc
+@@ -39,7 +39,7 @@ void ContentFiltersObserverBridge::OnChange(JNIEnv* env, bool enabled) {
+ }
+ 
+ void ContentFiltersObserverBridge::SetEnabled(bool enabled) {
+-  enabled_ = enabled;
++  enabled_ = false;
+   NotifyObservers();
+ }
+ 
+diff --git a/components/supervised_user/core/browser/supervised_user_pref_store.cc b/components/supervised_user/core/browser/supervised_user_pref_store.cc
+index ed40d89c1ac..5fc11f9b0c0 100644
+--- a/components/supervised_user/core/browser/supervised_user_pref_store.cc
++++ b/components/supervised_user/core/browser/supervised_user_pref_store.cc
+@@ -165,6 +165,7 @@ void SupervisedUserPrefStore::RecreatePreferences() {
+     return;
+   }
+ 
++  if ((true)) return;
+   std::unique_ptr<PrefValueMap> old_prefs = std::move(prefs_);
+   prefs_ = std::make_unique<PrefValueMap>();
+ 
+diff --git a/components/supervised_user/core/browser/supervised_user_preferences.cc b/components/supervised_user/core/browser/supervised_user_preferences.cc
+index f881db2bca7..5e543850d76 100644
+--- a/components/supervised_user/core/browser/supervised_user_preferences.cc
++++ b/components/supervised_user/core/browser/supervised_user_preferences.cc
+@@ -159,6 +159,10 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+ }
+ 
+ void EnableParentalControls(PrefService& pref_service) {
++  if ((true)) {
++    DisableParentalControls(pref_service);
++    return;
++  }
+   pref_service.SetString(prefs::kSupervisedUserId,
+                          supervised_user::kChildAccountSUID);
+ #if BUILDFLAG(IS_CHROMEOS)
+@@ -182,7 +186,7 @@ bool IsChildAccountStatusKnown(const PrefService& pref_service) {
+ #endif
+ 
+ bool IsSubjectToParentalControls(const PrefService& pref_service) {
+-  return pref_service.GetString(prefs::kSupervisedUserId) == kChildAccountSUID;
++  return false;
+ }
+ 
+ bool IsGoogleSafeSearchEnforced(const PrefService& pref_service) {
+diff --git a/components/supervised_user/core/common/features.cc b/components/supervised_user/core/common/features.cc
+index e4c1bf8e034..76fbbaa9529 100644
+--- a/components/supervised_user/core/common/features.cc
++++ b/components/supervised_user/core/common/features.cc
+@@ -19,6 +19,7 @@ namespace supervised_user {
+ // Enables local parent approvals for the blocked website on the Family Link
+ // user's device.
+ BASE_FEATURE(kLocalWebApprovals, base::FEATURE_ENABLED_BY_DEFAULT);
++SET_CROMITE_FEATURE_DISABLED(kLocalWebApprovals);
+ 
+ // TODO(crbug.com/391799078): Support local web approval for subframes on
+ // Desktop.
+diff --git a/extensions/browser/api/management/management_api.cc b/extensions/browser/api/management/management_api.cc
+index 3e60f78f58e..f36f392d331 100644
+--- a/extensions/browser/api/management/management_api.cc
++++ b/extensions/browser/api/management/management_api.cc
+@@ -662,6 +662,7 @@ bool ManagementSetEnabledFunction::HasUnsupportedRequirements(
+ 
+ bool ManagementSetEnabledFunction::IsSupervisedExtensionApprovalFlowRequired(
+     const Extension* target_extension) const {
++  if ((true)) return false;
+   SupervisedUserExtensionsDelegate* supervised_user_extensions_delegate =
+       ManagementAPI::GetFactoryInstance()
+           ->Get(browser_context())

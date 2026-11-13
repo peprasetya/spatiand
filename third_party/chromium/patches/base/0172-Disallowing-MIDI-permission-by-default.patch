@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 3 Jun 2023 13:11:22 +0000
+Subject: [PATCH 172/310] Disallowing MIDI permission by default
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disallowing-MIDI-permission-by-default.patch
+---
+ .../features_cc/Disallowing-MIDI-permission-by-default.inc       | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disallowing-MIDI-permission-by-default.inc
+
+diff --git a/cromite_flags/third_party/blink/common/features_cc/Disallowing-MIDI-permission-by-default.inc b/cromite_flags/third_party/blink/common/features_cc/Disallowing-MIDI-permission-by-default.inc
+new file mode 100644
+index 00000000000..0f59c3db576
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_cc/Disallowing-MIDI-permission-by-default.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_ENABLED(kBlockMidiByDefault);

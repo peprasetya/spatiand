@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <spatiand@localhost>
+Date: Fri, 13 Nov 2026 22:54:59 +0700
+Subject: [PATCH] Enable ClientHello Segmentation
+
+---
+ ssl/s3_both.cc | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/ssl/s3_both.cc b/ssl/s3_both.cc
+index 10e0ad2..4aa3536 100644
+--- a/ssl/s3_both.cc
++++ b/ssl/s3_both.cc
+@@ -98,8 +98,11 @@ bool tls_add_message(SSLImpl *ssl, Array<uint8_t> msg) {
+   // implementations.
+   //
+   // TODO(crbug.com/374991962): See if we can do this uniformly.
++  bool is_max_send_fragment_changed =
++          ssl->max_send_fragment != SSL3_RT_MAX_PLAIN_LENGTH;
+   Span<const uint8_t> rest = msg;
+-  if (!SSL_is_quic(ssl) && ssl->s3->aead_write_ctx->is_null_cipher()) {
++  if (is_max_send_fragment_changed ||
++       (!SSL_is_quic(ssl) && ssl->s3->aead_write_ctx->is_null_cipher())) {
+     while (!rest.empty()) {
+       Span<const uint8_t> chunk =
+           rest.first(std::min(size_t{ssl->max_send_fragment}, rest.size()));

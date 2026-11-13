@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 7 May 2023 14:18:46 +0000
+Subject: [PATCH 143/310] WIN Disable first run
+
+FILE:WIN-Disable-first-run.patch
+---
+ chrome/browser/ui/startup/first_run_service.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/chrome/browser/ui/startup/first_run_service.cc b/chrome/browser/ui/startup/first_run_service.cc
+index 7e1709c6744..617ad494d7e 100644
+--- a/chrome/browser/ui/startup/first_run_service.cc
++++ b/chrome/browser/ui/startup/first_run_service.cc
+@@ -80,7 +80,7 @@ bool IsFirstRunMarkedFinishedInPrefs() {
+ 
+ // static
+ void FirstRunService::RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
+-  registry->RegisterBooleanPref(prefs::kFirstRunFinished, false);
++  registry->RegisterBooleanPref(prefs::kFirstRunFinished, true);
+ }
+ 
+ FirstRunService::FirstRunService(Profile& profile,

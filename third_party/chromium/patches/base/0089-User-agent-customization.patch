@@ -1,0 +1,182 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 9 Apr 2021 20:09:08 +0000
+Subject: [PATCH 089/310] User agent customization
+
+Add possibility to define a custom User agent for mobile and desktop mode.
+Add possibility to reactivate the metatag view for desktop mode.
+The menu item in the hamburger menu applies to the tab only,
+whereas the content setting is intended for use in a specific site.
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:User-agent-customization.patch
+---
+ base/base_switches.h                           |  2 ++
+ ...sktop_site_web_contents_observer_android.cc | 12 ++++++++++++
+ chrome/common/pref_names.h                     |  8 ++++++++
+ .../request_desktop_site.grdp                  | 18 ++++++++++++++++++
+ .../navigation_controller_android.h            |  1 +
+ .../renderer_host/render_process_host_impl.cc  |  1 +
+ .../browser/web_contents/web_contents_impl.cc  |  6 ++++--
+ content/renderer/render_thread_impl.cc         |  1 -
+ 8 files changed, 46 insertions(+), 3 deletions(-)
+ create mode 100644 components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp
+
+diff --git a/base/base_switches.h b/base/base_switches.h
+index 389eecbd79c..9d544c40c69 100644
+--- a/base/base_switches.h
++++ b/base/base_switches.h
+@@ -195,6 +195,8 @@ inline constexpr char kPackageName[] = "package-name";
+ inline constexpr char kPackageVersionName[] = "package-version-name";
+ #endif
+ 
++inline constexpr char kDesktopModeViewportMetaEnabled[] = "dm-viewport-meta-enabled";
++
+ #if BUILDFLAG(IS_CHROMEOS)
+ // Override the default scheduling boosting value for urgent tasks.
+ // This can be adjusted if a specific chromeos device shows better perf/power
+diff --git a/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc b/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc
+index 44347aed1cb..363eda8f281 100644
+--- a/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc
++++ b/chrome/browser/content_settings/request_desktop_site_web_contents_observer_android.cc
+@@ -14,10 +14,12 @@
+ #include "base/metrics/histogram_functions.h"
+ #include "base/strings/string_split.h"
+ #include "base/strings/string_util.h"
++#include "chrome/browser/android/tab_android.h"
+ #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+ #include "chrome/browser/flags/android/chrome_feature_list.h"
+ #include "chrome/browser/preferences/android/chrome_shared_preferences.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/android/tab_model/tab_model.h"
+ #include "chrome/common/chrome_switches.h"
+ #include "components/content_settings/core/common/content_settings_utils.h"
+ #include "components/content_settings/core/common/pref_names.h"
+@@ -62,6 +64,16 @@ void RequestDesktopSiteWebContentsObserverAndroid::DidStartNavigation(
+     return;
+   }
+ 
++  // Stop UA override if there is a tab level setting.
++  auto* tab_android = TabAndroid::FromWebContents(web_contents());
++  TabModel::TabUserAgent tabSetting =
++      tab_android
++          ? static_cast<TabModel::TabUserAgent>(tab_android->GetUserAgent())
++          : TabModel::TabUserAgent::DEFAULT;
++  if (tabSetting != TabModel::TabUserAgent::DEFAULT) {
++    return;
++  }
++
+   const GURL& url = navigation_handle->GetParentFrameOrOuterDocument()
+                         ? navigation_handle->GetParentFrameOrOuterDocument()
+                               ->GetOutermostMainFrame()
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index b474bd710e7..5fa8d8b23bd 100644
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -1185,6 +1185,14 @@ inline constexpr char kNaviOnboardGroup[] = "browser.navi_onboard_group";
+ inline constexpr char kHadThreeConsecutiveNotificationPermissionDenies[] =
+     "profile.content_settings.had_three_consecutive_denies.notifications";
+ 
++#if BUILDFLAG(IS_ANDROID)
++inline constexpr char kOverrideUserAgentEnabled[] = "override_user_agent_enabled";
++inline constexpr char kOverrideUserAgent[] = "override_user_agent";
++inline constexpr char kOverrideUserAgentDesktopModeEnabled[] = "override_user_agent_dm_enabled";
++inline constexpr char kOverrideUserAgentDesktopMode[] = "override_user_agent_dm";
++inline constexpr char kDesktopModeViewportMetaEnabled[] = "dm-viewport-meta-enabled";
++#endif
++
+ // Boolean indicating whether support for Data URLs in SVGUseElement should be
+ // removed.
+ inline constexpr char kDataUrlInSvgUseEnabled[] =
+diff --git a/components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp b/components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp
+new file mode 100644
+index 00000000000..3ec4a851c30
+--- /dev/null
++++ b/components/browser_ui/strings/bromite_content_settings/request_desktop_site.grdp
+@@ -0,0 +1,18 @@
++<?xml version="1.0" encoding="utf-8"?>
++<grit-part>
++  <message name="IDS_SITE_SETTINGS_TYPE_REQUEST_DESKTOP_SITE" desc="The label used for request desktop site site settings controls." formatter_data="android_java">
++    Request desktop site
++  </message>
++
++  <message name="IDS_SETTINGS_SITE_SETTINGS_REQUEST_DESKTOP_SITE_DESCRIPTION" desc="" formatter_data="android_java">
++    Request desktop site
++  </message>
++
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_REQUEST_DESKTOP_SITE_ENABLED" desc="" formatter_data="android_java">
++    Request desktop site
++  </message>
++
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_REQUEST_DESKTOP_SITE_DISABLED" desc="" formatter_data="android_java">
++    Request mobile site
++  </message>
++</grit-part>
+diff --git a/content/browser/renderer_host/navigation_controller_android.h b/content/browser/renderer_host/navigation_controller_android.h
+index 84945344e69..ce45a812a9d 100644
+--- a/content/browser/renderer_host/navigation_controller_android.h
++++ b/content/browser/renderer_host/navigation_controller_android.h
+@@ -69,6 +69,7 @@ class CONTENT_EXPORT NavigationControllerAndroid {
+       bool can_load_local_resources,
+       bool is_renderer_initiated,
+       bool should_replace_current_entry,
++      jint user_agent_override_option,
+       const base::android::JavaRef<jobject>& j_initiator_origin,
+       bool has_user_gesture,
+       bool should_clear_history_list,
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 00d13b47500..7089a3e315d 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -4089,6 +4089,7 @@ void RenderProcessHostImpl::PropagateBrowserCommandLineToRenderer(
+ #if BUILDFLAG(IS_CHROMEOS)
+       switches::kSchedulerBoostUrgent,
+ #endif
++    switches::kDesktopModeViewportMetaEnabled,
+   };
+   renderer_cmd->CopySwitchesFrom(browser_cmd, kSwitchNames);
+ 
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index a2704216f1c..4d5fdf1e4fd 100644
+--- a/content/browser/web_contents/web_contents_impl.cc
++++ b/content/browser/web_contents/web_contents_impl.cc
+@@ -19,6 +19,7 @@
+ 
+ #include "base/auto_reset.h"
+ #include "base/base_switches.h"
++#include "base/base_switches.h"
+ #include "base/check_op.h"
+ #include "base/command_line.h"
+ #include "base/containers/flat_set.h"
+@@ -2624,8 +2625,6 @@ void WebContentsImpl::SetUserAgentOverride(
+   OPTIONAL_TRACE_EVENT2("content", "WebContentsImpl::SetUserAgentOverride",
+                         "ua_override", ua_override.ua_string_override,
+                         "override_in_new_tabs", override_in_new_tabs);
+-  DCHECK(!ua_override.ua_metadata_override.has_value() ||
+-         !ua_override.ua_string_override.empty());
+ 
+   if (GetUserAgentOverride() == ua_override) {
+     return;
+@@ -4137,6 +4136,9 @@ const blink::web_pref::WebPreferences WebContentsImpl::ComputeWebPreferences(
+ #else
+     prefs.viewport_meta_enabled = false;
+ #endif
++    if (!command_line.HasSwitch(switches::kDesktopModeViewportMetaEnabled)) {
++      prefs.viewport_meta_enabled = false;
++    }
+   }
+ 
+   prefs.spatial_navigation_enabled =
+diff --git a/content/renderer/render_thread_impl.cc b/content/renderer/render_thread_impl.cc
+index a5cf4998876..2aa51df7d57 100644
+--- a/content/renderer/render_thread_impl.cc
++++ b/content/renderer/render_thread_impl.cc
+@@ -860,7 +860,6 @@ void RenderThreadImpl::InitializeRenderer(
+     uint64_t trace_id) {
+   TRACE_EVENT("navigation", "RenderThreadImpl::InitializeRenderer",
+               perfetto::TerminatingFlow::Global(trace_id));
+-  DCHECK(user_agent_.IsNull());
+ 
+   user_agent_ = WebString::FromUtf8(user_agent);
+   GetContentClient()->renderer()->DidSetUserAgent(user_agent);

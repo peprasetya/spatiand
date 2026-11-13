@@ -1,8 +1,8 @@
-From 0000000000000000000000000000000000000030 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Fri, 13 Nov 2026 08:40:00 +0700
-Subject: [PATCH] Spatiand: history cleared for a while is not cleared for
- ever after, on any machine
+Subject: [PATCH 309/310] Spatiand: history cleared for a while is not cleared
+ for ever after, on any machine
 
 "Clear browsing data: the last hour" reaches HistorySync as a range from then
 until the end of time, and was shared so: every machine reading it took out
@@ -16,12 +16,12 @@ an entry of it before; and a list found shorter than what was read of it (an
 older build's) is read from its start. A batch of visits across the turn of a
 month no longer loses the old month's.
 ---
- chrome/browser/spatiand/history_sync.cc | 40 +++++++++++++++++++++---
+ chrome/browser/spatiand/history_sync.cc | 40 ++++++++++++++++++++++---
  chrome/browser/spatiand/history_sync.h  |  3 ++
  2 files changed, 39 insertions(+), 4 deletions(-)
 
 diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
-index 8d13080..b885989 100644
+index 8d13080019e..b8859896e1d 100644
 --- a/chrome/browser/spatiand/history_sync.cc
 +++ b/chrome/browser/spatiand/history_sync.cc
 @@ -112,6 +112,7 @@ std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file
@@ -108,7 +108,7 @@ index 8d13080..b885989 100644
      return;
    }
 diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
-index 9d76dcc..1490771 100644
+index 9d76dcccfb8..149077114d4 100644
 --- a/chrome/browser/spatiand/history_sync.h
 +++ b/chrome/browser/spatiand/history_sync.h
 @@ -61,6 +61,9 @@ class HistorySync : public history::HistoryServiceObserver {
@@ -121,6 +121,3 @@ index 9d76dcc..1490771 100644
    };
    struct News {
      News();
--- 
-2.53.0
-

@@ -1,0 +1,504 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 20 Sep 2022 07:20:01 +0000
+Subject: [PATCH 131/310] Partition blobs by top frame URL
+
+Introduce a global site-isolation mechanism in Cromite that strictly
+partitions the registration, resolution, and token exchange of Blob
+URLs based on the top-level frame's site identity. This enforces
+robust W3C Storage Partitioning guarantees and neutralizes cross-
+partition data exfiltration vectors.
+
+Global Architecture
+
+By default, standard Chromium allows cross-site contexts and identical
+third-party iframes to share or guess Blob URL references. This patch
+seals these privacy leaks by modifying the entire public URL pipeline
+across Blink and the Browser Process:
+
+1. Renderer-Side Context Resolution (Blink): Restructures
+   PublicURLManager and introduces a centralized helper
+   (GetInsecureTopLevelSite) to safely compute and propagate the
+   caller's active top-level site partition. It cleanly differentiates
+   between graphical windows/iframes and asynchronous background
+   environments (Dedicated Workers and Service Workers). Service
+   Workers derive their boundary directly from their browser-validated
+   StorageKey to maintain first-party compliance while eliminating
+   historical null-pointer crash surfaces.
+
+2. Intentional Scope Restrictions: To guarantee absolute isolation,
+   Blob URL support is deliberately dropped for Shared Workers, cutting
+   off unpartitioned cross-context communication channels.
+
+3. Mojo IPC and Browser Validation (Storage): Extends the BlobURLStore
+   IPC interface (Register, ResolveAsURLLoaderFactory,
+   ResolveAsBlobURLToken) to mandate top-level site wire parameters.
+   The storage backend enforces a strict, deterministic
+   IsSamePartition() validation check, dropping unauthorized
+   cross-partition requests on the floor downstream of vanilla
+   Chromium's native defenses.
+
+This global framework ensures that a Blob URL remains rigidly confined
+and sandboxed within the specific top-level site partition that
+originally spawned it, drastically enhancing Cromite's privacy profile
+without impacting standard web platform compatibility.
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Partition-blobs-by-top-frame-URL.patch
+---
+ .../renderer_host/render_frame_host_impl.cc   |  2 +
+ .../Partition-blobs-by-top-frame-URL.inc      |  1 +
+ storage/browser/blob/blob_url_registry.cc     | 31 +++++++++-
+ storage/browser/blob/blob_url_registry.h      | 11 +++-
+ storage/browser/blob/blob_url_store_impl.cc   | 56 ++++++++++++++++---
+ storage/browser/blob/blob_url_store_impl.h    | 15 ++++-
+ storage/browser/blob/features.cc              |  1 +
+ .../public/mojom/blob/blob_url_store.mojom    | 13 ++++-
+ .../core/fileapi/public_url_manager.cc        | 56 ++++++++++++++++++-
+ 9 files changed, 168 insertions(+), 18 deletions(-)
+ create mode 100644 cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc
+
+diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
+index 15ca3ffb4b8..396665ae4dd 100644
+--- a/content/browser/renderer_host/render_frame_host_impl.cc
++++ b/content/browser/renderer_host/render_frame_host_impl.cc
+@@ -13472,6 +13472,8 @@ void RenderFrameHostImpl::ReportBlockingCrossPartitionBlobURL(
+ }
+ 
+ bool RenderFrameHostImpl::IsFullCookieAccessAllowed() {
++  // 6313600: [Blob URL] Allow contexts with a StorageAccessHandle
++  // to bypass Blob URL partitioning | https://chromium-review.googlesource.com/c/chromium/src/+/6313600
+   return GetContentClient()->browser()->IsFullCookieAccessAllowed(
+       GetBrowserContext(), WebContents::FromRenderFrameHost(this),
+       GetLastCommittedURL(), GetStorageKey(), GetCookieSettingOverrides());
+diff --git a/cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc b/cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc
+new file mode 100644
+index 00000000000..a8ad245bda2
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_cc/Partition-blobs-by-top-frame-URL.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_ENABLED(kEnforceNoopenerOnBlobURLNavigation);
+diff --git a/storage/browser/blob/blob_url_registry.cc b/storage/browser/blob/blob_url_registry.cc
+index c3ebb81bb70..f88b7eef92d 100644
+--- a/storage/browser/blob/blob_url_registry.cc
++++ b/storage/browser/blob/blob_url_registry.cc
+@@ -93,13 +93,18 @@ bool BlobUrlRegistry::AddUrlMapping(
+     mojo::PendingRemote<blink::mojom::Blob> blob,
+     const blink::StorageKey& storage_key,
+     const url::Origin& renderer_origin,
+-    int render_process_host_id) {
++    int render_process_host_id,
++    const base::UnguessableToken& unsafe_agent_cluster_id,
++    const std::optional<net::SchemefulSite>& unsafe_top_level_site) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+   DCHECK(!BlobUrlUtils::UrlHasFragment(blob_url));
+   if (IsUrlMapped(blob_url, storage_key) !=
+       BlobUrlRegistry::MappingStatus::kNotMappedOther) {
+     return false;
+   }
++  url_to_unsafe_agent_cluster_id_[blob_url] = unsafe_agent_cluster_id;
++  if (unsafe_top_level_site)
++    url_to_unsafe_top_level_site_[blob_url] = *unsafe_top_level_site;
+   BlobUrlData data;
+   data.blob = std::move(blob);
+   data.storage_key = storage_key;
+@@ -121,6 +126,8 @@ bool BlobUrlRegistry::RemoveUrlMapping(const GURL& blob_url,
+     return false;
+   }
+   url_to_data_.erase(data_it);
++  url_to_unsafe_agent_cluster_id_.erase(blob_url);
++  url_to_unsafe_top_level_site_.erase(blob_url);
+   return true;
+ }
+ 
+@@ -184,6 +191,28 @@ BlobUrlRegistry::MappingStatus BlobUrlRegistry::IsUrlMapped(
+   return BlobUrlRegistry::MappingStatus::kNotMappedOther;
+ }
+ 
++std::optional<base::UnguessableToken> BlobUrlRegistry::GetUnsafeAgentClusterID(
++    const GURL& blob_url) const {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  auto it = url_to_unsafe_agent_cluster_id_.find(blob_url);
++  if (it != url_to_unsafe_agent_cluster_id_.end())
++    return it->second;
++  if (fallback_)
++    return fallback_->GetUnsafeAgentClusterID(blob_url);
++  return std::nullopt;
++}
++
++std::optional<net::SchemefulSite> BlobUrlRegistry::GetUnsafeTopLevelSite(
++    const GURL& blob_url) const {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  auto it = url_to_unsafe_top_level_site_.find(blob_url);
++  if (it != url_to_unsafe_top_level_site_.end())
++    return it->second;
++  if (fallback_)
++    return fallback_->GetUnsafeTopLevelSite(blob_url);
++  return std::nullopt;
++}
++
+ mojo::PendingRemote<blink::mojom::Blob> BlobUrlRegistry::GetBlobFromUrl(
+     const GURL& url) {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+diff --git a/storage/browser/blob/blob_url_registry.h b/storage/browser/blob/blob_url_registry.h
+index e0273ae700d..f9f6d451753 100644
+--- a/storage/browser/blob/blob_url_registry.h
++++ b/storage/browser/blob/blob_url_registry.h
+@@ -99,7 +99,9 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobUrlRegistry {
+                      mojo::PendingRemote<blink::mojom::Blob> blob,
+                      const blink::StorageKey& storage_key,
+                      const url::Origin& renderer_origin,
+-                     int render_process_host_id);
++                     int render_process_host_id,
++                     const base::UnguessableToken& unsafe_agent_cluster_id,
++                     const std::optional<net::SchemefulSite>& unsafe_top_level_site);
+ 
+   // Removes the given URL mapping associated with `storage_key`. Returns false
+   // if the URL wasn't mapped.
+@@ -110,6 +112,11 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobUrlRegistry {
+   MappingStatus IsUrlMapped(const GURL& blob_url,
+                             const blink::StorageKey& storage_key) const;
+ 
++  std::optional<base::UnguessableToken> GetUnsafeAgentClusterID(
++      const GURL& blob_url) const;
++  std::optional<net::SchemefulSite> GetUnsafeTopLevelSite(
++      const GURL& blob_url) const;
++
+   // Returns the blob from the given url. Returns a null remote if the mapping
+   // doesn't exist.
+   mojo::PendingRemote<blink::mojom::Blob> GetBlobFromUrl(const GURL& url);
+@@ -165,6 +172,8 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobUrlRegistry {
+   };
+ 
+   std::map<GURL, BlobUrlData> url_to_data_;
++  std::map<GURL, base::UnguessableToken> url_to_unsafe_agent_cluster_id_;
++  std::map<GURL, net::SchemefulSite> url_to_unsafe_top_level_site_;
+   std::map<base::UnguessableToken,
+            std::pair<GURL, mojo::PendingRemote<blink::mojom::Blob>>>
+       token_to_url_and_blob_;
+diff --git a/storage/browser/blob/blob_url_store_impl.cc b/storage/browser/blob/blob_url_store_impl.cc
+index 46670222106..ccc43caa30c 100644
+--- a/storage/browser/blob/blob_url_store_impl.cc
++++ b/storage/browser/blob/blob_url_store_impl.cc
+@@ -116,19 +116,43 @@ BlobURLStoreImpl::~BlobURLStoreImpl() {
+   }
+ }
+ 
+-void BlobURLStoreImpl::Register(mojo::PendingRemote<blink::mojom::Blob> blob,
+-                                bool security_origin_serializes_as_null,
+-                                RegisterCallback callback) {
++bool BlobURLStoreImpl::IsSamePartition(
++    const GURL& blob_url,
++    const base::UnguessableToken& unsafe_agent_cluster_id,
++    const std::optional<net::SchemefulSite>& unsafe_top_level_site) {
++  bool is_same_partition = false;
++  const std::optional<net::SchemefulSite>& top_level_site =
++    registry_->GetUnsafeTopLevelSite(blob_url);
++  if (top_level_site.has_value()) {
++    is_same_partition = (top_level_site == unsafe_top_level_site);
++  }
++  return is_same_partition;
++}
++
++void BlobURLStoreImpl::Register(
++    mojo::PendingRemote<blink::mojom::Blob> blob,
++    bool security_origin_serializes_as_null,
++    const base::UnguessableToken& unsafe_agent_cluster_id,
++    const std::optional<net::SchemefulSite>& unsafe_top_level_site,
++    RegisterCallback callback) {
+   const GURL url = blink::CreateBlobUrl(renderer_origin_,
+                                         security_origin_serializes_as_null);
+   if (!BlobUrlIsValid(url, "Register")) {
+     std::move(callback).Run(GURL());
+     return;
+   }
++  // LOG(INFO) << "---BlobURLStoreImpl Register"
++  //           << " url=" << url
++  //           << " storage_key_origin=" << storage_key_.GetDebugString()
++  //           << " renderer_origin_=" << renderer_origin_
++  //           << " render_process_host_id_=" << render_process_host_id_
++  //           << " unsafe_top_level_site=" << (unsafe_top_level_site.has_value() ? unsafe_top_level_site->GetDebugString() : "<none>")
++  //           << " unsafe_agent_cluster_id=" << unsafe_agent_cluster_id.ToString();
+ 
+   if (registry_)
+     registry_->AddUrlMapping(url, std::move(blob), storage_key_,
+-                             renderer_origin_, render_process_host_id_);
++                             renderer_origin_, render_process_host_id_,
++                             unsafe_agent_cluster_id, unsafe_top_level_site);
+   urls_.insert(url);
+   std::move(callback).Run(url);
+ }
+@@ -150,7 +174,7 @@ bool BlobURLStoreImpl::ShouldPartitionBlobUrlAccess(
+           features::kBlockCrossPartitionBlobUrlFetching) &&
+       !partitioning_disabled_by_policy_;
+ 
+-  const bool should_bypass_partitioning =
++  const bool should_bypass_partitioning = ((false)) &&
+       has_storage_access_handle &&
+       mapping_status ==
+           BlobUrlRegistry::MappingStatus::
+@@ -160,7 +184,9 @@ bool BlobURLStoreImpl::ShouldPartitionBlobUrlAccess(
+ 
+ void BlobURLStoreImpl::ResolveAsURLLoaderFactory(
+     const GURL& url,
+-    mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver) {
++    mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
++    const base::UnguessableToken& unsafe_agent_cluster_id,
++    const std::optional<net::SchemefulSite>& unsafe_top_level_site) {
+   if (!registry_) {
+     BlobURLLoaderFactory::Create(mojo::NullRemote(), url, std::move(receiver));
+     return;
+@@ -183,6 +209,7 @@ void BlobURLStoreImpl::ResolveAsURLLoaderFactory(
+     if (IsBlobUrlAccessCrossPartitionSameOrigin(mapping_status)) {
+       if (ShouldPartitionBlobUrlAccess(has_storage_access_handle,
+                                        mapping_status)) {
++        // LOG(INFO) << "---ResolveAsURLLoaderFactory blocked" << url;
+         partitioning_blob_url_closure_.Run(
+             url, blink::mojom::PartitioningBlobURLInfo::
+                      kBlockedCrossPartitionFetching);
+@@ -194,6 +221,12 @@ void BlobURLStoreImpl::ResolveAsURLLoaderFactory(
+     }
+   }
+ 
++  if (!IsSamePartition(url, unsafe_agent_cluster_id, unsafe_top_level_site)) {
++    // LOG(INFO) << "---ResolveAsURLLoaderFactory blocked by IsSamePartition" << url;
++    BlobURLLoaderFactory::Create(mojo::NullRemote(), url, std::move(receiver));
++    return;
++  }
++  // LOG(INFO) << "---ResolveAsURLLoaderFactory allowed " << url;
+   BlobURLLoaderFactory::Create(registry_->GetBlobFromUrl(url), url,
+                                std::move(receiver));
+ }
+@@ -201,7 +234,9 @@ void BlobURLStoreImpl::ResolveAsURLLoaderFactory(
+ void BlobURLStoreImpl::ResolveAsBlobURLToken(
+     const GURL& url,
+     mojo::PendingReceiver<blink::mojom::BlobURLToken> token,
+-    bool is_top_level_navigation) {
++    bool is_top_level_navigation,
++    const base::UnguessableToken& unsafe_agent_cluster_id,
++    const std::optional<net::SchemefulSite>& unsafe_top_level_site) {
+   // This function is known to be heap allocation heavy and performance
+   // critical. Extra memory safety checks can introduce regression
+   // (https://crbug.com/414710225) and these are disabled here.
+@@ -218,6 +253,7 @@ void BlobURLStoreImpl::ResolveAsBlobURLToken(
+         registry_->IsUrlMapped(BlobUrlUtils::ClearUrlFragment(url),
+                                storage_key_);
+     if (IsBlobUrlAccessCrossPartitionSameOrigin(mapping_status)) {
++        // LOG(INFO) << "---ResolveAsBlobURLToken blocked" << url;
+       if (ShouldPartitionBlobUrlAccess(has_storage_access_handle,
+                                        mapping_status)) {
+         partitioning_blob_url_closure_.Run(
+@@ -228,12 +264,16 @@ void BlobURLStoreImpl::ResolveAsBlobURLToken(
+       partitioning_blob_url_closure_.Run(url, std::nullopt);
+     }
+   }
++  if (!IsSamePartition(url, unsafe_agent_cluster_id, unsafe_top_level_site)) {
++    // LOG(INFO) << "---ResolveAsBlobURLToken blocked by IsSamePartition" << url;
++    return;
++  }
+ 
+   mojo::PendingRemote<blink::mojom::Blob> blob = registry_->GetBlobFromUrl(url);
+   if (!blob) {
+     return;
+   }
+-
++  // LOG(INFO) << "---ResolveAsBlobURLToken allowed " << url;
+   new BlobURLTokenImpl(registry_, url, std::move(blob), std::move(token));
+ }
+ 
+diff --git a/storage/browser/blob/blob_url_store_impl.h b/storage/browser/blob/blob_url_store_impl.h
+index 5e341b30c5a..5db3c297b5f 100644
+--- a/storage/browser/blob/blob_url_store_impl.h
++++ b/storage/browser/blob/blob_url_store_impl.h
+@@ -54,16 +54,22 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLStoreImpl
+ 
+   void Register(mojo::PendingRemote<blink::mojom::Blob> blob,
+                 bool security_origin_serializes_as_null,
++                const base::UnguessableToken& unsafe_agent_cluster_id,
++                const std::optional<net::SchemefulSite>& unsafe_top_level_site,
+                 RegisterCallback callback) override;
+   void Revoke(const GURL& url) override;
+   void ResolveAsURLLoaderFactory(
+       const GURL& url,
+-      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver)
++      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
++      const base::UnguessableToken& unsafe_agent_cluster_id,
++      const std::optional<net::SchemefulSite>& unsafe_top_level_site)
+       override;
+   void ResolveAsBlobURLToken(
+       const GURL& url,
+       mojo::PendingReceiver<blink::mojom::BlobURLToken> token,
+-      bool is_top_level_navigation) override;
++      bool is_top_level_navigation,
++      const base::UnguessableToken& unsafe_agent_cluster_id,
++      const std::optional<net::SchemefulSite>& unsafe_top_level_site) override;
+ 
+  private:
+   // Checks if the passed in url is a valid blob url for this blob url store.
+@@ -74,6 +80,11 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) BlobURLStoreImpl
+       bool has_storage_access_handle,
+       BlobUrlRegistry::MappingStatus mapping_status);
+ 
++  bool IsSamePartition(
++      const GURL& blob_url,
++      const base::UnguessableToken& unsafe_agent_cluster_id,
++      const std::optional<net::SchemefulSite>& unsafe_top_level_site);
++
+   const blink::StorageKey storage_key_;
+   // The origin used by the worker/document associated with this BlobURLStore on
+   // the renderer side. This will almost always be the same as `storage_key_`'s
+diff --git a/storage/browser/blob/features.cc b/storage/browser/blob/features.cc
+index f5292443be9..ce5b5a0281d 100644
+--- a/storage/browser/blob/features.cc
++++ b/storage/browser/blob/features.cc
+@@ -14,6 +14,7 @@ BASE_FEATURE(kBlobURLFetchRangeHeaderValidation,
+ 
+ BASE_FEATURE(kBlockCrossPartitionBlobUrlFetching,
+              base::FEATURE_ENABLED_BY_DEFAULT);
++SET_CROMITE_FEATURE_ENABLED(kBlockCrossPartitionBlobUrlFetching);
+ 
+ // Please keep features in alphabetical order.
+ 
+diff --git a/third_party/blink/public/mojom/blob/blob_url_store.mojom b/third_party/blink/public/mojom/blob/blob_url_store.mojom
+index f9ae50996b9..b12998c704b 100644
+--- a/third_party/blink/public/mojom/blob/blob_url_store.mojom
++++ b/third_party/blink/public/mojom/blob/blob_url_store.mojom
+@@ -4,6 +4,7 @@
+ module blink.mojom;
+ 
+ import "mojo/public/mojom/base/unguessable_token.mojom";
++import "services/network/public/mojom/schemeful_site.mojom";
+ import "services/network/public/mojom/url_loader_factory.mojom";
+ import "third_party/blink/public/mojom/blob/blob.mojom";
+ import "url/mojom/url.mojom";
+@@ -22,7 +23,9 @@ interface BlobURLStore {
+   // TODO(crbug.com/568014518): remove `security_origin_serializes_as_null`.
+   [Sync] Register(
+       pending_remote<blink.mojom.Blob> blob,
+-      bool security_origin_serializes_as_null) => (url.mojom.Url url);
++      bool security_origin_serializes_as_null,
++      mojo_base.mojom.UnguessableToken unsafe_agent_cluster_id,
++      network.mojom.SchemefulSite? unsafe_top_level_site) => (url.mojom.Url url);
+ 
+   // Revokes a public Blob URL.
+   Revoke(url.mojom.Url url);
+@@ -36,7 +39,9 @@ interface BlobURLStore {
+   // both the blob URL and all other references to the blob have been dropped.
+   ResolveAsURLLoaderFactory(
+     url.mojom.Url url,
+-    pending_receiver<network.mojom.URLLoaderFactory> factory);
++    pending_receiver<network.mojom.URLLoaderFactory> factory,
++    mojo_base.mojom.UnguessableToken unsafe_agent_cluster_id,
++    network.mojom.SchemefulSite? unsafe_top_level_site);
+ 
+   // Resolves a public Blob URL into a BlobURLToken. The BlobURLToken can be
+   // used by the browser process to securely look up the blob a URL used to
+@@ -51,7 +56,9 @@ interface BlobURLStore {
+   // as a duplicate of https://crbug.com/475586390.
+   ResolveAsBlobURLToken(url.mojom.Url url,
+                        pending_receiver<BlobURLToken> token,
+-                       bool is_top_level_navigation);
++                       bool is_top_level_navigation,
++                       mojo_base.mojom.UnguessableToken unsafe_agent_cluster_id,
++                       network.mojom.SchemefulSite? unsafe_top_level_site);
+ };
+ 
+ // A token representing a Blob URL. The browser process can use this to look up
+diff --git a/third_party/blink/renderer/core/fileapi/public_url_manager.cc b/third_party/blink/renderer/core/fileapi/public_url_manager.cc
+index 52a3a0c2ed8..4dc903b5f13 100644
+--- a/third_party/blink/renderer/core/fileapi/public_url_manager.cc
++++ b/third_party/blink/renderer/core/fileapi/public_url_manager.cc
+@@ -39,8 +39,10 @@
+ #include "third_party/blink/renderer/core/frame/local_frame_client.h"
+ #include "third_party/blink/renderer/core/html/media/media_source_attachment.h"
+ #include "third_party/blink/renderer/core/html/media/media_source_registry.h"
++#include "third_party/blink/renderer/core/workers/dedicated_worker_global_scope.h"
+ #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
+ #include "third_party/blink/renderer/core/workers/worklet_global_scope.h"
++#include "third_party/blink/renderer/modules/service_worker/service_worker_global_scope.h"
+ #include "third_party/blink/renderer/platform/blob/blob_url.h"
+ #include "third_party/blink/renderer/platform/blob/blob_url_null_origin_map.h"
+ #include "third_party/blink/renderer/platform/scheduler/main_thread/task_type_names.h"
+@@ -58,6 +60,49 @@ void RemoveFromNullOriginMapIfNecessary(const KURL& blob_url) {
+     BlobURLNullOriginMap::GetInstance()->Remove(blob_url);
+ }
+ 
++static std::optional<BlinkSchemefulSite> GetInsecureTopLevelSite(
++    ExecutionContext* execution_context) {
++  if (!execution_context) {
++    return std::nullopt;
++  }
++
++  // Window / Iframe (Secure and partitionable context)
++  if (auto* window = DynamicTo<LocalDOMWindow>(execution_context)) {
++    // LOG(INFO) << "--is window";
++    return window->GetStorageKey().GetTopLevelSite();
++  }
++
++  // Workers
++  if (auto* worker = DynamicTo<WorkerGlobalScope>(execution_context)) {
++    // We explicitly exclude Shared Workers from Blob support
++    if (execution_context->IsSharedWorkerGlobalScope()) {
++      // LOG(INFO) << "--is shared worker";
++      return std::nullopt;
++    }
++
++    // Service Workers and Dedicated Workers continue to use the 3PSP secure flow if set
++    if (worker->top_level_frame_security_origin()) {
++      // LOG(INFO) << "--is worker with top level frame";
++      return BlinkSchemefulSite(worker->top_level_frame_security_origin());
++    }
++
++    // Dedicated Workers are allowed to continue using their own origin.
++    if (auto* dedicated = DynamicTo<DedicatedWorkerGlobalScope>(worker)) {
++      // LOG(INFO) << "--is dedicated";
++      return BlinkSchemefulSite(dedicated->GetSecurityOrigin());
++    }
++
++    if (auto* service_worker = DynamicTo<ServiceWorkerGlobalScope>(worker)) {
++      // LOG(INFO) << "--is service worker";
++      const blink::StorageKey& storage_key = service_worker->storage_key();
++      return BlinkSchemefulSite(storage_key.top_level_site());
++    }
++  }
++
++  // LOG(INFO) << "--is other";
++  return std::nullopt;
++}
++
+ }  // namespace
+ 
+ PublicURLManager::PublicURLManager(ExecutionContext* execution_context)
+@@ -191,7 +236,8 @@ String PublicURLManager::RegisterUrl(Blob* blob) {
+   if (!GetBlobURLStore().Register(
+           std::move(blob_remote),
+           GetExecutionContext()->GetSecurityOrigin()->SerializesAsNull(),
+-          &url)) {
++          GetExecutionContext()->GetAgentClusterID(),
++          GetInsecureTopLevelSite(GetExecutionContext()), &url)) {
+     return String();
+   }
+ 
+@@ -241,7 +287,9 @@ void PublicURLManager::Resolve(
+ 
+   DCHECK(url.ProtocolIs("blob"));
+ 
+-  GetBlobURLStore().ResolveAsURLLoaderFactory(url, std::move(factory_receiver));
++  GetBlobURLStore().ResolveAsURLLoaderFactory(url, std::move(factory_receiver),
++    GetExecutionContext()->GetAgentClusterID(),
++    GetInsecureTopLevelSite(GetExecutionContext()));
+ }
+ 
+ void PublicURLManager::ResolveAsBlobURLToken(
+@@ -254,7 +302,9 @@ void PublicURLManager::ResolveAsBlobURLToken(
+   DCHECK(url.ProtocolIs("blob"));
+ 
+   GetBlobURLStore().ResolveAsBlobURLToken(url, std::move(token_receiver),
+-                                          is_top_level_navigation);
++                                          is_top_level_navigation,
++                                          GetExecutionContext()->GetAgentClusterID(),
++                                          GetInsecureTopLevelSite(GetExecutionContext()));
+ }
+ 
+ void PublicURLManager::ContextDestroyed() {

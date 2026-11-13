@@ -1,7 +1,8 @@
-From 8bb5bcd7f8b428d1ced893f738b1c51f5f944483 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Wed, 11 Nov 2026 23:40:00 +0700
-Subject: [PATCH] Spatiand: a page's popup is anchored where its element is
+Subject: [PATCH 304/310] Spatiand: a page's popup is anchored where its
+ element is
 
 Cromite's viewport protection keeps screen emulation on for every page (the
 view at 0,0, scaled). Blink reverses the emulation for a page popup's own
@@ -10,11 +11,11 @@ popup by its anchor (xdg_positioner): a <select>'s list, a date or a colour
 picker opened at the element's place in the page taken as its place in the
 window. Found on the Mac (2026-11-11), seen on the Beam Pro (2026-11-09).
 ---
- .../renderer/core/exported/web_page_popup_impl.cc  | 24 +++++++++++++++++++++-
+ .../core/exported/web_page_popup_impl.cc      | 24 ++++++++++++++++++-
  1 file changed, 23 insertions(+), 1 deletion(-)
 
 diff --git a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
-index d340cb8910..ca54143c36 100644
+index 6d9edd6ef15..632497d8822 100644
 --- a/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 +++ b/third_party/blink/renderer/core/exported/web_page_popup_impl.cc
 @@ -29,6 +29,8 @@
@@ -26,7 +27,7 @@ index d340cb8910..ca54143c36 100644
  #include <memory>
  
  #include "base/functional/callback_helpers.h"
-@@ -987,8 +989,28 @@ gfx::Rect WebPagePopupImpl::GetAnchorRectInScreen() const {
+@@ -988,8 +990,28 @@ gfx::Rect WebPagePopupImpl::GetAnchorRectInScreen() const {
    LocalFrameView* view = popup_client_->OwnerElement().GetDocument().View();
    DCHECK(view);
  
@@ -56,6 +57,3 @@ index d340cb8910..ca54143c36 100644
  }
  
  WebInputEventResult WebPagePopupImpl::DispatchBufferedTouchEvents() {
--- 
-2.43.0
-

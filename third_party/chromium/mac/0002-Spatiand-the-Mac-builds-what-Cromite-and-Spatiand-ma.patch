@@ -1,8 +1,8 @@
-From 9e29793505f69320fac7566a74ae4e14d3a7b558 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Tue, 10 Nov 2026 10:35:56 +0700
-Subject: [PATCH] Spatiand: the Mac builds what Cromite and Spatiand made for
- other systems
+Subject: [PATCH 2/2] Spatiand: the Mac builds what Cromite and Spatiand made
+ for other systems
 
 Cromite builds for Android, Windows and Linux, and Spatiand's patches for Linux; on a Mac five
 places failed, each now as it is where it builds:
@@ -28,10 +28,10 @@ Built on littleotter (2026-11-10): SpatiMesh.app links and loads a page headless
  6 files changed, 25 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/about_flags.cc b/chrome/browser/about_flags.cc
-index 76ff558c82..07ae85ff98 100644
+index 821921c4b56..75d7d467289 100644
 --- a/chrome/browser/about_flags.cc
 +++ b/chrome/browser/about_flags.cc
-@@ -12550,7 +12550,8 @@ const FeatureEntry kFeatureEntries[] = {
+@@ -12633,7 +12633,8 @@ const FeatureEntry kFeatureEntries[] = {
       FEATURE_VALUE_TYPE(features::kReadAnythingOmniboxChip)},
  #endif
  
@@ -42,10 +42,10 @@ index 76ff558c82..07ae85ff98 100644
       flag_descriptions::kUnexportableKeyDeletionName,
       flag_descriptions::kUnexportableKeyDeletionDescription, kOsMac,
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 03a7d641e8..806725d35c 100644
+index 342dfdc7f97..b1d4dd7e9ca 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
-@@ -8390,6 +8390,8 @@ bool ChromeContentBrowserClient::SetupEmbedderSandboxParameters(
+@@ -8677,6 +8677,8 @@ bool ChromeContentBrowserClient::SetupEmbedderSandboxParameters(
          sandbox::policy::kParamScreenAiComponentPath,
          screen_ai_binary_path.value());
    }
@@ -54,7 +54,7 @@ index 03a7d641e8..806725d35c 100644
    if (sandbox_type == sandbox::mojom::Sandbox::kOnDeviceTranslation) {
      auto translatekit_binary_path =
          on_device_translation::ComponentManager::GetInstance()
-@@ -8402,6 +8404,7 @@ bool ChromeContentBrowserClient::SetupEmbedderSandboxParameters(
+@@ -8689,6 +8691,7 @@ bool ChromeContentBrowserClient::SetupEmbedderSandboxParameters(
          sandbox::policy::kParamTranslatekitComponentPath,
          translatekit_binary_path.value());
    }
@@ -63,7 +63,7 @@ index 03a7d641e8..806725d35c 100644
    return false;
  }
 diff --git a/chrome/browser/ui/views/profiles/profile_menu_view.cc b/chrome/browser/ui/views/profiles/profile_menu_view.cc
-index 176f91baee..20ccf02b44 100644
+index b7c81171812..d534b6aedad 100644
 --- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
 +++ b/chrome/browser/ui/views/profiles/profile_menu_view.cc
 @@ -4,7 +4,10 @@
@@ -77,7 +77,7 @@ index 176f91baee..20ccf02b44 100644
  
  #include <algorithm>
  #include <optional>
-@@ -1268,6 +1271,7 @@ void ProfileMenuView::BuildFeatureButtons() {
+@@ -1228,6 +1231,7 @@ void ProfileMenuView::BuildFeatureButtons() {
    BuildAutofillSettingsButton();
    MaybeBuildManageGoogleAccountButton();
    BuildCustomizeProfileButton();
@@ -85,15 +85,15 @@ index 176f91baee..20ccf02b44 100644
    if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get()) {
      const base::FilePath path = profile().GetPath();
      AddFeatureButton(
-@@ -1282,6 +1286,7 @@ void ProfileMenuView::BuildFeatureButtons() {
+@@ -1242,6 +1246,7 @@ void ProfileMenuView::BuildFeatureButtons() {
              base::Unretained(this), path),
          vector_icons::kLockIcon);
    }
 +#endif
-   (syncer::IsReplaceSyncPromosWithSignInPromosEnabled() &&
-    (!identity_manager ||
-     !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync)))
-@@ -1442,6 +1447,7 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
+   (!identity_manager ||
+    !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync))
+       ? MaybeBuildChromeAccountSettingsButton()
+@@ -1398,6 +1403,7 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
        base::BindRepeating(&ProfileMenuView::OnManageProfilesButtonClicked,
                            base::Unretained(this)));
  
@@ -101,14 +101,14 @@ index 176f91baee..20ccf02b44 100644
    if (spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get();
        profiles && profiles->AnyLock()) {
      AddProfileManagementFeatureButton(
-@@ -1455,4 +1461,5 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
+@@ -1411,4 +1417,5 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
              },
              base::Unretained(this)));
    }
 +#endif
  }
 diff --git a/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc b/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc
-index ab10831503..5607937bfc 100644
+index ab108315037..5607937bfc0 100644
 --- a/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc
 +++ b/chrome/browser/ui/webui/unexportable_keys_internals/unexportable_keys_internals_ui.cc
 @@ -9,6 +9,7 @@
@@ -135,7 +135,7 @@ index ab10831503..5607937bfc 100644
  
  WEB_UI_CONTROLLER_TYPE_IMPL(UnexportableKeysInternalsUI)
 diff --git a/components/spatikey/client.cc b/components/spatikey/client.cc
-index aeda57df2b..6608c71476 100644
+index aeda57df2b6..6608c714767 100644
 --- a/components/spatikey/client.cc
 +++ b/components/spatikey/client.cc
 @@ -3,6 +3,7 @@
@@ -160,7 +160,7 @@ index aeda57df2b..6608c71476 100644
      return base::unexpected(Unreachable("no socket"));
    }
 diff --git a/ui/shell_dialogs/select_file_dialog_mac.h b/ui/shell_dialogs/select_file_dialog_mac.h
-index 6e34041a4c..058ec53916 100644
+index 6e34041a4c6..058ec539166 100644
 --- a/ui/shell_dialogs/select_file_dialog_mac.h
 +++ b/ui/shell_dialogs/select_file_dialog_mac.h
 @@ -37,6 +37,8 @@ class SHELL_DIALOGS_EXPORT SelectFileDialogImpl : public ui::SelectFileDialog {
@@ -172,6 +172,3 @@ index 6e34041a4c..058ec53916 100644
  
   protected:
    // SelectFileDialog implementation.
--- 
-2.54.0 (Apple Git-157)
-

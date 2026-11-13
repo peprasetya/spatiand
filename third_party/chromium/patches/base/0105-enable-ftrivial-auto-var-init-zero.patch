@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Micay <danielmicay@gmail.com>
+Date: Wed, 8 Apr 2020 20:48:17 -0400
+Subject: [PATCH 105/310] enable -ftrivial-auto-var-init=zero
+
+Original License: MIT - https://spdx.org/licenses/MIT.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:enable-ftrivial-auto-var-init-zero.patch
+---
+ build/config/compiler/BUILD.gn | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index 9ec0c26dfdf..6a7e14b9a0d 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -438,6 +438,10 @@ config("compiler") {
+     # --------------------------------
+     cflags += [ "-fno-strict-aliasing" ]  # See http://crbug.com/32204
+ 
++    if (is_clang) {
++      cflags += [ "-ftrivial-auto-var-init=zero", "-Wno-unused-command-line-argument" ]
++    }
++
+     # Stack protection. ShadowCallStack and Stack protector address the same
+     # problems. Therefore, we only enable one or the other. Clang advertises SCS
+     # as a stronger alternative to StackProtector, so we give SCS precedence

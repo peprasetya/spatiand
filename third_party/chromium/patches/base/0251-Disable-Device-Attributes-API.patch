@@ -1,0 +1,34 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 10 Sep 2025 07:46:17 +0000
+Subject: [PATCH 251/310] Disable Device Attributes API
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-Device-Attributes-API.patch
+---
+ chrome/browser/device_api/device_service_impl.cc | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/chrome/browser/device_api/device_service_impl.cc b/chrome/browser/device_api/device_service_impl.cc
+index eb368359044..e6dc79e5f6c 100644
+--- a/chrome/browser/device_api/device_service_impl.cc
++++ b/chrome/browser/device_api/device_service_impl.cc
+@@ -127,6 +127,7 @@ bool IsAffiliatedUser(Profile* profile) {
+ 
+ bool IsTrustedContext(content::RenderFrameHost& host,
+                       const url::Origin& origin) {
++  if ((true)) return false;
+   // Do not create the service for incognito or enterprise isolated mode.
+   if (GetProfile(host)->IsPrimaryOTRProfileWithRegularParent()) {
+     return false;
+@@ -311,6 +312,10 @@ void DeviceServiceImpl::GetAnnotatedLocation(
+ void DeviceServiceImpl::GetDeviceAttribute(
+     void (DeviceAttributeApi::*method)(DeviceAttributeCallback callback),
+     DeviceAttributeCallback callback) {
++  if ((true)) {
++    device_attribute_api_->ReportNotAllowedError(std::move(callback));
++    return;
++  }
+   if (!IsAffiliatedUser(GetProfile(render_frame_host())) &&
+       !IsDevModeInstalledIwaOrigin(render_frame_host(), origin())) {
+     device_attribute_api_->ReportNotAffiliatedError(std::move(callback));

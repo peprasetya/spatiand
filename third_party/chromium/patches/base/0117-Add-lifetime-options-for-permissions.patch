@@ -1,0 +1,1275 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 8 Apr 2022 11:04:04 +0000
+Subject: [PATCH 117/310] Add lifetime options for permissions
+
+Indicate the session mode for content-settings by using the constraint `content_settings::SessionModel` as
+UserSession when setting the value, and also make use of an expiration time value.
+This is used in Chromium for `ClientHints` but it is generally possible to use this functionality when a
+specific value needs to be persisted by origin.
+All content settings of this type are not saved on disk (except for the `Forever` option), allowing user to
+reset the status each time application is restarted.
+
+There are 4 main areas affected to introduce the functionality:
+* components/content_settings
+  A new `content_settings::LifetimeMode` enum value is defined to specify the user's
+  choice (Always, OnlyThisTime, UntilOriginClosed, UntilBrowserClosed).
+  Enumeration is also generated for java by adding it in `content_settings_enums_javagen` (gn).
+  This is mainly used in `content_settings_utils.cc` to create a specialised `content_settings::ContentSettingConstraints`
+  that is then used in `SetContentSettingDefaultScope()` by `PermissionContextBase::UpdateContentSetting`.
+  Existing Chromium data structures do not provide a specific property to define a choice which is instead encoded through
+  the `ContentSettingConstraints`; this approach is already used in other parts of the Chromium codebase so it is not
+  novel here.
+  Therefore, `content_settings::GetConstraintSessionExpiration()` and `content_settings::IsConstraintSessionExpiration()`
+  manage the lifetime modes of the session content-settings.
+  The modification also adds the session pattern to the ContentSettingPatternSource so that it is available for the UI.
+* components/permissions
+  Lifetime support is added to the permissions; most of the changes are caused by the fact that it is necessary to report
+  the value selected by the user from the Java UI managed by `components/browser_ui` up to
+  `PermissionContextBase::UpdateContentSetting()`,   without necessarily having to modify all requests that are not
+  related to geolocation/camera/microphone. The approach used is a new
+  `PermissionRequest::PermissionDecidedCallbackWithLifetime` used by an overload of
+  `PermissionContextBase::CreatePermissionRequest` so that options are present only for the specific content-settings
+  (see `PermissionDialogModel.java`).
+  For other permissions no behaviour is changed (see `PermissionDialogDelegate::Accept`); for geolocation it was
+  necessary to act directly in the specific context, because, unlike microphone/camera, the content-setting value is
+  inserted in its specific method (`FinishNotifyPermissionSet`, that calls the callback), even if the class always
+  derives from `PermissionContextBase`.
+* components/page_info
+  Some changes needed to see in the summary of the `page_info` the text "(only this session)"
+  (aka `page_info_android_permission_session_permission`) through adding a new property "is_user_session" in
+  `PageInfoPermissionEntry` (Java).
+* components/browser_ui
+  Changes to the Settings UI to show "(only this session)" in the specific content-setting.
+  The same view is used both in the settings and in the page_info.
+
+For the management of `UntilOriginClosed` the logic used by flag `kOneTimeGeolocationPermission` was used; this flag
+is active only in the desktop (files `last_tab_standing_tracker_*`). It is a class that manages a list of the active
+origins and allows to perform operations when all the tabs relating to that origin have been closed, in this case
+deleting the session content settings of `UntilOriginClosed`.
+
+See also: https://github.com/bromite/bromite/issues/1549
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-lifetime-options-for-permissions.patch
+---
+ .../permissions/last_tab_standing_tracker.cc  | 33 ++++++++++
+ .../one_time_permissions_tracker.cc           | 37 ++++++++++-
+ .../one_time_permissions_tracker.h            |  8 ++-
+ .../one_time_permissions_tracker_factory.cc   |  2 +-
+ .../views/permissions/chip/chip_controller.cc |  2 +-
+ .../permissions/embedded_permission_prompt.cc |  2 +-
+ ...exclusive_access_permission_prompt_view.cc |  2 +-
+ .../permission_prompt_bubble_base_view.cc     |  2 +-
+ .../core/browser/content_settings_utils.cc    | 44 ++++++++++---
+ .../core/browser/content_settings_utils.h     |  6 ++
+ .../core/common/content_settings_enums.mojom  |  9 +++
+ .../android/page_info_controller_android.cc   | 10 ++-
+ components/page_info/page_info.cc             |  2 +
+ components/page_info/page_info.h              |  1 +
+ .../embedded_permission_prompt_android.cc     |  4 +-
+ .../embedded_permission_prompt_android.h      |  2 +-
+ .../permission_dialog_delegate.cc             | 24 ++++++-
+ .../permission_dialog_delegate.h              |  1 +
+ .../permission_prompt_android.cc              | 10 ++-
+ .../permission_prompt_android.h               |  3 +-
+ .../android/permissions_android_strings.grd   | 17 +++++
+ .../geolocation_permission_context_android.cc | 34 +++++++---
+ .../geolocation_permission_context_android.h  | 11 +++-
+ .../permissions/permission_context_base.cc    | 64 +++++++++++++++++--
+ .../permissions/permission_context_base.h     | 30 ++++++++-
+ components/permissions/permission_prompt.h    |  4 +-
+ components/permissions/permission_request.cc  | 43 ++++++++++++-
+ components/permissions/permission_request.h   | 17 ++++-
+ .../permissions/permission_request_manager.cc | 53 +++++++++------
+ .../permissions/permission_request_manager.h  | 10 ++-
+ 30 files changed, 419 insertions(+), 68 deletions(-)
+
+diff --git a/chrome/browser/permissions/last_tab_standing_tracker.cc b/chrome/browser/permissions/last_tab_standing_tracker.cc
+index 5df1981731e..40761f71310 100644
+--- a/chrome/browser/permissions/last_tab_standing_tracker.cc
++++ b/chrome/browser/permissions/last_tab_standing_tracker.cc
+@@ -7,6 +7,32 @@
+ #include "base/observer_list.h"
+ #include "url/gurl.h"
+ 
++#include "components/content_settings/core/browser/host_content_settings_map.h"
++#include "components/content_settings/core/common/content_settings_utils.h"
++#include "components/permissions/permissions_client.h"
++
++namespace {
++  // Remove all sessions content setting by origin and type
++  void RemoveSessionSettings(HostContentSettingsMap* content_settings,
++                             const url::Origin& origin,
++                             ContentSettingsType type) {
++    ContentSettingsForOneType session_settings =
++      content_settings->GetSettingsForOneType(
++          type, content_settings::mojom::SessionModel::USER_SESSION);
++
++    GURL url = origin.GetURL();
++    for (ContentSettingPatternSource& entry : session_settings) {
++      if (content_settings::IsConstraintSessionExpiration(entry,
++              content_settings::mojom::LifetimeMode::UNTIL_ORIGIN_CLOSED) &&
++          entry.primary_pattern.Matches(url)) {
++        content_settings->SetWebsiteSettingCustomScope(
++            entry.primary_pattern, entry.secondary_pattern,
++            type, base::Value());
++      }
++    }
++  }
++}
++
+ LastTabStandingTracker::LastTabStandingTracker(content::BrowserContext* context)
+     : context_(context) {}
+ 
+@@ -56,4 +82,11 @@ void LastTabStandingTracker::WebContentsUnloadedOrigin(
+     for (auto& observer : observer_list_) {
+       observer.OnLastPageFromOriginClosed(origin);
+     }
++    HostContentSettingsMap* content_settings =
++            permissions::PermissionsClient::Get()->GetSettingsMap(context_);
++    RemoveSessionSettings(content_settings, origin, ContentSettingsType::GEOLOCATION);
++    RemoveSessionSettings(content_settings, origin, ContentSettingsType::GEOLOCATION_WITH_OPTIONS);
++    RemoveSessionSettings(content_settings, origin, ContentSettingsType::MEDIASTREAM_MIC);
++    RemoveSessionSettings(content_settings, origin, ContentSettingsType::MEDIASTREAM_CAMERA);
++  }
+ }
+diff --git a/chrome/browser/permissions/one_time_permissions_tracker.cc b/chrome/browser/permissions/one_time_permissions_tracker.cc
+index ba7c1b0b815..40bf6c90302 100644
+--- a/chrome/browser/permissions/one_time_permissions_tracker.cc
++++ b/chrome/browser/permissions/one_time_permissions_tracker.cc
+@@ -23,9 +23,32 @@
+ #include "components/permissions/permission_util.h"
+ #include "content/public/browser/visibility.h"
+ #include "url/gurl.h"
++#include "components/content_settings/core/browser/content_settings_utils.h"
++#include "components/content_settings/core/browser/host_content_settings_map.h"
++#include "components/content_settings/core/common/content_settings_utils.h"
++#include "components/permissions/permissions_client.h"
+ 
+ namespace {
+ 
++// Remove all sessions content setting by origin and type
++void RemoveSessionSettings(HostContentSettingsMap* content_settings,
++                           const url::Origin& origin,
++                           ContentSettingsType type) {
++  ContentSettingsForOneType session_settings =
++      content_settings->GetSettingsForOneType(
++          type, content_settings::mojom::SessionModel::USER_SESSION);
++
++  GURL url = origin.GetURL();
++  for (ContentSettingPatternSource& entry : session_settings) {
++    if (content_settings::IsConstraintSessionExpiration(
++            entry, content_settings::mojom::LifetimeMode::UNTIL_ORIGIN_CLOSED) &&
++        entry.primary_pattern.Matches(url)) {
++      content_settings->SetWebsiteSettingCustomScope(
++          entry.primary_pattern, entry.secondary_pattern, type, base::Value());
++    }
++  }
++}
++
+ template <size_t size>
+ class MultipleTrackerCondition : public OneTimePermissionsTracker::Condition {
+  public:
+@@ -40,7 +63,9 @@ class MultipleTrackerCondition : public OneTimePermissionsTracker::Condition {
+ 
+ }  // namespace
+ 
+-OneTimePermissionsTracker::OneTimePermissionsTracker() {
++OneTimePermissionsTracker::OneTimePermissionsTracker(
++    content::BrowserContext* context)
++    : context_(context) {
+   active_page_tracker_factory_ =
+       std::make_unique<OneTimePermissionsConditionTracker::Factory>(
+           base::BindRepeating(
+@@ -144,6 +169,16 @@ void OneTimePermissionsTracker::NotifyLastPageFromOriginClosed(
+   for (auto& observer : observer_list_) {
+     observer.OnLastPageFromOriginClosed(origin);
+   }
++  HostContentSettingsMap* content_settings =
++      permissions::PermissionsClient::Get()->GetSettingsMap(context_);
++  RemoveSessionSettings(content_settings, origin,
++                        ContentSettingsType::GEOLOCATION);
++  RemoveSessionSettings(content_settings, origin,
++                        ContentSettingsType::GEOLOCATION_WITH_OPTIONS);
++  RemoveSessionSettings(content_settings, origin,
++                        ContentSettingsType::MEDIASTREAM_MIC);
++  RemoveSessionSettings(content_settings, origin,
++                        ContentSettingsType::MEDIASTREAM_CAMERA);
+ }
+ 
+ void OneTimePermissionsTracker::NotifyBackgroundTimerExpired(
+diff --git a/chrome/browser/permissions/one_time_permissions_tracker.h b/chrome/browser/permissions/one_time_permissions_tracker.h
+index 001c0180e43..6af5668bd96 100644
+--- a/chrome/browser/permissions/one_time_permissions_tracker.h
++++ b/chrome/browser/permissions/one_time_permissions_tracker.h
+@@ -17,6 +17,7 @@
+ #include "chrome/browser/permissions/one_time_permissions_tracker_observer.h"
+ #include "components/content_settings/core/common/content_settings_pattern.h"
+ #include "components/content_settings/core/common/content_settings_types.h"
++#include "base/memory/raw_ptr.h"
+ #include "components/keyed_service/core/keyed_service.h"
+ #include "url/origin.h"
+ 
+@@ -24,6 +25,10 @@ namespace base {
+ class SequencedTaskRunner;
+ }
+ 
++namespace content {
++class BrowserContext;
++}
++
+ // This observable class keeps track of one-time permission related browsing
+ // states.
+ class OneTimePermissionsTracker : public KeyedService {
+@@ -31,7 +36,7 @@ class OneTimePermissionsTracker : public KeyedService {
+       void (OneTimePermissionsTracker::*)(const url::Origin&);
+ 
+  public:
+-  OneTimePermissionsTracker();
++  explicit OneTimePermissionsTracker(content::BrowserContext* context);
+   ~OneTimePermissionsTracker() override;
+ 
+   OneTimePermissionsTracker(const OneTimePermissionsTracker&) = delete;
+@@ -84,6 +89,7 @@ class OneTimePermissionsTracker : public KeyedService {
+   std::unique_ptr<OneTimePermissionsConditionTracker::Factory>
+       audio_capturing_tracker_factory_;
+ 
++  raw_ptr<content::BrowserContext> context_;
+   base::WeakPtrFactory<OneTimePermissionsTracker> weak_factory_{this};
+ };
+ 
+diff --git a/chrome/browser/permissions/one_time_permissions_tracker_factory.cc b/chrome/browser/permissions/one_time_permissions_tracker_factory.cc
+index 79092a2937b..6568080e507 100644
+--- a/chrome/browser/permissions/one_time_permissions_tracker_factory.cc
++++ b/chrome/browser/permissions/one_time_permissions_tracker_factory.cc
+@@ -44,5 +44,5 @@ bool OneTimePermissionsTrackerFactory::ServiceIsCreatedWithBrowserContext()
+ std::unique_ptr<KeyedService>
+ OneTimePermissionsTrackerFactory::BuildServiceInstanceForBrowserContext(
+     content::BrowserContext* context) const {
+-  return std::make_unique<OneTimePermissionsTracker>();
++  return std::make_unique<OneTimePermissionsTracker>(context);
+ }
+diff --git a/chrome/browser/ui/views/permissions/chip/chip_controller.cc b/chrome/browser/ui/views/permissions/chip/chip_controller.cc
+index 55afd0d348a..aabb3da140c 100644
+--- a/chrome/browser/ui/views/permissions/chip/chip_controller.cc
++++ b/chrome/browser/ui/views/permissions/chip/chip_controller.cc
+@@ -214,7 +214,7 @@ void ChipController::OnWidgetDestroyed(views::Widget* widget) {
+       break;
+     case permissions::PermissionAction::GRANTED_ONCE:
+       active_chip_permission_request_manager_.value()->AcceptThisTime(
+-          /*prompt_options=*/std::monostate());
++          /*prompt_options=*/std::monostate(), content_settings::mojom::LifetimeMode::ONLY_THIS_TIME);
+       break;
+     case permissions::PermissionAction::DENIED:
+       active_chip_permission_request_manager_.value()->Deny(
+diff --git a/chrome/browser/ui/views/permissions/embedded_permission_prompt.cc b/chrome/browser/ui/views/permissions/embedded_permission_prompt.cc
+index d0d9322965d..da90767dd0f 100644
+--- a/chrome/browser/ui/views/permissions/embedded_permission_prompt.cc
++++ b/chrome/browser/ui/views/permissions/embedded_permission_prompt.cc
+@@ -175,7 +175,7 @@ void EmbeddedPermissionPrompt::AllowThisTime() {
+   CHECK_NE(delegate()->Requests()[0]->GetContentSettingsType(),
+            ContentSettingsType::GEOLOCATION_WITH_OPTIONS);
+ 
+-  delegate()->AcceptThisTime(/*prompt_options=*/std::monostate());
++  delegate()->AcceptThisTime(/*prompt_options=*/std::monostate(), content_settings::mojom::LifetimeMode::ONLY_THIS_TIME);
+ }
+ 
+ void EmbeddedPermissionPrompt::Dismiss() {
+diff --git a/chrome/browser/ui/views/permissions/exclusive_access_permission_prompt_view.cc b/chrome/browser/ui/views/permissions/exclusive_access_permission_prompt_view.cc
+index feff83f60ca..2d2203cf2b2 100644
+--- a/chrome/browser/ui/views/permissions/exclusive_access_permission_prompt_view.cc
++++ b/chrome/browser/ui/views/permissions/exclusive_access_permission_prompt_view.cc
+@@ -115,7 +115,7 @@ void ExclusiveAccessPermissionPromptView::RunButtonCallback(int button_id) {
+       request_type(), GetPermissionActionString(button),
+       record_host_always_active_value());
+   if (button == ButtonType::kAllowThisTime) {
+-    delegate_->AcceptThisTime(/*prompt_options=*/std::monostate());
++    delegate_->AcceptThisTime(/*prompt_options=*/std::monostate(), content_settings::mojom::LifetimeMode::ONLY_THIS_TIME);
+   } else if (button == ButtonType::kAlwaysAllow) {
+     delegate_->Accept(/*prompt_options=*/std::monostate());
+   } else if (button == ButtonType::kNeverAllow) {
+diff --git a/chrome/browser/ui/views/permissions/permission_prompt_bubble_base_view.cc b/chrome/browser/ui/views/permissions/permission_prompt_bubble_base_view.cc
+index 29130687fb1..6ee55af48a9 100644
+--- a/chrome/browser/ui/views/permissions/permission_prompt_bubble_base_view.cc
++++ b/chrome/browser/ui/views/permissions/permission_prompt_bubble_base_view.cc
+@@ -321,7 +321,7 @@ void PermissionPromptBubbleBaseView::RunButtonCallback(int button_id) {
+       delegate_->Accept(/*prompt_options=*/std::monostate());
+       return;
+     case PermissionDialogButton::kAcceptOnce:
+-      delegate_->AcceptThisTime(/*prompt_options=*/std::monostate());
++      delegate_->AcceptThisTime(/*prompt_options=*/std::monostate(), content_settings::mojom::LifetimeMode::ONLY_THIS_TIME);
+       return;
+     case PermissionDialogButton::kDeny:
+ #if BUILDFLAG(IS_CHROMEOS)
+diff --git a/components/content_settings/core/browser/content_settings_utils.cc b/components/content_settings/core/browser/content_settings_utils.cc
+index 78ca81660b0..802fcb3e96d 100644
+--- a/components/content_settings/core/browser/content_settings_utils.cc
++++ b/components/content_settings/core/browser/content_settings_utils.cc
+@@ -182,6 +182,42 @@ bool IsConstraintPersistent(const ContentSettingConstraints& constraints) {
+   return constraints.session_model() == mojom::SessionModel::DURABLE;
+ }
+ 
++ContentSettingConstraints GetConstraintSessionExpiration(content_settings::mojom::LifetimeMode lifetime_mode) {
++  int lifetime;
++  base::Time now;
++  if (lifetime_mode == content_settings::mojom::LifetimeMode::ONLY_THIS_TIME) {
++    // note: this content settings will be discarded immediately
++    // 1h is used as a magic constant to identify the one-time lifetime mode
++    lifetime = 1;
++  } else if (lifetime_mode == content_settings::mojom::LifetimeMode::UNTIL_ORIGIN_CLOSED) {
++    now = base::Time::Now();
++    lifetime = 24;
++  } else {
++    lifetime = 0;
++  }
++  ContentSettingConstraints c(now);
++  c.set_lifetime(base::Hours(lifetime));
++  c.set_session_model(mojom::SessionModel::USER_SESSION);
++  return c;
++}
++
++bool IsConstraintSessionExpiration(const ContentSettingPatternSource& source,
++                                   content_settings::mojom::LifetimeMode lifetime_mode) {
++  if (source.metadata.session_model() != content_settings::mojom::SessionModel::USER_SESSION)
++    return false;
++
++  mojom::LifetimeMode type;
++  if (source.metadata.lifetime() == base::Hours(24)) {
++    type = content_settings::mojom::LifetimeMode::UNTIL_ORIGIN_CLOSED;
++  } else if (source.metadata.expiration() == (base::Time() + base::Hours(1))) {
++    type = content_settings::mojom::LifetimeMode::ONLY_THIS_TIME;
++  } else {
++    type = content_settings::mojom::LifetimeMode::UNTIL_BROWSER_CLOSED;
++  }
++
++  return lifetime_mode == type;
++}
++
+ bool CanTrackLastVisit(ContentSettingsType type) {
+   DCHECK(WebsiteSettingsRegistry::GetInstance()->Get(type)) << type;
+ 
+@@ -252,10 +288,6 @@ const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrants() {
+       ContentSettingsType::CAPTURED_SURFACE_CONTROL,
+ #endif
+       ContentSettingsType::KEYBOARD_LOCK,
+-      ContentSettingsType::GEOLOCATION,
+-      ContentSettingsType::GEOLOCATION_WITH_OPTIONS,
+-      ContentSettingsType::MEDIASTREAM_MIC,
+-      ContentSettingsType::MEDIASTREAM_CAMERA,
+       ContentSettingsType::SENSORS,
+       ContentSettingsType::HAND_TRACKING,
+       ContentSettingsType::SMART_CARD_DATA,
+@@ -272,10 +304,6 @@ const std::vector<ContentSettingsType>& GetTypesWithTemporaryGrantsInHcsm() {
+       ContentSettingsType::CAPTURED_SURFACE_CONTROL,
+ #endif
+       ContentSettingsType::KEYBOARD_LOCK,
+-      ContentSettingsType::GEOLOCATION,
+-      ContentSettingsType::GEOLOCATION_WITH_OPTIONS,
+-      ContentSettingsType::MEDIASTREAM_MIC,
+-      ContentSettingsType::MEDIASTREAM_CAMERA,
+       ContentSettingsType::SENSORS,
+       ContentSettingsType::HAND_TRACKING,
+       ContentSettingsType::AR,
+diff --git a/components/content_settings/core/browser/content_settings_utils.h b/components/content_settings/core/browser/content_settings_utils.h
+index a721b11bc39..8b8b9a5b0e2 100644
+--- a/components/content_settings/core/browser/content_settings_utils.h
++++ b/components/content_settings/core/browser/content_settings_utils.h
+@@ -78,6 +78,12 @@ bool IsConstraintPersistent(const ContentSettingConstraints& constraints);
+ // Returns whether the given type supports tracking last_visit timestamps.
+ bool CanTrackLastVisit(ContentSettingsType type);
+ 
++ContentSettingConstraints GetConstraintSessionExpiration(mojom::LifetimeMode lifetime_mode);
++
++bool IsConstraintSessionExpiration(
++    const ContentSettingPatternSource& source,
++    mojom::LifetimeMode lifetime_mode);
++
+ // Get a timestamp with week-precision.
+ base::Time GetCoarseVisitedTime(base::Time time);
+ 
+diff --git a/components/content_settings/core/common/content_settings_enums.mojom b/components/content_settings/core/common/content_settings_enums.mojom
+index a89fcd8ffa3..64e4ac0e639 100644
+--- a/components/content_settings/core/common/content_settings_enums.mojom
++++ b/components/content_settings/core/common/content_settings_enums.mojom
+@@ -63,6 +63,15 @@ enum SessionModel {
+   ONE_TIME = 3,
+ };
+ 
++// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.content_settings
++// GENERATED_JAVA_CLASS_NAME_OVERRIDE: LifetimeMode
++enum LifetimeMode {
++  ALWAYS = 99,
++  ONLY_THIS_TIME = 1,
++  UNTIL_ORIGIN_CLOSED = 2,
++  UNTIL_BROWSER_CLOSED = 0,
++};
++
+ // Identifies the content settings provider of a content setting.
+ // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.components.content_settings
+ // GENERATED_JAVA_CLASS_NAME_OVERRIDE: ProviderType
+diff --git a/components/page_info/android/page_info_controller_android.cc b/components/page_info/android/page_info_controller_android.cc
+index 4c7bf5a6b0b..13c042ca2eb 100644
+--- a/components/page_info/android/page_info_controller_android.cc
++++ b/components/page_info/android/page_info_controller_android.cc
+@@ -258,6 +258,8 @@ void PageInfoControllerAndroid::SetPermissionInfo(
+   // being requested. This is needed for the Clapper experiment
+   // (crbug.com/458351800) and (crbug.com/463333225).
+   bool requested_notifications = false;
++  std::map<ContentSettingsType, bool>
++      user_specified_settings_is_user_session;
+ 
+   for (const auto& permission : permission_info_list) {
+     if (std::ranges::contains(permissions_to_display, permission.type)) {
+@@ -270,6 +272,8 @@ void PageInfoControllerAndroid::SetPermissionInfo(
+ 
+         user_specified_settings_to_display[permission.type] =
+             info->delegate().IsAnyPermissionAllowed(*setting_to_display);
++        user_specified_settings_is_user_session[permission.type] =
++            permission.is_user_session;
+       }
+ 
+       // It might be that we decided to show a Notification permission entry
+@@ -299,7 +303,8 @@ void PageInfoControllerAndroid::SetPermissionInfo(
+           ConvertUTF16ToJavaString(env, setting_title_mid_sentence),
+           static_cast<int32_t>(permission),
+           user_specified_settings_to_display[permission],
+-          requested_notifications);
++          requested_notifications,
++          user_specified_settings_is_user_session[permission]);
+     }
+   }
+ 
+@@ -312,7 +317,8 @@ void PageInfoControllerAndroid::SetPermissionInfo(
+         env, controller_jobject_, ConvertUTF16ToJavaString(env, object_title),
+         ConvertUTF16ToJavaString(env, object_title),
+         static_cast<int32_t>(chosen_object->ui_info->content_settings_type),
+-        static_cast<int32_t>(CONTENT_SETTING_ALLOW), requested_notifications);
++        static_cast<int32_t>(CONTENT_SETTING_ALLOW), requested_notifications,
++        /* is_user_session */ false);
+   }
+ 
+   Java_PageInfoController_updatePermissionDisplay(env, controller_jobject_);
+diff --git a/components/page_info/page_info.cc b/components/page_info/page_info.cc
+index e56071dd2f9..a8402e7de85 100644
+--- a/components/page_info/page_info.cc
++++ b/components/page_info/page_info.cc
+@@ -1338,6 +1338,8 @@ void PageInfo::PopulatePermissionInfo(PermissionInfo& permission_info,
+   permission_info.is_one_time =
+       (info.metadata.session_model() ==
+        content_settings::mojom::SessionModel::ONE_TIME);
++  permission_info.is_user_session =
++      (info.metadata.session_model() == content_settings::mojom::SessionModel::USER_SESSION);
+ 
+   auto* setting_info =
+       content_settings::PermissionSettingsRegistry::GetInstance()->Get(
+diff --git a/components/page_info/page_info.h b/components/page_info/page_info.h
+index 51bebfa22e7..d51418f9394 100644
+--- a/components/page_info/page_info.h
++++ b/components/page_info/page_info.h
+@@ -151,6 +151,7 @@ class PageInfo : private content_settings::CookieControlsObserver,
+         content_settings::SettingSource::kNone;
+     // Whether the permission is a one-time grant.
+     bool is_one_time = false;
++    bool is_user_session = false;
+     // Only set for settings that can have multiple permissions for different
+     // embedded origins.
+     std::optional<url::Origin> requesting_origin;
+diff --git a/components/permissions/android/permission_prompt/embedded_permission_prompt_android.cc b/components/permissions/android/permission_prompt/embedded_permission_prompt_android.cc
+index fcaf15cfeef..6e17ca23ce8 100644
+--- a/components/permissions/android/permission_prompt/embedded_permission_prompt_android.cc
++++ b/components/permissions/android/permission_prompt/embedded_permission_prompt_android.cc
+@@ -112,11 +112,11 @@ void EmbeddedPermissionPromptAndroid::Acknowledge(
+ }
+ 
+ void EmbeddedPermissionPromptAndroid::AcceptThisTime(
+-    const PromptOptions& prompt_options) {
++    const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetimeOption) {
+   prompt_model_->PrecalculateVariantsForMetrics();
+   prompt_model_->RecordPermissionActionUKM(
+       permissions::ElementAnchoredBubbleAction::kGrantedOnce);
+-  delegate()->AcceptThisTime(prompt_options);
++  delegate()->AcceptThisTime(prompt_options, lifetimeOption);
+ }
+ 
+ void EmbeddedPermissionPromptAndroid::Deny(
+diff --git a/components/permissions/android/permission_prompt/embedded_permission_prompt_android.h b/components/permissions/android/permission_prompt/embedded_permission_prompt_android.h
+index c8e4597dcf5..5f5b5f481b0 100644
+--- a/components/permissions/android/permission_prompt/embedded_permission_prompt_android.h
++++ b/components/permissions/android/permission_prompt/embedded_permission_prompt_android.h
+@@ -45,7 +45,7 @@ class EmbeddedPermissionPromptAndroid : public PermissionPromptAndroid {
+       const override;
+   void Dismiss(const PromptOptions& prompt_options) override;
+   void Accept(const PromptOptions& prompt_options) override;
+-  void AcceptThisTime(const PromptOptions& prompt_options) override;
++  void AcceptThisTime(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetimeOption) override;
+   void Acknowledge(const PromptOptions& prompt_options) override;
+   void Deny(const PromptOptions& prompt_options) override;
+   void Resumed() override;
+diff --git a/components/permissions/android/permission_prompt/permission_dialog_delegate.cc b/components/permissions/android/permission_prompt/permission_dialog_delegate.cc
+index 77d56280ffa..f1a8ed04200 100644
+--- a/components/permissions/android/permission_prompt/permission_dialog_delegate.cc
++++ b/components/permissions/android/permission_prompt/permission_dialog_delegate.cc
+@@ -137,6 +137,11 @@ void PermissionDialogJavaDelegate::UpdateDialog() {
+       static_cast<int>(permission_prompt_->GetEmbeddedPromptVariant()));
+ }
+ 
++int PermissionDialogJavaDelegate::GetSelectedLifetimeOption() {
++  JNIEnv* env = base::android::AttachCurrentThread();
++  return Java_PermissionDialogDelegate_getSelectedLifetimeOption(env, j_delegate_);
++}
++
+ // static
+ std::unique_ptr<PermissionDialogDelegate> PermissionDialogDelegate::Create(
+     content::WebContents* web_contents,
+@@ -165,12 +170,22 @@ PermissionDialogDelegate::CreateForTesting(
+ 
+ void PermissionDialogDelegate::Accept(JNIEnv* env) {
+   CHECK(permission_prompt_);
++  content_settings::mojom::LifetimeMode lifetimeOption =
++    static_cast<content_settings::mojom::LifetimeMode>(
++      java_delegate_->GetSelectedLifetimeOption());
++  if (lifetimeOption != content_settings::mojom::LifetimeMode::ALWAYS) {
++    permission_prompt_->AcceptThisTime(prompt_options_, lifetimeOption);
++    return;
++  }
+   permission_prompt_->Accept(prompt_options_);
+ }
+ 
+ void PermissionDialogDelegate::AcceptThisTime(JNIEnv* env) {
+   CHECK(permission_prompt_);
+-  permission_prompt_->AcceptThisTime(prompt_options_);
++  content_settings::mojom::LifetimeMode lifetimeOption =
++    static_cast<content_settings::mojom::LifetimeMode>(
++      java_delegate_->GetSelectedLifetimeOption());
++  permission_prompt_->AcceptThisTime(prompt_options_, lifetimeOption);
+ }
+ 
+ void PermissionDialogDelegate::Acknowledge(JNIEnv* env) {
+@@ -180,6 +195,13 @@ void PermissionDialogDelegate::Acknowledge(JNIEnv* env) {
+ 
+ void PermissionDialogDelegate::Deny(JNIEnv* env) {
+   CHECK(permission_prompt_);
++  content_settings::mojom::LifetimeMode lifetimeOption =
++    static_cast<content_settings::mojom::LifetimeMode>(
++      java_delegate_->GetSelectedLifetimeOption());
++  if (lifetimeOption != content_settings::mojom::LifetimeMode::ALWAYS) {
++    permission_prompt_->DenyThisTime(prompt_options_, lifetimeOption);
++    return;
++  }
+   permission_prompt_->Deny(prompt_options_);
+ }
+ 
+diff --git a/components/permissions/android/permission_prompt/permission_dialog_delegate.h b/components/permissions/android/permission_prompt/permission_dialog_delegate.h
+index 8c05ee62f7f..da886185217 100644
+--- a/components/permissions/android/permission_prompt/permission_dialog_delegate.h
++++ b/components/permissions/android/permission_prompt/permission_dialog_delegate.h
+@@ -46,6 +46,7 @@ class PermissionDialogJavaDelegate {
+       const favicon_base::FaviconRawBitmapResult& favicon_result);
+ 
+   virtual void DismissDialog();
++  virtual int GetSelectedLifetimeOption();
+ 
+   virtual void UpdateDialog();
+ 
+diff --git a/components/permissions/android/permission_prompt/permission_prompt_android.cc b/components/permissions/android/permission_prompt/permission_prompt_android.cc
+index 23c3cfd8ee4..63ebbeada37 100644
+--- a/components/permissions/android/permission_prompt/permission_prompt_android.cc
++++ b/components/permissions/android/permission_prompt/permission_prompt_android.cc
+@@ -78,14 +78,20 @@ void PermissionPromptAndroid::Accept(const PromptOptions& prompt_options) {
+ }
+ 
+ void PermissionPromptAndroid::AcceptThisTime(
+-    const PromptOptions& prompt_options) {
+-  delegate_->AcceptThisTime(prompt_options);
++    const PromptOptions& prompt_options,
++    content_settings::mojom::LifetimeMode lifetimeOption) {
++  delegate_->AcceptThisTime(prompt_options, lifetimeOption);
+ }
+ 
+ void PermissionPromptAndroid::Deny(const PromptOptions& prompt_options) {
+   delegate_->Deny(prompt_options);
+ }
+ 
++void PermissionPromptAndroid::DenyThisTime(const PromptOptions& prompt_options,
++                                           content_settings::mojom::LifetimeMode lifetimeOption) {
++  delegate_->DenyThisTime(prompt_options, lifetimeOption);
++}
++
+ void PermissionPromptAndroid::Ignore(const PromptOptions& prompt_options) {
+   delegate_->Ignore(prompt_options);
+ }
+diff --git a/components/permissions/android/permission_prompt/permission_prompt_android.h b/components/permissions/android/permission_prompt/permission_prompt_android.h
+index e62fa816538..8e9eb33f1a6 100644
+--- a/components/permissions/android/permission_prompt/permission_prompt_android.h
++++ b/components/permissions/android/permission_prompt/permission_prompt_android.h
+@@ -56,10 +56,11 @@ class PermissionPromptAndroid : public PermissionPrompt {
+       const;
+   virtual void Dismiss(const PromptOptions& prompt_options);
+   virtual void Accept(const PromptOptions& prompt_options);
+-  virtual void AcceptThisTime(const PromptOptions& prompt_options);
++  virtual void AcceptThisTime(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetimeOption);
+   virtual void Acknowledge(const PromptOptions& prompt_options) {}
+   virtual void Deny(const PromptOptions& prompt_options);
+   virtual void Ignore(const PromptOptions& prompt_options);
++  virtual void DenyThisTime(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetimeOption);
+   virtual void Resumed() {}
+   virtual void SystemSettingsShown() {}
+   virtual void SystemPermissionResolved(bool accepted) {}
+diff --git a/components/permissions/android/permissions_android_strings.grd b/components/permissions/android/permissions_android_strings.grd
+index 212f52b393b..154f99a058f 100644
+--- a/components/permissions/android/permissions_android_strings.grd
++++ b/components/permissions/android/permissions_android_strings.grd
+@@ -272,6 +272,23 @@
+         Unknown or unsupported device (<ph name="DEVICE_ID">%1$s<ex>A1:B2:C3:D4:E5:F6</ex></ph>)
+       </message>
+ 
++      <!-- Session permissions -->
++      <message name="IDS_SESSION_PERMISSIONS_TITLE" desc="Title for the session section in the permission request">
++        Remember my decision
++      </message>
++      <message name="IDS_SESSION_PERMISSIONS_ONLY_THIS_THIS" desc="Message indicating that the permission is only for this time">
++        Only this time
++      </message>
++      <message name="IDS_SESSION_PERMISSIONS_UNTIL_PAGE_CLOSE" desc="Message indicating that the permission is deleted after navigating away from the page">
++        Until all pages of this origin are closed
++      </message>
++      <message name="IDS_SESSION_PERMISSIONS_UNTIL_BROWSER_CLOSE" desc="Message indicating that the permission is for the session only">
++        Until Bromite is closed
++      </message>
++      <message name="IDS_SESSION_PERMISSIONS_FOREVER" desc="Message indicating that the permission is for all sessions">
++        Forever
++      </message>
++
+       <!-- Item Chooser UI strings -->
+       <message name="IDS_ITEM_CHOOSER_ITEM_NAME_WITH_ID" desc="To distinguish items with the same name, the item chooser shows the item name with id.">
+         <ph name="ITEM_NAME">%1$s<ex>item_name</ex></ph> (<ph name="ITEM_ID">%2$s<ex>item id</ex></ph>)
+diff --git a/components/permissions/contexts/geolocation_permission_context_android.cc b/components/permissions/contexts/geolocation_permission_context_android.cc
+index a12e2e4d3db..ea4f2426d15 100644
+--- a/components/permissions/contexts/geolocation_permission_context_android.cc
++++ b/components/permissions/contexts/geolocation_permission_context_android.cc
+@@ -254,6 +254,18 @@ void GeolocationPermissionContextAndroid::NotifyPermissionSet(
+     bool persist,
+     const content::PermissionResult* permission_result,
+     const permissions::PermissionPromptDecision& decision) {
++  NotifyPermissionSetWithLifetime(request_data, std::move(callback), persist,
++                                  permission_result, decision,
++                                  content_settings::mojom::LifetimeMode::ALWAYS);
++}
++
++void GeolocationPermissionContextAndroid::NotifyPermissionSetWithLifetime(
++    const PermissionRequestData& request_data,
++    BrowserPermissionCallback callback,
++    bool persist,
++    const content::PermissionResult* permission_result,
++    const permissions::PermissionPromptDecision& decision,
++    content_settings::mojom::LifetimeMode lifetime_option) {
+   bool is_default_search =
+       IsRequestingOriginDSE(request_data.requesting_origin);
+   if (decision.overall_decision == PermissionDecision::kAllow &&
+@@ -272,7 +284,8 @@ void GeolocationPermissionContextAndroid::NotifyPermissionSet(
+           // decision.
+           /*permission_result=*/nullptr,
+           permissions::PermissionPromptDecision{
+-              .overall_decision = PermissionDecision::kDeny, .is_final = true});
++              .overall_decision = PermissionDecision::kDeny, .is_final = true},
++          lifetime_option);
+       return;
+     }
+ 
+@@ -297,7 +310,8 @@ void GeolocationPermissionContextAndroid::NotifyPermissionSet(
+           // changing the decision.
+           /*permission_result=*/nullptr,
+           permissions::PermissionPromptDecision{
+-              .overall_decision = PermissionDecision::kDeny, .is_final = true});
++              .overall_decision = PermissionDecision::kDeny, .is_final = true},
++          lifetime_option);
+       return;
+     }
+ 
+@@ -311,12 +325,12 @@ void GeolocationPermissionContextAndroid::NotifyPermissionSet(
+             permission_result ? std::make_unique<content::PermissionResult>(
+                                     *permission_result)
+                               : nullptr,
+-            decision));
++            decision, lifetime_option));
+     return;
+   }
+ 
+   FinishNotifyPermissionSet(request_data, std::move(callback), persist,
+-                            permission_result, decision);
++                            permission_result, decision, lifetime_option);
+ }
+ 
+ content::PermissionResult
+@@ -493,6 +507,7 @@ void GeolocationPermissionContextAndroid::OnLocationSettingsDialogShown(
+     bool persist,
+     std::unique_ptr<content::PermissionResult> permission_result,
+     const permissions::PermissionPromptDecision& decision,
++    content_settings::mojom::LifetimeMode lifetime_option,
+     LocationSettingsDialogOutcome prompt_outcome) {
+   bool is_default_search =
+       IsRequestingOriginDSE(request_data.requesting_origin);
+@@ -516,7 +531,8 @@ void GeolocationPermissionContextAndroid::OnLocationSettingsDialogShown(
+ 
+   FinishNotifyPermissionSet(request_data,
+                             std::move(location_settings_dialog_callback_),
+-                            persist, permission_result.get(), result_decision);
++                            persist, permission_result.get(), result_decision,
++                            lifetime_option);
+ }
+ 
+ void GeolocationPermissionContextAndroid::FinishNotifyPermissionSet(
+@@ -524,9 +540,11 @@ void GeolocationPermissionContextAndroid::FinishNotifyPermissionSet(
+     BrowserPermissionCallback callback,
+     bool persist,
+     const content::PermissionResult* permission_result,
+-    const permissions::PermissionPromptDecision& decision) {
+-  GeolocationPermissionContext::NotifyPermissionSet(
+-      request_data, std::move(callback), persist, permission_result, decision);
++    const permissions::PermissionPromptDecision& decision,
++    content_settings::mojom::LifetimeMode lifetime_option) {
++  GeolocationPermissionContext::NotifyPermissionSetImpl(
++      request_data, std::move(callback), persist, permission_result, decision,
++      /*use_lifetime_option=*/true, lifetime_option);
+ }
+ 
+ void GeolocationPermissionContextAndroid::SetLocationSettingsForTesting(
+diff --git a/components/permissions/contexts/geolocation_permission_context_android.h b/components/permissions/contexts/geolocation_permission_context_android.h
+index fb76cb39e2a..3925f31e9f3 100644
+--- a/components/permissions/contexts/geolocation_permission_context_android.h
++++ b/components/permissions/contexts/geolocation_permission_context_android.h
+@@ -106,6 +106,13 @@ class GeolocationPermissionContextAndroid
+       bool persist,
+       const content::PermissionResult* permission_result,
+       const permissions::PermissionPromptDecision& decision) override;
++  void NotifyPermissionSetWithLifetime(
++      const PermissionRequestData& request_data,
++      BrowserPermissionCallback callback,
++      bool persist,
++      const content::PermissionResult* permission_result,
++      const permissions::PermissionPromptDecision& decision,
++      content_settings::mojom::LifetimeMode lifetime_option) override;
+   content::PermissionResult UpdatePermissionStatusWithDeviceStatus(
+       content::WebContents* web_contents,
+       content::PermissionResult result,
+@@ -155,6 +162,7 @@ class GeolocationPermissionContextAndroid
+       bool persist,
+       std::unique_ptr<content::PermissionResult> permission_result,
+       const permissions::PermissionPromptDecision& decision,
++      content_settings::mojom::LifetimeMode lifetime_option,
+       LocationSettingsDialogOutcome prompt_outcome);
+ 
+   void FinishNotifyPermissionSet(
+@@ -162,7 +170,8 @@ class GeolocationPermissionContextAndroid
+       BrowserPermissionCallback callback,
+       bool persist,
+       const content::PermissionResult* permission_result,
+-      const permissions::PermissionPromptDecision& decision);
++      const permissions::PermissionPromptDecision& decision,
++      content_settings::mojom::LifetimeMode lifetime_option);
+ 
+   std::unique_ptr<LocationSettings> location_settings_;
+ 
+diff --git a/components/permissions/permission_context_base.cc b/components/permissions/permission_context_base.cc
+index 1d668698358..102b9f544f3 100644
+--- a/components/permissions/permission_context_base.cc
++++ b/components/permissions/permission_context_base.cc
+@@ -312,6 +312,17 @@ PermissionContextBase::CreatePermissionRequest(
+       std::move(request_finished_callback), UsesAutomaticEmbargo());
+ }
+ 
++std::unique_ptr<PermissionRequest>
++PermissionContextBase::CreatePermissionRequest(
++    content::WebContents* web_contents,
++    std::unique_ptr<PermissionRequestData> request_data,
++    PermissionRequest::PermissionDecidedCallbackWithLifetime permission_decided_callback,
++    base::OnceClosure request_finished_callback) const {
++  return std::make_unique<PermissionRequest>(
++      std::move(request_data), std::move(permission_decided_callback),
++      std::move(request_finished_callback), UsesAutomaticEmbargo());
++}
++
+ bool PermissionContextBase::UsesAutomaticEmbargo() const {
+   return true;
+ }
+@@ -670,7 +681,8 @@ void PermissionContextBase::DecidePermission(
+ 
+ void PermissionContextBase::PermissionDecided(
+     const permissions::PermissionPromptDecision& decision,
+-    const PermissionRequestData& request_data) {
++    const PermissionRequestData& request_data,
++    content_settings::mojom::LifetimeMode lifetime_option) {
+   UserMadePermissionDecision(request_data.id, request_data.requesting_origin,
+                              request_data.embedding_origin,
+                              decision.overall_decision);
+@@ -692,10 +704,11 @@ void PermissionContextBase::PermissionDecided(
+   // Check if `request` has `BrowserPermissionCallback`. The call back might be
+   // missing if a permission prompt was preignored and we already notified an
+   // origin about it.
+-  NotifyPermissionSet(request_data,
++  NotifyPermissionSetWithLifetime(request_data,
+                       request->second.second ? std::move(request->second.second)
+                                              : base::DoNothing(),
+-                      persist, /*permission_result=*/nullptr, decision);
++                      persist, /*permission_result=*/nullptr, decision,
++                      lifetime_option);
+ }
+ 
+ content::BrowserContext* PermissionContextBase::browser_context() const {
+@@ -797,6 +810,30 @@ void PermissionContextBase::NotifyPermissionSet(
+     bool persist,
+     const content::PermissionResult* permission_result,
+     const permissions::PermissionPromptDecision& decision) {
++  NotifyPermissionSetImpl(request_data, std::move(callback), persist,
++                          permission_result, decision, false,
++                          content_settings::mojom::LifetimeMode::ALWAYS);
++}
++
++void PermissionContextBase::NotifyPermissionSetWithLifetime(
++    const PermissionRequestData& request_data,
++    BrowserPermissionCallback callback,
++    bool persist,
++    const content::PermissionResult* permission_result,
++    const permissions::PermissionPromptDecision& decision,
++    content_settings::mojom::LifetimeMode lifetime_option) {
++  NotifyPermissionSetImpl(request_data, std::move(callback), persist,
++                          permission_result, decision, true, lifetime_option);
++}
++
++void PermissionContextBase::NotifyPermissionSetImpl(
++    const PermissionRequestData& request_data,
++    BrowserPermissionCallback callback,
++    bool persist,
++    const content::PermissionResult* permission_result,
++    const permissions::PermissionPromptDecision& decision,
++    bool use_lifetime_option,
++    content_settings::mojom::LifetimeMode lifetime_option) {
+   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+   content::PermissionResult new_permission_result =
+       permission_result ? *permission_result
+@@ -804,10 +841,11 @@ void PermissionContextBase::NotifyPermissionSet(
+ 
+   if (persist) {
+     CHECK(new_permission_result.retrieved_permission_setting.has_value());
+-    UpdateSetting(request_data,
+-                  new_permission_result.retrieved_permission_setting.value(),
+-                  /*is_one_time=*/decision.overall_decision ==
+-                      PermissionDecision::kAllowThisTime);
++    UpdateSettingImpl(request_data,
++                      new_permission_result.retrieved_permission_setting.value(),
++                      /*is_one_time=*/decision.overall_decision ==
++                          PermissionDecision::kAllowThisTime,
++                      use_lifetime_option, lifetime_option);
+   }
+ 
+   // Note that rfh may be null, see crbug.com/426909787.
+@@ -863,6 +901,16 @@ void PermissionContextBase::UpdateSetting(
+     const PermissionRequestData& request_data,
+     const PermissionSetting& setting,
+     bool is_one_time) {
++  UpdateSettingImpl(request_data, setting, is_one_time, false,
++                    content_settings::mojom::LifetimeMode::ALWAYS);
++}
++
++void PermissionContextBase::UpdateSettingImpl(
++    const PermissionRequestData& request_data,
++    const PermissionSetting& setting,
++    bool is_one_time,
++    bool use_lifetime_option,
++    content_settings::mojom::LifetimeMode lifetime_option) {
+   auto* info = content_settings::PermissionSettingsRegistry::GetInstance()->Get(
+       content_settings_type_);
+   CHECK(info);
+@@ -877,6 +925,8 @@ void PermissionContextBase::UpdateSetting(
+   constraints.set_session_model(
+       is_one_time ? content_settings::mojom::SessionModel::ONE_TIME
+                   : content_settings::mojom::SessionModel::DURABLE);
++  if (use_lifetime_option)
++    constraints = content_settings::GetConstraintSessionExpiration(lifetime_option);
+ 
+   // The unused permissions module in Safety check will revoke unused site
+   // permissions after a finite amount of time if the permission can be revoked.
+diff --git a/components/permissions/permission_context_base.h b/components/permissions/permission_context_base.h
+index 8e27733acea..66a84c6eeae 100644
+--- a/components/permissions/permission_context_base.h
++++ b/components/permissions/permission_context_base.h
+@@ -227,6 +227,22 @@ class PermissionContextBase : public content_settings::Observer {
+       const PermissionRequestData& request_data,
+       const permissions::PermissionPromptDecision& decision);
+ 
++  void NotifyPermissionSetImpl(
++      const PermissionRequestData& request_data,
++      BrowserPermissionCallback callback,
++      bool persist,
++      const content::PermissionResult* permission_result,
++      const permissions::PermissionPromptDecision& decision,
++      bool use_lifetime_option,
++      content_settings::mojom::LifetimeMode lifetime_option);
++  virtual void NotifyPermissionSetWithLifetime(
++      const PermissionRequestData& request_data,
++      BrowserPermissionCallback callback,
++      bool persist,
++      const content::PermissionResult* permission_result,
++      const permissions::PermissionPromptDecision& decision,
++      content_settings::mojom::LifetimeMode lifetime_option);
++
+   // Called when the permission decision has been made. Updates stored setting
+   // if persist is set, updates tab indicators and runs the callback to finish
+   // the request.
+@@ -254,6 +270,11 @@ class PermissionContextBase : public content_settings::Observer {
+   virtual void UpdateSetting(const PermissionRequestData& request_data,
+                              const PermissionSetting& setting,
+                              bool is_one_time);
++  void UpdateSettingImpl(const PermissionRequestData& request_data,
++                         const PermissionSetting& setting,
++                         bool is_one_time,
++                         bool use_lifetime_option,
++                         content_settings::mojom::LifetimeMode lifetime_option);
+ 
+   // Whether the permission should be restricted to secure origins.
+   virtual bool IsRestrictedToSecureOrigins() const;
+@@ -280,6 +301,12 @@ class PermissionContextBase : public content_settings::Observer {
+       PermissionRequest::PermissionDecidedCallback permission_decided_callback,
+       base::OnceClosure request_finished_callback) const;
+ 
++  virtual std::unique_ptr<PermissionRequest> CreatePermissionRequest(
++      content::WebContents* web_contents,
++      std::unique_ptr<PermissionRequestData> request_data,
++      PermissionRequest::PermissionDecidedCallbackWithLifetime permission_decided_callback,
++      base::OnceClosure request_finished_callback) const;
++
+   // Implementors can override this method to avoid using automatic embargo.
+   virtual bool UsesAutomaticEmbargo() const;
+ 
+@@ -334,7 +361,8 @@ class PermissionContextBase : public content_settings::Observer {
+   // This is the callback for PermissionRequest and is called once the user
+   // allows/blocks/dismisses a permission prompt.
+   void PermissionDecided(const permissions::PermissionPromptDecision& decision,
+-                         const PermissionRequestData& request_data);
++                         const PermissionRequestData& request_data,
++                         content_settings::mojom::LifetimeMode lifetime_option);
+ 
+   raw_ptr<content::BrowserContext> browser_context_;
+   const ContentSettingsType content_settings_type_;
+diff --git a/components/permissions/permission_prompt.h b/components/permissions/permission_prompt.h
+index a126ac33eba..b63ae81846d 100644
+--- a/components/permissions/permission_prompt.h
++++ b/components/permissions/permission_prompt.h
+@@ -11,6 +11,7 @@
+ 
+ #include "base/functional/callback.h"
+ #include "base/memory/raw_ptr.h"
++#include "components/content_settings/core/common/content_settings_enums.mojom-shared.h"
+ #include "components/permissions/features.h"
+ #include "components/permissions/permission_request_data.h"
+ #include "components/permissions/permission_uma_constants.h"
+@@ -72,8 +73,9 @@ class PermissionPrompt {
+     virtual GURL GetEmbeddingOrigin() const = 0;
+ 
+     virtual void Accept(const PromptOptions& prompt_options) = 0;
+-    virtual void AcceptThisTime(const PromptOptions& prompt_options) = 0;
++    virtual void AcceptThisTime(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetime_option) = 0;
+     virtual void Deny(const PromptOptions& prompt_options) = 0;
++    virtual void DenyThisTime(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetime_option) = 0;
+     virtual void Dismiss(const PromptOptions& prompt_options) = 0;
+     virtual void Ignore(const PromptOptions& prompt_options) = 0;
+     virtual void SwitchToLoudPrompt() = 0;
+diff --git a/components/permissions/permission_request.cc b/components/permissions/permission_request.cc
+index 4cd16d3755a..af14b5d86bf 100644
+--- a/components/permissions/permission_request.cc
++++ b/components/permissions/permission_request.cc
+@@ -49,6 +49,16 @@ PermissionRequest::PermissionRequest(
+       request_finished_callback_(std::move(request_finished_callback)),
+       uses_automatic_embargo_(uses_automatic_embargo) {}
+ 
++PermissionRequest::PermissionRequest(
++    std::unique_ptr<PermissionRequestData> request_data,
++    PermissionDecidedCallbackWithLifetime permission_decided_callback,
++    base::OnceClosure request_finished_callback,
++    bool uses_automatic_embargo)
++    : data_(std::move(request_data)),
++      permission_decided_callback_withlifetime_(std::move(permission_decided_callback)),
++      request_finished_callback_(std::move(request_finished_callback)),
++      uses_automatic_embargo_(uses_automatic_embargo) {}
++
+ PermissionRequest::~PermissionRequest() {
+   std::move(request_finished_callback_).Run();
+ }
+@@ -510,7 +520,19 @@ PermissionRequest::GetGeolocationPromptType() const {
+ }
+ 
+ void PermissionRequest::PermissionGranted(const PromptOptions& prompt_options,
+-                                          bool is_one_time) {
++                                          bool is_one_time,
++                                          content_settings::mojom::LifetimeMode lifetime_option) {
++  if (permission_decided_callback_withlifetime_) {
++    std::move(permission_decided_callback_withlifetime_)
++        .Run(PermissionPromptDecision{.overall_decision =
++                                          is_one_time
++                                              ? PermissionDecision::kAllowThisTime
++                                              : PermissionDecision::kAllow,
++                                      .prompt_options = prompt_options,
++                                      .is_final = true},
++            /*request_data=*/*data_, lifetime_option);
++    return;
++  }
+   std::move(permission_decided_callback_)
+       .Run(PermissionPromptDecision{.overall_decision =
+                                         is_one_time
+@@ -521,7 +543,16 @@ void PermissionRequest::PermissionGranted(const PromptOptions& prompt_options,
+            /*request_data=*/*data_);
+ }
+ 
+-void PermissionRequest::PermissionDenied() {
++void PermissionRequest::PermissionDenied(content_settings::mojom::LifetimeMode lifetime_option) {
++  if (permission_decided_callback_withlifetime_) {
++    std::move(permission_decided_callback_withlifetime_)
++        .Run(PermissionPromptDecision{.overall_decision =
++                                          PermissionDecision::kDeny,
++                                      .prompt_options = std::monostate(),
++                                      .is_final = true},
++            /*request_data=*/*data_, lifetime_option);
++    return;
++  }
+   std::move(permission_decided_callback_)
+       .Run(PermissionPromptDecision{.overall_decision =
+                                         PermissionDecision::kDeny,
+@@ -531,6 +562,14 @@ void PermissionRequest::PermissionDenied() {
+ }
+ 
+ void PermissionRequest::Cancelled(bool is_final_decision) {
++  if (permission_decided_callback_withlifetime_) {
++    permission_decided_callback_withlifetime_.Run(
++        PermissionPromptDecision{.overall_decision = PermissionDecision::kNone,
++                                 .prompt_options = std::monostate(),
++                                 .is_final = is_final_decision},
++        /*request_data=*/*data_, content_settings::mojom::LifetimeMode::ALWAYS);
++    return;
++  }
+   if (permission_decided_callback_) {
+     permission_decided_callback_.Run(
+         PermissionPromptDecision{.overall_decision = PermissionDecision::kNone,
+diff --git a/components/permissions/permission_request.h b/components/permissions/permission_request.h
+index 528d64f6653..032a9eb8c45 100644
+--- a/components/permissions/permission_request.h
++++ b/components/permissions/permission_request.h
+@@ -55,6 +55,11 @@ class PermissionRequest {
+       base::RepeatingCallback<void(const PermissionPromptDecision&,
+                                    const PermissionRequestData&)>;
+ 
++  using PermissionDecidedCallbackWithLifetime = base::RepeatingCallback<void(
++      const PermissionPromptDecision&,
++      const PermissionRequestData& /*request_data*/,
++      content_settings::mojom::LifetimeMode /*lifetime_option*/)>;
++
+   // `permission_decided_callback` is called when the permission request is
+   // resolved by the user (see comment on PermissionDecidedCallback above).
+   // `request_finished_callback` is called when the permission request is being
+@@ -69,6 +74,11 @@ class PermissionRequest {
+       base::OnceClosure request_finished_callback = base::DoNothing(),
+       bool uses_automatic_embargo = true);
+ 
++  PermissionRequest(std::unique_ptr<PermissionRequestData> request_data,
++                    PermissionDecidedCallbackWithLifetime permission_decided_callback,
++                    base::OnceClosure request_finished_callback = base::DoNothing(),
++                    bool uses_automatic_embargo = true);
++
+   PermissionRequest(const PermissionRequest&) = delete;
+   PermissionRequest& operator=(const PermissionRequest&) = delete;
+ 
+@@ -189,10 +199,10 @@ class PermissionRequest {
+   // If |is_one_time| is true the permission will last until all tabs of
+   // |origin| are closed or navigated away from, and then the permission will
+   // automatically expire after 1 day.
+-  void PermissionGranted(const PromptOptions& prompt_options, bool is_one_time);
++  void PermissionGranted(const PromptOptions& prompt_options, bool is_one_time, content_settings::mojom::LifetimeMode lifetime_option);
+ 
+   // Called when the user has denied the requested permission.
+-  void PermissionDenied();
++  void PermissionDenied(content_settings::mojom::LifetimeMode lifetime_option);
+ 
+   // Called when the user has cancelled the permission request. This
+   // corresponds to a denial, but is segregated in case the context needs to
+@@ -256,6 +266,9 @@ class PermissionRequest {
+   // Called once a decision is made about the permission.
+   PermissionDecidedCallback permission_decided_callback_;
+ 
++  // Called once a decision is made about the permission (with lifetime option).
++  PermissionDecidedCallbackWithLifetime permission_decided_callback_withlifetime_;
++
+   // Called when the request is finished to perform bookkeeping tasks.
+   base::OnceClosure request_finished_callback_;
+ 
+diff --git a/components/permissions/permission_request_manager.cc b/components/permissions/permission_request_manager.cc
+index 1fac8c98147..d17a17c93a6 100644
+--- a/components/permissions/permission_request_manager.cc
++++ b/components/permissions/permission_request_manager.cc
+@@ -225,12 +225,12 @@ void PermissionRequestManager::AddRequest(
+ 
+   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+           switches::kDenyPermissionPrompts)) {
+-    request->PermissionDenied();
++    request->PermissionDenied(content_settings::mojom::LifetimeMode::ALWAYS);
+     return;
+   }
+ 
+   if (display::Screen::Get()->IsHeadless()) {
+-    request->PermissionDenied();
++    request->PermissionDenied(content_settings::mojom::LifetimeMode::ALWAYS);
+     return;
+   }
+ 
+@@ -320,9 +320,9 @@ void PermissionRequestManager::AddRequest(
+                   .selected_accuracy = GeolocationAccuracy::kPrecise})
+             : std::monostate();
+     if (should_auto_approve_request == PermissionAction::GRANTED) {
+-      request->PermissionGranted(prompt_options, /*is_one_time=*/false);
++      request->PermissionGranted(prompt_options, /*is_one_time=*/false, content_settings::mojom::LifetimeMode::UNTIL_ORIGIN_CLOSED);
+     } else if (should_auto_approve_request == PermissionAction::GRANTED_ONCE) {
+-      request->PermissionGranted(prompt_options, /*is_one_time=*/true);
++      request->PermissionGranted(prompt_options, /*is_one_time=*/true, content_settings::mojom::LifetimeMode::UNTIL_ORIGIN_CLOSED);
+     }
+     return;
+   }
+@@ -735,7 +735,8 @@ void PermissionRequestManager::Accept(const PromptOptions& prompt_options) {
+     StorePermissionActionForUMA(request->requesting_origin(),
+                                 request->request_type(), action);
+     PermissionGrantedIncludingDuplicates(request.get(), prompt_options,
+-                                         /*is_one_time=*/false);
++                                        /*is_one_time=*/false,
++                                         content_settings::mojom::LifetimeMode::ALWAYS);
+ 
+ #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+     std::optional<ContentSettingsType> content_settings_type =
+@@ -754,7 +755,8 @@ void PermissionRequestManager::Accept(const PromptOptions& prompt_options) {
+ }
+ 
+ void PermissionRequestManager::AcceptThisTime(
+-    const PromptOptions& prompt_options) {
++    const PromptOptions& prompt_options,
++    content_settings::mojom::LifetimeMode mode) {
+   CHECK(requests_[0]->GetContentSettingsType() ==
+             ContentSettingsType::GEOLOCATION_WITH_OPTIONS ||
+         std::holds_alternative<std::monostate>(prompt_options))
+@@ -772,7 +774,7 @@ void PermissionRequestManager::AcceptThisTime(
+     StorePermissionActionForUMA(request->requesting_origin(),
+                                 request->request_type(), action);
+     PermissionGrantedIncludingDuplicates(request.get(), prompt_options,
+-                                         /*is_one_time=*/true);
++                                         /*is_one_time=*/true, mode);
+   }
+ 
+   NotifyRequestDecided(action);
+@@ -780,6 +782,18 @@ void PermissionRequestManager::AcceptThisTime(
+ }
+ 
+ void PermissionRequestManager::Deny(const PromptOptions& prompt_options) {
++  Deny_(prompt_options, content_settings::mojom::LifetimeMode::ALWAYS);
++}
++
++void PermissionRequestManager::DenyThisTime(
++    const PromptOptions& prompt_options,
++    content_settings::mojom::LifetimeMode mode) {
++  Deny_(prompt_options, mode);
++}
++
++void PermissionRequestManager::Deny_(
++    const PromptOptions& prompt_options,
++    content_settings::mojom::LifetimeMode lifetime_option) {
+   CHECK(requests_[0]->GetContentSettingsType() ==
+             ContentSettingsType::GEOLOCATION_WITH_OPTIONS ||
+         std::holds_alternative<std::monostate>(prompt_options))
+@@ -806,7 +820,7 @@ void PermissionRequestManager::Deny(const PromptOptions& prompt_options) {
+   for (const auto& request : requests_) {
+     StorePermissionActionForUMA(request->requesting_origin(),
+                                 request->request_type(), action);
+-    PermissionDeniedIncludingDuplicates(request.get());
++    PermissionDeniedIncludingDuplicates(request.get(), lifetime_option);
+   }
+ 
+   NotifyRequestDecided(action);
+@@ -1660,32 +1674,33 @@ PermissionRequestManager::VisitDuplicateRequests(
+ void PermissionRequestManager::PermissionGrantedIncludingDuplicates(
+     PermissionRequest* request,
+     const PromptOptions& prompt_options,
+-    bool is_one_time) {
++    bool is_one_time,
++    content_settings::mojom::LifetimeMode lifetime_option) {
+   CHECK(RequestExistsExactlyOnce(request, pending_permission_requests_,
+                                  requests_))
+       << "Only requests in [pending_permission_]requests_ can have duplicates";
+-  request->PermissionGranted(prompt_options, is_one_time);
++  request->PermissionGranted(prompt_options, is_one_time, lifetime_option);
+   VisitDuplicateRequests(
+       base::BindRepeating(
+-          [](const PromptOptions& prompt_options, bool is_one_time,
++          [](const PromptOptions& prompt_options, bool is_one_time, content_settings::mojom::LifetimeMode lifetime_option,
+              const std::unique_ptr<PermissionRequest>& request) {
+-            request->PermissionGranted(prompt_options, is_one_time);
++            request->PermissionGranted(prompt_options, is_one_time, lifetime_option);
+           },
+-          prompt_options, is_one_time),
++          prompt_options, is_one_time, lifetime_option),
+       request);
+ }
+ 
+ void PermissionRequestManager::PermissionDeniedIncludingDuplicates(
+-    PermissionRequest* request) {
++    PermissionRequest* request, content_settings::mojom::LifetimeMode lifetime_option) {
+   CHECK(RequestExistsExactlyOnce(request, pending_permission_requests_,
+                                  requests_))
+       << "Only requests in [pending_permission_]requests_ can have duplicates";
+-  request->PermissionDenied();
++  request->PermissionDenied(lifetime_option);
+   VisitDuplicateRequests(
+       base::BindRepeating(
+-          [](const std::unique_ptr<PermissionRequest>& request) {
+-            request->PermissionDenied();
+-          }),
++          [](content_settings::mojom::LifetimeMode lifetime_option, const std::unique_ptr<PermissionRequest>& request) {
++            request->PermissionDenied(lifetime_option);
++          }, lifetime_option),
+       request);
+ }
+ 
+@@ -1986,7 +2001,7 @@ void PermissionRequestManager::DoAutoResponseForTesting() {
+   }
+   switch (auto_response_for_test_) {
+     case ACCEPT_ONCE:
+-      AcceptThisTime(auto_response_prompt_options_for_test_);
++      AcceptThisTime(auto_response_prompt_options_for_test_, content_settings::mojom::LifetimeMode::ONLY_THIS_TIME);
+       break;
+     case ACCEPT_ALL:
+       Accept(auto_response_prompt_options_for_test_);
+diff --git a/components/permissions/permission_request_manager.h b/components/permissions/permission_request_manager.h
+index 0b4b3bac77a..8cc924834e2 100644
+--- a/components/permissions/permission_request_manager.h
++++ b/components/permissions/permission_request_manager.h
+@@ -199,8 +199,10 @@ class PermissionRequestManager
+   GURL GetRequestingOrigin() const override;
+   GURL GetEmbeddingOrigin() const override;
+   void Accept(const PromptOptions& prompt_options) override;
+-  void AcceptThisTime(const PromptOptions& prompt_options) override;
++  void AcceptThisTime(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetime_option) override;
+   void Deny(const PromptOptions& prompt_options) override;
++  void Deny_(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetime_option);
++  void DenyThisTime(const PromptOptions& prompt_options, content_settings::mojom::LifetimeMode lifetime_option) override;
+   void Dismiss(const PromptOptions& prompt_options) override;
+   void Ignore(const PromptOptions& prompt_options) override;
+   void FinalizeCurrentRequests() override;
+@@ -480,9 +482,11 @@ class PermissionRequestManager
+   // Calls PermissionGranted on a request and all its duplicates.
+   void PermissionGrantedIncludingDuplicates(PermissionRequest* request,
+                                             const PromptOptions& prompt_options,
+-                                            bool is_one_time);
++                                            bool is_one_time,
++                                            content_settings::mojom::LifetimeMode lifetime_option);
+   // Calls PermissionDenied on a request and all its duplicates.
+-  void PermissionDeniedIncludingDuplicates(PermissionRequest* request);
++  void PermissionDeniedIncludingDuplicates(PermissionRequest* request,
++                                           content_settings::mojom::LifetimeMode lifetime_option);
+   // Calls Cancelled on a request and all its duplicates.
+   void CancelRequestIncludingDuplicates(PermissionRequest* request,
+                                         bool is_final_decision = true);

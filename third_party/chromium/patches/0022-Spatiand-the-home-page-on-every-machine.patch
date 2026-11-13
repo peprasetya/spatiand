@@ -1,7 +1,7 @@
-From 34a1031e3cf8950016ce011adb7234e7c5db837d Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Tue, 10 Nov 2026 09:33:19 +0700
-Subject: [PATCH 22/22] Spatiand: the home page on every machine
+Subject: [PATCH 302/310] Spatiand: the home page on every machine
 
 The Rust SpatiMesh's `home` setting (settings/home.json in the shared folder, "about:blank" for none
 of its own) is Chrome's home page now, both ways: none is Chrome's new tab page.
@@ -9,15 +9,23 @@ of its own) is Chrome's home page now, both ways: none is Chrome's new tab page.
 Checked headless (2026-11-10): the home page set in Settings was written to home.json; another
 address written there became Chrome's home page, and "about:blank" the new tab page.
 ---
- chrome/browser/spatiand/settings_sync.cc | 28 +++++++++++++++++++++++-
+ chrome/browser/spatiand/settings_sync.cc | 34 ++++++++++++++++++++++--
  chrome/browser/spatiand/settings_sync.h  |  1 +
- 2 files changed, 28 insertions(+), 1 deletion(-)
+ 2 files changed, 33 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/spatiand/settings_sync.cc b/chrome/browser/spatiand/settings_sync.cc
-index 898c55b948..a133651091 100644
+index 898c55b9481..f14fe0b072e 100644
 --- a/chrome/browser/spatiand/settings_sync.cc
 +++ b/chrome/browser/spatiand/settings_sync.cc
-@@ -52,7 +52,7 @@ SettingsSync::Files ReadFiles(const std::string& id) {
+@@ -12,6 +12,7 @@
+ #include "base/functional/bind.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
+ #include "chrome/browser/prefs/session_startup_pref.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+@@ -52,7 +53,7 @@ SettingsSync::Files ReadFiles(const std::string& id) {
    SettingsSync::Files files;
    const base::FilePath shared = SharedDir().Append("settings");
    for (const char* name : {"search", "custom_search", "zoom", "restore", "bookmarks_bar",
@@ -26,7 +34,7 @@ index 898c55b948..a133651091 100644
      if (std::optional<base::Value> value = ReadJson(shared.Append(std::string(name) + ".json"))) {
        files.emplace(name, std::move(*value));
      }
-@@ -113,6 +113,11 @@ SettingsSync::SettingsSync(Profile* profile,
+@@ -113,6 +114,11 @@ SettingsSync::SettingsSync(Profile* profile,
                                   prefs::kExtensionsUIDeveloperMode));
    prefs_.Add(prefs::kRestoreOnStartup,
               base::BindRepeating(&SettingsSync::LocalRestore, base::Unretained(this)));
@@ -38,7 +46,7 @@ index 898c55b948..a133651091 100644
    if (ChromeZoomLevelPrefs* zoom = profile_->GetZoomLevelPrefs()) {
      zoom_subscription_ = zoom->RegisterDefaultZoomLevelCallback(
          base::BindRepeating(&SettingsSync::LocalZoom, base::Unretained(this)));
-@@ -175,6 +180,14 @@ void SettingsSync::OnRead(Files files) {
+@@ -175,6 +181,14 @@ void SettingsSync::OnRead(Files files) {
    if (const base::Value* value = changed("developer"); value && value->is_bool()) {
      prefs->SetBoolean(prefs::kExtensionsUIDeveloperMode, value->GetBool());
    }
@@ -53,7 +61,20 @@ index 898c55b948..a133651091 100644
    const bool search_changed = changed("search") || changed("custom_search") ||
                                changed("profile/search") || changed("profile/custom_search");
    for (auto& [name, value] : files) {
-@@ -335,6 +348,19 @@ void SettingsSync::LocalRestore() {
+@@ -246,8 +260,11 @@ void SettingsSync::OnTemplateURLServiceChanged() {
+   }
+   // The engines have only just loaded: what is shared comes first, or Chromium's default, which
+   // nobody chose, would be taken for a choice and sent to every machine.
++  // Not from inside this notification: making an engine the default notifies again, and since
++  // Chromium 157 the service's observers may not be told while they are being told.
+   if (!search_applied_) {
+-    ApplySearch();
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(&SettingsSync::ApplySearch, weak_factory_.GetWeakPtr()));
+     return;
+   }
+   // Which of the shared names it is, or an address of the wearer's own.
+@@ -335,6 +352,19 @@ void SettingsSync::LocalRestore() {
    }
  }
  
@@ -74,7 +95,7 @@ index 898c55b948..a133651091 100644
    if (applying_) {
      return;
 diff --git a/chrome/browser/spatiand/settings_sync.h b/chrome/browser/spatiand/settings_sync.h
-index bdad8719a6..a3607f61e3 100644
+index bdad8719a6a..a3607f61e32 100644
 --- a/chrome/browser/spatiand/settings_sync.h
 +++ b/chrome/browser/spatiand/settings_sync.h
 @@ -49,6 +49,7 @@ class SettingsSync : public TemplateURLServiceObserver, public ThemeServiceObser
@@ -85,6 +106,3 @@ index bdad8719a6..a3607f61e3 100644
    void LocalZoom();
    bool Seen(const std::string& key, const base::Value& value);
  
--- 
-2.53.0
-

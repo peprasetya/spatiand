@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sun, 27 Jun 2021 17:35:39 +0200
+Subject: [PATCH 096/310] Add flag to disable vibration
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-flag-to-disable-vibration.patch
+---
+ content/child/runtime_features.cc                         | 5 +++++
+ .../about_flags_cc/Add-flag-to-disable-vibration.inc      | 8 ++++++++
+ .../content_features_cc/Add-flag-to-disable-vibration.inc | 4 ++++
+ .../content_features_h/Add-flag-to-disable-vibration.inc  | 1 +
+ third_party/blink/public/platform/web_runtime_features.h  | 1 +
+ .../renderer/modules/vibration/vibration_controller.cc    | 4 ++++
+ .../renderer/platform/exported/web_runtime_features.cc    | 4 ++++
+ .../renderer/platform/runtime_enabled_features.json5      | 5 +++++
+ 8 files changed, 32 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-vibration.inc
+ create mode 100644 cromite_flags/content/public/common/content_features_cc/Add-flag-to-disable-vibration.inc
+ create mode 100644 cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc
+
+diff --git a/content/child/runtime_features.cc b/content/child/runtime_features.cc
+index c00b062823e..b82ab5e52ff 100644
+--- a/content/child/runtime_features.cc
++++ b/content/child/runtime_features.cc
+@@ -585,6 +585,11 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
+     WebRuntimeFeatures::EnableExperimentalFeatures(true);
+   }
+ 
++#if BUILDFLAG(IS_ANDROID)
++  WebRuntimeFeatures::EnableVibration(
++      base::FeatureList::IsEnabled(features::kVibration));
++#endif
++
+   // Sets origin trial features.
+   if (command_line.HasSwitch(
+           switches::kDisableOriginTrialControlledBlinkFeatures)) {
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-vibration.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-vibration.inc
+new file mode 100644
+index 00000000000..68ef357ef9e
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Add-flag-to-disable-vibration.inc
+@@ -0,0 +1,8 @@
++#ifdef FLAG_SECTION
++
++    {"enable-vibration",
++     "Vibration",
++     "Enable vibration API; an user gesture will still be needed.", kOsAll,
++     FEATURE_VALUE_TYPE(features::kVibration)},
++
++#endif
+diff --git a/cromite_flags/content/public/common/content_features_cc/Add-flag-to-disable-vibration.inc b/cromite_flags/content/public/common/content_features_cc/Add-flag-to-disable-vibration.inc
+new file mode 100644
+index 00000000000..3d5652a6101
+--- /dev/null
++++ b/cromite_flags/content/public/common/content_features_cc/Add-flag-to-disable-vibration.inc
+@@ -0,0 +1,4 @@
++// Enables vibration; an user gesture will still be required if enabled.
++CROMITE_FEATURE(kVibration,
++               "VibrationEnabled",
++               base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc b/cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc
+new file mode 100644
+index 00000000000..bda94d3022d
+--- /dev/null
++++ b/cromite_flags/content/public/common/content_features_h/Add-flag-to-disable-vibration.inc
+@@ -0,0 +1 @@
++CONTENT_EXPORT BASE_DECLARE_FEATURE(kVibration);
+diff --git a/third_party/blink/public/platform/web_runtime_features.h b/third_party/blink/public/platform/web_runtime_features.h
+index e78962e1edf..874d7a9cd79 100644
+--- a/third_party/blink/public/platform/web_runtime_features.h
++++ b/third_party/blink/public/platform/web_runtime_features.h
+@@ -73,6 +73,7 @@ class BLINK_PLATFORM_EXPORT WebRuntimeFeatures : public WebRuntimeFeaturesBase {
+   static void EnableFingerprintingCanvasImageDataNoise(bool);
+   static void EnableFluentScrollbars(bool);
+   static void EnableDesktopAndroidScrollbars(bool);
++  static void EnableVibration(bool);
+ 
+   static void EnableLocalNetworkAccessWebRTC(bool);
+ 
+diff --git a/third_party/blink/renderer/modules/vibration/vibration_controller.cc b/third_party/blink/renderer/modules/vibration/vibration_controller.cc
+index 3ba3da135c4..af74d1bb739 100644
+--- a/third_party/blink/renderer/modules/vibration/vibration_controller.cc
++++ b/third_party/blink/renderer/modules/vibration/vibration_controller.cc
+@@ -28,6 +28,7 @@
+ #include "third_party/blink/renderer/core/frame/local_frame.h"
+ #include "third_party/blink/renderer/core/frame/navigator.h"
+ #include "third_party/blink/renderer/core/page/page.h"
++#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+ 
+ // Maximum number of entries in a vibration pattern.
+ const unsigned kVibrationPatternLengthMax = 99;
+@@ -117,6 +118,9 @@ bool VibrationController::vibrate(Navigator& navigator,
+     return false;
+   }
+ 
++  if (!RuntimeEnabledFeatures::VibrationEnabled())
++    return false;
++
+   return From(navigator).Vibrate(pattern);
+ }
+ 
+diff --git a/third_party/blink/renderer/platform/exported/web_runtime_features.cc b/third_party/blink/renderer/platform/exported/web_runtime_features.cc
+index fdb1cabbb76..a362818ca6a 100644
+--- a/third_party/blink/renderer/platform/exported/web_runtime_features.cc
++++ b/third_party/blink/renderer/platform/exported/web_runtime_features.cc
+@@ -80,6 +80,10 @@ void WebRuntimeFeatures::EnableTestOnlyFeatures(bool enable) {
+   RuntimeEnabledFeatures::SetTestFeaturesEnabled(enable);
+ }
+ 
++void WebRuntimeFeatures::EnableVibration(bool enable) {
++  RuntimeEnabledFeatures::SetVibrationEnabled(enable);
++}
++
+ void WebRuntimeFeatures::EnableOriginTrialControlledFeatures(bool enable) {
+   RuntimeEnabledFeatures::SetOriginTrialControlledFeaturesEnabled(enable);
+ }
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index 389f952e3d8..2b19592cc09 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -1402,6 +1402,11 @@
+     {
+       name: "CompositingDecisionAtAnimationPhaseBoundaries"
+     },
++    {
++      name: "Vibration",
++      status: "stable",
++      base_feature: "none",
++    },
+     {
+       name: "CompositionForegroundMarkers",
+       status: {

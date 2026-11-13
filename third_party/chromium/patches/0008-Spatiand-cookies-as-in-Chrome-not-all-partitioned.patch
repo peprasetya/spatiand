@@ -1,31 +1,29 @@
-From bc8aa619d214817ed18842b58a2bcd66107edb4e Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Fri, 30 Oct 2026 18:21:43 +0700
-Subject: [PATCH 08/10] Spatiand: cookies as in Chrome, not all partitioned
+Subject: [PATCH 288/310] Spatiand: cookies as in Chrome, not all partitioned
 
 Undoes Cromite's "Partitioning all cookies by top frame domain". It deleted every unpartitioned
 cookie each time the browser started, so logins taken from Spatiand's shared folder lasted until the
 next start, and the merge then took their absence for a logout on every machine. It also stopped an
 extension's requests carrying a site's cookies. Third-party cookies can still be blocked in Settings.
 ---
- .../browser/chrome_content_browser_client.cc  |  2 +-
- .../extensions/api/cookies/cookies_helpers.cc |  4 ---
- .../net/profile_network_context_service.cc    | 12 ++++-----
- ...storage_access_grant_permission_context.cc | 13 ----------
- .../strings/android/site_settings.grdp        |  4 +--
- .../core/common/cookie_settings_base.cc       | 25 ++++++++++++++++++-
+ .../net/profile_network_context_service.cc    | 12 +++++-----
+ ...storage_access_grant_permission_context.cc | 13 -----------
+ .../core/common/cookie_settings_base.cc       | 23 ++++++++++++++++++-
  ...ioning-all-cookies-by-top-frame-domain.inc |  1 -
  ...ioning-all-cookies-by-top-frame-domain.inc |  1 -
  ...ioning-all-cookies-by-top-frame-domain.inc |  1 -
- ...ioning-all-cookies-by-top-frame-domain.inc | 12 ---------
+ ...ioning-all-cookies-by-top-frame-domain.inc | 12 ----------
  ...ioning-all-cookies-by-top-frame-domain.inc |  1 -
+ .../browser/api/cookies/cookies_helpers.cc    |  4 ----
  net/cookies/canonical_cookie.cc               |  5 ++++
  net/cookies/cookie_deletion_info.cc           |  3 +--
  net/cookies/cookie_monster.cc                 |  1 -
  net/cookies/cookie_util.cc                    |  1 -
  net/cookies/cookie_util.h                     |  2 +-
  net/cookies/parsed_cookie.h                   |  6 +----
- .../sqlite/sqlite_persistent_cookie_store.cc  |  8 ------
+ .../sqlite/sqlite_persistent_cookie_store.cc  |  8 -------
  net/url_request/url_request.cc                |  3 ++-
  net/url_request/url_request_http_job.cc       |  2 --
  services/network/cookie_settings.cc           |  6 +++--
@@ -36,46 +34,18 @@ extension's requests carrying a site's cookies. Third-party cookies can still be
  .../cookie_store_delete_options.idl           |  2 +-
  ui/webui/webui_allowlist.cc                   |  1 -
  url/url_features.cc                           |  1 -
- 28 files changed, 49 insertions(+), 75 deletions(-)
+ 26 files changed, 44 insertions(+), 72 deletions(-)
  delete mode 100644 cromite_flags/components/content_settings/core/common/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
  delete mode 100644 cromite_flags/components/permissions/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
  delete mode 100644 cromite_flags/content/public/common/content_features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
  delete mode 100644 cromite_flags/net/base/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
  delete mode 100644 cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 
-diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 0406177735..03a7d641e8 100644
---- a/chrome/browser/chrome_content_browser_client.cc
-+++ b/chrome/browser/chrome_content_browser_client.cc
-@@ -3675,7 +3675,7 @@ bool ChromeContentBrowserClient::IsFullCookieAccessAllowed(
-   scoped_refptr<content_settings::CookieSettings> cookie_settings =
-       CookieSettingsFactory::GetForProfile(profile);
-   if (!cookie_settings) {
--    return false;
-+    return true;
-   }
-   return cookie_settings->IsFullCookieAccessAllowed(
-       url, storage_key.ToNetSiteForCookies(),
-diff --git a/chrome/browser/extensions/api/cookies/cookies_helpers.cc b/chrome/browser/extensions/api/cookies/cookies_helpers.cc
-index 92c6c30852..fa5319f17b 100644
---- a/chrome/browser/extensions/api/cookies/cookies_helpers.cc
-+++ b/chrome/browser/extensions/api/cookies/cookies_helpers.cc
-@@ -375,10 +375,6 @@ ToNetCookiePartitionKey(
- bool CookieMatchesPartitionKeyCollection(
-     const net::CookiePartitionKeyCollection& cookie_partition_key_collection,
-     const net::CanonicalCookie& cookie) {
--  if (cookie_partition_key_collection.ContainsAllKeys() ||
--      cookie_partition_key_collection.IsEmpty()) {
--    return true;
--  }
-   if (!cookie.IsPartitioned()) {
-     return cookie_partition_key_collection.ContainsAllKeys() ||
-            cookie_partition_key_collection.IsEmpty();
 diff --git a/chrome/browser/net/profile_network_context_service.cc b/chrome/browser/net/profile_network_context_service.cc
-index 40b9c830d2..21ec09ba4b 100644
+index a3cf6472670..053fd268abe 100644
 --- a/chrome/browser/net/profile_network_context_service.cc
 +++ b/chrome/browser/net/profile_network_context_service.cc
-@@ -1133,8 +1133,8 @@ ProfileNetworkContextService::CreateCookieManagerParams(
+@@ -1124,8 +1124,8 @@ ProfileNetworkContextService::CreateCookieManagerParams(
    // UI to interact with SameSite cookies on accounts.google.com, which is used
    // for displaying a list of available accounts on the NTP
    // (chrome://new-tab-page), etc.
@@ -86,7 +56,7 @@ index 40b9c830d2..21ec09ba4b 100644
  #if !BUILDFLAG(IS_ANDROID)
    // TODO(crbug.com/483614998): Granting Lens side panel is a temporary
    // exception to use SameSite cookies while it migrates to a <webview>
-@@ -1147,10 +1147,10 @@ ProfileNetworkContextService::CreateCookieManagerParams(
+@@ -1141,10 +1141,10 @@ ProfileNetworkContextService::CreateCookieManagerParams(
    // TODO(chlily): To be consistent with the content_settings version of
    // CookieSettings, we should probably also add kExtensionScheme to the list of
    // matching_scheme_cookies_allowed_schemes.
@@ -102,10 +72,10 @@ index 40b9c830d2..21ec09ba4b 100644
  
    HostContentSettingsMap* host_content_settings_map =
 diff --git a/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc b/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc
-index 6270f54a33..fc656a0139 100644
+index cd013696764..dc1294b9ff5 100644
 --- a/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc
 +++ b/chrome/browser/storage_access_api/storage_access_grant_permission_context.cc
-@@ -200,7 +200,6 @@ FederatedIdentityPermissionContext* IsAutograntViaFedCmAllowed(
+@@ -197,7 +197,6 @@ FederatedIdentityPermissionContext* IsAutograntViaFedCmAllowed(
      const url::Origin& embedding_origin,
      const net::SchemefulSite& embedding_site,
      const net::SchemefulSite& requesting_site) {
@@ -113,7 +83,7 @@ index 6270f54a33..fc656a0139 100644
    CHECK(browser_context);
    if (!rfh->IsFeatureEnabled(
            network::mojom::PermissionsPolicyFeature::kIdentityCredentialsGet)) {
-@@ -457,18 +456,6 @@ void StorageAccessGrantPermissionContext::CheckForAutoGrantOrAutoDenial(
+@@ -454,18 +453,6 @@ void StorageAccessGrantPermissionContext::CheckForAutoGrantOrAutoDenial(
      std::unique_ptr<permissions::PermissionRequestData> request_data,
      permissions::BrowserPermissionCallback callback,
      net::FirstPartySetMetadata metadata) {
@@ -132,33 +102,11 @@ index 6270f54a33..fc656a0139 100644
    if (metadata.AreSitesInSameFirstPartySet()) {
      switch (metadata.top_frame_entry()->site_type()) {
        case net::SiteType::kPrimary:
-diff --git a/components/browser_ui/strings/android/site_settings.grdp b/components/browser_ui/strings/android/site_settings.grdp
-index c4c3188ade..ed9d1eba0b 100644
---- a/components/browser_ui/strings/android/site_settings.grdp
-+++ b/components/browser_ui/strings/android/site_settings.grdp
-@@ -53,7 +53,7 @@
-     Third-party cookies
-   </message>
-    <message name="IDS_THIRD_PARTY_COOKIES_LINK_ROW_SUB_LABEL_ENABLED" desc="1 of 3 possible states for the Third-party cookies setting. This text appears beneath the 'Third-party cookies' button label.">
--    Third-party cookies are partitioned
-+    Third-party cookies are allowed
-   </message>
-   <message name="IDS_THIRD_PARTY_COOKIES_LINK_ROW_SUB_LABEL_DISABLED" desc="3 of 3 possible states for the Third-party cookies setting. This text appears beneath the 'Third-party cookies' button label." >
-     Third-party cookies are blocked
-@@ -685,7 +685,7 @@
-     A site you visit can embed content from other sites, for example, images, ads, and text. Cookies set by these other sites are called third-party cookies.
-   </message>
-   <message name="IDS_WEBSITE_SETTINGS_THIRD_PARTY_COOKIES_PAGE_ALLOW_RADIO_LABEL" desc="1 of 3 options the user has to configure cookies. See the cookies page for context: chrome://settings/cookies.">
--    Partitions all cookies by top frame url
-+    Allow third-party cookies
-   </message>
-   <message name="IDS_WEBSITE_SETTINGS_THIRD_PARTY_COOKIES_PAGE_BLOCK_RADIO_LABEL" desc="3 of 3 options the user has to configure cookies. See the cookies page for context: chrome://settings/cookies">
-     Block third-party cookies
 diff --git a/components/content_settings/core/common/cookie_settings_base.cc b/components/content_settings/core/common/cookie_settings_base.cc
-index 2488ec36e1..76caef4c0c 100644
+index b3d37734636..2c67a2ff7ed 100644
 --- a/components/content_settings/core/common/cookie_settings_base.cc
 +++ b/components/content_settings/core/common/cookie_settings_base.cc
-@@ -375,11 +375,34 @@ CookieSettingsBase::DecideAccess(const GURL& url,
+@@ -405,11 +405,32 @@ CookieSettingsBase::DecideAccess(const GURL& url,
          ThirdPartyCookieAllowMechanism::kAllowByGlobalSetting};
    }
  
@@ -170,14 +118,12 @@ index 2488ec36e1..76caef4c0c 100644
 +  if (IsAllowedByTopLevelStorageAccessGrant(url, first_party_url, overrides)) {
 +    return AllowAllCookies{
 +        ThirdPartyCookieAllowMechanism::kAllowByTopLevelStorageAccess,
-+        IsAllowedByStorageAccessGrant(url, first_party_url, overrides)
-+            ? AllowedByStorageAccessType::kTopLevelAndStorageAccess
-+            : AllowedByStorageAccessType::kTopLevelOnly};
++    };
 +  }
    if (IsAllowedByStorageAccessGrant(url, first_party_url, overrides)) {
      return AllowAllCookies{
          ThirdPartyCookieAllowMechanism::kAllowByStorageAccess,
-         AllowedByStorageAccessType::kStorageAccessOnly};
+     };
    }
 +  if (IsAllowedBySandboxValue(url, first_party_url, overrides)) {
 +    return AllowAllCookies{
@@ -193,7 +139,7 @@ index 2488ec36e1..76caef4c0c 100644
    if (is_explicit_setting) {
      return AllowAllCookies{
          ThirdPartyCookieAllowMechanism::kAllowByExplicitSetting};
-@@ -414,7 +437,7 @@ CookieSettingsBase::GetCookieSettingInternal(
+@@ -444,7 +465,7 @@ CookieSettingsBase::GetCookieSettingInternal(
      }
      return CookieSettingWithMetadata{/*cookie_setting=*/CONTENT_SETTING_ALLOW,
                                       /*allow_partitioned_cookies=*/true,
@@ -204,28 +150,28 @@ index 2488ec36e1..76caef4c0c 100644
                                       /*is_third_party_request=*/false};
 diff --git a/cromite_flags/components/content_settings/core/common/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/components/content_settings/core/common/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 deleted file mode 100644
-index 4bd8276f34..0000000000
+index 4bd8276f349..00000000000
 --- a/cromite_flags/components/content_settings/core/common/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 +++ /dev/null
 @@ -1 +0,0 @@
 -// empty file
 diff --git a/cromite_flags/components/permissions/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/components/permissions/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 deleted file mode 100644
-index 59d549b568..0000000000
+index 59d549b5687..00000000000
 --- a/cromite_flags/components/permissions/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 +++ /dev/null
 @@ -1 +0,0 @@
 -SET_CROMITE_FEATURE_ENABLED(kShowRelatedWebsiteSetsPermissionGrants);
 diff --git a/cromite_flags/content/public/common/content_features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/content/public/common/content_features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 deleted file mode 100644
-index 4bd8276f34..0000000000
+index 4bd8276f349..00000000000
 --- a/cromite_flags/content/public/common/content_features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 +++ /dev/null
 @@ -1 +0,0 @@
 -// empty file
 diff --git a/cromite_flags/net/base/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/net/base/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 deleted file mode 100644
-index 3c52a2c910..0000000000
+index 3c52a2c9109..00000000000
 --- a/cromite_flags/net/base/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 +++ /dev/null
 @@ -1,12 +0,0 @@
@@ -243,21 +189,36 @@ index 3c52a2c910..0000000000
 -// SET_CROMITE_FEATURE_DISABLED(kStorageAccessHeaderRetry);
 diff --git a/cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc b/cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 deleted file mode 100644
-index d11c69f812..0000000000
+index d11c69f812a..00000000000
 --- a/cromite_flags/services/network/public/cpp/features_cc/Partitioning-all-cookies-by-top-frame-domain.inc
 +++ /dev/null
 @@ -1 +0,0 @@
 -// intentionally empty
+diff --git a/extensions/browser/api/cookies/cookies_helpers.cc b/extensions/browser/api/cookies/cookies_helpers.cc
+index 838120e98a6..d99b2804594 100644
+--- a/extensions/browser/api/cookies/cookies_helpers.cc
++++ b/extensions/browser/api/cookies/cookies_helpers.cc
+@@ -372,10 +372,6 @@ ToNetCookiePartitionKey(
+ bool CookieMatchesPartitionKeyCollection(
+     const net::CookiePartitionKeyCollection& cookie_partition_key_collection,
+     const net::CanonicalCookie& cookie) {
+-  if (cookie_partition_key_collection.ContainsAllKeys() ||
+-      cookie_partition_key_collection.IsEmpty()) {
+-    return true;
+-  }
+   if (!cookie.IsPartitioned()) {
+     return cookie_partition_key_collection.ContainsAllKeys() ||
+            cookie_partition_key_collection.IsEmpty();
 diff --git a/net/cookies/canonical_cookie.cc b/net/cookies/canonical_cookie.cc
-index 3c53c0169b..6d4f43c1cb 100644
+index 3bb66df0cf9..50d4ffd90e7 100644
 --- a/net/cookies/canonical_cookie.cc
 +++ b/net/cookies/canonical_cookie.cc
-@@ -1091,6 +1091,11 @@ CanonicalCookie::IsCanonicalForFromStorage() const {
+@@ -1116,6 +1116,11 @@ CanonicalCookie::IsCanonicalForFromStorage(
      return Fail(CanonicalizationFailure::kEmptyNameWithAmbiguousValue);
    }
  
-+  if (IsPartitioned() && !CookiePartitionKey::HasNonce(PartitionKey()) &&
-+      !SecureAttribute()) {
++  if (partition_key.has_value() &&
++      !CookiePartitionKey::HasNonce(partition_key) && !is_secure) {
 +    return Fail(CanonicalizationFailure::kPartitionedInsecure);
 +  }
 +
@@ -265,7 +226,7 @@ index 3c53c0169b..6d4f43c1cb 100644
  }
  
 diff --git a/net/cookies/cookie_deletion_info.cc b/net/cookies/cookie_deletion_info.cc
-index a91fd7130b..1b0aaf3a87 100644
+index a91fd7130bb..1b0aaf3a873 100644
 --- a/net/cookies/cookie_deletion_info.cc
 +++ b/net/cookies/cookie_deletion_info.cc
 @@ -131,8 +131,7 @@ bool CookieDeletionInfo::Matches(const CanonicalCookie& cookie,
@@ -279,10 +240,10 @@ index a91fd7130b..1b0aaf3a87 100644
      return false;
    }
 diff --git a/net/cookies/cookie_monster.cc b/net/cookies/cookie_monster.cc
-index bbfa64179c..83db80e158 100644
+index f224ed5c46d..e8e83353e74 100644
 --- a/net/cookies/cookie_monster.cc
 +++ b/net/cookies/cookie_monster.cc
-@@ -2272,7 +2272,6 @@ size_t CookieMonster::GarbageCollectPartitionedCookies(
+@@ -2265,7 +2265,6 @@ size_t CookieMonster::GarbageCollectPartitionedCookies(
    if (cookie_partition_it == partitioned_cookies_.end())
      return num_deleted;
  
@@ -291,10 +252,10 @@ index bbfa64179c..83db80e158 100644
            kPerPartitionDomainMaxCookieBytes ||
        cookie_partition_it->second->count(key) > kPerPartitionDomainMaxCookies) {
 diff --git a/net/cookies/cookie_util.cc b/net/cookies/cookie_util.cc
-index 7ccdf4a2c3..e5634ca65b 100644
+index 08da2bf342a..42d7b91751c 100644
 --- a/net/cookies/cookie_util.cc
 +++ b/net/cookies/cookie_util.cc
-@@ -841,7 +841,6 @@ bool IsCookiePartitionedValid(
+@@ -833,7 +833,6 @@ bool IsCookiePartitionedValid(
      base::optional_ref<const GURL> url,
      bool secure,
      base::optional_ref<const CookiePartitionKey> partition_key) {
@@ -303,10 +264,10 @@ index 7ccdf4a2c3..e5634ca65b 100644
      return true;
    }
 diff --git a/net/cookies/cookie_util.h b/net/cookies/cookie_util.h
-index e7decfab2b..1921a76419 100644
+index 5b3daaa4e5a..d33ec3866d6 100644
 --- a/net/cookies/cookie_util.h
 +++ b/net/cookies/cookie_util.h
-@@ -112,7 +112,7 @@ enum class StorageAccessStatusOutcome {
+@@ -89,7 +89,7 @@ enum class StorageAccessStatusOutcome {
  enum class ActivateStorageAccessLoadOutcome {
    // Applies when the `Activate-Storage-Access` header behavior is not enabled
    // under the existing feature flags or content settings.
@@ -316,7 +277,7 @@ index e7decfab2b..1921a76419 100644
    // header, but its corresponding request either has an omitted storage access
    // status, or has a storage access status of `none`.
 diff --git a/net/cookies/parsed_cookie.h b/net/cookies/parsed_cookie.h
-index aa67922ac4..9f17634ea6 100644
+index aa67922ac40..9f17634ea6c 100644
 --- a/net/cookies/parsed_cookie.h
 +++ b/net/cookies/parsed_cookie.h
 @@ -14,7 +14,6 @@
@@ -340,10 +301,10 @@ index aa67922ac4..9f17634ea6 100644
    std::optional<NamelessCookieLineParseType>
    NamelessCookieLineParseTypeForMetrics() const {
 diff --git a/net/extras/sqlite/sqlite_persistent_cookie_store.cc b/net/extras/sqlite/sqlite_persistent_cookie_store.cc
-index aeb3cdb1ec..586059f80b 100644
+index d908350a986..bb61afb851a 100644
 --- a/net/extras/sqlite/sqlite_persistent_cookie_store.cc
 +++ b/net/extras/sqlite/sqlite_persistent_cookie_store.cc
-@@ -845,14 +845,6 @@ bool SQLitePersistentCookieStore::Backend::DoInitializeDatabase() {
+@@ -857,14 +857,6 @@ bool SQLitePersistentCookieStore::Backend::DoInitializeDatabase() {
    if (!restore_old_session_cookies_)
      DeleteSessionCookiesOnStartup();
  
@@ -359,10 +320,10 @@ index aeb3cdb1ec..586059f80b 100644
  }
  
 diff --git a/net/url_request/url_request.cc b/net/url_request/url_request.cc
-index e156b19a32..42f1b1a31b 100644
+index 5445a29e9b2..3ae12b5b081 100644
 --- a/net/url_request/url_request.cc
 +++ b/net/url_request/url_request.cc
-@@ -1454,7 +1454,8 @@ StorageAccessStatusCache URLRequest::CalculateStorageAccessStatus() const {
+@@ -1453,7 +1453,8 @@ StorageAccessStatusCache URLRequest::CalculateStorageAccessStatus() const {
    // `deferred_redirect_info_` that has to be used when calculating new storage
    // access status.
    std::optional<net::cookie_util::StorageAccessStatus> storage_access_status =
@@ -373,10 +334,10 @@ index e156b19a32..42f1b1a31b 100644
        "API.StorageAccessHeader.StorageAccessStatusOutcome",
        storage_access_status
 diff --git a/net/url_request/url_request_http_job.cc b/net/url_request/url_request_http_job.cc
-index 6b65537d4a..5abc8f1303 100644
+index 9c62d25615c..eed53dc733a 100644
 --- a/net/url_request/url_request_http_job.cc
 +++ b/net/url_request/url_request_http_job.cc
-@@ -1652,8 +1652,6 @@ bool URLRequestHttpJob::NeedsAuth() {
+@@ -1623,8 +1623,6 @@ bool URLRequestHttpJob::NeedsAuth() {
  }
  
  bool URLRequestHttpJob::NeedsRetryWithStorageAccess() {
@@ -386,10 +347,10 @@ index 6b65537d4a..5abc8f1303 100644
    // `Activate-Storage-Access` response header, the request may include cookies,
    // and the prior request had the appropriate status without any of the
 diff --git a/services/network/cookie_settings.cc b/services/network/cookie_settings.cc
-index 137c2432f0..43f944ed99 100644
+index 124f74fb54b..b4a7741e1a4 100644
 --- a/services/network/cookie_settings.cc
 +++ b/services/network/cookie_settings.cc
-@@ -44,7 +44,8 @@ namespace network {
+@@ -42,7 +42,8 @@ namespace network {
  namespace {
  
  bool ShouldApply3pcdRelatedReasons(const net::CanonicalCookie& cookie) {
@@ -399,7 +360,7 @@ index 137c2432f0..43f944ed99 100644
  }
  
  bool IsValidType(ContentSettingsType type) {
-@@ -101,7 +102,8 @@ bool IsOriginOpaqueHttpOrHttps(
+@@ -90,7 +91,8 @@ bool IsOriginOpaqueHttpOrHttps(
  // static
  bool CookieSettings::IsCookieAllowed(const net::CanonicalCookie& cookie,
                                       const CookieSettingWithMetadata& setting) {
@@ -410,22 +371,22 @@ index 137c2432f0..43f944ed99 100644
  
  // static
 diff --git a/services/network/cors/cors_url_loader.cc b/services/network/cors/cors_url_loader.cc
-index 0d0483e2b8..7d31e958bf 100644
+index e81fbe5583b..237985a6c15 100644
 --- a/services/network/cors/cors_url_loader.cc
 +++ b/services/network/cors/cors_url_loader.cc
-@@ -953,7 +953,6 @@ void CorsURLLoader::StartRequest() {
-     }
+@@ -1190,7 +1190,6 @@ bool CorsURLLoader::ShouldIncludeOriginHeader() const {
+   }
  
-     if (request_.credentials_mode == mojom::CredentialsMode::kInclude &&
--        ((false)) && // storage access headers disabled by default
-         GetStorageAccessStatus() ==
-             net::cookie_util::StorageAccessStatus::kInactive) {
-       // Lower layers will add the Sec-Fetch-Storage-Access header, and the
+   if (request_.credentials_mode == mojom::CredentialsMode::kInclude &&
+-      ((false)) && // storage access headers disabled by default
+       GetStorageAccessStatus() ==
+           net::cookie_util::StorageAccessStatus::kInactive) {
+     // Lower layers will add the Sec-Fetch-Storage-Access header, and the
 diff --git a/services/network/url_loader.cc b/services/network/url_loader.cc
-index 42fa59868c..1e700c0fc0 100644
+index aa9fc69b827..747330be85f 100644
 --- a/services/network/url_loader.cc
 +++ b/services/network/url_loader.cc
-@@ -2567,7 +2567,6 @@ bool URLLoader::ShouldSetLoadWithStorageAccess() const {
+@@ -2613,7 +2613,6 @@ bool URLLoader::ShouldSetLoadWithStorageAccess() const {
  
    auto determine_storage_access_load_outcome =
        [&]() -> net::cookie_util::ActivateStorageAccessLoadOutcome {
@@ -434,7 +395,7 @@ index 42fa59868c..1e700c0fc0 100644
        url_request_->set_storage_access_status(
            url_request_->CalculateStorageAccessStatus());
 diff --git a/third_party/blink/renderer/modules/cookie_store/cookie_init.idl b/third_party/blink/renderer/modules/cookie_store/cookie_init.idl
-index f1f5ac0225..59725a39a5 100644
+index f1f5ac02259..59725a39a56 100644
 --- a/third_party/blink/renderer/modules/cookie_store/cookie_init.idl
 +++ b/third_party/blink/renderer/modules/cookie_store/cookie_init.idl
 @@ -17,6 +17,6 @@ dictionary CookieInit {
@@ -446,10 +407,10 @@ index f1f5ac0225..59725a39a5 100644
    [RuntimeEnabled=CookieStoreAPIMaxAge] long long? maxAge;
  };
 diff --git a/third_party/blink/renderer/modules/cookie_store/cookie_store.cc b/third_party/blink/renderer/modules/cookie_store/cookie_store.cc
-index 5f4e6f2885..6c87fff9e5 100644
+index db08585150b..4ebdbfa717f 100644
 --- a/third_party/blink/renderer/modules/cookie_store/cookie_store.cc
 +++ b/third_party/blink/renderer/modules/cookie_store/cookie_store.cc
-@@ -407,7 +407,6 @@ ScriptPromise<IDLUndefined> CookieStore::set(ScriptState* script_state,
+@@ -405,7 +405,6 @@ ScriptPromise<IDLUndefined> CookieStore::set(ScriptState* script_state,
    CookieInit* set_options = CookieInit::Create();
    set_options->setName(name);
    set_options->setValue(value);
@@ -457,7 +418,7 @@ index 5f4e6f2885..6c87fff9e5 100644
    return set(script_state, set_options, exception_state);
  }
  
-@@ -432,7 +431,6 @@ ScriptPromise<IDLUndefined> CookieStore::Delete(
+@@ -430,7 +429,6 @@ ScriptPromise<IDLUndefined> CookieStore::Delete(
    set_options->setName(stripped_name);
    set_options->setValue(stripped_name.empty() ? "deleted" : "");
    set_options->setExpires(0);
@@ -465,7 +426,7 @@ index 5f4e6f2885..6c87fff9e5 100644
    return DoWrite(script_state, set_options, exception_state);
  }
  
-@@ -449,7 +447,6 @@ ScriptPromise<IDLUndefined> CookieStore::Delete(
+@@ -447,7 +445,6 @@ ScriptPromise<IDLUndefined> CookieStore::Delete(
    set_options->setPath(options->path());
    set_options->setSameSite(V8CookieSameSite::Enum::kStrict);
    set_options->setPartitioned(options->partitioned());
@@ -474,7 +435,7 @@ index 5f4e6f2885..6c87fff9e5 100644
  }
  
 diff --git a/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl b/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl
-index 83801a3c8c..c3768bb9be 100644
+index 83801a3c8c5..c3768bb9be9 100644
 --- a/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl
 +++ b/third_party/blink/renderer/modules/cookie_store/cookie_store_delete_options.idl
 @@ -8,5 +8,5 @@ dictionary CookieStoreDeleteOptions {
@@ -485,7 +446,7 @@ index 83801a3c8c..c3768bb9be 100644
 +  boolean partitioned = false;
  };
 diff --git a/ui/webui/webui_allowlist.cc b/ui/webui/webui_allowlist.cc
-index b65c969a0f..0b297c6f76 100644
+index b65c969a0f1..0b297c6f76f 100644
 --- a/ui/webui/webui_allowlist.cc
 +++ b/ui/webui/webui_allowlist.cc
 @@ -75,7 +75,6 @@ void WebUIAllowlist::RegisterAutoGrantedPermissions(
@@ -497,7 +458,7 @@ index b65c969a0f..0b297c6f76 100644
    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
  
 diff --git a/url/url_features.cc b/url/url_features.cc
-index 5ff8715cf0..e1e11673d2 100644
+index 8f8632a077a..35ead394ffd 100644
 --- a/url/url_features.cc
 +++ b/url/url_features.cc
 @@ -9,7 +9,6 @@ namespace url {
@@ -508,6 +469,3 @@ index 5ff8715cf0..e1e11673d2 100644
  
  bool IsDisallowingSpaceCharacterInURLHostParsing() {
    // If the FeatureList isn't available yet, fall back to the feature's default
--- 
-2.53.0
-

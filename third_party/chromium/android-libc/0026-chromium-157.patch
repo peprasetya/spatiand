@@ -1,0 +1,52 @@
+What Chromium 157 changed under the patches above: gfx::FrameData is moved, not copied
+(the frames to the room, 0021 and 0024), and ANGLE's DeriveCreateInfoPNext takes the intended
+format before the actual one (0021's hardware-buffer sibling).
+
+diff --git a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+index 3008b2b079..fb68f7fbd7 100644
+--- a/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
++++ b/ui/ozone/platform/wayland/gpu/gl_surface_egl_readback_wayland.cc
+@@ -199,8 +199,9 @@ void GLSurfaceEglReadbackWayland::SwapBuffersAsync(
+       const gfx::Rect bounds(GetSize());
+       constexpr bool enable_blend_for_shadow = true;
+       buffer_manager_->CommitBuffer(widget_, next_buffer->buffer_id_,
+-                                    /*frame_id*/ next_buffer->buffer_id_, data,
+-                                    bounds, enable_blend_for_shadow,
++                                    /*frame_id*/ next_buffer->buffer_id_,
++                                    std::move(data), bounds,
++                                    enable_blend_for_shadow,
+                                     gfx::RoundedCornersF(),
+                                     surface_scale_factor_, bounds);
+       return;
+@@ -208,7 +209,7 @@ void GLSurfaceEglReadbackWayland::SwapBuffersAsync(
+     EGLSyncKHR fence =
+         eglCreateSyncKHR(GetEGLDisplay(), EGL_SYNC_FENCE_KHR, nullptr);
+     glFlush();
+-    pending_commit_ = PendingCommit{next_buffer->buffer_id_, data,
++    pending_commit_ = PendingCommit{next_buffer->buffer_id_, std::move(data),
+                                     gfx::Rect(GetSize()), fence};
+     CommitWhenDrawn();
+     return;
+@@ -505,7 +506,8 @@ void GLSurfaceEglReadbackWayland::CommitNow() {
+   }
+   constexpr bool enable_blend_for_shadow = true;
+   buffer_manager_->CommitBuffer(widget_, commit.buffer_id,
+-                                /*frame_id*/ commit.buffer_id, commit.data,
++                                /*frame_id*/ commit.buffer_id,
++                                std::move(commit.data),
+                                 commit.bounds, enable_blend_for_shadow,
+                                 gfx::RoundedCornersF(), surface_scale_factor_,
+                                 commit.bounds);
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp
+@@ -186,8 +186,8 @@
+     VkImageFormatListCreateInfoKHR imageFormatListInfoStorage;
+     vk::ImageHelper::ImageFormats imageFormats;
+     const void *imageCreateInfoPNext = vk::ImageHelper::DeriveCreateInfoPNext(
+-        displayVk, actualFormatID, &externalMemoryImageCreateInfo, &imageFormatListInfoStorage,
+-        &imageFormats, formatReinterpretability, &imageCreateFlags);
++        displayVk, intendedFormatID, actualFormatID, &externalMemoryImageCreateInfo,
++        &imageFormatListInfoStorage, &imageFormats, formatReinterpretability, &imageCreateFlags);
+ 
+     vk::YcbcrConversionDesc conversionDesc{};
+     ANGLE_TRY(mImage->initExternal(

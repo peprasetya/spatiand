@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 5 Jan 2024 17:02:29 +0000
+Subject: [PATCH 212/310] Disable Android AppRestrictions
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-Android-AppRestrictions.patch
+---
+ chrome/browser/flags/BUILD.gn                       |  1 +
+ .../about_flags_cc/DisableAndroidAppRestriction.inc | 13 +++++++++++++
+ .../disable-android-app-restriction.inc             |  3 +++
+ .../disable-android-app-restriction.inc             |  1 +
+ 4 files changed, 18 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/DisableAndroidAppRestriction.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/disable-android-app-restriction.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc
+
+diff --git a/chrome/browser/flags/BUILD.gn b/chrome/browser/flags/BUILD.gn
+index dbb1b78deac..39b58999705 100644
+--- a/chrome/browser/flags/BUILD.gn
++++ b/chrome/browser/flags/BUILD.gn
+@@ -29,6 +29,7 @@ android_library("java") {
+     "//build/android:build_java",
+     "//chrome/browser/preferences:java",
+     "//content/public/android:content_main_dex_java",
++    "//components/policy/android:policy_java",
+     "//third_party/android_deps:guava_android_java",
+     "//third_party/androidx:androidx_annotation_annotation_java",
+     "//third_party/jni_zero:jni_zero_java",
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/DisableAndroidAppRestriction.inc b/cromite_flags/chrome/browser/about_flags_cc/DisableAndroidAppRestriction.inc
+new file mode 100644
+index 00000000000..420bb63f2e8
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/DisableAndroidAppRestriction.inc
+@@ -0,0 +1,13 @@
++#ifdef FLAG_SECTION
++
++#if BUILDFLAG(IS_ANDROID)
++
++    {"enable-android-apprestrictions",
++     "Enable AppRestrictions",
++     "Does not allow loading of policies in android via AppRestrictions.",
++     kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kEnableAndroidAppRestriction)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/disable-android-app-restriction.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/disable-android-app-restriction.inc
+new file mode 100644
+index 00000000000..953881a0ef6
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/disable-android-app-restriction.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kEnableAndroidAppRestriction,
++                "EnableAndroidAppRestriction",
++                base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc
+new file mode 100644
+index 00000000000..b8f71c0f700
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/disable-android-app-restriction.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kEnableAndroidAppRestriction);

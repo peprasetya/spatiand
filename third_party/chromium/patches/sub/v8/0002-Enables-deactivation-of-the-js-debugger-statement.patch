@@ -1,0 +1,176 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <spatiand@localhost>
+Date: Fri, 13 Nov 2026 22:54:59 +0700
+Subject: [PATCH 2/3] Enables deactivation of the js debugger statement
+
+---
+ include/js_protocol.pdl                 |  4 ++++
+ src/common/message-template.h           |  1 +
+ src/debug/debug-interface.cc            |  5 +++++
+ src/debug/debug-interface.h             |  3 +++
+ src/debug/debug.h                       |  5 +++++
+ src/execution/messages.cc               |  1 +
+ src/inspector/v8-debugger-agent-impl.cc |  8 ++++++++
+ src/inspector/v8-debugger-agent-impl.h  |  1 +
+ src/runtime/runtime-debug.cc            | 17 +++++++++++++++--
+ 9 files changed, 43 insertions(+), 2 deletions(-)
+
+diff --git a/include/js_protocol.pdl b/include/js_protocol.pdl
+index 7f1e0829..b766b7a0 100644
+--- a/include/js_protocol.pdl
++++ b/include/js_protocol.pdl
+@@ -375,6 +375,10 @@ domain Debugger
+       # List of search matches.
+       array of SearchMatch result
+ 
++  command setDebuggerStatementEnabled
++    parameters
++      boolean enabled
++
+   # Enables or disables async call stacks tracking.
+   command setAsyncCallStackDepth
+     parameters
+diff --git a/src/common/message-template.h b/src/common/message-template.h
+index 4b47483f..e91c772f 100644
+--- a/src/common/message-template.h
++++ b/src/common/message-template.h
+@@ -779,6 +779,7 @@ namespace internal {
+   /* AggregateError */                                                         \
+   T(AllPromisesRejected, "All promises were rejected")                         \
+   T(CannotDeepFreezeObject, "Cannot DeepFreeze object of type %")              \
++  T(DebuggerStatementSuppressed, "debugger statement suppressed")             \
+   T(CannotDeepFreezeValue, "Cannot DeepFreeze non-const value %")              \
+   /* SuppressedError */                                                        \
+   T(SuppressedErrorDuringDisposal, "An error was suppressed during disposal")  \
+diff --git a/src/debug/debug-interface.cc b/src/debug/debug-interface.cc
+index 60ad0de1..577d56de 100644
+--- a/src/debug/debug-interface.cc
++++ b/src/debug/debug-interface.cc
+@@ -1108,6 +1108,11 @@ void SetAsyncEventDelegate(Isolate* v8_isolate, AsyncEventDelegate* delegate) {
+   reinterpret_cast<i::Isolate*>(v8_isolate)->set_async_event_delegate(delegate);
+ }
+ 
++void SetDebuggerStatementEnabled(Isolate* v8_isolate, bool in_enabled) {
++  i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
++  isolate->debug()->SetDebuggerStatementEnabled(in_enabled);
++}
++
+ void ResetBlackboxedStateCache(Isolate* v8_isolate, Local<Script> script) {
+   i::Isolate* isolate = reinterpret_cast<i::Isolate*>(v8_isolate);
+   EnterV8NoScriptNoExceptionScope api_scope(isolate);
+diff --git a/src/debug/debug-interface.h b/src/debug/debug-interface.h
+index 9e4522f2..33b7a269 100644
+--- a/src/debug/debug-interface.h
++++ b/src/debug/debug-interface.h
+@@ -351,6 +351,9 @@ class AsyncEventDelegate {
+ V8_EXPORT_PRIVATE void SetAsyncEventDelegate(Isolate* isolate,
+                                              AsyncEventDelegate* delegate);
+ 
++V8_EXPORT_PRIVATE void SetDebuggerStatementEnabled(Isolate* isolate,
++                                                   bool enabled);
++
+ void ResetBlackboxedStateCache(Isolate* isolate,
+                                v8::Local<debug::Script> script);
+ 
+diff --git a/src/debug/debug.h b/src/debug/debug.h
+index cf2b8fc0..b924e763 100644
+--- a/src/debug/debug.h
++++ b/src/debug/debug.h
+@@ -444,6 +444,9 @@ class V8_EXPORT_PRIVATE Debug {
+   void set_break_points_active(bool v) { break_points_active_ = v; }
+   bool break_points_active() const { return break_points_active_; }
+ 
++  inline bool debugger_statement_enabled() const { return debugger_statement_enabled_; }
++  void SetDebuggerStatementEnabled(bool enabled) { debugger_statement_enabled_ = enabled; }
++
+   StackFrameId break_frame_id() { return thread_local_.break_frame_id_; }
+ 
+   Handle<Object> return_value_handle();
+@@ -643,6 +646,8 @@ class V8_EXPORT_PRIVATE Debug {
+   // Termination exception because side effect check has failed.
+   bool side_effect_check_failed_;
+ 
++  bool debugger_statement_enabled_ = true;
++
+   // List of active debug info objects.
+   DebugInfoCollection debug_infos_;
+ 
+diff --git a/src/execution/messages.cc b/src/execution/messages.cc
+index e5f9140b..31eb582c 100644
+--- a/src/execution/messages.cc
++++ b/src/execution/messages.cc
+@@ -495,6 +495,7 @@ MaybeHandle<String> MessageFormatter::TryFormat(
+       MessageTemplate::kUndefinedOrNullToObject,
+       MessageTemplate::kUnexpectedStrictReserved,
+       MessageTemplate::kUnexpectedTokenIdentifier,
++      MessageTemplate::kDebuggerStatementSuppressed,
+       MessageTemplate::kWeakRefsCleanupMustBeCallable};
+ 
+   base::Vector<const DirectHandle<String>> remaining_args = args;
+diff --git a/src/inspector/v8-debugger-agent-impl.cc b/src/inspector/v8-debugger-agent-impl.cc
+index eb5621c4..ea43e108 100644
+--- a/src/inspector/v8-debugger-agent-impl.cc
++++ b/src/inspector/v8-debugger-agent-impl.cc
+@@ -1808,6 +1808,14 @@ Response V8DebuggerAgentImpl::setAsyncCallStackDepth(int depth) {
+   return Response::Success();
+ }
+ 
++Response V8DebuggerAgentImpl::setDebuggerStatementEnabled(bool in_enabled) {
++  if (!enabled() && !m_session->runtimeAgent()->enabled()) {
++    return Response::ServerError(kDebuggerNotEnabled);
++  }
++  v8::debug::SetDebuggerStatementEnabled(m_debugger->isolate(), in_enabled);
++  return Response::Success();
++}
++
+ Response V8DebuggerAgentImpl::setBlackboxPatterns(
+     std::unique_ptr<protocol::Array<String16>> patterns,
+     std::optional<bool> skipAnonymous) {
+diff --git a/src/inspector/v8-debugger-agent-impl.h b/src/inspector/v8-debugger-agent-impl.h
+index ef1cb281..8695499a 100644
+--- a/src/inspector/v8-debugger-agent-impl.h
++++ b/src/inspector/v8-debugger-agent-impl.h
+@@ -167,6 +167,7 @@ class V8DebuggerAgentImpl : public protocol::Debugger::Backend {
+   Response setReturnValue(
+       std::unique_ptr<protocol::Runtime::CallArgument> newValue) override;
+   Response setAsyncCallStackDepth(int depth) override;
++  Response setDebuggerStatementEnabled(bool in_enabled) override;
+   Response setBlackboxPatterns(
+       std::unique_ptr<protocol::Array<String16>> patterns,
+       std::optional<bool> skipAnonymous) override;
+diff --git a/src/runtime/runtime-debug.cc b/src/runtime/runtime-debug.cc
+index ba422260..7069bffb 100644
+--- a/src/runtime/runtime-debug.cc
++++ b/src/runtime/runtime-debug.cc
+@@ -176,9 +176,10 @@ RUNTIME_FUNCTION(Runtime_DebugBreakAtEntry) {
+ }
+ 
+ RUNTIME_FUNCTION(Runtime_HandleDebuggerStatement) {
+-  SealHandleScope shs(isolate);
++  HandleScope scope(isolate);
+   DCHECK_EQ(0, args.length());
+-  if (isolate->debug()->break_points_active()) {
++  if (isolate->debug()->break_points_active() &&
++      isolate->debug()->debugger_statement_enabled()) {
+     isolate->debug()->HandleDebugBreak(
+         kIgnoreIfTopFrameBlackboxed,
+         v8::debug::BreakReasons({v8::debug::BreakReason::kDebuggerStatement}));
+@@ -186,6 +187,18 @@ RUNTIME_FUNCTION(Runtime_HandleDebuggerStatement) {
+       return isolate->TerminateExecution();
+     }
+   }
++  if (!isolate->debug()->debugger_statement_enabled()) {
++    MessageLocation* location = nullptr;
++    MessageLocation computed_location;
++    if (isolate->ComputeLocation(&computed_location))
++      location = &computed_location;
++    Handle<JSMessageObject> message =
++        MessageHandler::MakeMessageObject(
++            isolate, MessageTemplate::kDebuggerStatementSuppressed, location,
++            isolate->factory()->null_value(), DirectHandle<StackTraceInfo>::null());
++    message->set_error_level(v8::Isolate::kMessageWarning);
++    MessageHandler::ReportMessage(isolate, location, message);
++  }
+   return isolate->stack_guard()->HandleInterrupts();
+ }
+ 

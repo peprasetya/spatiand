@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 12 Sep 2023 12:39:23 +0000
+Subject: [PATCH 198/310] Enable ImprovedBookmarks by default
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Enable-ImprovedBookmarks-by-default.patch
+---
+ components/bookmarks/browser/bookmark_node.cc | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/components/bookmarks/browser/bookmark_node.cc b/components/bookmarks/browser/bookmark_node.cc
+index c8fb6e2a3c4..251919b0bd3 100644
+--- a/components/bookmarks/browser/bookmark_node.cc
++++ b/components/bookmarks/browser/bookmark_node.cc
+@@ -168,8 +168,7 @@ bool BookmarkPermanentNode::IsTypeVisibleWhenEmpty(
+     case BookmarkNode::BOOKMARK_BAR:
+       return is_desktop;
+     case BookmarkNode::OTHER_NODE:
+-      return is_desktop || base::FeatureList::IsEnabled(
+-                               kAllBookmarksBaselineFolderVisibility);
++      return true;
+     case BookmarkNode::MOBILE:
+       // Either MOBILE or OTHER_NODE is visible when empty, but never both.
+       return !IsTypeVisibleWhenEmpty(BookmarkNode::OTHER_NODE, form_factor);

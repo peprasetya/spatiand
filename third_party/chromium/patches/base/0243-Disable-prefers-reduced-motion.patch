@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 30 May 2025 10:29:39 +0000
+Subject: [PATCH 243/310] Disable prefers reduced motion
+
+Disables the possibility of retrieving the device user setting via
+css prefers-reduced-motion
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-prefers-reduced-motion.patch
+---
+ ui/gfx/animation/animation_linux.cc | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/ui/gfx/animation/animation_linux.cc b/ui/gfx/animation/animation_linux.cc
+index 8b3afc65842..45d5717701b 100644
+--- a/ui/gfx/animation/animation_linux.cc
++++ b/ui/gfx/animation/animation_linux.cc
+@@ -13,6 +13,7 @@ namespace {
+ // Linux toolkits only have a global setting for whether animations should be
+ // enabled.  So use it for all of the specific settings that Chrome needs.
+ bool AnimationsEnabled() {
++  if ((true)) return true;
+   auto* linux_ui = ui::LinuxUi::instance();
+   return !linux_ui || linux_ui->AnimationsEnabled();
+ }

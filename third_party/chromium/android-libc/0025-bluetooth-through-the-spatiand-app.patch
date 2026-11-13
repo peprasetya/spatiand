@@ -14,7 +14,7 @@ Chromium's Linux build reaches Bluetooth through BlueZ on D-Bus, which Android h
  create mode 100644 device/bluetooth/spatiand/bluetooth_spatiand.h
 
 diff --git a/device/bluetooth/BUILD.gn b/device/bluetooth/BUILD.gn
-index 448f1df3e1..a940d531ae 100644
+index 9e1af8c4ed..e0a657899f 100644
 --- a/device/bluetooth/BUILD.gn
 +++ b/device/bluetooth/BUILD.gn
 @@ -2,6 +2,7 @@
@@ -24,12 +24,11 @@ index 448f1df3e1..a940d531ae 100644
 +import("//build/config/compiler/compiler.gni")
  import("//build/buildflag_header.gni")
  import("//build/config/features.gni")
- import("//device/bluetooth/cast_bluetooth.gni")
-@@ -337,7 +338,14 @@ component("bluetooth") {
+ import("//device/bluetooth/emulation/buildflags.gni")
+@@ -335,8 +336,17 @@ component("bluetooth") {
  
    if (is_chromeos || is_linux) {
      if (use_bluez) {
--      if (!force_cast_bluetooth) {
 +      # Spatiand: on Android's libc the adapter is Android's Bluetooth, reached
 +      # through the Spatiand app's bridge (spatiand/), not BlueZ on D-Bus.
 +      if (spatiand_android_libc) {
@@ -37,10 +36,14 @@ index 448f1df3e1..a940d531ae 100644
 +          "spatiand/bluetooth_spatiand.cc",
 +          "spatiand/bluetooth_spatiand.h",
 +        ]
-+      } else if (!force_cast_bluetooth) {
-         sources += [ "bluetooth_adapter_chromeos.cc" ]
-       }
++      } else {
++        sources += [ "bluetooth_adapter_chromeos.cc" ]
++      }
        sources += [
+-        "bluetooth_adapter_chromeos.cc",
+         "bluez/bluetooth_adapter_bluez.cc",
+         "bluez/bluetooth_adapter_bluez.h",
+         "bluez/bluetooth_adapter_profile_bluez.cc",
 diff --git a/device/bluetooth/spatiand/bluetooth_spatiand.cc b/device/bluetooth/spatiand/bluetooth_spatiand.cc
 new file mode 100644
 index 0000000000..9d76928818

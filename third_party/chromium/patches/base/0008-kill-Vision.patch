@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: thermatk <thermatk@thermatk.com>
+Date: Fri, 22 Jun 2018 17:04:43 +0200
+Subject: [PATCH 008/310] kill Vision
+
+Barcode, face and text detection APIs
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:kill-Vision.patch
+---
+ services/shape_detection/BUILD.gn | 8 --------
+ 1 file changed, 8 deletions(-)
+
+diff --git a/services/shape_detection/BUILD.gn b/services/shape_detection/BUILD.gn
+index e55432dba07..cbc2d1dc9c1 100644
+--- a/services/shape_detection/BUILD.gn
++++ b/services/shape_detection/BUILD.gn
+@@ -124,21 +124,13 @@ if (is_android) {
+ 
+   android_library("shape_detection_java") {
+     sources = [
+-      "android/java/src/org/chromium/shape_detection/BarcodeDetectionImpl.java",
+-      "android/java/src/org/chromium/shape_detection/BarcodeDetectionProviderImpl.java",
+       "android/java/src/org/chromium/shape_detection/BitmapUtils.java",
+-      "android/java/src/org/chromium/shape_detection/FaceDetectionImpl.java",
+-      "android/java/src/org/chromium/shape_detection/FaceDetectionImplGmsCore.java",
+-      "android/java/src/org/chromium/shape_detection/FaceDetectionProviderImpl.java",
+       "android/java/src/org/chromium/shape_detection/InterfaceRegistrar.java",
+-      "android/java/src/org/chromium/shape_detection/TextDetectionImpl.java",
+     ]
+ 
+     deps = [
+       "$google_play_services_package:google_play_services_base_java",
+       "$google_play_services_package:google_play_services_basement_java",
+-      "$google_play_services_package:google_play_services_vision_common_java",
+-      "$google_play_services_package:google_play_services_vision_java",
+       "//base:base_java",
+       "//mojo/public/java:base_java",
+       "//mojo/public/java:bindings_java",

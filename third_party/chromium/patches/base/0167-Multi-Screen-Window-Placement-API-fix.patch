@@ -1,0 +1,153 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Thu, 20 Apr 2023 07:45:37 +0000
+Subject: [PATCH 167/310] Multi-Screen Window Placement API fix
+
+Links the use of screen.isExtended to WINDOW_MANAGEMENT permission
+granted by user
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Multi-Screen-Window-Placement-API-fix.patch
+---
+ .../core/frame/cached_permission_status.cc    |  6 ++--
+ .../core/frame/cached_permission_status.h     |  1 +
+ .../blink/renderer/core/frame/screen.cc       | 35 +++++++++++++++++--
+ .../blink/renderer/core/frame/screen.h        | 17 ++++++++-
+ 4 files changed, 53 insertions(+), 6 deletions(-)
+
+diff --git a/third_party/blink/renderer/core/frame/cached_permission_status.cc b/third_party/blink/renderer/core/frame/cached_permission_status.cc
+index 2da5ef102e6..77953322ef2 100644
+--- a/third_party/blink/renderer/core/frame/cached_permission_status.cc
++++ b/third_party/blink/renderer/core/frame/cached_permission_status.cc
+@@ -38,9 +38,9 @@ CachedPermissionStatus::CachedPermissionStatus(ExecutionContext* context)
+       permission_service_(context),
+       permission_observer_receivers_(this, context) {
+   CHECK(context);
+-  CHECK(RuntimeEnabledFeatures::GeolocationElementEnabled(context) ||
+-        RuntimeEnabledFeatures::UserMediaElementEnabled(context) ||
+-        RuntimeEnabledFeatures::InstallElementEnabled(context));
++  // CHECK(RuntimeEnabledFeatures::GeolocationElementEnabled(context) ||
++  //       RuntimeEnabledFeatures::UserMediaElementEnabled(context) ||
++  //       RuntimeEnabledFeatures::InstallElementEnabled(context)); see https://source.chromium.org/chromium/chromium/src/+/81a9e9b66a03e12cb438eef0834f5e5f7a0506ee
+ }
+ 
+ void CachedPermissionStatus::Trace(Visitor* visitor) const {
+diff --git a/third_party/blink/renderer/core/frame/cached_permission_status.h b/third_party/blink/renderer/core/frame/cached_permission_status.h
+index b58b5910892..ad3094e9827 100644
+--- a/third_party/blink/renderer/core/frame/cached_permission_status.h
++++ b/third_party/blink/renderer/core/frame/cached_permission_status.h
+@@ -73,6 +73,7 @@ class CORE_EXPORT CachedPermissionStatus final
+ 
+  private:
+   friend class HTMLCapabilityElementBase;
++  friend class Screen;
+   friend class DocumentLoader;
+   friend class CachedPermissionStatusTest;
+ 
+diff --git a/third_party/blink/renderer/core/frame/screen.cc b/third_party/blink/renderer/core/frame/screen.cc
+index ed5028943e3..2c67debf4fa 100644
+--- a/third_party/blink/renderer/core/frame/screen.cc
++++ b/third_party/blink/renderer/core/frame/screen.cc
+@@ -42,7 +42,18 @@
+ namespace blink {
+ 
+ Screen::Screen(LocalDOMWindow* window, int64_t display_id)
+-    : ExecutionContextClient(window), display_id_(display_id) {}
++    : ExecutionContextClient(window), display_id_(display_id) {
++  if (DomWindow() &&
++      DomWindow()->IsFeatureEnabled(
++          network::mojom::PermissionsPolicyFeature::kWindowManagement)) {
++    auto descriptor = mojom::blink::PermissionDescriptor::New();
++    descriptor->name = mojom::blink::PermissionName::WINDOW_MANAGEMENT;
++    Vector<mojom::blink::PermissionDescriptorPtr> descriptors;
++    descriptors.push_back(std::move(descriptor));
++    CachedPermissionStatus::From(DomWindow())
++        ->RegisterClient(this, std::move(descriptors));
++  }
++}
+ 
+ // static
+ bool Screen::AreWebExposedScreenPropertiesEqual(
+@@ -166,7 +177,7 @@ bool Screen::isExtended() const {
+     return false;
+   }
+ 
+-  return GetScreenInfo().is_extended;
++  return GetScreenInfo().is_extended && window_management_permission_granted_;
+ }
+ 
+ gfx::Rect Screen::GetRect(bool available) const {
+@@ -196,4 +207,24 @@ const display::ScreenInfo& Screen::GetScreenInfo() const {
+   return kEmptyScreenInfo;
+ }
+ 
++void Screen::OnPermissionStatusChange(mojom::blink::PermissionName name,
++                                      mojom::blink::PermissionStatus status) {
++  CHECK(name == mojom::blink::PermissionName::WINDOW_MANAGEMENT);
++  window_management_permission_granted_ =
++      status == mojom::blink::PermissionStatus::GRANTED;
++}
++
++void Screen::OnPermissionStatusInitialized(
++    CachedPermissionStatus::PermissionStatusMap map) {
++  // Window management permission is granted if the map we're given has entries,
++  // and they're all GRANTED:
++  window_management_permission_granted_ =
++      map.size() > 0U && std::ranges::all_of(map, [](const auto& status) {
++        return status.value == mojom::blink::PermissionStatus::GRANTED;
++      });
++
++  // If the permission is granted, it should be the only item in the map:
++  CHECK(!window_management_permission_granted_ || map.size() == 1U);
++}
++
+ }  // namespace blink
+diff --git a/third_party/blink/renderer/core/frame/screen.h b/third_party/blink/renderer/core/frame/screen.h
+index 787aa750ae6..1e2dac72d35 100644
+--- a/third_party/blink/renderer/core/frame/screen.h
++++ b/third_party/blink/renderer/core/frame/screen.h
+@@ -32,11 +32,16 @@
+ #include "third_party/blink/renderer/core/core_export.h"
+ #include "third_party/blink/renderer/core/dom/events/event_target.h"
+ #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
++#include "third_party/blink/renderer/core/frame/cached_permission_status.h"
+ #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
++#include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
++#include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
+ #include "third_party/blink/renderer/platform/supplementable.h"
+ #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
+ #include "ui/gfx/geometry/rect.h"
+ 
++#include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
++
+ namespace display {
+ struct ScreenInfo;
+ }
+@@ -45,7 +50,7 @@ namespace blink {
+ 
+ class LocalDOMWindow;
+ 
+-class CORE_EXPORT Screen : public EventTarget,
++class CORE_EXPORT Screen : public EventTarget, public CachedPermissionStatus::Client,
+                            public ExecutionContextClient,
+                            public Supplementable<Screen> {
+   DEFINE_WRAPPERTYPEINFO();
+@@ -89,8 +94,18 @@ class CORE_EXPORT Screen : public EventTarget,
+   gfx::Rect GetRect(bool available) const;
+   const display::ScreenInfo& GetScreenInfo() const;
+ 
++  // CachedPermissionStatus::Client overrides:
++  void OnPermissionStatusChange(mojom::blink::PermissionName,
++                                mojom::blink::PermissionStatus) override;
++
++  void OnPermissionStatusInitialized(
++      CachedPermissionStatus::PermissionStatusMap) override;
++
+   // The internal id of the underlying display, to support multi-screen devices.
+   int64_t display_id_;
++
++ private:
++  bool window_management_permission_granted_ = false;
+ };
+ 
+ }  // namespace blink

@@ -1,7 +1,7 @@
-From f2ba97747dbdf7ed7482cc7a5be0f9399676c528 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Thu, 29 Oct 2026 23:52:32 +0000
-Subject: [PATCH 2/3] Spatiand: SpatiMesh
+Subject: [PATCH 282/310] Spatiand: SpatiMesh
 
 The product's name and icon (assets/apps/spatimesh.svg) in place of Cromite's.
 ---
@@ -20,7 +20,7 @@ The product's name and icon (assets/apps/spatimesh.svg) in place of Cromite's.
  12 files changed, 8 insertions(+), 8 deletions(-)
 
 diff --git a/chrome/app/theme/chromium/BRANDING b/chrome/app/theme/chromium/BRANDING
-index 9f98aa4bf5..47dc8192eb 100644
+index 9f98aa4bf54..47dc8192ebc 100644
 --- a/chrome/app/theme/chromium/BRANDING
 +++ b/chrome/app/theme/chromium/BRANDING
 @@ -1,10 +1,10 @@
@@ -3794,7 +3794,4 @@ zn2!NR3Squr05smA2c5aZwWzCjw>Jj7yq>ieq5@9{n}s}^Yp;{pQh3!z1UR`eyfst;
 zR!GATutkj*idGAY3ECRuLdE?w(5i=d-4d`u8mfWcP-w){S?>!nP5D{=>%a%Vhkl<@
 z8c%1R0LIee>BDSLfl_6a*wwkN)4u`yUJYtW_wn>PV6>=4Q~P{=GiqhZ&UO>d3JKsY
 lFhlP1`BA@5nKW{J{|Dc-jUez~WIO->002ovPDHLkV1hC`C^7&5
-
--- 
-2.34.1
 

@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 26 Feb 2023 19:46:04 +0000
+Subject: [PATCH 154/310] Disable csp reports
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-csp-reports.patch
+---
+ third_party/blink/renderer/core/loader/ping_loader.cc | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/third_party/blink/renderer/core/loader/ping_loader.cc b/third_party/blink/renderer/core/loader/ping_loader.cc
+index baacf84ba9d..d3499a61e8a 100644
+--- a/third_party/blink/renderer/core/loader/ping_loader.cc
++++ b/third_party/blink/renderer/core/loader/ping_loader.cc
+@@ -68,6 +68,7 @@ bool SendBeaconCommon(const ScriptState& state,
+                       LocalFrame* frame,
+                       const KURL& url,
+                       const BeaconData& beacon) {
++  if ((true)) return true;
+   if (!frame->DomWindow()
+            ->GetContentSecurityPolicyForWorld(&state.World())
+            ->AllowConnectToSource(url, url, RedirectStatus::kNoRedirect)) {
+@@ -113,6 +114,7 @@ bool SendBeaconCommon(const ScriptState& state,
+ void PingLoader::SendLinkAuditPing(LocalFrame* frame,
+                                    const KURL& ping_url,
+                                    const KURL& destination_url) {
++  if ((true)) return;
+   if (!ping_url.ProtocolIsInHttpFamily()) {
+     return;
+   }
+@@ -155,6 +157,7 @@ void PingLoader::SendViolationReport(ExecutionContext* execution_context,
+                                      const KURL& report_url,
+                                      scoped_refptr<EncodedFormData> report,
+                                      bool is_frame_ancestors_violation) {
++  if ((true)) return;
+   ResourceRequest request(report_url);
+   request.SetHttpMethod(http_names::kPOST);
+   request.SetHTTPContentType(AtomicString("application/csp-report"));

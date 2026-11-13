@@ -1,0 +1,1717 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: chromium-sdk <project_26591639_bot@noreply.gitlab.com>
+Date: Fri, 14 Feb 2025 08:26:40 +0100
+Subject: [PATCH 276/310] eyeo Browser Ad filtering Solution: Android Settings
+ UI Module
+
+Based on Chromium 133.0.6943.49
+
+Pre-requisites: eyeo Browser Ad filtering Solution: Base Module and Android API Module
+FILE:eyeo-133.0.6943.49-android_settings.patch
+---
+ chrome/browser/adblock/android/README.md      |  13 +
+ .../adblock/android/adblock_strings.grd       | 244 ++++++++++++++++++
+ .../translations/adblock_strings_af.xtb       |   4 +
+ .../translations/adblock_strings_am.xtb       |  13 +
+ .../translations/adblock_strings_ar.xtb       |  13 +
+ .../translations/adblock_strings_as.xtb       |   4 +
+ .../translations/adblock_strings_az.xtb       |   4 +
+ .../translations/adblock_strings_be.xtb       |   4 +
+ .../translations/adblock_strings_bg.xtb       |  16 ++
+ .../translations/adblock_strings_bn.xtb       |  13 +
+ .../translations/adblock_strings_bs.xtb       |  13 +
+ .../translations/adblock_strings_ca.xtb       |  13 +
+ .../translations/adblock_strings_cs.xtb       |  13 +
+ .../translations/adblock_strings_da.xtb       |  13 +
+ .../translations/adblock_strings_de.xtb       |  13 +
+ .../translations/adblock_strings_el.xtb       |  13 +
+ .../translations/adblock_strings_en-GB.xtb    |  13 +
+ .../translations/adblock_strings_es-419.xtb   |  13 +
+ .../translations/adblock_strings_es.xtb       |  13 +
+ .../translations/adblock_strings_et.xtb       |  13 +
+ .../translations/adblock_strings_eu.xtb       |   4 +
+ .../translations/adblock_strings_fa.xtb       |  13 +
+ .../translations/adblock_strings_fi.xtb       |  13 +
+ .../translations/adblock_strings_fil.xtb      |  13 +
+ .../translations/adblock_strings_fr-CA.xtb    |  13 +
+ .../translations/adblock_strings_fr.xtb       |  13 +
+ .../translations/adblock_strings_gl.xtb       |   4 +
+ .../translations/adblock_strings_gu.xtb       |   4 +
+ .../translations/adblock_strings_hi.xtb       |  13 +
+ .../translations/adblock_strings_hr.xtb       |  13 +
+ .../translations/adblock_strings_hu.xtb       |  13 +
+ .../translations/adblock_strings_hy.xtb       |   4 +
+ .../translations/adblock_strings_id.xtb       |  13 +
+ .../translations/adblock_strings_is.xtb       |   4 +
+ .../translations/adblock_strings_it.xtb       |  13 +
+ .../translations/adblock_strings_iw.xtb       |  13 +
+ .../translations/adblock_strings_ja.xtb       |  13 +
+ .../translations/adblock_strings_ka.xtb       |   4 +
+ .../translations/adblock_strings_kk.xtb       |  13 +
+ .../translations/adblock_strings_km.xtb       |  13 +
+ .../translations/adblock_strings_kn.xtb       |   4 +
+ .../translations/adblock_strings_ko.xtb       |  13 +
+ .../translations/adblock_strings_ky.xtb       |   4 +
+ .../translations/adblock_strings_lo.xtb       |   4 +
+ .../translations/adblock_strings_lt.xtb       |  13 +
+ .../translations/adblock_strings_lv.xtb       |  13 +
+ .../translations/adblock_strings_mk.xtb       |  13 +
+ .../translations/adblock_strings_ml.xtb       |   4 +
+ .../translations/adblock_strings_mn.xtb       |   4 +
+ .../translations/adblock_strings_mr.xtb       |   4 +
+ .../translations/adblock_strings_ms.xtb       |  13 +
+ .../translations/adblock_strings_my.xtb       |  13 +
+ .../translations/adblock_strings_ne.xtb       |   4 +
+ .../translations/adblock_strings_nl.xtb       |  13 +
+ .../translations/adblock_strings_no.xtb       |   4 +
+ .../translations/adblock_strings_or.xtb       |   4 +
+ .../translations/adblock_strings_pa.xtb       |   4 +
+ .../translations/adblock_strings_pl.xtb       |  13 +
+ .../translations/adblock_strings_pt-BR.xtb    |  13 +
+ .../translations/adblock_strings_pt-PT.xtb    |  13 +
+ .../translations/adblock_strings_ro.xtb       |  13 +
+ .../translations/adblock_strings_ru.xtb       |  13 +
+ .../translations/adblock_strings_si.xtb       |   4 +
+ .../translations/adblock_strings_sk.xtb       |  13 +
+ .../translations/adblock_strings_sl.xtb       |  13 +
+ .../translations/adblock_strings_sq.xtb       |   4 +
+ .../translations/adblock_strings_sr-Latn.xtb  |   4 +
+ .../translations/adblock_strings_sr.xtb       |  13 +
+ .../translations/adblock_strings_sv.xtb       |  13 +
+ .../translations/adblock_strings_sw.xtb       |  13 +
+ .../translations/adblock_strings_ta.xtb       |   4 +
+ .../translations/adblock_strings_te.xtb       |   4 +
+ .../translations/adblock_strings_th.xtb       |  13 +
+ .../translations/adblock_strings_tr.xtb       |  13 +
+ .../translations/adblock_strings_uk.xtb       |  13 +
+ .../translations/adblock_strings_ur.xtb       |  13 +
+ .../translations/adblock_strings_uz.xtb       |   4 +
+ .../translations/adblock_strings_vi.xtb       |  13 +
+ .../translations/adblock_strings_zh-CN.xtb    |  13 +
+ .../translations/adblock_strings_zh-HK.xtb    |   4 +
+ .../translations/adblock_strings_zh-TW.xtb    |  13 +
+ .../translations/adblock_strings_zu.xtb       |   4 +
+ 82 files changed, 1048 insertions(+)
+ create mode 100644 chrome/browser/adblock/android/README.md
+ create mode 100644 chrome/browser/adblock/android/adblock_strings.grd
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_af.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_am.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ar.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_as.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_az.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_be.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_bg.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_bn.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_bs.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ca.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_cs.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_da.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_de.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_el.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_en-GB.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_es-419.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_es.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_et.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_eu.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_fa.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_fi.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_fil.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_fr-CA.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_fr.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_gl.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_gu.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_hi.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_hr.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_hu.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_hy.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_id.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_is.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_it.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_iw.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ja.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ka.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_kk.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_km.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_kn.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ko.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ky.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_lo.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_lt.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_lv.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_mk.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ml.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_mn.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_mr.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ms.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_my.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ne.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_nl.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_no.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_or.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_pa.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_pl.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_pt-BR.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_pt-PT.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ro.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ru.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_si.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_sk.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_sl.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_sq.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_sr-Latn.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_sr.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_sv.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_sw.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ta.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_te.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_th.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_tr.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_uk.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_ur.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_uz.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_vi.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_zh-CN.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_zh-HK.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_zh-TW.xtb
+ create mode 100644 chrome/browser/adblock/android/translations/adblock_strings_zu.xtb
+
+diff --git a/chrome/browser/adblock/android/README.md b/chrome/browser/adblock/android/README.md
+new file mode 100644
+index 00000000000..faaa3ec773e
+--- /dev/null
++++ b/chrome/browser/adblock/android/README.md
+@@ -0,0 +1,13 @@
++# Translations HOWTO
++
++After introducing changes in [grdp file](adblock_strings.grd) it is recommended
++to run `grit` tool to make sure that translation IDs in [xtb files](translations)
++are matching definitions from [grdp file](adblock_strings.grd).
++
++Command:
++
++    ./tools/grit/grit.py -i components/adblock/android/adblock_strings.grd xmb grit_xmb_output.xml
++
++will produce output `grit_xmb_output.xml` containing mappings between textual
++IDs in [grdp file](adblock_strings.grd) (`message name` value) and numerical IDs
++in [xtb files](translations) (`translation id` value).
+diff --git a/chrome/browser/adblock/android/adblock_strings.grd b/chrome/browser/adblock/android/adblock_strings.grd
+new file mode 100644
+index 00000000000..7e4226f4938
+--- /dev/null
++++ b/chrome/browser/adblock/android/adblock_strings.grd
+@@ -0,0 +1,244 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!--
++  This file is part of eyeo Chromium SDK,
++  Copyright (C) 2006-present eyeo GmbH
++
++  eyeo Chromium SDK is free software: you can redistribute it and/or modify
++  it under the terms of the GNU General Public License version 3 as
++  published by the Free Software Foundation.
++
++  eyeo Chromium SDK is distributed in the hope that it will be useful,
++  but WITHOUT ANY WARRANTY; without even the implied warranty of
++  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++  GNU General Public License for more details.
++
++  You should have received a copy of the GNU General Public License
++  along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++-->
++<grit current_release="1" latest_public_release="0" output_all_resource_defines="false">
++  <outputs>
++    <output filename="values-af/adblock_strings.xml" lang="af" type="android" />
++    <output filename="values-am/adblock_strings.xml" lang="am" type="android" />
++    <output filename="values-ar/adblock_strings.xml" lang="ar" type="android" />
++    <output filename="values-ar-rXB/adblock_strings.xml" lang="ar-XB" type="android" />
++    <output filename="values-as/adblock_strings.xml" lang="as" type="android" />
++    <output filename="values-az/adblock_strings.xml" lang="az" type="android" />
++    <output filename="values-be/adblock_strings.xml" lang="be" type="android" />
++    <output filename="values-bg/adblock_strings.xml" lang="bg" type="android" />
++    <output filename="values-bn/adblock_strings.xml" lang="bn" type="android" />
++    <output filename="values-bs/adblock_strings.xml" lang="bs" type="android" />
++    <output filename="values-ca/adblock_strings.xml" lang="ca" type="android" />
++    <output filename="values-cs/adblock_strings.xml" lang="cs" type="android" />
++    <output filename="values-da/adblock_strings.xml" lang="da" type="android" />
++    <output filename="values-de/adblock_strings.xml" lang="de" type="android" />
++    <output filename="values-el/adblock_strings.xml" lang="el" type="android" />
++    <output filename="values/adblock_strings.xml" lang="en" type="android" />
++    <output filename="values-en-rGB/adblock_strings.xml" lang="en-GB" type="android" />
++    <output filename="values-en-rXA/adblock_strings.xml" lang="en-XA" type="android" />
++    <output filename="values-es/adblock_strings.xml" lang="es" type="android" />
++    <output filename="values-es-rUS/adblock_strings.xml" lang="es-419" type="android" />
++    <output filename="values-et/adblock_strings.xml" lang="et" type="android" />
++    <output filename="values-eu/adblock_strings.xml" lang="eu" type="android" />
++    <output filename="values-fa/adblock_strings.xml" lang="fa" type="android" />
++    <output filename="values-fi/adblock_strings.xml" lang="fi" type="android" />
++    <output filename="values-tl/adblock_strings.xml" lang="fil" type="android" />
++    <output filename="values-fr/adblock_strings.xml" lang="fr" type="android" />
++    <output filename="values-fr-rCA/adblock_strings.xml" lang="fr-CA" type="android" />
++    <output filename="values-gl/adblock_strings.xml" lang="gl" type="android" />
++    <output filename="values-gu/adblock_strings.xml" lang="gu" type="android" />
++    <output filename="values-hi/adblock_strings.xml" lang="hi" type="android" />
++    <output filename="values-hr/adblock_strings.xml" lang="hr" type="android" />
++    <output filename="values-hu/adblock_strings.xml" lang="hu" type="android" />
++    <output filename="values-hy/adblock_strings.xml" lang="hy" type="android" />
++    <output filename="values-in/adblock_strings.xml" lang="id" type="android" />
++    <output filename="values-is/adblock_strings.xml" lang="is" type="android" />
++    <output filename="values-it/adblock_strings.xml" lang="it" type="android" />
++    <output filename="values-iw/adblock_strings.xml" lang="iw" type="android" />
++    <output filename="values-ja/adblock_strings.xml" lang="ja" type="android" />
++    <output filename="values-ka/adblock_strings.xml" lang="ka" type="android" />
++    <output filename="values-kk/adblock_strings.xml" lang="kk" type="android" />
++    <output filename="values-km/adblock_strings.xml" lang="km" type="android" />
++    <output filename="values-kn/adblock_strings.xml" lang="kn" type="android" />
++    <output filename="values-ko/adblock_strings.xml" lang="ko" type="android" />
++    <output filename="values-ky/adblock_strings.xml" lang="ky" type="android" />
++    <output filename="values-lo/adblock_strings.xml" lang="lo" type="android" />
++    <output filename="values-lt/adblock_strings.xml" lang="lt" type="android" />
++    <output filename="values-lv/adblock_strings.xml" lang="lv" type="android" />
++    <output filename="values-mk/adblock_strings.xml" lang="mk" type="android" />
++    <output filename="values-ml/adblock_strings.xml" lang="ml" type="android" />
++    <output filename="values-mn/adblock_strings.xml" lang="mn" type="android" />
++    <output filename="values-mr/adblock_strings.xml" lang="mr" type="android" />
++    <output filename="values-ms/adblock_strings.xml" lang="ms" type="android" />
++    <output filename="values-my/adblock_strings.xml" lang="my" type="android" />
++    <output filename="values-ne/adblock_strings.xml" lang="ne" type="android" />
++    <output filename="values-nl/adblock_strings.xml" lang="nl" type="android" />
++    <output filename="values-nb/adblock_strings.xml" lang="no" type="android" />
++    <output filename="values-or/adblock_strings.xml" lang="or" type="android" />
++    <output filename="values-pa/adblock_strings.xml" lang="pa" type="android" />
++    <output filename="values-pl/adblock_strings.xml" lang="pl" type="android" />
++    <output filename="values-pt-rBR/adblock_strings.xml" lang="pt-BR" type="android" />
++    <output filename="values-pt-rPT/adblock_strings.xml" lang="pt-PT" type="android" />
++    <output filename="values-ro/adblock_strings.xml" lang="ro" type="android" />
++    <output filename="values-ru/adblock_strings.xml" lang="ru" type="android" />
++    <output filename="values-si/adblock_strings.xml" lang="si" type="android" />
++    <output filename="values-sk/adblock_strings.xml" lang="sk" type="android" />
++    <output filename="values-sl/adblock_strings.xml" lang="sl" type="android" />
++    <output filename="values-sq/adblock_strings.xml" lang="sq" type="android" />
++    <output filename="values-sr/adblock_strings.xml" lang="sr" type="android" />
++    <output filename="values-b+sr+Latn/adblock_strings.xml" lang="sr-Latn" type="android" />
++    <output filename="values-sv/adblock_strings.xml" lang="sv" type="android" />
++    <output filename="values-sw/adblock_strings.xml" lang="sw" type="android" />
++    <output filename="values-ta/adblock_strings.xml" lang="ta" type="android" />
++    <output filename="values-te/adblock_strings.xml" lang="te" type="android" />
++    <output filename="values-th/adblock_strings.xml" lang="th" type="android" />
++    <output filename="values-tr/adblock_strings.xml" lang="tr" type="android" />
++    <output filename="values-uk/adblock_strings.xml" lang="uk" type="android" />
++    <output filename="values-ur/adblock_strings.xml" lang="ur" type="android" />
++    <output filename="values-uz/adblock_strings.xml" lang="uz" type="android" />
++    <output filename="values-vi/adblock_strings.xml" lang="vi" type="android" />
++    <output filename="values-zh-rCN/adblock_strings.xml" lang="zh-CN" type="android" />
++    <output filename="values-zh-rHK/adblock_strings.xml" lang="zh-HK" type="android" />
++    <output filename="values-zh-rTW/adblock_strings.xml" lang="zh-TW" type="android" />
++    <output filename="values-zu/adblock_strings.xml" lang="zu" type="android" />
++  </outputs>
++  <translations>
++    <file lang="af" path="translations/adblock_strings_af.xtb" />
++    <file lang="am" path="translations/adblock_strings_am.xtb" />
++    <file lang="ar" path="translations/adblock_strings_ar.xtb" />
++    <file lang="as" path="translations/adblock_strings_as.xtb" />
++    <file lang="az" path="translations/adblock_strings_az.xtb" />
++    <file lang="be" path="translations/adblock_strings_be.xtb" />
++    <file lang="bg" path="translations/adblock_strings_bg.xtb" />
++    <file lang="bn" path="translations/adblock_strings_bn.xtb" />
++    <file lang="bs" path="translations/adblock_strings_bs.xtb" />
++    <file lang="ca" path="translations/adblock_strings_ca.xtb" />
++    <file lang="cs" path="translations/adblock_strings_cs.xtb" />
++    <file lang="da" path="translations/adblock_strings_da.xtb" />
++    <file lang="de" path="translations/adblock_strings_de.xtb" />
++    <file lang="el" path="translations/adblock_strings_el.xtb" />
++    <file lang="en-GB" path="translations/adblock_strings_en-GB.xtb" />
++    <file lang="es" path="translations/adblock_strings_es.xtb" />
++    <file lang="es-419" path="translations/adblock_strings_es-419.xtb" />
++    <file lang="et" path="translations/adblock_strings_et.xtb" />
++    <file lang="eu" path="translations/adblock_strings_eu.xtb" />
++    <file lang="fa" path="translations/adblock_strings_fa.xtb" />
++    <file lang="fi" path="translations/adblock_strings_fi.xtb" />
++    <file lang="fil" path="translations/adblock_strings_fil.xtb" />
++    <file lang="fr" path="translations/adblock_strings_fr.xtb" />
++    <file lang="fr-CA" path="translations/adblock_strings_fr-CA.xtb" />
++    <file lang="gl" path="translations/adblock_strings_gl.xtb" />
++    <file lang="gu" path="translations/adblock_strings_gu.xtb" />
++    <file lang="hi" path="translations/adblock_strings_hi.xtb" />
++    <file lang="hr" path="translations/adblock_strings_hr.xtb" />
++    <file lang="hu" path="translations/adblock_strings_hu.xtb" />
++    <file lang="hy" path="translations/adblock_strings_hy.xtb" />
++    <file lang="id" path="translations/adblock_strings_id.xtb" />
++    <file lang="is" path="translations/adblock_strings_is.xtb" />
++    <file lang="it" path="translations/adblock_strings_it.xtb" />
++    <file lang="iw" path="translations/adblock_strings_iw.xtb" />
++    <file lang="ja" path="translations/adblock_strings_ja.xtb" />
++    <file lang="ka" path="translations/adblock_strings_ka.xtb" />
++    <file lang="kk" path="translations/adblock_strings_kk.xtb" />
++    <file lang="km" path="translations/adblock_strings_km.xtb" />
++    <file lang="kn" path="translations/adblock_strings_kn.xtb" />
++    <file lang="ko" path="translations/adblock_strings_ko.xtb" />
++    <file lang="ky" path="translations/adblock_strings_ky.xtb" />
++    <file lang="lo" path="translations/adblock_strings_lo.xtb" />
++    <file lang="lt" path="translations/adblock_strings_lt.xtb" />
++    <file lang="lv" path="translations/adblock_strings_lv.xtb" />
++    <file lang="mk" path="translations/adblock_strings_mk.xtb" />
++    <file lang="ml" path="translations/adblock_strings_ml.xtb" />
++    <file lang="mn" path="translations/adblock_strings_mn.xtb" />
++    <file lang="mr" path="translations/adblock_strings_mr.xtb" />
++    <file lang="ms" path="translations/adblock_strings_ms.xtb" />
++    <file lang="my" path="translations/adblock_strings_my.xtb" />
++    <file lang="ne" path="translations/adblock_strings_ne.xtb" />
++    <file lang="nl" path="translations/adblock_strings_nl.xtb" />
++    <file lang="no" path="translations/adblock_strings_no.xtb" />
++    <file lang="or" path="translations/adblock_strings_or.xtb" />
++    <file lang="pa" path="translations/adblock_strings_pa.xtb" />
++    <file lang="pl" path="translations/adblock_strings_pl.xtb" />
++    <file lang="pt-BR" path="translations/adblock_strings_pt-BR.xtb" />
++    <file lang="pt-PT" path="translations/adblock_strings_pt-PT.xtb" />
++    <file lang="ro" path="translations/adblock_strings_ro.xtb" />
++    <file lang="ru" path="translations/adblock_strings_ru.xtb" />
++    <file lang="si" path="translations/adblock_strings_si.xtb" />
++    <file lang="sk" path="translations/adblock_strings_sk.xtb" />
++    <file lang="sl" path="translations/adblock_strings_sl.xtb" />
++    <file lang="sq" path="translations/adblock_strings_sq.xtb" />
++    <file lang="sr" path="translations/adblock_strings_sr.xtb" />
++    <file lang="sr-Latn" path="translations/adblock_strings_sr-Latn.xtb" />
++    <file lang="sv" path="translations/adblock_strings_sv.xtb" />
++    <file lang="sw" path="translations/adblock_strings_sw.xtb" />
++    <file lang="ta" path="translations/adblock_strings_ta.xtb" />
++    <file lang="te" path="translations/adblock_strings_te.xtb" />
++    <file lang="th" path="translations/adblock_strings_th.xtb" />
++    <file lang="tr" path="translations/adblock_strings_tr.xtb" />
++    <file lang="uk" path="translations/adblock_strings_uk.xtb" />
++    <file lang="ur" path="translations/adblock_strings_ur.xtb" />
++    <file lang="uz" path="translations/adblock_strings_uz.xtb" />
++    <file lang="vi" path="translations/adblock_strings_vi.xtb" />
++    <file lang="zh-CN" path="translations/adblock_strings_zh-CN.xtb" />
++    <file lang="zh-HK" path="translations/adblock_strings_zh-HK.xtb" />
++    <file lang="zh-TW" path="translations/adblock_strings_zh-TW.xtb" />
++    <file lang="zu" path="translations/adblock_strings_zu.xtb" />
++  </translations>
++  <release seq="1">
++    <messages fallback_to_english="true">
++      <message name="IDS_ADBLOCK_SETTINGS_TITLE" desc="Title of Adblock settings menu item [CHAR-LIMIT=12]">
++        Ad blocking
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_ENABLED_SUMMARY" desc="Summary of SwitchPreference to enable/disable Adblock">
++        Allow ad blocking on websites in this app
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_FILTER_LISTS_TITLE" desc="Title of MultiSelectListPreference to choose filter lists">
++        Filter lists
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_FILTER_LISTS_SUMMARY" desc="Summary of MultiSelectListPreference to choose filter lists">
++        Add the languages in which you regularly browse websites in
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_AA_ENABLED_TITLE" desc="Title of SwitchPreference to enable/disable Acceptable Ads">
++        Acceptable Ads
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_AA_ENABLED_SUMMARY" desc="Summary of SwitchPreference to enable/disable Acceptable Ads">
++        Acceptable ads are non-annoying ads that comply with a strict ad standard. They help generate revenue for content creators and do not interfere with the content you are viewing. This feature is turned on by default, but you can turn it off at any time.
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_AUTO_INSTALL_ENABLED_TITLE" desc="Title of SwitchPreference to enable/disable Filter lists auto install">
++        Filter lists auto install
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_AUTO_INSTALL_ENABLED_SUMMARY" desc="Summary of SwitchPreference to enable/disable Filter lists auto install">
++        Allow auto adjustments of filter lists collection, based on your geolocation, to provide the best ad-filtering experience.
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_ALLOWED_DOMAINS_TITLE" desc="Title of Preference to configure allowed domains">
++        Allowlist
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_ALLOWED_DOMAINS_SUMMARY" desc="Summary of Preference to configure allowed domains">
++        Support your favorite websites by adding them to this list. You might see ads on them.
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_ADD_DOMAIN" desc="Hint of EditText for typing domain in allowed domains fragment">
++        Enter URL
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_SETTINGS_MORE_OPTIONS_TITLE" desc="Title of the Preference and fragment additional options are shown at">
++        More blocking options
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_MORE_OPTIONS_CUSTOM_FILTER_LISTS_TITLE" desc="Title of the Preference and fragment for adding custom filter lists">
++        Custom ad filtering settings
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_MORE_OPTIONS_CUSTOM_FILTER_LISTS_SUMMARY" desc="Title of the Preference for adding custom filter lists">
++        Add custom filter lists
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_MORE_OPTIONS_ADD_CUSTOM_FILTER_LIST" desc="Hint shown in a EditView for adding custom filter list URL">
++        https://example.org/myFilterList.txt
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_MORE_OPTIONS_CUSTOM_FILTERS_TITLE" desc="Title of the Preference and fragment for adding custom filters">
++        Custom Filters
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_MORE_OPTIONS_CUSTOM_FILTERS_SUMMARY" desc="Title of the Preference for adding custom filters">
++        Add custom filters
++      </message>
++      <message name="IDS_FRAGMENT_ADBLOCK_MORE_OPTIONS_CUSTOM_FILTERS_HINT" desc="Hint shown in a EditView for adding custom filter">
++        Enter filter
++      </message>
++    </messages>
++  </release>
++</grit>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_af.xtb b/chrome/browser/adblock/android/translations/adblock_strings_af.xtb
+new file mode 100644
+index 00000000000..0861004fdc6
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_af.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="af">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_am.xtb b/chrome/browser/adblock/android/translations/adblock_strings_am.xtb
+new file mode 100644
+index 00000000000..a8188ff56b8
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_am.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="am">
++<translation id="8714145577049629910">Ad blocking (አድ ብሎክ ፕላስ) የንግድ ማስታወቂያማገድ</translation>
++<translation id="3493556515901914593">ብዚሁ ድር ጣቢያ የንግድ ማስታወቂያ እንዲዘጋ ወይም እንዲታገድ አድርጉ።</translation>
++<translation id="4516904298421534459">የሚፈለገው ዝርዝ</translation>
++<translation id="4713094065435138404">የሚፈልጉትን ቋንቋ መጨመር ወይም ደግሞ ማንሳት(ማስወጣት)</translation>
++<translation id="1575042640644572091">የንግድ ማስታወቂያ መቀበል</translation>
++<translation id="2763228171090923752">እኛ የድር ጣቢያ በቀላሉ መጠቀም የሚችሉ የንግድ ማስታወቂያ እንዲጠቀሙ እና የሰው ሂወት ጣልቃ የማይገባ እንዲሆን ነው መታባባት እና መባራታት ነው የምንፈልግው። ለዚህ ነው እኛ በጣም ትብቅ የሆነ መምሪያ ተጠቅመን ተቀባይነት ያላቸው የንግድ ማስታወቂያ ብቻ ከማሳየት የምናስፈቅደው፡ ይህ ደግሞ በ default setting (ደፎልት ሰቲንግ) ይገኛል። የንግድ ማስታወቂያ የሌለው ድር ጣቢያ መከታተል ከፈለጋችሁ ደግሞ ይህ በ disable setting (ዲስኤብል ሰቲንግ) የሚለው ቦታ በሜሄድ መዝጋት ይቻላል።</translation>
++<translation id="7857292107035345544">Allowlisted domains (ዋይትሊስተድ ዶመይንስ)</translation>
++<translation id="3575711988891311088">ኣርስዎ የሚፈልጉት የንግድ ማስታወቂያ የሚያሳዩት የድር ጣቢያራስዎ መጨመር ይችላሉ።</translation>
++<translation id="7059127752542505809">Domain (ዱመይን) መጨመር ይችላሉ።</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ar.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ar.xtb
+new file mode 100644
+index 00000000000..2500a499757
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ar.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ar">
++<translation id="8714145577049629910">حجب الإعلانات</translation>
++<translation id="3493556515901914593">السماح بحجب الإعلانات على المواقع الإلكترونية في هذا التطبيق</translation>
++<translation id="4516904298421534459">قوائم عوامل التصفية</translation>
++<translation id="4713094065435138404">إضافة اللغات التي تستعرض بها المواقع بشكل منتظم</translation>
++<translation id="1575042640644572091">الإعلانات المقبولة</translation>
++<translation id="2763228171090923752">الإعلانات المقبولة هي إعلانات غير مزعجة تتوافق مع معيار صارم للإعلانات. وتساعد هذه الإعلانات في توفير عائد مادي لمنشئي المحتوى في حين لا تتداخل مع المحتوى الذي تستعرضه.</translation>
++<translation id="7857292107035345544">القائمة المسموح بها</translation>
++<translation id="3575711988891311088">ادعم المواقع الإلكترونية المفضلة لديك بإضافتها إلى هذه القائمة. وفي حالة إضافتها، قد تشاهد إعلانات عليها</translation>
++<translation id="7059127752542505809">أدخل عنوان الموقع (URL)</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_as.xtb b/chrome/browser/adblock/android/translations/adblock_strings_as.xtb
+new file mode 100644
+index 00000000000..3ad7206d197
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_as.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="as">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_az.xtb b/chrome/browser/adblock/android/translations/adblock_strings_az.xtb
+new file mode 100644
+index 00000000000..6d09f4cde0b
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_az.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="az">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_be.xtb b/chrome/browser/adblock/android/translations/adblock_strings_be.xtb
+new file mode 100644
+index 00000000000..09e9a3adc2b
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_be.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="be">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_bg.xtb b/chrome/browser/adblock/android/translations/adblock_strings_bg.xtb
+new file mode 100644
+index 00000000000..ec97ea06903
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_bg.xtb
+@@ -0,0 +1,16 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="bg">
++<translation id="8714145577049629910">Блокиране на реклами</translation>
++<translation id="3493556515901914593">Разрешете блокиране на реклами на уебсайтове в това приложение</translation>
++<translation id="4516904298421534459">Списъци с филтри</translation>
++<translation id="4713094065435138404">Добави или премахни списъци с филтри за конкретни езици</translation>
++<translation id="1575042640644572091">Допустими реклами</translation>
++<translation id="2763228171090923752">Бихме искали да насърчим уебсайтовете да използват ясни, ненатрапчиви реклами. Затова създадохме стриктни правила за идентифициране на допустими реклами, които се показват в настройките по подразбиране. Ако искаш да преглеждаш, без да виждаш реклами, можеш да деактивираш тази настройка по всяко време.</translation>
++<translation id="7857292107035345544">Домейни, добавени в белия списък</translation>
++<translation id="3575711988891311088">Добави уебсайтове, на които искаш да виждаш реклами, към този списък</translation>
++<translation id="7059127752542505809">Добави домейн</translation>
++<translation id="1028699632127661925">Изпраща се до <ph name="DEVICE_NAME" />...</translation>
++<translation id="103269572468856066">Изчиств. и на данните от тези сайтове и прил.?</translation>
++<translation id="1036348656032585052">Изключване</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_bn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_bn.xtb
+new file mode 100644
+index 00000000000..79c1a9ebe56
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_bn.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="bn">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">ওয়েবসাইটগুলোতে বিজ্ঞাপন ব্লক করার জন্য এই অ্যাপকে অনুমতি দিন</translation>
++<translation id="4516904298421534459">ফিল্টার তালিকা</translation>
++<translation id="4713094065435138404">ভাষা যুক্ত করুন বা সরান- নির্দিষ্ট ফিল্টার তালিকা</translation>
++<translation id="1575042640644572091">গ্রহণযোগ্য বিজ্ঞাপনগুলি</translation>
++<translation id="2763228171090923752">আমরা সহজবোধ্য, অ-ছদ্মবেশী বিজ্ঞাপনগুলি ব্যবহার করতে ওয়েবসাইটগুলিকে উত্সাহিত করতে চাই। সেই কারণে আমরা গ্রহণযোগ্য বিজ্ঞাপনগুলি চিহ্নিত করতে কঠোর নির্দেশাবলী স্থাপন করেছি, যা ডিফল্ট সেটিংসে দেখানো হয়েছে। যদি আপনি বিজ্ঞাপন মুক্ত ভাবে ব্রাউজ করতে চান, তবে আপনি এই সেটিংটি যেকোনো সময়ে অক্ষম করতে পারেন।</translation>
++<translation id="7857292107035345544">পরিচ্ছন্ন তলিকাভুক্ত ডোমেইনগুলি</translation>
++<translation id="3575711988891311088">এই তালিকায় সেই ওয়েবসাইটগুলি যোগ করুন যাতে বিজ্ঞাপন দেখতে চান</translation>
++<translation id="7059127752542505809">ডোমেন যোগ করুন</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_bs.xtb b/chrome/browser/adblock/android/translations/adblock_strings_bs.xtb
+new file mode 100644
+index 00000000000..ffac4da0a50
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_bs.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="bs">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Dozvolite blokiranje oglasa na web lokacijama u ovoj aplikaciji</translation>
++<translation id="4516904298421534459">Filtriraj liste</translation>
++<translation id="4713094065435138404">Dodaj ili ukloni liste filtera specifičnih za jezik</translation>
++<translation id="1575042640644572091">Prihvatljive reklame</translation>
++<translation id="2763228171090923752">Željeli bismo podstaknuti webstranice da koriste jasno, nenametljivo reklamiranje. Zato smo utvrdili stroge smjernice kako bismo identificirali prihvatljive reklame, koje se mogu vidjeti pod podrazumijevanim postavkama. Ako želite pretraživati bez oglasa, ovu postavku možete onemogućiti bilo kad.</translation>
++<translation id="7857292107035345544">Lista dopuštenih domena</translation>
++<translation id="3575711988891311088">Na ovaj popis dodajte webstranice sa kojih želite vidjeti oglase</translation>
++<translation id="7059127752542505809">ডDodaj domen</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ca.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ca.xtb
+new file mode 100644
+index 00000000000..82d7ab531ad
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ca.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ca">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Permet el bloqueig d\'anuncis en llocs web en aquesta aplicació</translation>
++<translation id="4516904298421534459">Llistes de filtres</translation>
++<translation id="4713094065435138404">Afegiu o suprimiu llistes de filtres específics per idioma</translation>
++<translation id="1575042640644572091">Anuncis acceptables</translation>
++<translation id="2763228171090923752">Instem als llocs web a que facin servir publicitat directa i no intrusiva. Per això hem establert directius estrictes per identificar els anuncis acceptables, que podeu trobar a la configuració predeterminada. Si voleu navegar sense anuncis, podeu desactivar aquesta configuració en qualsevol moment.</translation>
++<translation id="7857292107035345544">Llista blanca de dominis</translation>
++<translation id="3575711988891311088">Afegiu a aquesta llista tots els llocs web en què voleu veure anuncis</translation>
++<translation id="7059127752542505809">Afegeix un domini</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_cs.xtb b/chrome/browser/adblock/android/translations/adblock_strings_cs.xtb
+new file mode 100644
+index 00000000000..8f35b764209
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_cs.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="cs">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Povolit v této aplikaci blokování reklam na webových stránkách</translation>
++<translation id="4516904298421534459">Přehledy filtrů</translation>
++<translation id="4713094065435138404">Přidávání nebo odebírání seznamů filtrů pro konkrétní jazyk</translation>
++<translation id="1575042640644572091">Nerušivé reklamy</translation>
++<translation id="2763228171090923752">Rádi bychom podpořili webové stránky, aby používaly přímočaré, nerušivé reklamy. Z tohoto důvodu jsme vytvořili přísné směrnice pro identifikaci „přijatelných reklam“, které se zobrazují ve výchozím nastavení. Pokud chcete surfovat bez reklam, můžete toto nastavení kdykoliv zakázat.</translation>
++<translation id="7857292107035345544">Seznam povolených domén</translation>
++<translation id="3575711988891311088">Na tento seznam lze přidávat webové stránky, na kterých chcete vidět reklamy</translation>
++<translation id="7059127752542505809">Přidat doménu</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_da.xtb b/chrome/browser/adblock/android/translations/adblock_strings_da.xtb
+new file mode 100644
+index 00000000000..39c978aec9a
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_da.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="da">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Tillad blokering af reklamer på hjemmesider i denne app</translation>
++<translation id="4516904298421534459">Filterlister</translation>
++<translation id="4713094065435138404">Tilføj eller fjern sprogspecifikke filterlister</translation>
++<translation id="1575042640644572091">Acceptable Ads</translation>
++<translation id="2763228171090923752">Vi vil gerne opfordre hjemmesider til at bruge ukomplicerede reklamer og reklamer, der ikke er påtrængende. Det er grunden til, at vi har lavet strenge retningslinjer, der skal identificere Acceptable Ads. Disse kan ses under standardindstillinger. Hvis du ønsker at browse internettet uden reklamer, kan du til enhver tid slå denne indstilling fra.</translation>
++<translation id="7857292107035345544">Domæner på positivlisten</translation>
++<translation id="3575711988891311088">Tilføj hjemmesider, du ønsker at se reklamer på, til denne liste</translation>
++<translation id="7059127752542505809">Tilføj domæne</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_de.xtb b/chrome/browser/adblock/android/translations/adblock_strings_de.xtb
+new file mode 100644
+index 00000000000..f20c25a3ad1
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_de.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="de">
++<translation id="8714145577049629910">Adblocking</translation>
++<translation id="3493556515901914593">Werbeblockierung auf Websites in dieser App zulassen</translation>
++<translation id="4516904298421534459">Filterlisten</translation>
++<translation id="4713094065435138404">Füge die Sprachen hinzu, in denen du regelmäßig Webseiten besuchst.</translation>
++<translation id="1575042640644572091">Acceptable Ads</translation>
++<translation id="2763228171090923752">Acceptable Ads sind unaufdringliche Werbeanzeigen gemäß strikter Normen. Sie helfen Urhebern dabei, Einnahmen zu generieren und stören nicht beim Anschauen der Inhalte. Standardmäßig sind Acceptable Ads aktiviert, aber du kannst sie jederzeit in den Einstellungen deaktivieren.</translation>
++<translation id="7857292107035345544">Allowlist</translation>
++<translation id="3575711988891311088">Unterstütze deine liebsten Webseiten und füge sie zu dieser Liste hinzu, um bei deren Besuch Werbung zuzulassen.</translation>
++<translation id="7059127752542505809">URL hinzufügen</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_el.xtb b/chrome/browser/adblock/android/translations/adblock_strings_el.xtb
+new file mode 100644
+index 00000000000..a021bc0a318
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_el.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="el">
++<translation id="8714145577049629910">Φραγή διαφημίσεων</translation>
++<translation id="3493556515901914593">Να επιτρέπεται ο αποκλεισμός διαφημίσεων στους ιστοτόπους σε αυτή την εφαρμογή</translation>
++<translation id="4516904298421534459">Λίστες φίλτρων</translation>
++<translation id="4713094065435138404">Προσθέστε τις γλώσσες στις οποίες κάνετε συχνότερα περιήγηση</translation>
++<translation id="1575042640644572091">Αποδεκτές Διαφημίσεις</translation>
++<translation id="2763228171090923752">Αποδεκτές διαφημίσεις είναι οι διαφημίσεις που δεν είναι ενοχλητικές και τηρούν αυστηρά πρότυπα. Βοηθούν τους δημιουργούς περιεχομένου να έχουν έσοδα και να μην παρεμβαίνουν στο περιεχόμενο που βλέπετε. Αυτή η λειτουργία είναι προεπιλογμένη, αλλά μπορείτε να την απενεργοποιήσετε ανά πάσα στιγμή.</translation>
++<translation id="7857292107035345544">Αποδοχή λίστας</translation>
++<translation id="3575711988891311088">Υποστηρίξτε τους αγαπημένους σας ιστοτόπους και προσθέστε τους σε αυτή τη λίστα. Μπορεί να δείτε διαφημίσεις στους ιστοτόπους αυτούς.</translation>
++<translation id="7059127752542505809">Εισάγετε διεύθυνση URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_en-GB.xtb b/chrome/browser/adblock/android/translations/adblock_strings_en-GB.xtb
+new file mode 100644
+index 00000000000..a34364dbb1e
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_en-GB.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="en-GB">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Allow ad blocking on websites in this app</translation>
++<translation id="4516904298421534459">Filter lists</translation>
++<translation id="4713094065435138404">Add the languages in which you regularly browse websites in</translation>
++<translation id="1575042640644572091">Acceptable Ads</translation>
++<translation id="2763228171090923752">Acceptable ads are non-annoying ads that comply with a strict ad standard. They help generate revenue for content creators and do not interfere with the content you are viewing. This feature is turned on by default, but you can turn it off at any time.</translation>
++<translation id="7857292107035345544">Allowlist</translation>
++<translation id="3575711988891311088">Support your favorite websites by adding them to this list. You might see ads on them.</translation>
++<translation id="7059127752542505809">Enter URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_es-419.xtb b/chrome/browser/adblock/android/translations/adblock_strings_es-419.xtb
+new file mode 100644
+index 00000000000..63261027585
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_es-419.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="es-419">
++<translation id="8714145577049629910">Bloqueo de anuncios</translation>
++<translation id="3493556515901914593">Permitir que esta aplicación bloquee anuncios en sitios web</translation>
++<translation id="4516904298421534459">Listas de filtros</translation>
++<translation id="4713094065435138404">Añadir los idiomas en los que normalmente visitas los sitios web</translation>
++<translation id="1575042640644572091">Anuncios Aceptables</translation>
++<translation id="2763228171090923752">Los anuncios aceptables son anuncios que no molestan y que cumplen con un estándar de anuncios estricto. Ayudan a que los creadores de contenido generen ingresos y no interfieren con el contenido que estás viendo.</translation>
++<translation id="7857292107035345544">Lista de elementos permitidos</translation>
++<translation id="3575711988891311088">Ayuda a tus sitios favoritos añadiéndolos a esta lista. Al hacerlo, puede que veas anuncios en ellos.</translation>
++<translation id="7059127752542505809">Introducir URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_es.xtb b/chrome/browser/adblock/android/translations/adblock_strings_es.xtb
+new file mode 100644
+index 00000000000..f46c833cbdd
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_es.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="es">
++<translation id="8714145577049629910">Bloqueo de anuncios</translation>
++<translation id="3493556515901914593">Permitir que esta aplicación bloquee anuncios en sitios web</translation>
++<translation id="4516904298421534459">Listas de filtros</translation>
++<translation id="4713094065435138404">Añadir los idiomas en los que normalmente visitas los sitios web</translation>
++<translation id="1575042640644572091">Anuncios Aceptables</translation>
++<translation id="2763228171090923752">Los anuncios aceptables son anuncios que no molestan y que cumplen con un estándar de anuncios estricto. Ayudan a que los creadores de contenido generen ingresos y no interfieren con el contenido que estás viendo.</translation>
++<translation id="7857292107035345544">Lista de elementos permitidos</translation>
++<translation id="3575711988891311088">Ayuda a tus sitios favoritos añadiéndolos a esta lista. Al hacerlo, puede que veas anuncios en ellos.</translation>
++<translation id="7059127752542505809">Introducir URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_et.xtb b/chrome/browser/adblock/android/translations/adblock_strings_et.xtb
+new file mode 100644
+index 00000000000..5fab16e2f34
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_et.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="et">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Luba selles rakenduses veebisaitidel reklaamide blokeerimine</translation>
++<translation id="4516904298421534459">Filtriloendid</translation>
++<translation id="4713094065435138404">Keelepõhiste filtriloendite lisamine või eemaldamine</translation>
++<translation id="1575042640644572091">Lubatavad reklaamid</translation>
++<translation id="2763228171090923752">Soovime, et veebisaidid kasutaksid otsekoheseid, mitte pealetükkivaid reklaame. Seepärast oleme kehtestanud ranged suunised lubatavate reklaamide tuvastamiseks. Need on näha vaikesätete all. Kui soovite sirvida täiesti reklaamivabalt, võite selle sätte igal ajal välja lülitada.</translation>
++<translation id="7857292107035345544">Lubatud domeenide loend</translation>
++<translation id="3575711988891311088">Lisage sellesse loendisse veebisaidid, kus soovite reklaame näha</translation>
++<translation id="7059127752542505809">Lisa domeenid</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_eu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_eu.xtb
+new file mode 100644
+index 00000000000..981c85fbc66
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_eu.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="eu">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fa.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fa.xtb
+new file mode 100644
+index 00000000000..88874d3f232
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_fa.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="fa">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">فعالسازی بلوکه کردن نمایش تبلیغات دروب سایت ها دراین نرم افزار</translation>
++<translation id="4516904298421534459">لیست</translation>
++<translation id="4713094065435138404">افزودن یا حذف لیست</translation>
++<translation id="1575042640644572091">تبلیغات قابل قبول</translation>
++<translation id="2763228171090923752">ما در نظر داریم وب</translation>
++<translation id="7857292107035345544">دامنه</translation>
++<translation id="3575711988891311088">وب</translation>
++<translation id="7059127752542505809">افزودن دامنه</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fi.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fi.xtb
+new file mode 100644
+index 00000000000..09249abbf69
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_fi.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="fi">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Salli mainosten esto verkkosivustoilla tässä sovelluksessa</translation>
++<translation id="4516904298421534459">Suodatinluettelot</translation>
++<translation id="4713094065435138404">Lisää tai poista kielikohtaiset suodatinluettelot</translation>
++<translation id="1575042640644572091">Hyväksyttävät mainokset</translation>
++<translation id="2763228171090923752">Haluamme kannustaa verkkosivustoja käyttämään yksinkertaista, tunkeilematonta mainontaa. Siksi olemme luoneet tiukat ohjeet hyväksyttävien mainosten tunnistamiseksi, jotka näytetään oletusasetuksissa. Jos haluat selata ilman mainoksia, voit ottaa tämän asetuksen pois käytöstä milloin tahansa.</translation>
++<translation id="7857292107035345544">Sallittujen toimialueiden luettelo</translation>
++<translation id="3575711988891311088">Lisää tähän luetteloon verkkosivustot, joilla haluat nähdä mainoksia</translation>
++<translation id="7059127752542505809">Lisää toimialue</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fil.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fil.xtb
+new file mode 100644
+index 00000000000..5369d4b31da
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_fil.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="fil">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Salli mainosten esto verkkosivustoilla tässä sovelluksessa</translation>
++<translation id="4516904298421534459">I-filter ang listahan</translation>
++<translation id="4713094065435138404">Idagdag o alisin ang mga listahan ng filter para sa tiyak na wika</translation>
++<translation id="1575042640644572091">Mga Katanggap-tanggap na Ad</translation>
++<translation id="2763228171090923752">Nais naming hikayatin ang mga website na gumamit ng tapat at di mapanghimasok na pag-aadvertize. Kaya nagtaguyod kami ng mahigpit na panuntunan upang kilalanin ang mga Katanggap-tanggap na Ad na ipinapakita sa ilalim ng default settings. Kung nais mong mag-browse nang walang ad, maaari mong i-disable ang setting na ito anumang oras.</translation>
++<translation id="7857292107035345544">Mga allowlisted na domain</translation>
++<translation id="3575711988891311088">Magdagdag ng mga website na gusto mong makitaan ng mga ad sa listahang ito</translation>
++<translation id="7059127752542505809">Magdagdag ng domain</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fr-CA.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fr-CA.xtb
+new file mode 100644
+index 00000000000..226196f3074
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_fr-CA.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="fr-CA">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Autorisez le blocage de publicités sur les sites Internet dans cette application</translation>
++<translation id="4516904298421534459">Listes de filtres</translation>
++<translation id="4713094065435138404">Ajoutez les langues des sites Internet sur lesquels vous naviguez régulièrement</translation>
++<translation id="1575042640644572091">Publicité Acceptable</translation>
++<translation id="2763228171090923752">Les publicités acceptables sont des publicités non agaçantes, qui sont soumises à des normes strictes. Elles contribuent à générer des revenus pour les créateurs de contenu et ne constituent pas une entrave au contenu que vous affichez.</translation>
++<translation id="7857292107035345544">Liste des sites acceptables</translation>
++<translation id="3575711988891311088">Soutenez vos sites Internet préférés en les ajoutant à cette liste. Vous y verrez peut-être des publicités.</translation>
++<translation id="7059127752542505809">Entrez l'URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_fr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_fr.xtb
+new file mode 100644
+index 00000000000..ceda9835910
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_fr.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="fr">
++<translation id="8714145577049629910">Blocage des publicités</translation>
++<translation id="3493556515901914593">Autorisez le blocage de publicités sur les sites Internet dans cette application</translation>
++<translation id="4516904298421534459">Listes de filtres</translation>
++<translation id="4713094065435138404">Ajoutez les langues des sites Internet sur lesquels vous naviguez régulièrement</translation>
++<translation id="1575042640644572091">Publicité Acceptable</translation>
++<translation id="2763228171090923752">Les publicités acceptables sont des publicités non agaçantes, qui sont soumises à des normes strictes. Elles contribuent à générer des revenus pour les créateurs de contenu et ne constituent pas une entrave au contenu que vous affichez.</translation>
++<translation id="7857292107035345544">Liste des sites acceptables</translation>
++<translation id="3575711988891311088">Soutenez vos sites Internet préférés en les ajoutant à cette liste. Vous y verrez peut-être des publicités.</translation>
++<translation id="7059127752542505809">Entrez l'URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_gl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_gl.xtb
+new file mode 100644
+index 00000000000..ad1197af41f
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_gl.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="gl">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_gu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_gu.xtb
+new file mode 100644
+index 00000000000..7d8a4df1b08
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_gu.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="gu">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hi.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hi.xtb
+new file mode 100644
+index 00000000000..016f89e5f41
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_hi.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="hi">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">इस ऐप में वेबसाइट्स पर विज्ञापन ब्लॉक करने की अनुमति दें</translation>
++<translation id="4516904298421534459">फ़िल्टर सूचियां</translation>
++<translation id="4713094065435138404">भाषा विशिष्ठ फ़िल्टर सूचियों को जोड़ें या हटाएं</translation>
++<translation id="1575042640644572091">स्वीकार्य विज्ञापन</translation>
++<translation id="2763228171090923752">हम वेबसाइटों को सीधी, नॉनइंट्रूसिव विज्ञापन का उपयोग करने के लिए प्रोत्साहित करना चाहेंगे। इसलिए हम ने स्वीकार्य विज्ञापनों के लिए कठोर निर्देश तैयार किये है, जो डिफ़ॉल्ट सेटिंग के अंतर्गत दिखाए जायेंगे। यदि आप विज्ञापन-मुक्त ब्राउज़ करना चाहते हैं, तो आप इस सेटिंग को किसी भी समय अक्षम कर सकते हैं।</translation>
++<translation id="7857292107035345544">श्वेतसूची वाले डोमेन</translation>
++<translation id="3575711988891311088">उन वेबसाइट्स को जोड़ें, जिन्हें आप इस सूची में विज्ञापन देखना चाहते हैं</translation>
++<translation id="7059127752542505809">डोमेन जोड़ें</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hr.xtb
+new file mode 100644
+index 00000000000..0cd45dd05f5
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_hr.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="hr">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Dopustite blokiranje oglasa na mrežnim mjestima u ovoj aplikaciji</translation>
++<translation id="4516904298421534459">Filtriraj popise</translation>
++<translation id="4713094065435138404">Dodaj ili ukloni popise filtara za određeni jezik</translation>
++<translation id="1575042640644572091">Prihvatljive reklame</translation>
++<translation id="2763228171090923752">Željeli bismo potaknuti web-mjesta na korištenje izravnog, nenametljivog reklamiranja. Zato smo utvrdili stroge smjernice za identificiranje Prihvatljivih reklama, koje se vide pod zadanim postavkama. Ako želite pregledati bez reklama, ovu postavku možete onemogućiti kad god želite.</translation>
++<translation id="7857292107035345544">Popis dopuštenih domena</translation>
++<translation id="3575711988891311088">Na ovaj popis dodajte web-mjesta s kojih želite vidjeti reklame</translation>
++<translation id="7059127752542505809">Dodaj domen</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hu.xtb
+new file mode 100644
+index 00000000000..b56f841b679
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_hu.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="hu">
++<translation id="8714145577049629910">Reklámok blokkolása</translation>
++<translation id="3493556515901914593">Reklámblokkolás engedélyezése webhelyeken ezen alkalmazásban</translation>
++<translation id="4516904298421534459">Filter listák</translation>
++<translation id="4713094065435138404">Adja hozzá azokat a nyelveket, amelyekben általában a weboldalak böngészését végzi.</translation>
++<translation id="1575042640644572091">Elfogadható hirdetések</translation>
++<translation id="2763228171090923752">Az elfogadható hirdetések olyan nem bosszantó hirdetések, amelyek szigorú hirdetési szabályoknak felelnek meg. Segítenek a tartalomkészítők bevételeinek generálásában, és nem zavarják a tartalmak megtekintését. Alapértelmezésként be van kapcsolva ezen funkció, de ez bármikor kikapcsolható.</translation>
++<translation id="7857292107035345544">Engedélyezőlista</translation>
++<translation id="3575711988891311088">Támogassa kedvenc weboldalait e listához történő hozzáadással. Előfordulhat, hogy hirdetéseket is láthat rajtuk.</translation>
++<translation id="7059127752542505809">URL-cím megadása</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_hy.xtb b/chrome/browser/adblock/android/translations/adblock_strings_hy.xtb
+new file mode 100644
+index 00000000000..2ae4ee10755
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_hy.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="hy">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_id.xtb b/chrome/browser/adblock/android/translations/adblock_strings_id.xtb
+new file mode 100644
+index 00000000000..9399a0ba13e
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_id.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="id">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Izinkan pemblokiran iklan pada situs web dalam aplikasi ini</translation>
++<translation id="4516904298421534459">Daftar filter</translation>
++<translation id="4713094065435138404">Tambah atau hapus daftar filter dalam bahasa tertentu</translation>
++<translation id="1575042640644572091">Iklan yang Bisa Diterima</translation>
++<translation id="2763228171090923752">Kami ingin mendorong agar semua situs web menggunakan metode periklanan yang bersifat sederhana dan nonintrusif. Itulah sebabnya mengapa kami menetapkan pedoman yang ketat dalam mengidentifikasi Iklan yang Bisa Diterima, yang ditunjukkan dalam pengaturan default kami. Jika Anda ingin menjelajah internet tanpa melihat iklan apa pun, Anda bisa menonaktifkan pengaturan ini kapan saja.</translation>
++<translation id="7857292107035345544">Domain yang masuk dalam daftar putih</translation>
++<translation id="3575711988891311088">Tambah situs web yang ingin Anda lihat iklan di dalamnya ke daftar ini</translation>
++<translation id="7059127752542505809">Tambah domain</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_is.xtb b/chrome/browser/adblock/android/translations/adblock_strings_is.xtb
+new file mode 100644
+index 00000000000..b93d5071f77
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_is.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="is">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_it.xtb b/chrome/browser/adblock/android/translations/adblock_strings_it.xtb
+new file mode 100644
+index 00000000000..79fec663887
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_it.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="it">
++<translation id="8714145577049629910">Blocco degli annunci</translation>
++<translation id="3493556515901914593">Abilita il blocco pubblicità sui siti Web</translation>
++<translation id="4516904298421534459">Elenchi di filtri</translation>
++<translation id="4713094065435138404">Aggiungi le lingue dei siti web che visiti regolarmente</translation>
++<translation id="1575042640644572091">Pubblicità Accettabili</translation>
++<translation id="2763228171090923752">Le pubblicità accettabili sono annunci non fastidiosi che rispettano un rigoroso standard pubblicitario. Aiutano a generare entrate per i creatori di contenuti e non interferiscono con i contenuti che si stanno visualizzando.</translation>
++<translation id="7857292107035345544">Elenco consentiti</translation>
++<translation id="3575711988891311088">Sostieni i tuoi siti web preferiti aggiungendoli a questo elenco. È possibile che su questi siti web appaiano delle pubblicità.</translation>
++<translation id="7059127752542505809">Inserisci URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_iw.xtb b/chrome/browser/adblock/android/translations/adblock_strings_iw.xtb
+new file mode 100644
+index 00000000000..da68556aa00
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_iw.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="iw">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">אפשר חסימת התראות באתרים באפליקציה זאת</translation>
++<translation id="4516904298421534459">רשימות סינון</translation>
++<translation id="4713094065435138404">הוסף או הסר רשימות סינון ספציפיות לשפה</translation>
++<translation id="1575042640644572091">פרסומות מקובלות</translation>
++<translation id="2763228171090923752">אנחנו רוצים לעודד אתרים בפרסום ישיר ושאינו מפריע. לכן ביססנו קווים מנחים נוקשים לזיהוי פרסומות מקובלות, שמוצגות בהגדרות ברירת מחדל. אם תרצו לגלוש ללא פרסומות כלל, תוכלו לבטל הגדרה זו בכל עת.</translation>
++<translation id="7857292107035345544">דומיינים ברשימה הלבנה</translation>
++<translation id="3575711988891311088">לרשימה הזו הוסף אתרים שבהם תרצה לראות פרסומות</translation>
++<translation id="7059127752542505809">הוסף דומיין</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ja.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ja.xtb
+new file mode 100644
+index 00000000000..b6add6b2add
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ja.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ja">
++<translation id="8714145577049629910">広告ブロック</translation>
++<translation id="3493556515901914593">このアプリで、ウェブサイトの広告ブロックを許可する</translation>
++<translation id="4516904298421534459">フィルターリスト</translation>
++<translation id="4713094065435138404">通常ウェブサイトをご覧になる際の言語を追加してください</translation>
++<translation id="1575042640644572091">控えめな広告</translation>
++<translation id="2763228171090923752">控えめな広告とは、厳格な広告基準を遵守する邪魔にならない広告のことです。これらの広告はコンテンツ作成者の収入源となるとともに、ご覧になっているコンテンツに干渉しないようになっています。この機能はデフォルトで ON になっていますが、いつでも OFF にすることができます。</translation>
++<translation id="7857292107035345544">許可リスト</translation>
++<translation id="3575711988891311088">このリストにお気に入りのウェブサイトを追加して支援しましょう。広告が表示される場合があります。</translation>
++<translation id="7059127752542505809">URL を入力してください</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ka.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ka.xtb
+new file mode 100644
+index 00000000000..57c55dddd2e
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ka.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ka">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_kk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_kk.xtb
+new file mode 100644
+index 00000000000..4fa047f61d1
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_kk.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="kk">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Осы қолданбадағы веб-сайттарға жарнамаларға тыйым салуға рұқсат ету</translation>
++<translation id="4516904298421534459">Сүзгі тізімдері</translation>
++<translation id="4713094065435138404">Тілге тән сүзгі тізімдерін қосу немесе жою</translation>
++<translation id="1575042640644572091">Қабылданатын жарнамалар</translation>
++<translation id="2763228171090923752">Веб-сайттарда тікелей емес, жалықтырмайтын жарнама пайдалануды қалаймыз. Сол себепті, әдепкі параметрлер астында көрсетілген қабылданатын жарнамаларды анықтау бойынша қатаң нұсқаулықтарды орнату керек. Егер тегін жарнаманы шолуды қаласаңыз, осы параметрді кез келген уақытта өшіре аласыз.</translation>
++<translation id="7857292107035345544">Ақ тізімге енген домендер</translation>
++<translation id="3575711988891311088">Осы тізімге жарнамалар көруді қалайтын веб-сайттарды қосу</translation>
++<translation id="7059127752542505809">Домен қосу</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_km.xtb b/chrome/browser/adblock/android/translations/adblock_strings_km.xtb
+new file mode 100644
+index 00000000000..553178f99ad
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_km.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="km">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">អនុញ្ញាតការទប់ស្កាត់ការផ្សាយពាណិជ្ជកម្មនៅលើគេហទំព័រក្នុងកម្មវិធីនេះ</translation>
++<translation id="4516904298421534459">បញ្ជីតម្រង</translation>
++<translation id="4713094065435138404">បន្ថែម ឬដកបញ្ជីតម្រង</translation>
++<translation id="1575042640644572091">ការផ្សាយពាណិជ្ជកម្ម</translation>
++<translation id="2763228171090923752">យើងចង់</translation>
++<translation id="7857292107035345544">ដូមែន</translation>
++<translation id="3575711988891311088">បន្ថែម</translation>
++<translation id="7059127752542505809">បន្ថែមដូមែន</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_kn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_kn.xtb
+new file mode 100644
+index 00000000000..cc3643a208f
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_kn.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="kn">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ko.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ko.xtb
+new file mode 100644
+index 00000000000..e378e72c03c
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ko.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ko">
++<translation id="8714145577049629910">광고 차단</translation>
++<translation id="3493556515901914593">이 앱에서 웹사이트 광고 차단을 허용합니다</translation>
++<translation id="4516904298421534459">필터 목록</translation>
++<translation id="4713094065435138404">웹사이트 탐색 시 자주 사용하는 언어를 추가합니다</translation>
++<translation id="1575042640644572091">허용되는 광고</translation>
++<translation id="2763228171090923752">허용되는 광고란 엄격한 광고 기준을 준수하는 성가시지 않은 광고입니다.  콘텐츠 크리에이터의 수익 창출에 도움이 되며 표시 중인 콘텐츠를 방해하지 않습니다. 이 기능은 기본 설정에서 켜짐 상태이지만 언제든지 끌 수 있습니다.</translation>
++<translation id="7857292107035345544">허용 목록</translation>
++<translation id="3575711988891311088">이 목록에 즐겨 찾는 웹 사이트를 추가하여 지원할 수 있습니다.  광고가 표시될 수 있습니다.</translation>
++<translation id="7059127752542505809">URL 입력</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ky.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ky.xtb
+new file mode 100644
+index 00000000000..71a08837d26
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ky.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ky">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_lo.xtb b/chrome/browser/adblock/android/translations/adblock_strings_lo.xtb
+new file mode 100644
+index 00000000000..eb6216c2e6f
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_lo.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="lo">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_lt.xtb b/chrome/browser/adblock/android/translations/adblock_strings_lt.xtb
+new file mode 100644
+index 00000000000..0d29766aba3
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_lt.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="lt">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Leisti šioje programėlėje blokuoti svetainių reklamas</translation>
++<translation id="4516904298421534459">Filtrų sąrašas</translation>
++<translation id="4713094065435138404">Pridėti arba pašalinti konkrečių kalbų filtrų sąrašus</translation>
++<translation id="1575042640644572091">Priimtini skelbimai</translation>
++<translation id="2763228171090923752">Norėtume svetaines paskatinti naudoti aiškias, neintervencines reklamas. Tam sudarėme griežtas Priimtinų skelbimų, kurie rodomi esant numatytiesiems nustatymams, identifikavimo gaires. Jei naršydami norite nematyti skelbimų, šį nustatymą galite bet kada išjungti.</translation>
++<translation id="7857292107035345544">Į baltąjį sąrašą įtraukti domenai</translation>
++<translation id="3575711988891311088">Į šį sąrašą pridėkite svetaines, kurių skelbimus norite matyti</translation>
++<translation id="7059127752542505809">Pridėti domeną</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_lv.xtb b/chrome/browser/adblock/android/translations/adblock_strings_lv.xtb
+new file mode 100644
+index 00000000000..5e764380096
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_lv.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="lv">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Atļaut reklāmu bloķēšanu tīmekļa vietnēs šajā programmā</translation>
++<translation id="4516904298421534459">Filtru saraksti</translation>
++<translation id="4713094065435138404">Pievienojiet vai noņemiet valodai raksturīgos filtru sarakstus</translation>
++<translation id="1575042640644572091">Pieņemamās reklāmas</translation>
++<translation id="2763228171090923752">Mēs vēlamies mudināt tīmekļa vietnes izmantot vienkāršas, neuzmācīgas reklāmas. Tādēļ mēs esam izveidota stingras vadlīnijas, lai atpazītu pieņemamās reklāmas, kas tiek parādītas, kad ir aktīvi noklusējuma iestatījumi. Ja vēlaties pārlūkot bez reklāmām, varat atslēgt šo iestatījumu jebkurā laikā.</translation>
++<translation id="7857292107035345544">Baltajā sarakstā iekļautie domēni</translation>
++<translation id="3575711988891311088">Pievienojiet šim sarakstam tīmekļa vietnes, kurās vēlaties redzēt reklāmas</translation>
++<translation id="7059127752542505809">Pievienot domēnu</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_mk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_mk.xtb
+new file mode 100644
+index 00000000000..c5726c83fc3
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_mk.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="mk">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Дозволи блокирање реклами на веб-локации во оваа апликација</translation>
++<translation id="4516904298421534459">Листи на филтри</translation>
++<translation id="4713094065435138404">Додај или отстрани листи на филтри специфични за јазикот</translation>
++<translation id="1575042640644572091">Прифатливи реклами</translation>
++<translation id="2763228171090923752">Би сакале да ги охрабриме веб сајтовите да се служат со едноставно, ненаметливо рекламирање. Затоа воспоставивме строги упатства за идентификација на Прифатливите реклами, што се наоѓаат под стандардните поставки. Ако сакаш да прелистуваш без реклами, во секое време може да ја оневозможиш оваа поставка.</translation>
++<translation id="7857292107035345544">Домени на бела листа</translation>
++<translation id="3575711988891311088">На оваа листа додај веб сајтови на коишто сакаш да видиш реклами</translation>
++<translation id="7059127752542505809">Додај домен</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ml.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ml.xtb
+new file mode 100644
+index 00000000000..f7db3152e4c
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ml.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ml">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_mn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_mn.xtb
+new file mode 100644
+index 00000000000..a22186757ac
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_mn.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="mn">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_mr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_mr.xtb
+new file mode 100644
+index 00000000000..098d29c9921
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_mr.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="mr">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ms.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ms.xtb
+new file mode 100644
+index 00000000000..4f7cde48bfd
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ms.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ms">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Benarkan penyekat iklan pada tapak web dalam apl ini</translation>
++<translation id="4516904298421534459">Senarai penapis</translation>
++<translation id="4713094065435138404">Tambah atau buang senarai penapis bahasa tertentu</translation>
++<translation id="1575042640644572091">Iklan yang boleh diterima</translation>
++<translation id="2763228171090923752">Kami ingin menggalakkan lama web untuk menggunakan pengiklanan yang jujur dan tidak mengganggu. Itulah sebabnya kami menubuhkan garis panduan ketat untuk mengenal pasti Iklan Boleh Diterima, yang dipaparkan di bawah tetapan lalai. Jika anda ingin melayari bebas iklan, anda boleh menyahdaya tetapan ini pada bila-bila masa.</translation>
++<translation id="7857292107035345544">Domain disenarai putih</translation>
++<translation id="3575711988891311088">Tambah laman web yang anda ingin lihat iklan pada senarai ini</translation>
++<translation id="7059127752542505809">Tambaha domain</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_my.xtb b/chrome/browser/adblock/android/translations/adblock_strings_my.xtb
+new file mode 100644
+index 00000000000..915e955d418
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_my.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="my">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">ဤအက္(ပ္)တြင္ ဝဘ္ဆိုုဒ္မ်ား ၾကည့္ရႈခ်ိန္၌ ေၾကာ္ျငာမ်ားထြက္ေပၚလာျခင္းကိုု ပိတ္ဆိုု႔ရန္အတြက္ ခြင့္ျပဳသည္</translation>
++<translation id="4516904298421534459">စစ္ထုတ္ထားသည့္စာရင္းမ်ား</translation>
++<translation id="4713094065435138404">ဘာသာရပ္ဆိုင္ရာစစ္ထုတ္စာရင္းမ်ားကိုထည့္ပါ သို႔မဟုတ္ ဖယ္ထုတ္ပါ</translation>
++<translation id="1575042640644572091">လက္ခံႏုိင္ေသာေၾကာ္ျငာမ်ား</translation>
++<translation id="2763228171090923752">ေျဖာင့္မွန္ေသာ၊ အစြန္းထြက္ျခင္းမရွိေသာ ေၾကာ္ျငာကိုအသံုးျပဳရန္ ကၽြႏု္ပ္တို႔ ဝဘ္ဆိုက္ကို တိုက္တြန္းလိုပါသည္။ ပံုေသဆက္တင္မ်ားေအာက္တြင္ ေဖာ္ျပထားသည့္ လက္ခံႏုိင္သည့္ ေၾကာ္ျငာမ်ားကို ေဖာ္ျပရန္ တင္းက်ပ္သည့္လမ္းညႊန္ခ်က္မ်ားကို ထို႔အတြက္ေၾကာင့္ ကၽြႏု္ပ္တုိ႔ ခ်မွတ္ထားသည္။ ေၾကာ္ျငာမပါျခင္းကိုရွာေဖြလိုသည့္အခါ သင္သည္ ထုိဆက္တင္ကို မည္သည့္အခ်ိန္တြင္မဆို ပိတ္ထားႏုိင္သည္။</translation>
++<translation id="7857292107035345544">အတည္ျပဳထားသည့္ ဒိုမိန္းမ်ား</translation>
++<translation id="3575711988891311088">ဤစာရင္းတြင္ ေၾကာ္ျငာမ်ားကိုျမင္ခ်င္သည့္ ဝဘ္ဆိုက္မ်ားကိုထည့္သြင္းပါ</translation>
++<translation id="7059127752542505809">ডဒိုမိန္းကိုထည့္ပါ</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ne.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ne.xtb
+new file mode 100644
+index 00000000000..30c7e0657e9
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ne.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ne">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_nl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_nl.xtb
+new file mode 100644
+index 00000000000..6bed94a9d1a
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_nl.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="nl">
++<translation id="8714145577049629910">Advertentieblokkering</translation>
++<translation id="3493556515901914593">In deze app advertentieblokkering op websites toestaan</translation>
++<translation id="4516904298421534459">Filterlijsten</translation>
++<translation id="4713094065435138404">Voeg de talen toe waarin u regelmatig websites bezoekt</translation>
++<translation id="1575042640644572091">Acceptabele advertenties</translation>
++<translation id="2763228171090923752">Acceptabele advertenties zijn niet-irritante advertenties die voldoen aan een strenge advertentie standaard. Ze dragen bij tot het genereren van inkomsten voor contentmakers en komen niet in de weg van de inhoud die u bekijkt. Deze optie staat standaard aan, maar u kan het elk moment uitschakelen.</translation>
++<translation id="7857292107035345544">Toelatingslijst</translation>
++<translation id="3575711988891311088">Ondersteun uw favoriete websites door ze aan deze lijst toe te voegen. Er kunnen advertenties op worden weergegeven.</translation>
++<translation id="7059127752542505809">Voer URL in</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_no.xtb b/chrome/browser/adblock/android/translations/adblock_strings_no.xtb
+new file mode 100644
+index 00000000000..913638ba4e9
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_no.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="no">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_or.xtb b/chrome/browser/adblock/android/translations/adblock_strings_or.xtb
+new file mode 100644
+index 00000000000..fe2ddbc9936
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_or.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="or">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pa.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pa.xtb
+new file mode 100644
+index 00000000000..5c7ac50d575
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_pa.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="pa">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pl.xtb
+new file mode 100644
+index 00000000000..b37947e5ed2
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_pl.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="pl">
++<translation id="8714145577049629910">Blokowanie reklam</translation>
++<translation id="3493556515901914593">Zezwalaj na blokowanie reklam na witrynach w tej aplikacji</translation>
++<translation id="4516904298421534459">Listy filtrów</translation>
++<translation id="4713094065435138404">Dodaj języki, w których najczęściej przeglądasz strony internetowe</translation>
++<translation id="1575042640644572091">Akceptowalne reklamy</translation>
++<translation id="2763228171090923752">Akceptowalne reklamy to reklamy nieirytujące, które podlegają rygorystycznym normom tworzenia reklam. Pomagają one generować dochód dla twórców, a Tobie nie przeszkadzają w oglądaniu treści stron.</translation>
++<translation id="7857292107035345544">Lista dozwolonych</translation>
++<translation id="3575711988891311088">Wspieraj swoje ulubione witryny, dodając je do tej listy. Reklamy będą na nich wyświetlane.</translation>
++<translation id="7059127752542505809">Wprowadź URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pt-BR.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pt-BR.xtb
+new file mode 100644
+index 00000000000..0185a74b082
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_pt-BR.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="pt-BR">
++<translation id="8714145577049629910">Bloqueio de anúncios</translation>
++<translation id="3493556515901914593">Permitir o bloqueio de anúncios em páginas web neste app</translation>
++<translation id="4516904298421534459">Listas de filtros</translation>
++<translation id="4713094065435138404">Adicione os idiomas nos quais normalmente você navega nos sites</translation>
++<translation id="1575042640644572091">Anúncios Aceitáveis</translation>
++<translation id="2763228171090923752">Anúncios aceitáveis são anúncios não irritantes que atendem a um rígido padrão. Eles ajudam a gerar receita para criadores de conteúdo e não interferem no conteúdo que você exibe.</translation>
++<translation id="7857292107035345544">Lista de permissões</translation>
++<translation id="3575711988891311088">Para apoiar os seus sites favoritos, adicione-os a essa lista. Você poderá ver anúncios neles.</translation>
++<translation id="7059127752542505809">Inserir URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_pt-PT.xtb b/chrome/browser/adblock/android/translations/adblock_strings_pt-PT.xtb
+new file mode 100644
+index 00000000000..914f6e0aa9e
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_pt-PT.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="pt-PT">
++<translation id="8714145577049629910">Bloqueio de anúncios</translation>
++<translation id="3493556515901914593">Permitir o  bloqueio de anúncios em páginas web neste app</translation>
++<translation id="4516904298421534459">Listas de filtros</translation>
++<translation id="4713094065435138404">Adicionar ou remover listas de filtros específicas de idiomas</translation>
++<translation id="1575042640644572091">Anúncios Aceitáveis</translation>
++<translation id="2763228171090923752">Gostaríamos de incentivar os sites Web a utilizar anúncios simples e não intrusivos. Foi por esse motivo que estabelecemos diretrizes rigorosas para identificar Anúncios Aceitáveis, que são mostrados nas definições padrão. Se pretender uma navegação sem anúncios, é possível desativar esta definição a qualquer momento.</translation>
++<translation id="7857292107035345544">Domínios na lista branca</translation>
++<translation id="3575711988891311088">Adicione os sites Web dos quais pretende ver anúncios a esta lista</translation>
++<translation id="7059127752542505809">Adicionar domínio</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ro.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ro.xtb
+new file mode 100644
+index 00000000000..12d057707a5
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ro.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ro">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Permite blocarea reclamelor pe site-urile web în această aplicație</translation>
++<translation id="4516904298421534459">Listă filtre</translation>
++<translation id="4713094065435138404">Adăugați sau eliminați liste de filtre specifice limbilor</translation>
++<translation id="1575042640644572091">Reclame acceptabile</translation>
++<translation id="2763228171090923752">Am dori să încurajăm website-urile să folosească reclame directe, neintruzive. De aceea am definit reguli stricte pentru identificarea reclamelor acceptabile, care sunt prezentate la setările implicite standard. Dacă doriți să navigați pe Internet fără reclame, puteți dezactiva această setare în orice moment.</translation>
++<translation id="7857292107035345544">Domenii din lista de aprobare</translation>
++<translation id="3575711988891311088">Adăugați website-uri pe care doriți vedeți reclame la această listă</translation>
++<translation id="7059127752542505809">Adăugare domeniu</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ru.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ru.xtb
+new file mode 100644
+index 00000000000..c92bc24fbee
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ru.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ru">
++<translation id="8714145577049629910">Блокировка рекламы</translation>
++<translation id="3493556515901914593">Разрешить блокировку рекламы на сайтах в этом приложении</translation>
++<translation id="4516904298421534459">Списки фильтров</translation>
++<translation id="4713094065435138404">Добавить языки, на которых вы регулярно просматриваете сайты</translation>
++<translation id="1575042640644572091">Допустимая реклама</translation>
++<translation id="2763228171090923752">Допустимая реклама не является назойливой и соответствует строгим требованиям, предъявляемым ко внешнему виду сайтов. Она помогает создателям контента получать доход и не мешает чтению. Эта функция включена по умолчанию, но вы можете отключить её в любой момент.</translation>
++<translation id="7857292107035345544">Разрешенный список</translation>
++<translation id="3575711988891311088">Поддержите ваши любимые сайты, добавив их в этот список. На этих сайтах вы можете увидеть рекламу.</translation>
++<translation id="7059127752542505809">Ввести URL-адрес</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_si.xtb b/chrome/browser/adblock/android/translations/adblock_strings_si.xtb
+new file mode 100644
+index 00000000000..712d8907201
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_si.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="si">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sk.xtb
+new file mode 100644
+index 00000000000..49373744e63
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_sk.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="sk">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Povoliť blokovanie reklám na webových stránkach v tejto aplikácii</translation>
++<translation id="4516904298421534459">Zoznamy filtrov</translation>
++<translation id="4713094065435138404">Pridať alebo odstrániť zoznamy filtrov pre konkrétne jazyky</translation>
++<translation id="1575042640644572091">Prijateľné reklamy</translation>
++<translation id="2763228171090923752">Radi by sme podporili webové lokality, aby používali priamu a nerušivú reklamu. Preto sme vypracovali prísne pokyny na identifikáciu prijateľných reklám, ktoré sa zobrazujú v predvolených nastaveniach. Ak chcete prehliadať stránky bez reklám, môžete toto nastavenie kedykoľvek zakázať.</translation>
++<translation id="7857292107035345544">Domény s povolenými adresami</translation>
++<translation id="3575711988891311088">Pridajte webové lokality, ktoré chcete vidieť na tomto zozname</translation>
++<translation id="7059127752542505809">Pridať doménu</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sl.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sl.xtb
+new file mode 100644
+index 00000000000..16ced370e78
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_sl.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="sl">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Dovoli blokiranje oglasov na spletnih straneh v tej aplikaciji</translation>
++<translation id="4516904298421534459">Seznami filtrov</translation>
++<translation id="4713094065435138404">Dodaj ali odstranit sezname filtrov za jezik</translation>
++<translation id="1575042640644572091">Acceptable Ads</translation>
++<translation id="2763228171090923752">Želimo spodbujati, da bi spletne strani uporabljale enostavno, nevsiljivo oglaševanje. Zato smo vzpostavili stroge smernice za prepoznavanje sprejemljivih oglasov (Acceptable Ads), ki so prikazane pod privzetimi nastavitvami. Če želite brskati brez oglasov, lahko to nastavitev kadar koli onemogočite.</translation>
++<translation id="7857292107035345544">Dovoljene domene</translation>
++<translation id="3575711988891311088">Dodajte spletne strani, na katerih želite videti oglase, na ta seznam</translation>
++<translation id="7059127752542505809">Dodaj domeno</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sq.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sq.xtb
+new file mode 100644
+index 00000000000..3fecfc5f819
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_sq.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="sq">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sr-Latn.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sr-Latn.xtb
+new file mode 100644
+index 00000000000..14178c31f3a
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_sr-Latn.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="sr-Latn">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sr.xtb
+new file mode 100644
+index 00000000000..0ed2dfa087f
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_sr.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="sr">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Dozvolite blokiranje oglasa na veb lokacijama u ovoj aplikaciji</translation>
++<translation id="4516904298421534459">Liste filtera</translation>
++<translation id="4713094065435138404">Dodaj ili ukloni liste filtera za određeni jezik</translation>
++<translation id="1575042640644572091">Prihvatljive reklame</translation>
++<translation id="2763228171090923752">Želeli bismo da podstaknemo veb lokacije da koriste način neposrednog, nenametljivog reklamiranja. Zato smo utvrdili stroge smernice za identifikovanje prihvatljivih reklama, koje mogu da se vide pod podrazumevanim postavkama. Ako želite da pregledate bez reklama, ovu postavku možete da onemogućite bilo kad.</translation>
++<translation id="7857292107035345544">Bela lista domena</translation>
++<translation id="3575711988891311088">Na ovu listu dodajte veb lokacije sa kojih želite da vidite reklame</translation>
++<translation id="7059127752542505809">Dodaj domen</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sv.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sv.xtb
+new file mode 100644
+index 00000000000..49ab1852b15
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_sv.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="sv">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Tillåt annonsblockering på webbplatser i denna app</translation>
++<translation id="4516904298421534459">Filterlistor</translation>
++<translation id="4713094065435138404">Lägg till och ta bort språkspecifika filterlistor</translation>
++<translation id="1575042640644572091">Accepterade annonser</translation>
++<translation id="2763228171090923752">Vi vill uppmuntra webbplatser att använda enkel, icke påträngande annonsering. Därför har vi upprättat strikta riktlinjer för att identifiera Accepterade annonser, som visas under standardinställningarna. Om du vill surfa annonsfritt kan du när som helst inaktivera den här inställningen.</translation>
++<translation id="7857292107035345544">Godkända domäner</translation>
++<translation id="3575711988891311088">Lägg till webbplatser där du vill se annonser i den här listan</translation>
++<translation id="7059127752542505809">Lägg till domän</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_sw.xtb b/chrome/browser/adblock/android/translations/adblock_strings_sw.xtb
+new file mode 100644
+index 00000000000..48641e0840b
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_sw.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="sw">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Tillåt annonsblockering på webbplatser i denna app</translation>
++<translation id="4516904298421534459">Chuja Orodha</translation>
++<translation id="4713094065435138404">Ongeza au ondoa uchujaji wa orodha kwa misingi ya lugha</translation>
++<translation id="1575042640644572091">Ads Zinazokubalika</translation>
++<translation id="2763228171090923752">Tungependa kuhimiza tovuti zitumie utangazaji wa moja kwa moja usio na uingiliaji. Hiyo ndio sababu tumeanzisha mwongozo mkali wa kutambua Ads Zinazokubalika, ambazo zinaonyeshwa kwenye mpangilio asili. Ikiwa ungependa kudurusu bila ads, unaweza kusimamisha mpangilio huu wakati wowote.</translation>
++<translation id="7857292107035345544">Domeini za Orodha Nyeupe</translation>
++<translation id="3575711988891311088">Ongeza tovuti ambazo kwazo ungependa kuona ads kwenye orodha hii</translation>
++<translation id="7059127752542505809">Ongeza domeini</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ta.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ta.xtb
+new file mode 100644
+index 00000000000..ef90687762c
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ta.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ta">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_te.xtb b/chrome/browser/adblock/android/translations/adblock_strings_te.xtb
+new file mode 100644
+index 00000000000..48c714ba18f
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_te.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="te">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_th.xtb b/chrome/browser/adblock/android/translations/adblock_strings_th.xtb
+new file mode 100644
+index 00000000000..cbd45f67214
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_th.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="th">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">อนุญาตให้บล็อคโฆษณาบนเว็บไซต์ในแอปนี้</translation>
++<translation id="4516904298421534459">ตัวกรองรายการ</translation>
++<translation id="4713094065435138404">เพิ่มหรือลบตัวกรองรายการภาษาที่ระบุ</translation>
++<translation id="1575042640644572091">โฆษณาที่ยอมรับได้</translation>
++<translation id="2763228171090923752">เราต้องการส่งเสริมให้เว็บไซต์ทำการโฆษณาโดยตรง โดยไม่สร้างความรำคาญแก่ผู้ชม นั่นจึงเป็นเหตุผลว่าทำไมเราถึงได้กำหนดแนวทางที่เข้มงวดเพื่อระบุโฆษณาที่ยอมรับได้ ซึ่งแสดงอยู่ด้านล่างในค่าเริ่มต้นของการตั้งค่า หากคุณต้องการเรียกใช้งานโฆษณาฟรี คุณสามารถปิดใช้งานการตั้งค่านี้ได้ตลอดเวลา</translation>
++<translation id="7857292107035345544">โดเมนที่อนุญาต</translation>
++<translation id="3575711988891311088">เพิ่มเว็บไซต์ที่คุณต้องการเห็นโฆษณาบนรายการนี้</translation>
++<translation id="7059127752542505809">เพิ่มโดเมน</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_tr.xtb b/chrome/browser/adblock/android/translations/adblock_strings_tr.xtb
+new file mode 100644
+index 00000000000..3d8d36735e7
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_tr.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="tr">
++<translation id="8714145577049629910">Reklam engelleme</translation>
++<translation id="3493556515901914593">Bu uygulamadaki web sitelerinde reklamların engellenmesine izin verin</translation>
++<translation id="4516904298421534459">Filtre listeleri</translation>
++<translation id="4713094065435138404">Web sitelerinde düzenli olarak gezindiğiniz dilleri ekleyin</translation>
++<translation id="1575042640644572091">Kabul edilebilir reklamlar</translation>
++<translation id="2763228171090923752">Kabul edilebilir reklamlar, katı bir reklam standardına uygun olan, can sıkıcı olmayan reklamlardır. Bunlar, içerik yaratıcılarının gelir elde etmesini sağlar ve görüntülediğiniz içeriği sekteye uğratmaz. Bu özellik varsayılan olarak açıktır, ancak istediğiniz zaman kapatabilirsiniz.</translation>
++<translation id="7857292107035345544">İzin listesi</translation>
++<translation id="3575711988891311088">En sevdiğiniz web sitelerini bu listeye ekleyerek destekleyin.  Bu sitelerde reklamlar görebilirsiniz.</translation>
++<translation id="7059127752542505809">URL gir</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_uk.xtb b/chrome/browser/adblock/android/translations/adblock_strings_uk.xtb
+new file mode 100644
+index 00000000000..a5e5540c360
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_uk.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="uk">
++<translation id="8714145577049629910">Блокування реклами</translation>
++<translation id="3493556515901914593">Дозволити блокування реклами на веб-сайтах у цьому додатку</translation>
++<translation id="4516904298421534459">Списки фільтрів</translation>
++<translation id="4713094065435138404">Додавання або видалення списків фільтрів для різних мов</translation>
++<translation id="1575042640644572091">Допустима реклама</translation>
++<translation id="2763228171090923752">Ми хотіли б заохотити веб-сайти використовувати просту, ненав\'язливу рекламу. Тому ми створили суворі принципи для ідентифікації допустимої реклами, яка відображається за замовчуванням. Якщо ви хочете переглядати сайти без реклами, ви можете відключити її у будь-який момент.</translation>
++<translation id="7857292107035345544">Дозволені домени</translation>
++<translation id="3575711988891311088">Додайте веб-сайти у білий список, щоб дозволити відображення реклами</translation>
++<translation id="7059127752542505809">Додати домен</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_ur.xtb b/chrome/browser/adblock/android/translations/adblock_strings_ur.xtb
+new file mode 100644
+index 00000000000..fd24b10fac1
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_ur.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="ur">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">اس ایپ میں ویب سائٹوں پر اشتہارات روکنے کی اجازت دیں۔</translation>
++<translation id="4516904298421534459">فلٹر والی فہرستیں</translation>
++<translation id="4713094065435138404">زبان کے ساتھ مخصوص فلٹر والی فہرستیں اضافہ کریں یا ہٹائیں</translation>
++<translation id="1575042640644572091">قابل قبول اشتہارات</translation>
++<translation id="2763228171090923752">ہم اس بات کی ترغیب دینا چاہیں گے کہ ویب سائٹیں راست، غیر مداخلتی اشتہارات استعمال کریں۔ یہی وجہ ہے کہ ہم نے قابل قبول اشتہارات کی شناخت کے لیے سخت ہدایات مرتب کی ہیں، جنہیں ڈیفالٹ ترتیبات میں دکھایا گیا ہے۔ اگر آپ اشتہارات سے پاک براؤزنگ کرنا چاہتے ہیں تو کسی بھی وقت اس ترتیب کو غیر فعال کر سکتے ہیں۔</translation>
++<translation id="7857292107035345544">منظور شدہ فہرست میں داخل کردہ ڈومین</translation>
++<translation id="3575711988891311088">اس فہرست میں ویب سائٹوں کا اضافہ کریں آپ جن کے اشتہارات دیکھنا چاہتے ہیں</translation>
++<translation id="7059127752542505809">ڈومین کا اضافہ کریں</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_uz.xtb b/chrome/browser/adblock/android/translations/adblock_strings_uz.xtb
+new file mode 100644
+index 00000000000..1d58ed4c6d7
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_uz.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="uz">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_vi.xtb b/chrome/browser/adblock/android/translations/adblock_strings_vi.xtb
+new file mode 100644
+index 00000000000..6874fed6d97
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_vi.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="vi">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">Cho phép chặn quảng cáo trên trang web trong ứng dụng này</translation>
++<translation id="4516904298421534459">Danh sách lọc</translation>
++<translation id="4713094065435138404">Thêm hoặc xóa danh sách bộ lọc ngôn ngữ</translation>
++<translation id="1575042640644572091">Quảng cáo chấp nhận được</translation>
++<translation id="2763228171090923752">Chúng tôi khuyến khích các trang web sử dụng quảng cáo đơn giản, không gây phiền toái. Đó là lý do tại sao chúng tôi tạo ra hướng dẫn chặt chẽ để xác định Quảng cáo chấp nhận được, những quảng cáo được hiển thị ở chế độ cài đặt mặc định. Nếu bạn muốn duyệt web không có quảng cáo, bạn có thể vô hiệu hóa cài đặt này bất kỳ lúc nào.</translation>
++<translation id="7857292107035345544">Danh sách tên miền không gây hại</translation>
++<translation id="3575711988891311088">Thêm các trang web mà bạn muốn xem quảng cáo vào danh sách này</translation>
++<translation id="7059127752542505809">Thêm tên miền</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zh-CN.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zh-CN.xtb
+new file mode 100644
+index 00000000000..9d3d00822e4
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_zh-CN.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="zh-CN">
++<translation id="8714145577049629910">广告拦截</translation>
++<translation id="3493556515901914593">允许于此应用程序中启用网站广告拦截功能</translation>
++<translation id="4516904298421534459">过滤列表</translation>
++<translation id="4713094065435138404">添加您浏览网站时通常使用的语言</translation>
++<translation id="1575042640644572091">可接受广告</translation>
++<translation id="2763228171090923752">可接受广告是符合严格广告标准的广告，不会给人造成困扰。这些广告助于内容创作者 带来收入，并且不会干扰您观看的内容。此功能默认为开启，但您可以随时关闭。</translation>
++<translation id="7857292107035345544">允许列表</translation>
++<translation id="3575711988891311088">支持您最喜爱的网站，将其添加到此列表。您可能在这些网站上看到广告。</translation>
++<translation id="7059127752542505809">输入 URL</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zh-HK.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zh-HK.xtb
+new file mode 100644
+index 00000000000..3ecd9e371ad
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_zh-HK.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="zh-HK">
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zh-TW.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zh-TW.xtb
+new file mode 100644
+index 00000000000..b085469ba6b
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_zh-TW.xtb
+@@ -0,0 +1,13 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="zh-TW">
++<translation id="8714145577049629910">Ad blocking</translation>
++<translation id="3493556515901914593">允許於此App中啟用網站廣告攔截功能</translation>
++<translation id="4516904298421534459">過濾列表</translation>
++<translation id="4713094065435138404">新增或移除特定於語言的篩選清單</translation>
++<translation id="1575042640644572091">可接受廣告</translation>
++<translation id="2763228171090923752">我們鼓勵網站使用直接的非侵入性廣告。這就是我們設立嚴格的指引來識別依預設顯示之可接受廣告的原因。若您希望無廣告瀏覽，則可以隨時停用此設定。</translation>
++<translation id="7857292107035345544">列出的白名單網域</translation>
++<translation id="3575711988891311088">將您想要在其上查看廣告的網站新增至此清單</translation>
++<translation id="7059127752542505809">新增網域</translation>
++</translationbundle>
+diff --git a/chrome/browser/adblock/android/translations/adblock_strings_zu.xtb b/chrome/browser/adblock/android/translations/adblock_strings_zu.xtb
+new file mode 100644
+index 00000000000..f9c1cd322fb
+--- /dev/null
++++ b/chrome/browser/adblock/android/translations/adblock_strings_zu.xtb
+@@ -0,0 +1,4 @@
++<?xml version="1.0" ?>
++<!DOCTYPE translationbundle>
++<translationbundle lang="zu">
++</translationbundle>

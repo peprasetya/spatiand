@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 25 May 2024 10:34:38 +0000
+Subject: [PATCH 224/310] Enable menu on reload button
+
+Activate right-button submenu in reload (desktop platforms).
+Patch derived from the ungoogled-chromium patch of the same name.
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Enable-menu-on-reload-button.patch
+---
+ chrome/app/generated_resources.grd              | 4 ++--
+ chrome/browser/ui/views/toolbar/toolbar_view.cc | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/chrome/app/generated_resources.grd b/chrome/app/generated_resources.grd
+index 1d1a040cdff..3b4c52b4c03 100644
+--- a/chrome/app/generated_resources.grd
++++ b/chrome/app/generated_resources.grd
+@@ -4801,10 +4801,10 @@ are declared in tools/grit/grit_args.gni.
+         Normal Reload
+       </message>
+       <message name="IDS_RELOAD_MENU_HARD_RELOAD_ITEM" desc="Menu item displayed in the Reload dropdown menu when in dev mode">
+-        Hard Reload
++        Reload bypassing cache
+       </message>
+       <message name="IDS_RELOAD_MENU_EMPTY_AND_HARD_RELOAD_ITEM" desc="Menu item displayed in the Reload dropdown menu when in dev mode">
+-        Empty Cache and Hard Reload
++        Empty Cache and Reload
+       </message>
+ 
+       <!-- Tab sharing infobar -->
+diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+index 184ae3e5bc4..55aff4cf3c5 100644
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+@@ -1214,7 +1214,7 @@ void ToolbarView::Update(WebContents* tab) {
+ 
+   if (ReloadControl* reload_control = GetReloadButton(); reload_control) {
+     reload_control->SetDevToolsStatus(
+-        chrome::IsDebuggerAttachedToCurrentTab(browser_));
++        true);
+   }
+ }
+ 

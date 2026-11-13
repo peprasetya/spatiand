@@ -1,0 +1,55 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 10 Jul 2026 06:28:01 +0000
+Subject: [PATCH 263/310] Reduce input capability fingerprinting through
+ normalization
+
+Reduce the amount of hardware-specific information exposed through pointer and
+touch capability APIs.
+Normalize pointer type, hover capability, and maximum touch points to common
+profiles instead of exposing the exact input hardware configuration.
+This avoids exposing differences between devices with similar usage patterns,
+such as desktop systems with optional touchscreen hardware.
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Reduce-input-capability-fingerprinting-through-normalization.patch
+---
+ ui/base/pointer/pointer_device_linux.cc | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ui/base/pointer/pointer_device_linux.cc b/ui/base/pointer/pointer_device_linux.cc
+index 5c9bf105bb1..0b6998b320c 100644
+--- a/ui/base/pointer/pointer_device_linux.cc
++++ b/ui/base/pointer/pointer_device_linux.cc
+@@ -15,6 +15,7 @@ namespace ui {
+ namespace {
+ 
+ bool IsTouchDevicePresent() {
++  if ((true)) return false;
+   return !DeviceDataManager::GetInstance()->GetTouchscreenDevices().empty();
+ }
+ 
+@@ -31,6 +32,7 @@ bool IsMouseOrTouchpadPresent() {
+ }  // namespace
+ 
+ std::pair<int, int> GetAvailablePointerAndHoverTypesImpl() {
++  if ((true)) return {POINTER_TYPE_FINE, HOVER_TYPE_HOVER};
+   int pointer_types = IsTouchDevicePresent() ? POINTER_TYPE_COARSE : 0;
+   int hover_types = HOVER_TYPE_NONE;
+   if (IsMouseOrTouchpadPresent()) {
+@@ -41,6 +43,7 @@ std::pair<int, int> GetAvailablePointerAndHoverTypesImpl() {
+ }
+ 
+ TouchScreensAvailability GetTouchScreensAvailability() {
++  if ((true)) return TouchScreensAvailability::NONE;
+   if (!IsTouchDevicePresent()) {
+     return TouchScreensAvailability::NONE;
+   }
+@@ -51,6 +54,7 @@ TouchScreensAvailability GetTouchScreensAvailability() {
+ }
+ 
+ int MaxTouchPoints() {
++  if ((true)) return 0;
+   const std::vector<TouchscreenDevice>& touchscreen_devices =
+       DeviceDataManager::GetInstance()->GetTouchscreenDevices();
+   const auto& it = std::ranges::max_element(touchscreen_devices, {},

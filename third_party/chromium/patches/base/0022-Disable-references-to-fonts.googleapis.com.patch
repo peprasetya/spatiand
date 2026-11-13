@@ -1,0 +1,89 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sun, 15 Oct 2017 21:45:46 +0200
+Subject: [PATCH 022/310] Disable references to fonts.googleapis.com
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Disable-references-to-fonts.googleapis.com.patch
+---
+ .../side_panel/read_anything/app/read_anything_toolbar.ts     | 4 +---
+ .../content/browser/dom_distiller_viewer_source.cc            | 2 +-
+ components/dom_distiller/core/html/dom_distiller_viewer.html  | 4 ----
+ components/dom_distiller/core/html/preview.html               | 2 +-
+ .../crashpad/crashpad/doc/support/crashpad_doxygen.css        | 3 +--
+ 5 files changed, 4 insertions(+), 11 deletions(-)
+
+diff --git a/chrome/browser/resources/side_panel/read_anything/app/read_anything_toolbar.ts b/chrome/browser/resources/side_panel/read_anything/app/read_anything_toolbar.ts
+index 4d9f139eaac..90d91739239 100644
+--- a/chrome/browser/resources/side_panel/read_anything/app/read_anything_toolbar.ts
++++ b/chrome/browser/resources/side_panel/read_anything/app/read_anything_toolbar.ts
+@@ -320,9 +320,7 @@ export class ReadAnythingToolbarElement extends ReadAnythingToolbarElementBase {
+     const link = document.createElement('link');
+     link.rel = 'preload';
+     link.as = 'style';
+-    link.href = 'https://fonts.googleapis.com/css?family=';
+-    link.href += this.visualBrowserProxy_.getAllFonts().join('|');
+-    link.href = link.href.replace(' ', '+');
++    this.setFontsLoaded();
+ 
+     link.addEventListener('load', () => {
+       link.media = 'all';
+diff --git a/components/dom_distiller/content/browser/dom_distiller_viewer_source.cc b/components/dom_distiller/content/browser/dom_distiller_viewer_source.cc
+index dc57c5c218e..3cfa5d612ba 100644
+--- a/components/dom_distiller/content/browser/dom_distiller_viewer_source.cc
++++ b/components/dom_distiller/content/browser/dom_distiller_viewer_source.cc
+@@ -308,7 +308,7 @@ bool DomDistillerViewerSource::ShouldServiceRequest(
+ std::string DomDistillerViewerSource::GetContentSecurityPolicy(
+     network::mojom::CSPDirectiveName directive) {
+   if (directive == network::mojom::CSPDirectiveName::StyleSrc) {
+-    return "style-src 'self' https://fonts.googleapis.com;";
++    return "style-src 'self';";
+   } else if (directive == network::mojom::CSPDirectiveName::ChildSrc) {
+     return "child-src *;";
+   } else if (directive ==
+diff --git a/components/dom_distiller/core/html/dom_distiller_viewer.html b/components/dom_distiller/core/html/dom_distiller_viewer.html
+index 7b0526533e8..6a4bde9f09a 100644
+--- a/components/dom_distiller/core/html/dom_distiller_viewer.html
++++ b/components/dom_distiller/core/html/dom_distiller_viewer.html
+@@ -17,14 +17,10 @@ found in the LICENSE file.
+   <!-- Placeholder for CSP. -->
+   $1
+   <title>$i18n{title}</title>
+-  <link href="https://fonts.googleapis.com/icon?family=Material+Icons"
+-      rel="stylesheet">
+   <!-- Import web fonts. -->
+   <!-- On iOS, the web fonts block the rendering until the resources are fetched,
+     which can take a long time on slow networks. In Blink, it times out after 3
+     seconds and uses fallback fonts. See crbug.com/711650 -->
+-  <link href="https://fonts.googleapis.com/css2?family=Lexend&family=Roboto&display=block"
+-      rel="stylesheet" type="text/css">
+   <!-- Placeholder for CSS. -->
+   $2
+ </head>
+diff --git a/components/dom_distiller/core/html/preview.html b/components/dom_distiller/core/html/preview.html
+index 0b7dc142392..f620f0157d9 100644
+--- a/components/dom_distiller/core/html/preview.html
++++ b/components/dom_distiller/core/html/preview.html
+@@ -11,7 +11,7 @@ found in the LICENSE file.
+   <meta name="theme-color" id="theme-color">
+   <title>Title goes here and it could be kind of lengthy - Publisher name</title>
+   <link href="../css/distilledpage.css" rel="stylesheet" type="text/css">
+-  <link href='https://fonts.googleapis.com/css?family=Roboto' rel='stylesheet' type='text/css'>
++  <link href='chrome://resources/css/roboto.css' rel='stylesheet' type='text/css'>
+   <style>
+     .english :lang(th) {display: none}
+     .english :lang(zh) {display: none}
+diff --git a/third_party/crashpad/crashpad/doc/support/crashpad_doxygen.css b/third_party/crashpad/crashpad/doc/support/crashpad_doxygen.css
+index 13ce3854ca9..b6a8e209eac 100644
+--- a/third_party/crashpad/crashpad/doc/support/crashpad_doxygen.css
++++ b/third_party/crashpad/crashpad/doc/support/crashpad_doxygen.css
+@@ -12,8 +12,7 @@
+  * See the License for the specific language governing permissions and
+  * limitations under the License. */
+ 
+-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,100..900;1,100..900&display=swap');
+-@import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap');
++@import "chrome://resources/css/roboto.css";
+ 
+ :root {
+   --font-family-normal: 'Noto Sans',

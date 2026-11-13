@@ -1,0 +1,250 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Mon, 5 Apr 2021 21:37:12 +0200
+Subject: [PATCH 010/310] Remove binary blob integrations
+
+Remove dependency on com.google.android.gms.auth
+kill GCM
+Remove dependency on com.google.android.gcm
+Remove dependency on com.google.android.gms.gcm
+It also disables Snippets, auto-update of offline pages and launching browser from background service.
+The snippets are already disabled in native codes, this will disable it on Java level.
+
+Remove dependency on com.google.android.play
+Remove dependency on vision, clearcut and phenotype
+Remove dependency on flags, places and stats
+Remove dependency on fido, iid, instantapps, location
+Remove dependency on com.google.android.gms.cast
+Remove dependency on auth, signin, dynamic and tasks
+Remove google_services_gcm
+ungoogled-chromium: Disable GCM
+Disable Google Cloud Messaging (GCM) client
+Disable web authentication phone support
+
+Parts of this patch were developed by csagan5, uazo and others.
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Remove-binary-blob-integrations.patch
+---
+ .../push_messaging/push_messaging_service_factory.cc   |  3 +--
+ .../notification_telemetry_service.cc                  |  1 +
+ chrome/browser/ui/webui/chrome_web_ui_configs.cc       |  1 -
+ chrome/browser/webid/BUILD.gn                          |  3 ---
+ components/gcm_driver/gcm_client_impl.cc               |  4 ++++
+ .../browser/push_messaging/push_messaging_manager.cc   |  2 +-
+ content/test/BUILD.gn                                  |  4 ----
+ device/BUILD.gn                                        |  3 ---
+ services/BUILD.gn                                      | 10 ----------
+ services/device/geolocation/BUILD.gn                   |  4 ----
+ services/shape_detection/BUILD.gn                      |  2 --
+ third_party/cardboard/BUILD.gn                         |  4 ----
+ 12 files changed, 7 insertions(+), 34 deletions(-)
+
+diff --git a/chrome/browser/push_messaging/push_messaging_service_factory.cc b/chrome/browser/push_messaging/push_messaging_service_factory.cc
+index 337a07eb340..31be99dc969 100644
+--- a/chrome/browser/push_messaging/push_messaging_service_factory.cc
++++ b/chrome/browser/push_messaging/push_messaging_service_factory.cc
+@@ -28,8 +28,7 @@
+ // static
+ PushMessagingServiceImpl* PushMessagingServiceFactory::GetForProfile(
+     content::BrowserContext* context) {
+-  return static_cast<PushMessagingServiceImpl*>(
+-      GetInstance()->GetServiceForBrowserContext(context, true));
++  return nullptr;
+ }
+ 
+ // static
+diff --git a/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc b/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc
+index 2afdfdb52da..5086b7e38db 100644
+--- a/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc
++++ b/chrome/browser/safe_browsing/notification_telemetry/notification_telemetry_service.cc
+@@ -70,6 +70,7 @@ NotificationTelemetryService::NotificationTelemetryService(
+   // Notification Telemetry Service is a keyed service and will outlive
+   // any invocations of the callback being registered with the push messaging
+   // service (also a keyed service).
++  if (push_messaging_service)
+   push_messaging_service->SetSubscribeFromWorkerCallback(base::BindRepeating(
+       &NotificationTelemetryService::OnNewNotificationServiceWorkerSubscription,
+       base::Unretained(this)));
+diff --git a/chrome/browser/ui/webui/chrome_web_ui_configs.cc b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+index d79e9dfdb0e..f3a1ecac47d 100644
+--- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
++++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
+@@ -296,7 +296,6 @@ void RegisterChromeWebUIConfigs() {
+   map.AddWebUIConfig(std::make_unique<FlagsUIConfig>());
+   map.AddWebUIConfig(std::make_unique<glic::GlicExperimentalOptInUIConfig>());
+   map.AddWebUIConfig(std::make_unique<glic::GlicUIConfig>());
+-  map.AddWebUIConfig(std::make_unique<GCMInternalsUIConfig>());
+   map.AddWebUIConfig(
+       std::make_unique<
+           history_clusters_internals::HistoryClustersInternalsUIConfig>());
+diff --git a/chrome/browser/webid/BUILD.gn b/chrome/browser/webid/BUILD.gn
+index 5fc09fb1d31..049e52aef13 100644
+--- a/chrome/browser/webid/BUILD.gn
++++ b/chrome/browser/webid/BUILD.gn
+@@ -19,8 +19,6 @@ if (is_android) {
+       "android/java/src/org/chromium/chrome/browser/webid/VerifiedOriginResolver.java",
+     ]
+     deps = [
+-      "$google_play_services_package:google_play_services_identity_credentials_java",
+-      "$google_play_services_package:google_play_services_tasks_java",
+       "//base:base_java",
+       "//chrome/browser/android/browserservices/verification:java",
+       "//components/content_relationship_verification/android:java",
+@@ -56,7 +54,6 @@ if (is_android) {
+ 
+     deps = [
+       ":java",
+-      "$google_play_services_package:google_play_services_identity_credentials_java",
+       "//base:base_junit_test_support",
+       "//base:promise_java",
+       "//content/public/android:content_java",
+diff --git a/components/gcm_driver/gcm_client_impl.cc b/components/gcm_driver/gcm_client_impl.cc
+index c7e37b01dcb..55b39672e43 100644
+--- a/components/gcm_driver/gcm_client_impl.cc
++++ b/components/gcm_driver/gcm_client_impl.cc
+@@ -332,6 +332,7 @@ void GCMClientImpl::StartGCM() {
+ 
+ void GCMClientImpl::InitializeMCSClient() {
+   DCHECK(network_connection_tracker_);
++  if ((true)) return;
+   std::vector<GURL> endpoints;
+   endpoints.push_back(gservices_settings_.GetMCSMainEndpoint());
+   GURL fallback_endpoint = gservices_settings_.GetMCSFallbackEndpoint();
+@@ -500,6 +501,7 @@ void GCMClientImpl::AddHeartbeatInterval(const std::string& scope,
+                                          int interval_ms) {
+   DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
+   DCHECK(mcs_client_);
++  if ((true)) return;
+   mcs_client_->AddHeartbeatInterval(scope, interval_ms);
+ }
+ 
+@@ -511,6 +513,7 @@ void GCMClientImpl::RemoveHeartbeatInterval(const std::string& scope) {
+ 
+ void GCMClientImpl::StartCheckin() {
+   DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
++  if ((true)) return;
+ 
+   // Make sure no checkin is in progress.
+   if (checkin_request_)
+@@ -585,6 +588,7 @@ void GCMClientImpl::SetGServicesSettingsCallback(bool success) {
+ 
+ void GCMClientImpl::SchedulePeriodicCheckin() {
+   DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
++  if ((true)) return;
+ 
+   // Make sure no checkin is in progress.
+   if (checkin_request_.get() || !device_checkin_info_.accounts_set()) {
+diff --git a/content/browser/push_messaging/push_messaging_manager.cc b/content/browser/push_messaging/push_messaging_manager.cc
+index 342ba19bf7f..689dd8d19bf 100644
+--- a/content/browser/push_messaging/push_messaging_manager.cc
++++ b/content/browser/push_messaging/push_messaging_manager.cc
+@@ -847,7 +847,7 @@ void PushMessagingManager::GetSubscriptionInfo(
+ }
+ 
+ PushMessagingService* PushMessagingManager::GetService() {
+-  return render_process_host_->GetBrowserContext()->GetPushMessagingService();
++  return nullptr;
+ }
+ 
+ }  // namespace content
+diff --git a/content/test/BUILD.gn b/content/test/BUILD.gn
+index 309d2cd9282..8b8a53732dc 100644
+--- a/content/test/BUILD.gn
++++ b/content/test/BUILD.gn
+@@ -3917,10 +3917,6 @@ if (is_android) {
+     testonly = true
+     sources = content_java_sources_needing_jni
+     deps = [
+-      "$google_play_services_package:google_play_services_auth_api_phone_java",
+-      "$google_play_services_package:google_play_services_base_java",
+-      "$google_play_services_package:google_play_services_basement_java",
+-      "$google_play_services_package:google_play_services_tasks_java",
+       "//base:base_java",
+       "//content/public/android:content_java",
+       "//third_party/jni_zero:jni_zero_java",
+diff --git a/device/BUILD.gn b/device/BUILD.gn
+index 2cdc91e243d..527defc2631 100644
+--- a/device/BUILD.gn
++++ b/device/BUILD.gn
+@@ -523,9 +523,6 @@ if (is_android) {
+       "vr/public/junit/src/org/chromium/device/vr/XrFeatureStatusTest.java",
+     ]
+     deps = [
+-      "$google_play_services_package:google_play_services_base_java",
+-      "$google_play_services_package:google_play_services_basement_java",
+-      "$google_play_services_package:google_play_services_location_java",
+       "//base:base_java",
+       "//base:base_java_test_support",
+       "//base:base_junit_test_support",
+diff --git a/services/BUILD.gn b/services/BUILD.gn
+index 589a30c7323..4bae69db1f8 100644
+--- a/services/BUILD.gn
++++ b/services/BUILD.gn
+@@ -201,12 +201,6 @@ if (is_android) {
+       "shape_detection/android/junit/src/org/chromium/shape_detection/BitmapUtilsTest.java",
+     ]
+     deps = [
+-      "$google_play_services_package:google_play_services_base_java",
+-      "$google_play_services_package:google_play_services_basement_java",
+-      "$google_play_services_package:google_play_services_location_java",
+-      "$google_play_services_package:google_play_services_tasks_java",
+-      "$google_play_services_package:google_play_services_vision_common_java",
+-      "$google_play_services_package:google_play_services_vision_java",
+       "//base:base_java",
+       "//base:base_java_test_support",
+       "//base:base_junit_test_support",
+@@ -246,10 +240,6 @@ if (is_android) {
+       "shape_detection/android/javatests/src/org/chromium/shape_detection/TextDetectionImplTest.java",
+     ]
+     deps = [
+-      "$google_play_services_package:google_play_services_base_java",
+-      "$google_play_services_package:google_play_services_basement_java",
+-      "$google_play_services_package:google_play_services_vision_common_java",
+-      "$google_play_services_package:google_play_services_vision_java",
+       "//base:base_java",
+       "//base:base_java_test_support",
+       "//mojo/public/java:base_java",
+diff --git a/services/device/geolocation/BUILD.gn b/services/device/geolocation/BUILD.gn
+index 44485d88411..7090bb82686 100644
+--- a/services/device/geolocation/BUILD.gn
++++ b/services/device/geolocation/BUILD.gn
+@@ -163,10 +163,6 @@ if (is_android) {
+ 
+     deps = [
+       ":geolocation_jni_headers",
+-      "$google_play_services_package:google_play_services_base_java",
+-      "$google_play_services_package:google_play_services_basement_java",
+-      "$google_play_services_package:google_play_services_location_java",
+-      "$google_play_services_package:google_play_services_tasks_java",
+       "//base:base_java",
+       "//build/android:build_java",
+       "//components/location/android:location_java",
+diff --git a/services/shape_detection/BUILD.gn b/services/shape_detection/BUILD.gn
+index cbc2d1dc9c1..e0b02621f3b 100644
+--- a/services/shape_detection/BUILD.gn
++++ b/services/shape_detection/BUILD.gn
+@@ -129,8 +129,6 @@ if (is_android) {
+     ]
+ 
+     deps = [
+-      "$google_play_services_package:google_play_services_base_java",
+-      "$google_play_services_package:google_play_services_basement_java",
+       "//base:base_java",
+       "//mojo/public/java:base_java",
+       "//mojo/public/java:bindings_java",
+diff --git a/third_party/cardboard/BUILD.gn b/third_party/cardboard/BUILD.gn
+index dce4e969b72..c3eb09329b5 100644
+--- a/third_party/cardboard/BUILD.gn
++++ b/third_party/cardboard/BUILD.gn
+@@ -51,10 +51,6 @@ android_library("cardboard_java") {
+   deps = [
+     ":cardboard_proto_java",
+     ":cardboard_resources",
+-    "$google_play_services_package:google_play_services_base_java",
+-    "$google_play_services_package:google_play_services_basement_java",
+-    "$google_play_services_package:google_play_services_vision_common_java",
+-    "$google_play_services_package:google_play_services_vision_java",
+     "//third_party/android_deps:protobuf_lite_runtime_java",
+     "//third_party/androidx:androidx_annotation_annotation_jvm_java",
+     "//third_party/androidx:androidx_appcompat_appcompat_java",

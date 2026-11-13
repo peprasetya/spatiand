@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sun, 6 Mar 2022 17:39:15 +0100
+Subject: [PATCH 110/310] Disable safety check
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Disable-safety-check.patch
+---
+ .../resources/settings/privacy_page/privacy_page_index.ts       | 2 +-
+ .../chrome/common/chrome_features_cc/Disable-safety-check.inc   | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+ create mode 100644 cromite_flags/chrome/common/chrome_features_cc/Disable-safety-check.inc
+
+diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
+index bf4eaeb2367..4bb2e2e950d 100644
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
+@@ -218,7 +218,7 @@ export class SettingsPrivacyPageIndexElement extends
+     }
+ 
+     if (this.showPage_(this.pageVisibility_.safetyHub)) {
+-      defaultViews.push('safetyHubEntryPoint');
++      // defaultViews.push('safetyHubEntryPoint');
+     }
+ 
+     return defaultViews;
+diff --git a/cromite_flags/chrome/common/chrome_features_cc/Disable-safety-check.inc b/cromite_flags/chrome/common/chrome_features_cc/Disable-safety-check.inc
+new file mode 100644
+index 00000000000..d11c69f812a
+--- /dev/null
++++ b/cromite_flags/chrome/common/chrome_features_cc/Disable-safety-check.inc
+@@ -0,0 +1 @@
++// intentionally empty

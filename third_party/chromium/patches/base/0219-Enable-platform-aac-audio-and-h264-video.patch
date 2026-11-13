@@ -1,0 +1,185 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 6 Mar 2024 12:05:52 +0000
+Subject: [PATCH 219/310] Enable platform aac audio and h264 video
+
+Allows the activation in android and windows of aac and
+h264 decoding via the s.o. libraries, replacing ffmpeg which does
+not have the necessary licences.
+
+Context: https://github.com/uazo/cromite/pull/856
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Enable-platform-aac-audio-and-h264-video.patch
+---
+ .../Enable-platform-aac-audio-and-h264-video.inc    |  7 +++++++
+ media/BUILD.gn                                      |  2 ++
+ media/base/android/media_codec_util.cc              |  4 ++++
+ media/filters/ffmpeg_audio_decoder.cc               | 10 ++++++++++
+ media/filters/ffmpeg_demuxer.cc                     |  1 +
+ media/filters/ffmpeg_video_decoder.cc               | 11 +++++++++++
+ media/gpu/windows/supported_profile_helpers.cc      | 13 ++++++++++++-
+ media/media_options.gni                             |  8 ++++++++
+ 8 files changed, 55 insertions(+), 1 deletion(-)
+ create mode 100644 cromite_flags/media/base/media_switches_cc/Enable-platform-aac-audio-and-h264-video.inc
+
+diff --git a/cromite_flags/media/base/media_switches_cc/Enable-platform-aac-audio-and-h264-video.inc b/cromite_flags/media/base/media_switches_cc/Enable-platform-aac-audio-and-h264-video.inc
+new file mode 100644
+index 00000000000..9950dde2130
+--- /dev/null
++++ b/cromite_flags/media/base/media_switches_cc/Enable-platform-aac-audio-and-h264-video.inc
+@@ -0,0 +1,7 @@
++#if BUILDFLAG(IS_LINUX)
++
++SET_CROMITE_FEATURE_ENABLED(kAcceleratedVideoDecodeLinuxGL);
++SET_CROMITE_FEATURE_ENABLED(kAcceleratedVideoEncodeLinux);
++SET_CROMITE_FEATURE_ENABLED(kVaapiIgnoreDriverChecks);
++
++#endif
+diff --git a/media/BUILD.gn b/media/BUILD.gn
+index 1919962dd18..b7dbb36bc03 100644
+--- a/media/BUILD.gn
++++ b/media/BUILD.gn
+@@ -27,6 +27,8 @@ buildflag_header("media_buildflags") {
+   header = "media_buildflags.h"
+ 
+   flags = [
++    "ENABLE_PLATFORM_AAC_AUDIO=$enable_platform_aac_audio",
++    "ENABLE_PLATFORM_H264_VIDEO=$enable_platform_h264_video",
+     "ENABLE_OOP_VIDEO_DECODER=$enable_oop_video_decoder",
+     "ALTERNATE_CDM_STORAGE_ID_KEY=\"$alternate_cdm_storage_id_key\"",
+     "CHROME_WIDE_ECHO_CANCELLATION=$chrome_wide_echo_cancellation_supported",
+diff --git a/media/base/android/media_codec_util.cc b/media/base/android/media_codec_util.cc
+index 7780065a459..7ecec38a725 100644
+--- a/media/base/android/media_codec_util.cc
++++ b/media/base/android/media_codec_util.cc
+@@ -16,6 +16,7 @@
+ #include "base/numerics/safe_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/system/sys_info.h"
++#include "media/media_buildflags.h"
+ #include "media/base/android/media_codec_bridge.h"
+ #include "media/base/video_codecs.h"
+ #include "third_party/re2/src/re2/re2.h"
+@@ -127,6 +128,9 @@ std::string MediaCodecUtil::CodecToAndroidMimeType(AudioCodec codec) {
+ // static
+ std::string MediaCodecUtil::CodecToAndroidMimeType(AudioCodec codec,
+                                                    SampleFormat sample_format) {
++#if BUILDFLAG(ENABLE_PLATFORM_AAC_AUDIO)
++  if (codec == AudioCodec::kAAC) return kAacMimeType;
++#endif
+   // Passthrough is possible for some bitstream formats.
+   if (sample_format == kSampleFormatDts ||
+       sample_format == kSampleFormatDtsxP2 ||
+diff --git a/media/filters/ffmpeg_audio_decoder.cc b/media/filters/ffmpeg_audio_decoder.cc
+index 729c35f9fe1..5a5c320672f 100644
+--- a/media/filters/ffmpeg_audio_decoder.cc
++++ b/media/filters/ffmpeg_audio_decoder.cc
+@@ -154,6 +154,16 @@ void FFmpegAudioDecoder::Initialize(const AudioDecoderConfig& config,
+     return;
+   }
+ 
++#if BUILDFLAG(ENABLE_PLATFORM_AAC_AUDIO)
++  if (config.codec() == AudioCodec::kAAC) {
++    std::move(bound_init_cb)
++        .Run(DecoderStatus(DecoderStatus::Codes::kUnsupportedProfile)
++                 .WithData("decoder", "FFmpegAudioDecoder")
++                 .WithData("profile", config.profile()));
++    return;
++  }
++#endif
++
+   // TODO(dalecurtis): Remove this if ffmpeg ever gets xHE-AAC support.
+   if (config.profile() == AudioCodecProfile::kXHE_AAC) {
+     std::move(bound_init_cb)
+diff --git a/media/filters/ffmpeg_demuxer.cc b/media/filters/ffmpeg_demuxer.cc
+index 9cc8e291a73..1f4bdee44d6 100644
+--- a/media/filters/ffmpeg_demuxer.cc
++++ b/media/filters/ffmpeg_demuxer.cc
+@@ -762,6 +762,7 @@ void FFmpegDemuxerStream::InitBitstreamConverter() {
+       // FFmpeg doesn't understand xHE-AAC profiles yet, which can't be put in
+       // ADTS anyways, so skip bitstream conversion when the profile is
+       // unknown.
++      // Also Windows need ADTS conversion for AAC
+       if (audio_config_->profile() != AudioCodecProfile::kXHE_AAC) {
+         bitstream_converter_ =
+             std::make_unique<FFmpegAACBitstreamConverter>(stream_->codecpar);
+diff --git a/media/filters/ffmpeg_video_decoder.cc b/media/filters/ffmpeg_video_decoder.cc
+index 3e351538d12..b13e1aabd62 100644
+--- a/media/filters/ffmpeg_video_decoder.cc
++++ b/media/filters/ffmpeg_video_decoder.cc
+@@ -18,6 +18,7 @@
+ #include "base/numerics/safe_conversions.h"
+ #include "base/task/bind_post_task.h"
+ #include "base/task/sequenced_task_runner.h"
++#include "media/media_buildflags.h"
+ #include "media/base/decoder_buffer.h"
+ #include "media/base/limits.h"
+ #include "media/base/media_log.h"
+@@ -117,6 +118,16 @@ static void ReleaseVideoBufferImpl(void* opaque, uint8_t* data) {
+ 
+ // static
+ bool FFmpegVideoDecoder::IsCodecSupported(VideoCodec codec) {
++#if BUILDFLAG(ENABLE_PLATFORM_H264_VIDEO)
++  if (codec == VideoCodec::kH264) {
++    return false;
++  }
++#endif
++#if BUILDFLAG(ENABLE_PLATFORM_HEVC)
++  if (codec == VideoCodec::kHEVC) {
++    return false;
++  }
++#endif
+   // We only build support for H.264.
+   return codec == VideoCodec::kH264 && IsDecoderBuiltInVideoCodec(codec);
+ }
+diff --git a/media/gpu/windows/supported_profile_helpers.cc b/media/gpu/windows/supported_profile_helpers.cc
+index 01b833a0f0d..4621850760b 100644
+--- a/media/gpu/windows/supported_profile_helpers.cc
++++ b/media/gpu/windows/supported_profile_helpers.cc
+@@ -364,7 +364,11 @@ SupportedResolutionRangeMap GetSupportedD3DVideoDecoderResolutions(
+   //
+   // On Windows 7 the maximum resolution supported by media foundation is
+   // 1920 x 1088. We use 1088 to account for 16x16 macro-blocks.
++#if BUILDFLAG(ENABLE_PLATFORM_H264_VIDEO)
++  constexpr gfx::Size kDefaultMaxH264Resolution(4096, 2304);
++#else
+   constexpr gfx::Size kDefaultMaxH264Resolution(1920, 1088);
++#endif
+   SupportedResolutionRange h264_profile;
+   h264_profile.min_resolution = kMinResolution;
+   h264_profile.max_landscape_resolution = kDefaultMaxH264Resolution;
+@@ -372,7 +376,14 @@ SupportedResolutionRangeMap GetSupportedD3DVideoDecoderResolutions(
+   // We don't have a way to map DXVA support to specific H.264 profiles, so just
+   // mark all the common ones with the same level of support.
+   constexpr VideoCodecProfile kSupportedH264Profiles[] = {
+-      H264PROFILE_BASELINE, H264PROFILE_MAIN, H264PROFILE_HIGH};
++      H264PROFILE_BASELINE, H264PROFILE_MAIN, H264PROFILE_HIGH
++#if BUILDFLAG(ENABLE_PLATFORM_H264_VIDEO)
++      // even if they are not supported, we add the items so that play
++      // is still attempted. On the contrary, non-support would appear immediately.
++      , H264PROFILE_HIGH10PROFILE, H264PROFILE_HIGH422PROFILE,
++      H264PROFILE_HIGH444PREDICTIVEPROFILE
++#endif
++  };
+   for (const auto profile : kSupportedH264Profiles)
+     supported_resolutions[profile] = h264_profile;
+ 
+diff --git a/media/media_options.gni b/media/media_options.gni
+index f3313ea4676..5cf1e75de15 100644
+--- a/media/media_options.gni
++++ b/media/media_options.gni
+@@ -53,6 +53,14 @@ declare_args() {
+     media_use_symphonia = false
+   }
+ 
++  # Enables AAC audio decoder using only MediaCodecAudioDecoder in Android
++  # and MediaFoundationAudioDecoder in Windows
++  enable_platform_aac_audio = false
++
++  # Enables h264 video decoder using only MediaCodecVideoDecoder in Android
++  # and D3D11VideoDecoder in Windows
++  enable_platform_h264_video = false
++
+   # Enable usage of OpenH264 within the media library. Used for software based
+   # encoding of H264 content.
+   media_use_openh264 = true

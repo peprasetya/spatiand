@@ -1,0 +1,91 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 17 Apr 2023 12:43:19 +0000
+Subject: [PATCH 164/310] Remove detection of captive portals
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Remove-detection-of-captive-portals.patch
+---
+ chrome/browser/BUILD.gn                           |  2 +-
+ .../net/profile_network_context_service.cc        |  2 +-
+ chrome/browser/ssl/BUILD.gn                       |  2 +-
+ .../ssl/chrome_security_blocking_page_factory.cc  | 15 ---------------
+ components/captive_portal/core/features.gni       |  2 +-
+ 5 files changed, 4 insertions(+), 19 deletions(-)
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 99adc086c3a..4f20814e6f2 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1546,7 +1546,7 @@ source_set("core") {
+ 
+   if (is_win || is_mac || is_linux || is_chromeos) {
+     deps += [
+-      "//chrome/browser/captive_portal",
++      #"//chrome/browser/captive_portal",
+       "//chrome/browser/headless:headless_extra_parts",
+       "//chrome/browser/indigo/onboarding",
+       "//chrome/browser/media/router/discovery/access_code:access_code_sink_service",
+diff --git a/chrome/browser/net/profile_network_context_service.cc b/chrome/browser/net/profile_network_context_service.cc
+index 8b82a1dfa46..a38b75523dd 100644
+--- a/chrome/browser/net/profile_network_context_service.cc
++++ b/chrome/browser/net/profile_network_context_service.cc
+@@ -649,7 +649,7 @@ void ProfileNetworkContextService::ConfigureNetworkContextParams(
+ void ProfileNetworkContextService::RegisterProfilePrefs(
+     user_prefs::PrefRegistrySyncable* registry) {
+   registry->RegisterBooleanPref(embedder_support::kAlternateErrorPagesEnabled,
+-                                true);
++                                false);
+   registry->RegisterBooleanPref(prefs::kQuicAllowed, true);
+   registry->RegisterBooleanPref(prefs::kGloballyScopeHTTPAuthCacheEnabled,
+                                 false);
+diff --git a/chrome/browser/ssl/BUILD.gn b/chrome/browser/ssl/BUILD.gn
+index a83a5c3d1f3..f64f8fbdc21 100644
+--- a/chrome/browser/ssl/BUILD.gn
++++ b/chrome/browser/ssl/BUILD.gn
+@@ -317,7 +317,7 @@ if (!is_android) {
+       "//base",
+       "//build:branding_buildflags",
+       "//chrome/browser:chrome_content_browser_client",
+-      "//chrome/browser/captive_portal",
++      #"//chrome/browser/captive_portal",
+       "//chrome/browser/interstitials:idn_test_support",
+       "//chrome/browser/interstitials:test_support",
+       "//chrome/browser/net",
+diff --git a/chrome/browser/ssl/chrome_security_blocking_page_factory.cc b/chrome/browser/ssl/chrome_security_blocking_page_factory.cc
+index a03c29515bd..f19b710e5e0 100644
+--- a/chrome/browser/ssl/chrome_security_blocking_page_factory.cc
++++ b/chrome/browser/ssl/chrome_security_blocking_page_factory.cc
+@@ -82,21 +82,6 @@ EnterpriseManaged g_is_enterprise_managed_for_testing =
+ // CaptivePortalBlockingPage to be invoked when the user has pressed the
+ // connect button.
+ void OpenLoginPage(content::WebContents* web_contents) {
+-#if !BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
+-  // OpenLoginTabForWebContents() is not available on Android (the only
+-  // platform on which captive portal detection is not enabled). Simply open
+-  // the platform's portal detection URL in a new tab.
+-  const std::string url = security_interstitials::GetCaptivePortalServerUrl(
+-      base::android::AttachCurrentThread());
+-  content::OpenURLParams params =
+-      content::OpenURLParams::CreateBrowserInitiated(
+-          GURL(url), WindowOpenDisposition::NEW_FOREGROUND_TAB,
+-          ui::PAGE_TRANSITION_LINK);
+-  web_contents->OpenURL(params, /*navigation_handle_callback=*/{});
+-#else
+-  ChromeSecurityBlockingPageFactory::OpenLoginTabForWebContents(web_contents,
+-                                                                true);
+-#endif  // !BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
+ }
+ 
+ std::unique_ptr<ContentMetricsHelper> CreateMetricsHelperAndStartRecording(
+diff --git a/components/captive_portal/core/features.gni b/components/captive_portal/core/features.gni
+index b010d1431dd..535e0a086f0 100644
+--- a/components/captive_portal/core/features.gni
++++ b/components/captive_portal/core/features.gni
+@@ -6,5 +6,5 @@ import("//build/config/compiler/compiler.gni")
+ 
+ # Please keep features in alphabetical order.
+ declare_args() {
+-  enable_captive_portal_detection = !is_android && !is_ios && !is_castos
++  enable_captive_portal_detection = false
+ }

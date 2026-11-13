@@ -1,0 +1,245 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 15 Nov 2021 09:43:29 +0000
+Subject: [PATCH 102/310] Disable conversion measurement api
+
+Disable Conversion Measurement API by disabling the flag and removing
+support for the AttributionReporting provider. it also removes
+the handling of attributions via intents between apps.
+This patch enforces the deactivation by preventing the report from
+being sent and being saved to disk, although it is currently in uncalled code.
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Disable-conversion-measurement-api.patch
+---
+ .../privacy_page/privacy_page_index.html      |  9 -------
+ chrome/browser/resources/settings/route.ts    |  2 +-
+ .../site_settings/site_settings_page.ts       |  1 +
+ components/attribution_reporting/features.cc  |  1 +
+ .../core/browser/content_settings_registry.cc |  2 +-
+ .../origin_trials/features.cc                 |  1 +
+ .../renderer_host/render_frame_host_impl.cc   | 10 ++++++++
+ .../Disable-conversion-measurement-api.inc    |  1 +
+ .../Disable-conversion-measurement-api.inc    |  2 ++
+ services/network/network_context.cc           | 24 ++++---------------
+ .../platform/runtime_enabled_features.json5   | 12 +++++-----
+ ui/events/android/motion_event_android.cc     |  8 +++++--
+ 12 files changed, 34 insertions(+), 39 deletions(-)
+ create mode 100644 cromite_flags/services/network/public/cpp/features_cc/Disable-conversion-measurement-api.inc
+ create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc
+
+diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
+index 7e32733631c..c0e488b4d3e 100644
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
+@@ -114,15 +114,6 @@
+     </settings-ar-page>
+   </template>
+ 
+-  <template is="dom-if" if="[[renderView_(
+-      routes_.SITE_SETTINGS_AUTO_VERIFY, currentRoute, inSearchMode)]]"
+-      update-when-false>
+-    <settings-anti-abuse-page slot="view" id="siteSettingsAutoVerify"
+-        data-parent-view-id="privacy"
+-        route-path$="[[routes_.SITE_SETTINGS_AUTO_VERIFY.path]]">
+-    </settings-anti-abuse-page>
+-  </template>
+-
+   <template is="dom-if" if="[[renderView_(
+       routes_.SITE_SETTINGS_AUTO_PICTURE_IN_PICTURE, currentRoute,
+       inSearchMode)]]" update-when-false>
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index 257eee5f0e7..75f95f35d55 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -63,7 +63,7 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
+     r.SITE_SETTINGS_WEB_PRINTING = r.SITE_SETTINGS.createChild('webPrinting');
+   }
+   // </if>
+-  r.SITE_SETTINGS_AUTO_VERIFY = r.SITE_SETTINGS.createChild('autoVerify');
++  // r.SITE_SETTINGS_AUTO_VERIFY = r.SITE_SETTINGS.createChild('autoVerify');
+   r.SITE_SETTINGS_BACKGROUND_SYNC =
+       r.SITE_SETTINGS.createChild('backgroundSync');
+   r.SITE_SETTINGS_CAMERA = r.SITE_SETTINGS.createChild('camera');
+diff --git a/chrome/browser/resources/settings/site_settings/site_settings_page.ts b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
+index a0a088f19dc..8bed6495847 100644
+--- a/chrome/browser/resources/settings/site_settings/site_settings_page.ts
++++ b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
+@@ -67,6 +67,7 @@ function getCategoryItemMap(): Map<ContentSettingsTypes, CategoryListItem> {
+       route: routes.SITE_SETTINGS_AUTO_VERIFY,
+       id: Id.ANTI_ABUSE,
+       label: 'siteSettingsAntiAbuse',
++      shouldShow: () => false,
+       icon: 'privacy20:person-check',
+       enabledLabel: 'siteSettingsAntiAbuseEnabledSubLabel',
+       disabledLabel: 'siteSettingsAntiAbuseDisabledSubLabel',
+diff --git a/components/attribution_reporting/features.cc b/components/attribution_reporting/features.cc
+index b199e7682ad..a5929da4e4b 100644
+--- a/components/attribution_reporting/features.cc
++++ b/components/attribution_reporting/features.cc
+@@ -11,4 +11,5 @@ namespace attribution_reporting::features {
+ // Controls whether the Conversion Measurement API infrastructure is enabled.
+ BASE_FEATURE(kConversionMeasurement, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
++SET_CROMITE_FEATURE_DISABLED(kConversionMeasurement);
+ }  // namespace attribution_reporting::features
+diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
+index 9ef0c605b03..5aa23a8b92e 100644
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -629,7 +629,7 @@ void ContentSettingsRegistry::Init() {
+            ContentSettingsInfo::INHERIT_IN_INCOGNITO,
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_ORIGINS_ONLY);
+ 
+-  Register(ContentSettingsType::ANTI_ABUSE, "anti-abuse", CONTENT_SETTING_ALLOW,
++  Register(ContentSettingsType::ANTI_ABUSE, "anti-abuse", CONTENT_SETTING_BLOCK,
+            WebsiteSettingsInfo::SYNCABLE,
+            /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
+diff --git a/components/embedder_support/origin_trials/features.cc b/components/embedder_support/origin_trials/features.cc
+index df26d9e8817..89237d70dcf 100644
+--- a/components/embedder_support/origin_trials/features.cc
++++ b/components/embedder_support/origin_trials/features.cc
+@@ -15,4 +15,5 @@ namespace embedder_support {
+ // from the origin trial.
+ BASE_FEATURE(kOriginTrialsSampleAPIThirdPartyAlternativeUsage,
+              base::FEATURE_ENABLED_BY_DEFAULT);
++SET_CROMITE_FEATURE_DISABLED(kOriginTrialsSampleAPIThirdPartyAlternativeUsage);
+ }  // namespace embedder_support
+diff --git a/content/browser/renderer_host/render_frame_host_impl.cc b/content/browser/renderer_host/render_frame_host_impl.cc
+index fbc3875616a..7644822472b 100644
+--- a/content/browser/renderer_host/render_frame_host_impl.cc
++++ b/content/browser/renderer_host/render_frame_host_impl.cc
+@@ -15156,6 +15156,16 @@ void RenderFrameHostImpl::BindTrustTokenQueryAnswerer(
+     return;
+   }
+ 
++  // flags are enforced in benign renderers by the
++  // RuntimeEnabled=PrivateStateTokens IDL attribute (the base::Feature's value
++  // is tied to the RuntimeEnabledFeature's).
++  if ((true)) {
++    mojo::ReportBadMessage(
++        "Attempted to get a TrustTokenQueryAnswerer with Private State Tokens "
++        "disabled.");
++    return;
++  }
++
+   // TODO(crbug.com/40729410): Document.hasPrivateToken is restricted to
+   // secure contexts, so we could additionally add a check verifying that the
+   // bind request "is coming from a secure context"---but there's currently no
+diff --git a/cromite_flags/services/network/public/cpp/features_cc/Disable-conversion-measurement-api.inc b/cromite_flags/services/network/public/cpp/features_cc/Disable-conversion-measurement-api.inc
+new file mode 100644
+index 00000000000..6aad184154a
+--- /dev/null
++++ b/cromite_flags/services/network/public/cpp/features_cc/Disable-conversion-measurement-api.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_DISABLED(kBrowsingTopics);
+diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc
+new file mode 100644
+index 00000000000..d6c1874a15f
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_cc/Disable-conversion-measurement-api.inc
+@@ -0,0 +1,2 @@
++SET_CROMITE_FEATURE_DISABLED(kFledge);
++SET_CROMITE_FEATURE_DISABLED(kAllowURNsInIframes);
+diff --git a/services/network/network_context.cc b/services/network/network_context.cc
+index 6b871193fc1..4e317912e2a 100644
+--- a/services/network/network_context.cc
++++ b/services/network/network_context.cc
+@@ -1406,6 +1406,10 @@ void NetworkContext::ClearTrustTokenData(mojom::ClearDataFilterPtr filter,
+ 
+ void NetworkContext::ClearTrustTokenSessionOnlyData(
+     ClearTrustTokenSessionOnlyDataCallback callback) {
++  if (!trust_token_store_) {
++    std::move(callback).Run(false);
++    return;
++  }
+   // Only called when Private State Tokens is enabled, i.e.,
+   // `trust_token_store_` is non-null.
+   DCHECK(trust_token_store_);
+@@ -2946,26 +2950,6 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
+     builder.set_network_quality_estimator(
+         network_service_->network_quality_estimator());
+   }
+-  trust_token_store_ = std::make_unique<PendingTrustTokenStore>();
+-
+-  base::FilePath trust_token_path;
+-  if (GetFullDataFilePath(
+-          params_->file_paths,
+-          &network::mojom::NetworkContextFilePaths::trust_token_database_name,
+-          trust_token_path)) {
+-    SQLiteTrustTokenPersister::CreateForFilePath(
+-        base::ThreadPool::CreateSequencedTaskRunner(
+-            {base::MayBlock(), kTrustTokenDatabaseTaskPriority,
+-             base::TaskShutdownBehavior::BLOCK_SHUTDOWN}),
+-        trust_token_path, kTrustTokenWriteBufferingWindow,
+-        base::BindOnce(&NetworkContext::FinishConstructingTrustTokenStore,
+-                       weak_factory_.GetWeakPtr()));
+-  } else {
+-    trust_token_store_->OnStoreReady(std::make_unique<TrustTokenStore>(
+-        std::make_unique<InMemoryTrustTokenPersister>(),
+-        std::make_unique<ExpiryInspectingRecordExpiryDelegate>(
+-            network_service()->trust_token_key_commitments())));
+-  }
+ 
+   std::unique_ptr<net::StaticHttpUserAgentSettings> user_agent_settings =
+       std::make_unique<net::StaticHttpUserAgentSettings>(
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index 83e3fc84d2f..4eb9428c435 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -773,8 +773,8 @@
+       status: "stable",
+     },
+     {
+-      name: "AttributionReporting",
+-      status: "stable",
++      name: "AttributionReporting", // keep disabled
++      status: "experimental",       // keep disabled
+       base_feature: "none",
+       public: true,
+     },
+@@ -5209,8 +5209,8 @@
+       base_feature: "none",
+     },
+     {
+-      name: "PrivateStateTokens",
+-      status: "stable",
++      name: "PrivateStateTokens", // disabled
++      status: "experimental",     // by default
+       base_feature: "none",
+       public: true,
+     },
+@@ -6748,10 +6748,10 @@
+       status: "experimental",
+     },
+     {
+-      name: "TopicsAPI",
++      name: "TopicsAPI",       // keep disabled
+       base_feature: "none",
+       public: true,
+-      status: "stable",
++      status: "experimental",  // keep disabled
+     },
+     // This feature allows touch dragging and a context menu to occur
+     // simultaneously, with the assumption that the menu is non-modal.  Without
+diff --git a/ui/events/android/motion_event_android.cc b/ui/events/android/motion_event_android.cc
+index 4931c35def4..1a90972db30 100644
+--- a/ui/events/android/motion_event_android.cc
++++ b/ui/events/android/motion_event_android.cc
+@@ -30,8 +30,12 @@ namespace ui {
+ namespace {
+ 
+ base::TimeTicks FromAndroidTime(base::TimeTicks time) {
+-  ValidateEventTimeClock(&time);
+-  return time;
++  base::TimeTicks timestamp;
++  // Rounding down to milliseconds (from nanoseconds)
++  // see https://bugs.chromium.org/p/chromium/issues/detail?id=1378615
++  timestamp = base::TimeTicks::FromUptimeMillis(time.ToUptimeMillis());
++  ValidateEventTimeClock(&timestamp);
++  return timestamp;
+ }
+ 
+ float ToValidFloat(float x) {

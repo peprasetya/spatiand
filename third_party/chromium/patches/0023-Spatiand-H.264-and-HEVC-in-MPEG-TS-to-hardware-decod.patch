@@ -1,8 +1,8 @@
-From 8bb5bcd7f8b428d1ced893f738b1c51f5f944483 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Wed, 11 Nov 2026 06:14:56 +0700
-Subject: [PATCH] Spatiand: H.264 and HEVC in MPEG-TS to hardware decoders,
- Opus and MP2 in files, a VOB's timestamps
+Subject: [PATCH 303/310] Spatiand: H.264 and HEVC in MPEG-TS to hardware
+ decoders, Opus and MP2 in files, a VOB's timestamps
 
 A stream whose extra data is already Annex B (MPEG-TS, an elementary stream) is passed on as it
 is: read as an MP4 decoder configuration record, every packet of it was dropped once a hardware
@@ -19,10 +19,10 @@ VOB) gives most packets no PTS: FFmpeg makes them, as its own players do.
  4 files changed, 49 insertions(+), 2 deletions(-)
 
 diff --git a/media/ffmpeg/ffmpeg_common.cc b/media/ffmpeg/ffmpeg_common.cc
-index 8024fab1d9..e1d36aa591 100644
+index e196df9689e..e3200715cd3 100644
 --- a/media/ffmpeg/ffmpeg_common.cc
 +++ b/media/ffmpeg/ffmpeg_common.cc
-@@ -152,6 +152,12 @@ AudioCodec CodecIDToAudioCodec(AVCodecID codec_id) {
+@@ -146,6 +146,12 @@ AudioCodec CodecIDToAudioCodec(AVCodecID codec_id) {
        return AudioCodec::kDTS;
      case AV_CODEC_ID_MP3:
        return AudioCodec::kMP3;
@@ -35,7 +35,7 @@ index 8024fab1d9..e1d36aa591 100644
      case AV_CODEC_ID_VORBIS:
        return AudioCodec::kVorbis;
      case AV_CODEC_ID_PCM_U8:
-@@ -1152,8 +1158,10 @@ const char* GetAllowedAudioDecoders() {
+@@ -1144,8 +1150,10 @@ const char* GetAllowedAudioDecoders() {
        "mp3,pcm_s16be,pcm_s24be,pcm_mulaw,pcm_alaw"
        // Spatiand: Dolby Digital and Dolby Digital Plus, and DTS, by Spatiand's FFmpeg; and
        // FFmpeg's own MP3 decoder, which is the one it gives for MP3 (Chromium's FFmpeg is built
@@ -49,10 +49,10 @@ index 8024fab1d9..e1d36aa591 100644
  
    return kAllowedAudioCodecs.data();
 diff --git a/media/filters/ffmpeg_glue.cc b/media/filters/ffmpeg_glue.cc
-index 38b0acb8b0..b4af4f5051 100644
+index 3514b3511ca..debfe3b9c58 100644
 --- a/media/filters/ffmpeg_glue.cc
 +++ b/media/filters/ffmpeg_glue.cc
-@@ -225,6 +225,9 @@ bool FFmpegGlue::OpenContext(bool is_local_file) {
+@@ -227,6 +227,9 @@ bool FFmpegGlue::OpenContext(bool is_local_file) {
      container_ = container_names::MediaContainerName::kContainerMPEG2TS;
    } else if (format_name == "mpeg") {
      container_ = container_names::MediaContainerName::kContainerMPEG2PS;
@@ -63,7 +63,7 @@ index 38b0acb8b0..b4af4f5051 100644
      container_ = container_names::MediaContainerName::kContainerFLV;
    } else if (format_name == "asf") {
 diff --git a/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc b/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
-index 7f2fbc390d..9069f7a203 100644
+index 7f2fbc390d2..9069f7a2031 100644
 --- a/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
 +++ b/media/filters/ffmpeg_h264_to_annex_b_bitstream_converter.cc
 @@ -13,6 +13,20 @@
@@ -99,7 +99,7 @@ index 7f2fbc390d..9069f7a203 100644
  
      if (!converter_.ParseConfiguration(
 diff --git a/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc b/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
-index 0c4af787e3..6d6bad5742 100644
+index fb0d0739053..38dd2753862 100644
 --- a/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
 +++ b/media/filters/ffmpeg_h265_to_annex_b_bitstream_converter.cc
 @@ -15,6 +15,20 @@
@@ -134,6 +134,3 @@ index 0c4af787e3..6d6bad5742 100644
      hevc_config_ = std::make_unique<mp4::HEVCDecoderConfigurationRecord>();
  
      if (!hevc_config_->Parse(
--- 
-2.53.0
-

@@ -1,0 +1,951 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sat, 2 Oct 2021 13:20:36 +0200
+Subject: [PATCH 041/310] Add an always-incognito mode
+
+Add a preference that causes all new tabs and all clicked links to launch in incognito.
+Make sure initial incognito status is correctly recognized.
+Enable incognito custom tabs and fix crashes for incognito/custom tab intents
+Use a native flag to correctly start new tabs on app startup
+
+Add history, recents, offlinepages and send to home screen support for always incognito.
+History, recent tabs and offline pages require the INCOGNITO_TAB_HISTORY_ENABLED
+flag turned on.
+IncognitoPlaceholder is also deactivated, both in the phone and tablet version.
+The relative tests are also present.
+
+based on the original work by Ryan Archer <ryan.bradley.archer@gmail.com>
+Major contributions by uazo.
+See also: https://github.com/bromite/bromite/pull/1427
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-an-always-incognito-mode.patch
+---
+ .../chrome_autocomplete_provider_client.cc    |  9 ++++
+ .../chrome_autocomplete_provider_client.h     |  1 +
+ .../remote_suggestions_service_factory.cc     |  5 +++
+ .../host_content_settings_map_factory.cc      | 22 +++++++++-
+ chrome/browser/history/history_tab_helper.cc  | 20 +++++++++
+ chrome/browser/history/history_tab_helper.h   | 10 +++--
+ .../android/offline_page_model_factory.cc     | 20 +++++++--
+ .../android/request_coordinator_factory.cc    | 33 +++++++++++----
+ .../offline_page_model_factory.h              |  1 +
+ .../offline_pages/recent_tab_helper.cc        | 31 ++++++++++++--
+ .../browser/offline_pages/recent_tab_helper.h |  5 +++
+ .../request_coordinator_factory.h             |  4 +-
+ chrome/browser/prefs/browser_prefs.cc         |  5 +++
+ chrome/browser/profiles/profile_selections.cc | 10 +++++
+ chrome/browser/profiles/profile_selections.h  |  7 ++++
+ .../search_engine_tab_helper.cc               |  6 +++
+ chrome/common/pref_names.h                    |  6 +++
+ .../browser/content_settings_pref_provider.cc |  6 ++-
+ .../browser/content_settings_pref_provider.h  |  2 +
+ .../core/browser/host_content_settings_map.cc |  4 +-
+ .../core/browser/host_content_settings_map.h  |  3 ++
+ .../browser/autocomplete_provider_client.cc   |  4 ++
+ .../browser/autocomplete_provider_client.h    |  1 +
+ .../omnibox/browser/base_search_provider.cc   |  2 +-
+ components/omnibox/browser/search_provider.cc |  3 +-
+ .../add-an-always-incognito-mode.inc          | 13 ++++++
+ .../add-an-always-incognito-mode.inc          |  1 +
+ .../add-an-always-incognito-mode.inc          |  3 ++
+ .../add-an-always-incognito-mode.inc          |  1 +
+ .../webstore_private/webstore_private_api.cc  | 41 ++++++++++++++-----
+ 30 files changed, 246 insertions(+), 33 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/add-an-always-incognito-mode.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-an-always-incognito-mode.inc
+ create mode 100644 cromite_flags/components/offline_pages/core/offline_page_feature_cc/add-an-always-incognito-mode.inc
+ create mode 100644 cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc
+
+diff --git a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
+index 868d7421ef7..7d08aa18e0c 100644
+--- a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
++++ b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.cc
+@@ -520,6 +520,15 @@ AiModeButtonService* ChromeAutocompleteProviderClient::GetAiModeButtonService()
+   return AiModeButtonServiceFactory::GetForProfile(profile_);
+ }
+ 
++bool ChromeAutocompleteProviderClient::IsAlwaysIncognitoEnabled() const {
++#if BUILDFLAG(IS_ANDROID)
++  if (profile_->GetPrefs()->GetBoolean(prefs::kAlwaysIncognitoEnabled)) {
++    return true;
++  }
++#endif
++  return false;
++}
++
+ bool ChromeAutocompleteProviderClient::IsOffTheRecord() const {
+   return profile_->IsOffTheRecord();
+ }
+diff --git a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h
+index 6efa1d82894..13a037d168b 100644
+--- a/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h
++++ b/chrome/browser/autocomplete/chrome_autocomplete_provider_client.h
+@@ -109,6 +109,7 @@ class ChromeAutocompleteProviderClient : public AutocompleteProviderClient {
+ 
+   bool IsOffTheRecord() const override;
+   bool IsPrimaryOTRProfileWithRegularParent() const override;
++  bool IsAlwaysIncognitoEnabled() const override;
+   bool IsIncognitoProfile() const override;
+   bool IsGuestSession() const override;
+   bool SearchSuggestEnabled() const override;
+diff --git a/chrome/browser/autocomplete/remote_suggestions_service_factory.cc b/chrome/browser/autocomplete/remote_suggestions_service_factory.cc
+index 0836c117463..8471040dd26 100644
+--- a/chrome/browser/autocomplete/remote_suggestions_service_factory.cc
++++ b/chrome/browser/autocomplete/remote_suggestions_service_factory.cc
+@@ -4,6 +4,7 @@
+ 
+ #include "chrome/browser/autocomplete/remote_suggestions_service_factory.h"
+ 
++#include "build/build_config.h"
+ #include "base/no_destructor.h"
+ #include "chrome/browser/autocomplete/document_suggestions_service_factory.h"
+ #include "chrome/browser/autocomplete/enterprise_search_aggregator_suggestions_service_factory.h"
+@@ -43,9 +44,13 @@ RemoteSuggestionsServiceFactory::RemoteSuggestionsServiceFactory()
+     : ProfileKeyedServiceFactory(
+           "RemoteSuggestionsService",
+           ProfileSelections::Builder()
++#if BUILDFLAG(IS_ANDROID)
++              .WithRegular(ProfileSelection::kOriginalOnlyAndAlwaysIncognito)
++#else
+               // Service is needed in OTR profiles (Incognito and Guest).
+               .WithRegular(ProfileSelection::kOwnInstance)
+               .WithGuest(ProfileSelection::kOwnInstance)
++#endif
+               // TODO(crbug.com/41488885): Check if this service is needed for
+               // Ash Internals.
+               .WithAshInternals(ProfileSelection::kOriginalOnly)
+diff --git a/chrome/browser/content_settings/host_content_settings_map_factory.cc b/chrome/browser/content_settings/host_content_settings_map_factory.cc
+index 02a8d862461..dc5898b7d0b 100644
+--- a/chrome/browser/content_settings/host_content_settings_map_factory.cc
++++ b/chrome/browser/content_settings/host_content_settings_map_factory.cc
+@@ -17,6 +17,7 @@
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+ #include "chrome/browser/supervised_user/family_link_settings_service_factory.h"
+ #include "chrome/common/buildflags.h"
++#include "chrome/common/pref_names.h"
+ #include "components/content_settings/core/browser/content_settings_pref_provider.h"
+ #include "components/content_settings/core/browser/host_content_settings_map.h"
+ #include "components/permissions/features.h"
+@@ -122,9 +123,25 @@ scoped_refptr<RefcountedKeyedService>
+     GetForProfile(original_profile);
+ 
+   bool should_record_metrics = profiles::IsRegularUserProfile(profile);
++  bool always_incognito_enabled = false;
++  bool force_save_site_settings = false;
++
++#if BUILDFLAG(IS_ANDROID)
++  PrefService* prefService = original_profile->GetPrefs();
++  if (prefService->GetBoolean(prefs::kAlwaysIncognitoEnabled)) {
++    always_incognito_enabled = true;
++  }
++
++  if (prefService->GetBoolean(prefs::kIncognitoSaveSiteSettingEnabled)) {
++    profile = original_profile;
++    force_save_site_settings = true;
++  }
++#endif
++
+   scoped_refptr<HostContentSettingsMap> settings_map(new HostContentSettingsMap(
+       profile->GetPrefs(),
+-      profile->IsOffTheRecord() || profile->IsGuestSession(),
++      !force_save_site_settings && (profile->IsOffTheRecord() || profile->IsGuestSession()),
++      force_save_site_settings,
+       /*store_last_modified=*/true, profile->ShouldRestoreOldSessionCookies(),
+       should_record_metrics));
+ 
+@@ -142,6 +159,9 @@ scoped_refptr<RefcountedKeyedService>
+                                  std::move(component_extension_provider));
+ #endif  // BUILDFLAG(IS_CHROMEOS)
+ 
++  if (always_incognito_enabled)
++    return settings_map;
++
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   // These must be registered before before the HostSettings are passed over to
+   // the IOThread.  Simplest to do this on construction.
+diff --git a/chrome/browser/history/history_tab_helper.cc b/chrome/browser/history/history_tab_helper.cc
+index 41e33ac73f3..f146c538e21 100644
+--- a/chrome/browser/history/history_tab_helper.cc
++++ b/chrome/browser/history/history_tab_helper.cc
+@@ -17,11 +17,14 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
+ #include "chrome/browser/translate/chrome_translate_client.h"
++#include "chrome/common/pref_names.h"
+ #include "components/actor/core/task_id.h"
+ #include "components/history/content/browser/history_context_helper.h"
+ #include "components/history/core/browser/history_constants.h"
+ #include "components/history/core/browser/history_service.h"
+ #include "components/history/core/browser/history_types.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
+ #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
+ #include "components/sessions/content/navigation_task_id.h"
+ #include "components/sessions/content/session_tab_helper.h"
+@@ -650,6 +653,15 @@ void HistoryTabHelper::TitleWasSet(NavigationEntry* entry) {
+ history::HistoryService* HistoryTabHelper::GetHistoryService() {
+   Profile* profile =
+       Profile::FromBrowserContext(web_contents()->GetBrowserContext());
++
++#if BUILDFLAG(IS_ANDROID)
++  if (profile->GetOriginalProfile()->GetPrefs()->GetBoolean(
++          prefs::kIncognitoTabHistoryEnabled)) {
++    return HistoryServiceFactory::GetForProfile(
++        profile, ServiceAccessType::IMPLICIT_ACCESS);
++  }
++#endif
++
+   if (profile->IsOffTheRecord()) {
+     return nullptr;
+   }
+@@ -658,6 +670,14 @@ history::HistoryService* HistoryTabHelper::GetHistoryService() {
+       profile, ServiceAccessType::IMPLICIT_ACCESS);
+ }
+ 
++// static
++void HistoryTabHelper::RegisterProfilePrefs(PrefRegistrySimple* registry) {
++#if BUILDFLAG(IS_ANDROID)
++  registry->RegisterBooleanPref(prefs::kIncognitoTabHistoryEnabled, false);
++  registry->RegisterBooleanPref(prefs::kIncognitoSaveSiteSettingEnabled, false);
++#endif
++}
++
+ void HistoryTabHelper::WebContentsDestroyed() {
+   translate_observation_.Reset();
+ 
+diff --git a/chrome/browser/history/history_tab_helper.h b/chrome/browser/history/history_tab_helper.h
+index aed6337c7de..229e88e6f60 100644
+--- a/chrome/browser/history/history_tab_helper.h
++++ b/chrome/browser/history/history_tab_helper.h
+@@ -20,6 +20,8 @@
+ #include "components/translate/core/browser/translate_driver.h"
+ #include "content/public/browser/web_contents_observer.h"
+ #include "content/public/browser/web_contents_user_data.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
+ 
+ namespace history {
+ struct HistoryAddPageArgs;
+@@ -71,6 +73,11 @@ class HistoryTabHelper
+   std::optional<std::string> GetAppId() { return app_id_; }
+ #endif
+ 
++  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
++
++  // Helper function to return the history service.  May return null.
++  history::HistoryService* GetHistoryService();
++
+  private:
+   explicit HistoryTabHelper(content::WebContents* web_contents);
+   friend class content::WebContentsUserData<HistoryTabHelper>;
+@@ -110,9 +117,6 @@ class HistoryTabHelper
+   void OnLanguageDetermined(
+       const translate::LanguageDetectionDetails& details) override;
+ 
+-  // Helper function to return the history service.  May return null.
+-  history::HistoryService* GetHistoryService();
+-
+   // Returns true if our observed web contents is an eligible tab.
+   bool IsEligibleTab(const history::HistoryAddPageArgs& add_page_args) const;
+ 
+diff --git a/chrome/browser/offline_pages/android/offline_page_model_factory.cc b/chrome/browser/offline_pages/android/offline_page_model_factory.cc
+index de31d0e561d..8bd1a52b11b 100644
+--- a/chrome/browser/offline_pages/android/offline_page_model_factory.cc
++++ b/chrome/browser/offline_pages/android/offline_page_model_factory.cc
+@@ -23,6 +23,9 @@
+ #include "components/keyed_service/core/simple_dependency_manager.h"
+ #include "components/offline_pages/core/model/offline_page_model_taskified.h"
+ #include "components/offline_pages/core/offline_page_metadata_store.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
++#include "chrome/common/pref_names.h"
+ 
+ namespace offline_pages {
+ 
+@@ -54,13 +57,15 @@ std::unique_ptr<KeyedService> OfflinePageModelFactory::BuildServiceInstanceFor(
+   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
+       base::ThreadPool::CreateSequencedTaskRunner({base::MayBlock()});
+ 
++  ProfileKey* profile_key = ProfileKey::FromSimpleFactoryKey(key)->GetOriginalKey();
++
+   base::FilePath store_path =
+-      key->GetPath().Append(chrome::kOfflinePageMetadataDirname);
++      profile_key->GetPath().Append(chrome::kOfflinePageMetadataDirname);
+   std::unique_ptr<OfflinePageMetadataStore> metadata_store(
+       new OfflinePageMetadataStore(background_task_runner, store_path));
+ 
+   base::FilePath persistent_archives_dir =
+-      key->GetPath().Append(chrome::kOfflinePageArchivesDirname);
++      profile_key->GetPath().Append(chrome::kOfflinePageArchivesDirname);
+   // If base::PathService::Get returns false, the temporary_archives_dir will be
+   // empty, and no temporary pages will be saved during this chrome lifecycle.
+   base::FilePath temporary_archives_dir;
+@@ -69,7 +74,6 @@ std::unique_ptr<KeyedService> OfflinePageModelFactory::BuildServiceInstanceFor(
+         temporary_archives_dir.Append(chrome::kOfflinePageArchivesDirname);
+   }
+ 
+-  ProfileKey* profile_key = ProfileKey::FromSimpleFactoryKey(key);
+   auto archive_manager = std::make_unique<DownloadArchiveManager>(
+       temporary_archives_dir, persistent_archives_dir,
+       DownloadPrefs::GetDefaultDownloadDirectory(), background_task_runner,
+@@ -87,4 +91,14 @@ std::unique_ptr<KeyedService> OfflinePageModelFactory::BuildServiceInstanceFor(
+   return model;
+ }
+ 
++SimpleFactoryKey* OfflinePageModelFactory::GetKeyToUse(
++    SimpleFactoryKey* key) const {
++  ProfileKey* profile_key = ProfileKey::FromSimpleFactoryKey(key);
++  if (profile_key->GetPrefs()->GetBoolean(prefs::kIncognitoTabHistoryEnabled) == false) {
++    return SimpleKeyedServiceFactory::GetKeyToUse(key);
++  }
++
++  return profile_key->GetOriginalKey();
++}
++
+ }  // namespace offline_pages
+diff --git a/chrome/browser/offline_pages/android/request_coordinator_factory.cc b/chrome/browser/offline_pages/android/request_coordinator_factory.cc
+index 79c9affc1b9..2bd6309396a 100644
+--- a/chrome/browser/offline_pages/android/request_coordinator_factory.cc
++++ b/chrome/browser/offline_pages/android/request_coordinator_factory.cc
+@@ -19,6 +19,7 @@
+ #include "chrome/browser/ui/android/tab_model/tab_model.h"
+ #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
+ #include "chrome/common/chrome_constants.h"
++#include "components/keyed_service/content/browser_context_dependency_manager.h"
+ #include "components/offline_pages/core/background/offliner.h"
+ #include "components/offline_pages/core/background/offliner_policy.h"
+ #include "components/offline_pages/core/background/request_coordinator.h"
+@@ -28,6 +29,11 @@
+ #include "components/offline_pages/core/offline_page_feature.h"
+ #include "content/public/browser/web_contents.h"
+ 
++#include "chrome/browser/profiles/incognito_helpers.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
++#include "chrome/common/pref_names.h"
++
+ namespace network {
+ class NetworkQualityTracker;
+ }
+@@ -65,14 +71,9 @@ class ActiveTabInfo : public RequestCoordinator::ActiveTabInfo {
+ }  // namespace
+ 
+ RequestCoordinatorFactory::RequestCoordinatorFactory()
+-    : ProfileKeyedServiceFactory(
++    : BrowserContextKeyedServiceFactory(
+           "OfflineRequestCoordinator",
+-          ProfileSelections::Builder()
+-              .WithRegular(ProfileSelection::kOriginalOnly)
+-              // TODO(crbug.com/40257657): Check if this service is needed in
+-              // Guest mode.
+-              .WithGuest(ProfileSelection::kOriginalOnly)
+-              .Build()) {
++          BrowserContextDependencyManager::GetInstance()) {
+   // Depends on OfflinePageModelFactory in SimpleDependencyManager.
+ }
+ 
+@@ -92,6 +93,12 @@ RequestCoordinator* RequestCoordinatorFactory::GetForBrowserContext(
+ std::unique_ptr<KeyedService>
+ RequestCoordinatorFactory::BuildServiceInstanceForBrowserContext(
+     content::BrowserContext* context) const {
++  if (context->IsOffTheRecord() &&
++      Profile::FromBrowserContext(context)->GetOriginalProfile()
++        ->GetPrefs()->GetBoolean(prefs::kIncognitoTabHistoryEnabled) == false) {
++    // do not track history in incognito mode if preference is disabled
++    return nullptr;
++  }
+   std::unique_ptr<OfflinerPolicy> policy(new OfflinerPolicy());
+   std::unique_ptr<Offliner> offliner;
+   OfflinePageModel* model =
+@@ -122,4 +129,16 @@ RequestCoordinatorFactory::BuildServiceInstanceForBrowserContext(
+       std::make_unique<ActiveTabInfo>(profile));
+ }
+ 
++content::BrowserContext*
++RequestCoordinatorFactory::GetBrowserContextToUse(
++    content::BrowserContext* context) const {
++  if (Profile::FromBrowserContext(context)->GetOriginalProfile()
++        ->GetPrefs()->GetBoolean(prefs::kIncognitoTabHistoryEnabled) == false) {
++    return BrowserContextKeyedServiceFactory::GetBrowserContextToUse(context);
++  }
++
++  return GetBrowserContextRedirectedInIncognito(context);
++}
++
++
+ }  // namespace offline_pages
+diff --git a/chrome/browser/offline_pages/offline_page_model_factory.h b/chrome/browser/offline_pages/offline_page_model_factory.h
+index 7e08ef422f9..765c4f54b9a 100644
+--- a/chrome/browser/offline_pages/offline_page_model_factory.h
++++ b/chrome/browser/offline_pages/offline_page_model_factory.h
+@@ -48,6 +48,7 @@ class OfflinePageModelFactory : public SimpleKeyedServiceFactory {
+ 
+   std::unique_ptr<KeyedService> BuildServiceInstanceFor(
+       SimpleFactoryKey* key) const override;
++  SimpleFactoryKey* GetKeyToUse(SimpleFactoryKey* key) const override;
+ };
+ 
+ }  // namespace offline_pages
+diff --git a/chrome/browser/offline_pages/recent_tab_helper.cc b/chrome/browser/offline_pages/recent_tab_helper.cc
+index ca4c4ced875..ab4b3313a7d 100644
+--- a/chrome/browser/offline_pages/recent_tab_helper.cc
++++ b/chrome/browser/offline_pages/recent_tab_helper.cc
+@@ -28,6 +28,11 @@
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/navigation_handle.h"
+ 
++#include "chrome/browser/profiles/profile.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
++#include "chrome/common/pref_names.h"
++
+ namespace {
+ class DefaultRecentTabHelperDelegate
+     : public offline_pages::RecentTabHelper::Delegate {
+@@ -191,6 +196,14 @@ bool RecentTabHelper::EnsureInitialized() {
+   // WebContents with its origin as well.
+   snapshots_enabled_ = !tab_id_.empty() &&
+                        !web_contents()->GetBrowserContext()->IsOffTheRecord();
++  if (!tab_id_.empty() && web_contents()->GetBrowserContext()->IsOffTheRecord()) {
++    if (Profile::FromBrowserContext(web_contents()->GetBrowserContext())
++          ->GetOriginalProfile()
++          ->GetPrefs()->GetBoolean(prefs::kIncognitoTabHistoryEnabled)) {
++      snapshots_enabled_ = true;
++      incognito_tab_history_enabled_ = true;
++    }
++  }
+ 
+   if (snapshots_enabled_) {
+     page_model_ = OfflinePageModelFactory::GetForBrowserContext(
+@@ -350,7 +363,8 @@ void RecentTabHelper::WebContentsWasHidden() {
+       GetRecentPagesClientId(),
+       base::BindOnce(&RecentTabHelper::ContinueSnapshotWithIdsToPurge,
+                      weak_ptr_factory_.GetWeakPtr(),
+-                     last_n_ongoing_snapshot_info_.get()));
++                     last_n_ongoing_snapshot_info_.get(),
++                     /*user_requested*/ false));
+ 
+   last_n_latest_saved_snapshot_info_.reset();
+ }
+@@ -416,11 +430,12 @@ void RecentTabHelper::SaveSnapshotForDownloads(bool replace_latest) {
+         downloads_latest_saved_snapshot_info_->request_id,
+         downloads_latest_saved_snapshot_info_->origin);
+     std::vector<int64_t> ids{downloads_latest_saved_snapshot_info_->request_id};
+-    ContinueSnapshotWithIdsToPurge(downloads_ongoing_snapshot_info_.get(), ids);
++    ContinueSnapshotWithIdsToPurge(downloads_ongoing_snapshot_info_.get(), /*user_requested*/ true, ids);
+   } else {
+     // Otherwise go straight to saving the page.
+     CHECK(downloads_ongoing_snapshot_info_, base::NotFatalUntil::M161);
+     ContinueSnapshotAfterPurge(downloads_ongoing_snapshot_info_.get(),
++                               /*user_requested*/ true,
+                                OfflinePageModel::DeletePageResult::SUCCESS);
+   }
+ }
+@@ -437,6 +452,7 @@ void RecentTabHelper::SaveSnapshotForDownloads(bool replace_latest) {
+ // for early termination in case of errors.
+ void RecentTabHelper::ContinueSnapshotWithIdsToPurge(
+     SnapshotProgressInfo* snapshot_info,
++    bool user_requested,
+     const std::vector<int64_t>& page_ids) {
+   CHECK(snapshot_info, base::NotFatalUntil::M161);
+ 
+@@ -446,13 +462,20 @@ void RecentTabHelper::ContinueSnapshotWithIdsToPurge(
+   criteria.offline_ids = page_ids;
+   page_model_->DeletePagesWithCriteria(
+       criteria, base::BindOnce(&RecentTabHelper::ContinueSnapshotAfterPurge,
+-                               weak_ptr_factory_.GetWeakPtr(), snapshot_info));
++                               weak_ptr_factory_.GetWeakPtr(), snapshot_info,
++                               user_requested));
+ }
+ 
+ void RecentTabHelper::ContinueSnapshotAfterPurge(
+     SnapshotProgressInfo* snapshot_info,
++    bool user_requested,
+     OfflinePageModel::DeletePageResult result) {
+-  if (result != OfflinePageModel::DeletePageResult::SUCCESS) {
++  // remove snapshot save of recent tab if always incognito mode is active
++  // so recents tab list is empty at every startup
++  // the user can choose to disable the feature
++  if ((incognito_tab_history_enabled_ || !base::FeatureList::IsEnabled(offline_pages::kOfflinePagesAutoSaveFeature)
++         || result != OfflinePageModel::DeletePageResult::SUCCESS)
++       && !user_requested) {
+     ReportSnapshotCompleted(snapshot_info, false);
+     return;
+   }
+diff --git a/chrome/browser/offline_pages/recent_tab_helper.h b/chrome/browser/offline_pages/recent_tab_helper.h
+index 020ff00b0f3..b31e5d7a8c2 100644
+--- a/chrome/browser/offline_pages/recent_tab_helper.h
++++ b/chrome/browser/offline_pages/recent_tab_helper.h
+@@ -106,8 +106,10 @@ class RecentTabHelper : public content::WebContentsObserver,
+ 
+   bool EnsureInitialized();
+   void ContinueSnapshotWithIdsToPurge(SnapshotProgressInfo* snapshot_info,
++                                      bool user_requested,
+                                       const std::vector<int64_t>& page_ids);
+   void ContinueSnapshotAfterPurge(SnapshotProgressInfo* snapshot_info,
++                                  bool user_requested,
+                                   OfflinePageModel::DeletePageResult result);
+   void SavePageCallback(SnapshotProgressInfo* snapshot_info,
+                         OfflinePageModel::SavePageResult result,
+@@ -129,6 +131,9 @@ class RecentTabHelper : public content::WebContentsObserver,
+   // Not page-specific.
+   bool snapshots_enabled_ = false;
+ 
++  // If true, tab history in incognito mode is enabled
++  bool incognito_tab_history_enabled_ = false;
++
+   // Snapshot progress information for an ongoing snapshot requested by
+   // downloads. Null if there's no ongoing request.
+   std::unique_ptr<SnapshotProgressInfo> downloads_ongoing_snapshot_info_;
+diff --git a/chrome/browser/offline_pages/request_coordinator_factory.h b/chrome/browser/offline_pages/request_coordinator_factory.h
+index f826269a32c..5125359582c 100644
+--- a/chrome/browser/offline_pages/request_coordinator_factory.h
++++ b/chrome/browser/offline_pages/request_coordinator_factory.h
+@@ -18,7 +18,7 @@ namespace offline_pages {
+ class RequestCoordinator;
+ 
+ // A factory to create one unique RequestCoordinator.
+-class RequestCoordinatorFactory : public ProfileKeyedServiceFactory {
++class RequestCoordinatorFactory : public BrowserContextKeyedServiceFactory {
+  public:
+   static RequestCoordinatorFactory* GetInstance();
+   static RequestCoordinator* GetForBrowserContext(
+@@ -36,6 +36,8 @@ class RequestCoordinatorFactory : public ProfileKeyedServiceFactory {
+ 
+   std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(
+       content::BrowserContext* context) const override;
++  content::BrowserContext* GetBrowserContextToUse(
++      content::BrowserContext* context) const override;
+ };
+ 
+ }  // namespace offline_pages
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index 7a6cebc49f9..8415d1e2489 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -281,6 +281,7 @@
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ #include "chrome/browser/accessibility/accessibility_prefs/android/accessibility_prefs_controller.h"
++#include "chrome/browser/history/history_tab_helper.h"
+ #include "chrome/browser/android/ntp/recent_tabs_page_prefs.h"
+ #include "chrome/browser/android/oom_intervention/oom_intervention_decider.h"
+ #include "chrome/browser/android/preferences/browser_prefs_android.h"
+@@ -2240,6 +2241,10 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry,
+   usage_stats::UsageStatsBridge::RegisterProfilePrefs(registry);
+   variations::VariationsService::RegisterProfilePrefs(registry);
+   webapps::InstallPromptPrefs::RegisterProfilePrefs(registry);
++  // register incognito pref
++  registry->RegisterBooleanPref(prefs::kAlwaysIncognitoEnabled,
++                              /*default_value=*/false);
++  HistoryTabHelper::RegisterProfilePrefs(registry);
+ #else   // BUILDFLAG(IS_ANDROID)
+   bookmarks_webui::RegisterProfilePrefs(registry);
+   browser_sync::ForeignSessionHandler::RegisterProfilePrefs(registry);
+diff --git a/chrome/browser/profiles/profile_selections.cc b/chrome/browser/profiles/profile_selections.cc
+index 4c61cf88d1f..d3f017ade46 100644
+--- a/chrome/browser/profiles/profile_selections.cc
++++ b/chrome/browser/profiles/profile_selections.cc
+@@ -5,6 +5,9 @@
+ #include "chrome/browser/profiles/profile_selections.h"
+ 
+ #include "base/memory/ptr_util.h"
++#include "components/prefs/pref_registry_simple.h"
++#include "components/prefs/pref_service.h"
++#include "chrome/common/pref_names.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "components/profile_metrics/browser_profile_type.h"
+ 
+@@ -124,6 +127,13 @@ Profile* ProfileSelections::ApplyProfileSelection(Profile* profile) const {
+       return nullptr;
+     case ProfileSelection::kOriginalOnly:
+       return profile->IsOffTheRecord() ? nullptr : profile;
++#if BUILDFLAG(IS_ANDROID)
++    case ProfileSelection::kOriginalOnlyAndAlwaysIncognito:
++      return profile->IsOffTheRecord() &&
++             !(profile->GetOriginalProfile()
++              ->GetPrefs()
++              ->GetBoolean(prefs::kAlwaysIncognitoEnabled)) ? nullptr : profile;
++#endif
+     case ProfileSelection::kOwnInstance:
+       return profile;
+     case ProfileSelection::kRedirectedToOriginal:
+diff --git a/chrome/browser/profiles/profile_selections.h b/chrome/browser/profiles/profile_selections.h
+index 62e1ed732e7..26131d082b2 100644
+--- a/chrome/browser/profiles/profile_selections.h
++++ b/chrome/browser/profiles/profile_selections.h
+@@ -8,6 +8,8 @@
+ #include <memory>
+ #include <optional>
+ 
++#include "build/build_config.h"
++
+ class Profile;
+ 
+ // A helper function that checks whether Keyed Services should be created for
+@@ -26,6 +28,11 @@ bool AreKeyedServicesDisabledForProfileByDefault(const Profile* profile);
+ enum class ProfileSelection {
+   kNone,                  // Original: No Profile  --  OTR: No Profile
+   kOriginalOnly,          // Original: Self        --  OTR: No Profile
++#if BUILDFLAG(IS_ANDROID)
++  kOriginalOnlyAndAlwaysIncognito,
++                          // Original: Self        --  OTR: Self (with AlwaysIncognito ON)
++                          //                       --  OTR: No Profile (with AlwaysIncognito OFF)
++#endif
+   kOwnInstance,           // Original: Self        --  OTR: Self
+   kRedirectedToOriginal,  // Original: Self        --  OTR: Original
+   kOffTheRecordOnly       // Original: No Profile  --  OTR: Self
+diff --git a/chrome/browser/ui/search_engines/search_engine_tab_helper.cc b/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
+index 35326fab25e..6be6ddd1db3 100644
+--- a/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
++++ b/chrome/browser/ui/search_engines/search_engine_tab_helper.cc
+@@ -11,6 +11,7 @@
+ #include "chrome/browser/search_engines/template_url_fetcher_factory.h"
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+ #include "chrome/browser/ui/search_engines/edit_search_engine_controller.h"
++#include "chrome/common/pref_names.h"
+ #include "chrome/common/url_constants.h"
+ #include "components/search_engines/template_url.h"
+ #include "components/search_engines/template_url_fetcher.h"
+@@ -177,6 +178,11 @@ void SearchEngineTabHelper::PageHasOpenSearchDescriptionDocument(
+ 
+   // Download the OpenSearch description document. If this is successful, a
+   // new keyword will be created when done.
++#if BUILDFLAG(IS_ANDROID)
++  if (profile->GetOriginalProfile()->GetPrefs()->GetBoolean(prefs::kIncognitoTabHistoryEnabled)) {
++    is_off_the_record = false;
++  }
++#endif
+   TemplateURLFetcherFactory::GetForProfile(profile)->ScheduleDownload(
+       keyword, osdd_url, entry->GetFavicon().url,
+       frame->GetLastCommittedOrigin(), url_loader_factory.get(),
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index 3824309147e..5e19e78fd69 100644
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -3076,6 +3076,12 @@ inline constexpr char kOutOfProcessSystemDnsResolutionEnabled[] =
+     "net.out_of_process_system_dns_resolution_enabled";
+ #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)
+ 
++#if BUILDFLAG(IS_ANDROID)
++inline constexpr char kAlwaysIncognitoEnabled[] = "always_incognito_enabled";
++inline constexpr char kIncognitoSaveSiteSettingEnabled[] = "incognito_tab_history_enabled";
++inline constexpr char kIncognitoTabHistoryEnabled[] = "incognito_site_setting_enabled";
++#endif
++
+ // A list of hostnames to disable HTTPS Upgrades / HTTPS-First Mode warnings on.
+ inline constexpr char kHttpAllowlist[] = "https_upgrades.policy.http_allowlist";
+ 
+diff --git a/components/content_settings/core/browser/content_settings_pref_provider.cc b/components/content_settings/core/browser/content_settings_pref_provider.cc
+index bce0af5b9bc..51b90b3f472 100644
+--- a/components/content_settings/core/browser/content_settings_pref_provider.cc
++++ b/components/content_settings/core/browser/content_settings_pref_provider.cc
+@@ -142,10 +142,12 @@ void PrefProvider::RegisterProfilePrefs(
+ 
+ PrefProvider::PrefProvider(PrefService* prefs,
+                            bool off_the_record,
++                           bool force_save_site_settings,
+                            bool store_last_modified,
+                            bool restore_session)
+     : prefs_(prefs),
+       off_the_record_(off_the_record),
++      force_save_site_settings_(force_save_site_settings),
+       store_last_modified_(store_last_modified),
+       clock_(base::DefaultClock::GetInstance()) {
+   TRACE_EVENT_BEGIN("startup", "PrefProvider::PrefProvider");
+@@ -168,10 +170,12 @@ PrefProvider::PrefProvider(PrefService* prefs,
+   WebsiteSettingsRegistry* website_settings =
+       WebsiteSettingsRegistry::GetInstance();
+   for (const WebsiteSettingsInfo* info : *website_settings) {
++    bool save_site_settings = force_save_site_settings_ &&
++      info->incognito_behavior() == WebsiteSettingsInfo::INHERIT_IN_INCOGNITO;
+     content_settings_prefs_.insert(std::make_pair(
+         info->type(), std::make_unique<ContentSettingsPref>(
+                           info->type(), prefs_, &pref_change_registrar_,
+-                          info->pref_name(), off_the_record_, restore_session,
++                          info->pref_name(), off_the_record_ && !save_site_settings, restore_session,
+                           base::BindRepeating(&PrefProvider::Notify,
+                                               base::Unretained(this)))));
+   }
+diff --git a/components/content_settings/core/browser/content_settings_pref_provider.h b/components/content_settings/core/browser/content_settings_pref_provider.h
+index 27a6553fa7c..50c1cdc60b4 100644
+--- a/components/content_settings/core/browser/content_settings_pref_provider.h
++++ b/components/content_settings/core/browser/content_settings_pref_provider.h
+@@ -37,6 +37,7 @@ class PrefProvider : public UserModifiableProvider {
+ 
+   PrefProvider(PrefService* prefs,
+                bool off_the_record,
++               bool force_save_site_settings,
+                bool store_last_modified,
+                bool restore_session);
+ 
+@@ -128,6 +129,7 @@ class PrefProvider : public UserModifiableProvider {
+   raw_ptr<PrefService> prefs_;
+ 
+   const bool off_the_record_;
++  const bool force_save_site_settings_;
+ 
+   bool store_last_modified_;
+ 
+diff --git a/components/content_settings/core/browser/host_content_settings_map.cc b/components/content_settings/core/browser/host_content_settings_map.cc
+index 8b8a022073c..009d529caa4 100644
+--- a/components/content_settings/core/browser/host_content_settings_map.cc
++++ b/components/content_settings/core/browser/host_content_settings_map.cc
+@@ -285,6 +285,7 @@ struct ContentSettingEntry {
+ 
+ HostContentSettingsMap::HostContentSettingsMap(PrefService* prefs,
+                                                bool is_off_the_record,
++                                               bool force_save_site_settings,
+                                                bool store_last_modified,
+                                                bool restore_session,
+                                                bool should_record_metrics)
+@@ -294,6 +295,7 @@ HostContentSettingsMap::HostContentSettingsMap(PrefService* prefs,
+ #endif
+       prefs_(prefs),
+       is_off_the_record_(is_off_the_record),
++      force_save_site_settings_(force_save_site_settings),
+       store_last_modified_(store_last_modified),
+       allow_invalid_secondary_pattern_for_testing_(false),
+       clock_(base::DefaultClock::GetInstance()) {
+@@ -307,7 +309,7 @@ HostContentSettingsMap::HostContentSettingsMap(PrefService* prefs,
+   policy_provider->AddObserver(this);
+ 
+   auto pref_provider_ptr = std::make_unique<content_settings::PrefProvider>(
+-      prefs_, is_off_the_record_, store_last_modified_, restore_session);
++      prefs_, is_off_the_record_, force_save_site_settings_, store_last_modified_, restore_session);
+   pref_provider_ = pref_provider_ptr.get();
+   content_settings_providers_[ProviderType::kPrefProvider] =
+       std::move(pref_provider_ptr);
+diff --git a/components/content_settings/core/browser/host_content_settings_map.h b/components/content_settings/core/browser/host_content_settings_map.h
+index 77cf51e5138..ce19726490c 100644
+--- a/components/content_settings/core/browser/host_content_settings_map.h
++++ b/components/content_settings/core/browser/host_content_settings_map.h
+@@ -83,6 +83,7 @@ class HostContentSettingsMap : public content_settings::Observer,
+   // profile or a guest session.
+   HostContentSettingsMap(PrefService* prefs,
+                          bool is_off_the_record,
++                         bool force_save_site_settings,
+                          bool store_last_modified,
+                          bool restore_session,
+                          bool should_record_metrics);
+@@ -571,6 +572,8 @@ class HostContentSettingsMap : public content_settings::Observer,
+   // Whether this settings map is for an incognito or guest session.
+   bool is_off_the_record_;
+ 
++  bool force_save_site_settings_ = false;
++
+   // Whether ContentSettings in the PrefProvider will store a last_modified
+   // timestamp.
+   bool store_last_modified_;
+diff --git a/components/omnibox/browser/autocomplete_provider_client.cc b/components/omnibox/browser/autocomplete_provider_client.cc
+index 8b5acf5ed6e..b1c133dfb47 100644
+--- a/components/omnibox/browser/autocomplete_provider_client.cc
++++ b/components/omnibox/browser/autocomplete_provider_client.cc
+@@ -98,6 +98,10 @@ AutocompleteProviderClient::GetWeakPtr() {
+   return nullptr;
+ }
+ 
++bool AutocompleteProviderClient::IsAlwaysIncognitoEnabled() const {
++  return false;
++}
++
+ bool AutocompleteProviderClient::IsWebUiNtpEnabledForDesktopAndroid() const {
+   return false;
+ }
+diff --git a/components/omnibox/browser/autocomplete_provider_client.h b/components/omnibox/browser/autocomplete_provider_client.h
+index 1c215d22143..9de1828e3b6 100644
+--- a/components/omnibox/browser/autocomplete_provider_client.h
++++ b/components/omnibox/browser/autocomplete_provider_client.h
+@@ -165,6 +165,7 @@ class AutocompleteProviderClient : public OmniboxAction::Client {
+   virtual bool IsPrimaryOTRProfileWithRegularParent() const = 0;
+   virtual bool IsIncognitoProfile() const = 0;
+   virtual bool IsGuestSession() const = 0;
++  virtual bool IsAlwaysIncognitoEnabled() const = 0;
+ 
+   virtual bool SearchSuggestEnabled() const = 0;
+ 
+diff --git a/components/omnibox/browser/base_search_provider.cc b/components/omnibox/browser/base_search_provider.cc
+index d21f651bf0b..fd96a1e5527 100644
+--- a/components/omnibox/browser/base_search_provider.cc
++++ b/components/omnibox/browser/base_search_provider.cc
+@@ -406,7 +406,7 @@ bool BaseSearchProvider::CanSendSuggestRequest(
+ 
+   // Don't make a suggest request if in incognito mode; unless for the Lens
+   // searchboxes.
+-  if (client->IsOffTheRecord() &&
++  if (client->IsOffTheRecord() && !client->IsAlwaysIncognitoEnabled() &&
+       !omnibox::IsLensSearchbox(page_classification)) {
+     return false;
+   }
+diff --git a/components/omnibox/browser/search_provider.cc b/components/omnibox/browser/search_provider.cc
+index 4fad769790b..27f922f8036 100644
+--- a/components/omnibox/browser/search_provider.cc
++++ b/components/omnibox/browser/search_provider.cc
+@@ -969,7 +969,8 @@ std::unique_ptr<network::SimpleURLLoader> SearchProvider::CreateSuggestLoader(
+   // is required.
+   // Request for suggestions in OTR contexts is not allowed; except for the Lens
+   // searchboxes.
+-  DCHECK(!client()->IsOffTheRecord() ||
++  if (!client()->IsAlwaysIncognitoEnabled())
++    DCHECK(!client()->IsOffTheRecord() ||
+          omnibox::IsLensSearchbox(input.current_page_classification()));
+   return client()
+       ->GetRemoteSuggestionsService(/*create_if_necessary=*/true)
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/add-an-always-incognito-mode.inc b/cromite_flags/chrome/browser/about_flags_cc/add-an-always-incognito-mode.inc
+new file mode 100644
+index 00000000000..49ef2ef7574
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/add-an-always-incognito-mode.inc
+@@ -0,0 +1,13 @@
++#ifdef FLAG_SECTION
++
++#if BUILDFLAG(IS_ANDROID)
++
++    {"offline-pages-auto-save",
++     "Enables autosave of offline page",
++     "Enables autosave of offline page, as automatic switching in case "
++     "the device goes offline.", kOsAndroid,
++     FEATURE_VALUE_TYPE(offline_pages::kOfflinePagesAutoSaveFeature)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-an-always-incognito-mode.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-an-always-incognito-mode.inc
+new file mode 100644
+index 00000000000..c382b02da9e
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/add-an-always-incognito-mode.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_ENABLED(kCCTIncognitoAvailableToThirdParty);
+diff --git a/cromite_flags/components/offline_pages/core/offline_page_feature_cc/add-an-always-incognito-mode.inc b/cromite_flags/components/offline_pages/core/offline_page_feature_cc/add-an-always-incognito-mode.inc
+new file mode 100644
+index 00000000000..db45879e065
+--- /dev/null
++++ b/cromite_flags/components/offline_pages/core/offline_page_feature_cc/add-an-always-incognito-mode.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kOfflinePagesAutoSaveFeature,
++                "OfflinePagesAutoSaveEnabled",
++                base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc b/cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc
+new file mode 100644
+index 00000000000..78d0eabf7bd
+--- /dev/null
++++ b/cromite_flags/components/offline_pages/core/offline_page_feature_h/add-an-always-incognito-mode.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kOfflinePagesAutoSaveFeature);
+diff --git a/extensions/browser/api/webstore_private/webstore_private_api.cc b/extensions/browser/api/webstore_private/webstore_private_api.cc
+index ad5ac45ba49..f6c467f4b7a 100644
+--- a/extensions/browser/api/webstore_private/webstore_private_api.cc
++++ b/extensions/browser/api/webstore_private/webstore_private_api.cc
+@@ -31,6 +31,9 @@
+ #include "base/version.h"
+ #include "base/version_info/version_info.h"
+ #include "build/chromeos_buildflags.h"
++#include "build/build_config.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/pref_names.h"
+ #include "components/crx_file/id_util.h"
+ #include "components/enterprise/browser/reporting/common_pref_names.h"
+ #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
+@@ -281,6 +284,18 @@ const int kExtensionReferrerUserGestureLimit = 2;
+ 
+ WebstorePrivateApi::Delegate* test_delegate = nullptr;
+ 
++content::BrowserContext* GetContextForAlwaysIncognito(
++    content::BrowserContext* browser_context) {
++#if BUILDFLAG(IS_ANDROID)
++  Profile* profile = Profile::FromBrowserContext(browser_context);
++  if (profile->GetOriginalProfile()->GetPrefs()->GetBoolean(
++          prefs::kAlwaysIncognitoEnabled)) {
++    return profile->GetOriginalProfile();
++  }
++#endif
++  return browser_context;
++}
++
+ // We allow the web store to set a string containing login information when a
+ // purchase is made, so that when a user logs into sync with a different
+ // account we can recognize the situation. The Get function returns the login if
+@@ -547,7 +562,7 @@ WebstorePrivateBeginInstallWithManifest3Function::Run() {
+   params_ = Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params_);
+ 
+-  browser_context_ = browser_context();
++  browser_context_ = GetContextForAlwaysIncognito(browser_context());
+   if (!crx_file::id_util::IdIsValid(details().id)) {
+     return RespondNow(BuildResponse(api::webstore_private::Result::kInvalidId,
+                                     kWebstoreInvalidIdError));
+@@ -1245,8 +1260,10 @@ WebstorePrivateCompleteInstallFunction::Run() {
+   std::optional<CompleteInstall::Params> params =
+       CompleteInstall::Params::Create(args());
+   EXTENSION_FUNCTION_VALIDATE(params);
+-  if (ExtensionsBrowserClient::Get()->IsGuestSession(browser_context()) ||
+-      browser_context()->IsOffTheRecord()) {
++  content::BrowserContext* install_context =
++      GetContextForAlwaysIncognito(browser_context());
++  if (ExtensionsBrowserClient::Get()->IsGuestSession(install_context) ||
++      install_context->IsOffTheRecord()) {
+     return RespondNow(Error(kIncognitoError));
+   }
+ 
+@@ -1254,7 +1271,7 @@ WebstorePrivateCompleteInstallFunction::Run() {
+     return RespondNow(Error(kWebstoreInvalidIdError));
+   }
+ 
+-  approval_ = g_pending_approvals.Get().PopApproval(browser_context(),
++  approval_ = g_pending_approvals.Get().PopApproval(install_context,
+                                                     params->expected_id);
+   if (!approval_) {
+     return RespondNow(
+@@ -1268,13 +1285,13 @@ WebstorePrivateCompleteInstallFunction::Run() {
+   }
+ 
+   scoped_active_install_ = std::make_unique<ScopedActiveInstall>(
+-      ExtensionsBrowserClient::Get()->GetInstallTracker(browser_context()),
++      ExtensionsBrowserClient::Get()->GetInstallTracker(install_context),
+       params->expected_id);
+ 
+   // The extension will install through the normal extension install flow, but
+   // the allowlist entry will bypass the normal permissions install dialog.
+   scoped_refptr<WebstoreInstaller> installer = new WebstoreInstaller(
+-      browser_context(),
++      install_context,
+       base::BindOnce(
+           &WebstorePrivateCompleteInstallFunction::OnExtensionInstallSuccess,
+           this),
+@@ -1412,10 +1429,12 @@ WebstorePrivateIsInIncognitoModeFunction::
+ 
+ ExtensionFunction::ResponseAction
+ WebstorePrivateIsInIncognitoModeFunction::Run() {
++  content::BrowserContext* effective_context =
++      GetContextForAlwaysIncognito(browser_context());
+   content::BrowserContext* original_context =
+-      ExtensionsBrowserClient::Get()->GetOriginalContext(browser_context());
++      ExtensionsBrowserClient::Get()->GetOriginalContext(effective_context);
+   return RespondNow(ArgumentList(IsInIncognitoMode::Results::Create(
+-      browser_context() != original_context)));
++      effective_context != original_context)));
+ }
+ 
+ WebstorePrivateIsPendingCustodianApprovalFunction::
+@@ -1555,7 +1574,8 @@ WebstorePrivateGetExtensionStatusFunction::Run() {
+     return RespondNow(Error(kWebstoreInvalidManifestError));
+   }
+ 
+-  if (!ExtensionsBrowserClient::Get()->IsValidContext(browser_context())) {
++  if (!ExtensionsBrowserClient::Get()->IsValidContext(
++          GetContextForAlwaysIncognito(browser_context()))) {
+     return RespondNow(Error(kWebstoreUserCancelledError));
+   }
+ 
+@@ -1584,7 +1604,8 @@ ExtensionFunction::ResponseValue
+ WebstorePrivateGetExtensionStatusFunction::BuildResponseWithoutManifest(
+     const ExtensionId& extension_id) {
+   ExtensionInstallStatus status =
+-      GetWebstoreExtensionInstallStatus(extension_id, browser_context());
++      GetWebstoreExtensionInstallStatus(
++          extension_id, GetContextForAlwaysIncognito(browser_context()));
+   api::webstore_private::ExtensionInstallStatus api_status =
+       ConvertExtensionInstallStatusForAPI(status);
+   return ArgumentList(GetExtensionStatus::Results::Create(api_status));

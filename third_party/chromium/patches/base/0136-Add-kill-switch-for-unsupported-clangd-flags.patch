@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Thu, 20 Oct 2022 09:34:48 +0000
+Subject: [PATCH 136/310] Add kill switch for unsupported clangd flags
+
+Allows build with clangd by suppressing unsupported parameters
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-kill-switch-for-unsupported-clangd-flags.patch
+---
+ build/config/compiler/BUILD.gn | 16 ++++++++++++++--
+ build_overrides/build.gni      |  5 +++++
+ 2 files changed, 19 insertions(+), 2 deletions(-)
+
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+index 6a7e14b9a0d..7daac0ff96c 100644
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -682,7 +682,7 @@ config("compiler") {
+     # TODO(crbug.com/376278218): This causes segfault on Linux ARM builds.
+     # It also causes segfault on Linux s390x:
+     # https://github.com/llvm/llvm-project/issues/149511
+-    if (is_linux && use_lld && current_cpu != "arm" && current_cpu != "s390x") {
++    if (is_linux && !skip_clangd_unsupported_options && use_lld && current_cpu != "arm" && current_cpu != "s390x") {
+       cflags += [ "-Wa,--crel,--allow-experimental-crel" ]
+     }
+   }
+@@ -1612,7 +1612,7 @@ config("clang_revision") {
+ # e.g. by setting in the the project's .gn file.
+ config("clang_warning_suppression") {
+   # Some build configs use older versions of clang that don't support WSMs
+-  if (use_clang_warning_suppression_file) {
++  if (use_clang_warning_suppression_file && !skip_clangd_unsupported_options) {
+     from_build_root =
+         rebase_path(clang_warning_suppression_file, root_build_dir)
+     inputs = [ clang_warning_suppression_file ]
+@@ -2016,6 +2016,9 @@ config("default_warnings") {
+         # TODO(crbug.com/495753203): Fix and re-enable.
+         "-Wno-unused-but-set-global",
+       ]
++      if (skip_clangd_unsupported_options) {
++        cflags -= [ "-Wno-uninitialized-const-pointer" ]
++      }
+     }
+ 
+     cflags_cc += [
+@@ -2075,6 +2078,15 @@ config("default_warnings") {
+       ldflags += [ "-Wno-version-check" ]
+     }
+ 
++    if (skip_clangd_unsupported_options) {
++      cflags -= [
++        "-Wno-thread-safety-reference-return",
++        "-Wno-nontrivial-memcall",
++      ]
++      cflags_cc -= [
++      ]
++    }
++
+     # Disable the GNU line marker warning when building a target with Icecc,
+     # ccache, or both. This warning appears frequently when compiling
+     # files that use GNU-style line markers with Clang and Icecc. It can
+diff --git a/build_overrides/build.gni b/build_overrides/build.gni
+index 533726228c4..6f809282ff1 100644
+--- a/build_overrides/build.gni
++++ b/build_overrides/build.gni
+@@ -54,6 +54,11 @@ declare_args() {
+   gtest_enable_absl_printers = true
+ }
+ 
++declare_args() {
++  # Allows clangd builds by suppressing unsupported parameters
++  skip_clangd_unsupported_options = false
++}
++
+ # Features used by //base/trace_event.
+ declare_args() {
+   # Use Perfetto's trace processor for converting protobuf-encoded traces to

@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 24 Jan 2024 12:19:44 +0000
+Subject: [PATCH 215/310] Disable Read Aloud by default
+
+FILE:Disable-Read-Aloud-by-default.patch
+---
+ chrome/browser/prefs/browser_prefs.cc                           | 2 +-
+ .../flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc
+
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index b0ea874b490..0e2ffa72de0 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1755,7 +1755,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
+   registry->RegisterBooleanPref(prefs::kAppRatingPolicyEnabled, true);
+   registry->RegisterBooleanPref(policy::policy_prefs::kBackForwardCacheEnabled,
+                                 true);
+-  registry->RegisterBooleanPref(policy::policy_prefs::kReadAloudEnabled, true);
++  registry->RegisterBooleanPref(policy::policy_prefs::kReadAloudEnabled, false);
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
+   // Below this point is for platform-specific and compile-time conditional
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc
+new file mode 100644
+index 00000000000..4bd8276f349
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Read-Aloud.inc
+@@ -0,0 +1 @@
++// empty file

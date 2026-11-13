@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 15 May 2023 13:35:24 +0000
+Subject: [PATCH 144/310] WIN Add some prefs to secure preferences
+
+FILE:WIN-Add-some-prefs-to-secure-preferences.patch
+---
+ chrome/browser/prefs/chrome_pref_service_factory.cc | 8 ++++++++
+ services/preferences/tracked/pref_hash_filter.cc    | 2 +-
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/chrome/browser/prefs/chrome_pref_service_factory.cc b/chrome/browser/prefs/chrome_pref_service_factory.cc
+index cd4f964e723..32aa9fd7a90 100644
+--- a/chrome/browser/prefs/chrome_pref_service_factory.cc
++++ b/chrome/browser/prefs/chrome_pref_service_factory.cc
+@@ -116,6 +116,14 @@ bool g_disable_domain_check_for_testing = false;
+ // See CleanupDeprecatedTrackedPreferences() in pref_hash_filter.cc to remove a
+ // deprecated tracked preference.
+ const auto kTrackedPrefs = std::to_array<prefs::TrackedPreferenceMetadata>({
++#if BUILDFLAG(IS_WIN)
++    {200, prefs::kFileOrDirectoryPickerWithoutGestureAllowedForOrigins, EnforcementLevel::ENFORCE_ON_LOAD,
++     PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
++    {201, prefs::kAutoplayAllowlist, EnforcementLevel::ENFORCE_ON_LOAD,
++     PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
++    {202, prefs::kScreenCaptureWithoutGestureAllowedForOrigins, EnforcementLevel::ENFORCE_ON_LOAD,
++     PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
++#endif
+     {0, prefs::kShowHomeButton, EnforcementLevel::ENFORCE_ON_LOAD,
+      PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
+     {1, prefs::kHomePageIsNewTabPage, EnforcementLevel::ENFORCE_ON_LOAD,
+diff --git a/services/preferences/tracked/pref_hash_filter.cc b/services/preferences/tracked/pref_hash_filter.cc
+index 32772a722fe..75d2df96bfa 100644
+--- a/services/preferences/tracked/pref_hash_filter.cc
++++ b/services/preferences/tracked/pref_hash_filter.cc
+@@ -134,7 +134,7 @@ PrefHashFilter::PrefHashFilter(
+           base::FeatureList::IsEnabled(tracked::kEncryptedPrefHashing)) {
+   // For base::UmaHistogramExactLinear, number of tracked histograms must 100 or
+   // below.
+-  CHECK_LE(reporting_ids_count_, 100u);
++  //CHECK_LE(reporting_ids_count_, 100u);
+   DCHECK(pref_hash_store_);
+   DCHECK_GE(reporting_ids_count, tracked_preferences.size());
+   // Verify that, if |external_validation_hash_store_pair_| is present, both its

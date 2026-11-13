@@ -1,0 +1,2007 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Thu, 24 Feb 2022 07:54:36 +0000
+Subject: [PATCH 175/310] Content settings infrastructure
+
+This patch is used by other patches to provide the UI for Bromite-specific
+site settings.
+
+See BromiteCustomContentSetting_README.md for more information.
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+Require: bromite-build-utils.patch
+FILE:Content-settings-infrastructure.patch
+---
+ ...page_specific_content_settings_delegate.cc |   2 +-
+ .../privacy_page/privacy_page_index.html      |   1 +
+ .../privacy_page/privacy_page_index.ts        |  83 +++++++-
+ chrome/browser/resources/settings/route.ts    |   2 +
+ .../settings/site_settings/site_details.html  |   1 +
+ .../settings/site_settings/site_details.ts    |  33 ++-
+ .../site_details_permission.html              |   8 +-
+ .../site_settings/site_details_permission.ts  |  44 ++++
+ .../site_settings/site_settings_mixin.ts      |  22 +-
+ .../site_settings/site_settings_page.ts       |  31 ++-
+ .../site_settings/site_settings_util.ts       |  56 ++++++
+ .../controls/rich_controls_container_view.h   |   7 +
+ chrome/browser/ui/views/page_info/BUILD.gn    |   1 +
+ .../views/page_info/page_info_bubble_view.cc  |   2 +-
+ .../ui/views/page_info/page_info_main_view.cc |  28 ++-
+ .../views/page_info/page_info_view_factory.cc |  20 ++
+ .../views/page_info/page_info_view_factory.h  |   5 +
+ .../page_info/permission_toggle_row_view.cc   | 188 +++++++++++++++---
+ .../page_info/permission_toggle_row_view.h    |  18 +-
+ .../settings_localized_strings_provider.cc    |  54 +++++
+ .../ui/webui/settings/site_settings_helper.cc |  47 ++++-
+ .../bromite_content_settings/placeholder.txt  |   1 +
+ .../content_settings/core/browser/BUILD.gn    |   7 +
+ .../bromite_content_settings/placeholder.txt  |   1 +
+ .../core/browser/content_settings_registry.cc |   2 +
+ .../core/browser/content_settings_uma_util.cc |   6 +-
+ .../core/browser/content_settings_utils.cc    |  12 ++
+ .../core/browser/website_settings_info.h      |  38 ++++
+ .../core/browser/website_settings_registry.cc |   6 +
+ .../core/browser/website_settings_registry.h  |   1 +
+ .../content_settings/core/common/BUILD.gn     |   8 +
+ .../bromite_content_settings/placeholder.txt  |   1 +
+ .../core/common/content_settings.cc           |  30 ++-
+ .../core/common/content_settings.h            |  12 ++
+ .../core/common/content_settings.mojom        |   6 +
+ .../common/content_settings_mojom_traits.cc   |  12 +-
+ .../common/content_settings_mojom_traits.h    |  24 +++
+ .../core/common/content_settings_types.mojom  |   1 +
+ .../renderer/content_settings_agent_impl.cc   |  74 +++++++
+ .../renderer/content_settings_agent_impl.h    |   9 +
+ .../android/page_info_controller_android.cc   |  18 ++
+ components/page_info/page_info.cc             |  23 ++-
+ components/page_info/page_info_ui.cc          |  25 +++
+ components/site_settings_strings.grdp         |   1 +
+ .../platform/web_content_settings_client.h    |  13 ++
+ .../execution_context/execution_context.cc    |  16 ++
+ .../execution_context/execution_context.h     |   5 +
+ 47 files changed, 947 insertions(+), 58 deletions(-)
+ create mode 100644 components/browser_ui/strings/bromite_content_settings/placeholder.txt
+ create mode 100644 components/content_settings/core/browser/bromite_content_settings/placeholder.txt
+ create mode 100644 components/content_settings/core/common/bromite_content_settings/placeholder.txt
+
+diff --git a/chrome/browser/content_settings/page_specific_content_settings_delegate.cc b/chrome/browser/content_settings/page_specific_content_settings_delegate.cc
+index d02ab96eef1..6449daff859 100644
+--- a/chrome/browser/content_settings/page_specific_content_settings_delegate.cc
++++ b/chrome/browser/content_settings/page_specific_content_settings_delegate.cc
+@@ -220,7 +220,7 @@ namespace {
+ void GetGuestViewDefaultContentSettingRules(
+     bool incognito,
+     RendererContentSettingRules* rules) {
+-  rules->mixed_content_rules.clear();
++  rules->mixed_content_rules.clear(); // do not remove
+   rules->mixed_content_rules.push_back(ContentSettingPatternSource(
+       ContentSettingsPattern::Wildcard(), ContentSettingsPattern::Wildcard(),
+       content_settings::ContentSettingToValue(CONTENT_SETTING_BLOCK),
+diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
+index c0e488b4d3e..a325ba0f900 100644
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.html
+@@ -552,4 +552,5 @@
+     </zoom-levels>
+   </template>
+ 
++  <div id="bromite-placeholder"></div>
+ </cr-view-manager>
+diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
+index 45f5d272d2a..c2aec405c9a 100644
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page_index.ts
+@@ -9,6 +9,7 @@ import '../settings_page/settings_section.js';
+ import '../settings_shared.css.js';
+ import './privacy_guide/privacy_guide_promo.js';
+ import './privacy_page.js';
++import '../controls/settings_dropdown_menu.js';
+ 
+ import type {SettingsPrefsElement} from '/shared/settings/prefs/prefs.js';
+ import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
+@@ -30,6 +31,8 @@ import {PrivacyGuideAvailabilityMixin} from './privacy_guide/privacy_guide_avail
+ import type {PrivacyGuideBrowserProxy} from './privacy_guide/privacy_guide_browser_proxy.js';
+ import {MAX_PRIVACY_GUIDE_PROMO_IMPRESSION, PrivacyGuideBrowserProxyImpl} from './privacy_guide/privacy_guide_browser_proxy.js';
+ import {getTemplate} from './privacy_page_index.html.js';
++import {ContentSettingsTypes} from '../site_settings/constants.js';
++import {SettingsCategoryDefaultRadioGroupElement} from '../site_settings/settings_category_default_radio_group.js';
+ 
+ // clang-format off
+ // <if expr="is_chromeos">
+@@ -55,8 +58,86 @@ export class SettingsPrivacyPageIndexElement extends
+     return 'settings-privacy-page-index';
+   }
+ 
++  static getSettingTemplate(template: HTMLTemplateElement,
++                            name: string) : SettingsCategoryDefaultRadioGroupElement | undefined {
++    let value : SettingsCategoryDefaultRadioGroupElement | undefined = undefined;
++    let page : CrViewManagerElement | null = template.content.querySelector("cr-view-manager");
++
++    page?.querySelectorAll("template").forEach(
++      (subTemplate: HTMLTemplateElement) => {
++        subTemplate.content.querySelectorAll("settings-category-default-radio-group").forEach(
++          (radio: SettingsCategoryDefaultRadioGroupElement) => {
++            let setting = radio?.getAttribute("category")
++              ?.replace("[[contentSettingsTypesEnum_.", "")
++              ?.replace("]]", "");
++              if (setting && ContentSettingsTypes[setting as keyof typeof ContentSettingsTypes] === name)
++                value = radio;
++          });
++      });
++    return value;
++  }
++
+   static get template() {
+-    return getTemplate();
++    let template = getTemplate();
++    let content = template.content.getElementById("bromite-placeholder")!;
++
++    for (let index=0; index < loadTimeData.getInteger("br_cs_count"); index++) {
++      let obj = JSON.parse(loadTimeData.getString("br_cs_" + index));
++      let name = obj["name"];
++      let tag_name = obj["tag_ui"]; if (!tag_name) tag_name = obj["name"];
++
++      let existingSetting = this.getSettingTemplate(template, name);
++      if (existingSetting) {
++        if (loadTimeData.valueExists(`brSiteSettings${name}Ask`)) {
++          existingSetting.setAttribute("ask-option-label", loadTimeData.getString(`brSiteSettings${name}Ask`));
++          existingSetting.setAttribute("ask-option-icon", `br-settings:${name}-off`);
++        }
++        continue;
++      }
++
++      let subpage = document.createElement("settings-subpage");
++      subpage.setAttribute("page-title", loadTimeData.getString(`brSiteSettings${name}`));
++      subpage.setAttribute("search-title", loadTimeData.getString("siteSettingsAllSitesSearch"));
++      subpage.setAttribute("search-term", "{{searchFilter_}}");
++      subpage.setAttribute("slot", "view");
++      subpage.setAttribute("data-parent-view-id", "privacy");
++      subpage.setAttribute("id", `siteSettings${name}`);
++      subpage.setAttribute("route-path", `/content/${tag_name}`);
++
++      let divElement = document.createElement("div");
++      divElement.setAttribute("class", "content-settings-header secondary");
++      divElement.setAttribute("style", "padding: 0 var(--cr-section-padding)");
++      divElement.innerText = loadTimeData.getString(`brSiteSettings${name}Description`);
++      subpage.appendChild(divElement);
++
++      let radioGroup = existingSetting ?? document.createElement("settings-category-default-radio-group");
++      radioGroup.setAttribute("category", name);
++      radioGroup.setAttribute("allow-option-label", loadTimeData.getString(`brSiteSettings${name}Allowed`));
++      radioGroup.setAttribute("allow-option-icon", `br-settings:${name}`);
++      radioGroup.setAttribute("block-option-label", loadTimeData.getString(`brSiteSettings${name}Blocked`));
++      radioGroup.setAttribute("block-option-icon", `br-settings:${name}-off`);
++      if (loadTimeData.valueExists(`brSiteSettings${name}Ask`)) {
++        radioGroup.setAttribute("ask-option-label", loadTimeData.getString(`brSiteSettings${name}Ask`));
++        radioGroup.setAttribute("ask-option-icon", `br-settings:${name}-off`);
++      }
++      subpage.appendChild(radioGroup);
++
++      let exceptions = document.createElement("category-setting-exceptions");
++      exceptions.setAttribute("category", name);
++      exceptions.setAttribute("allow-header", loadTimeData.getString(`brSiteSettings${name}AllowedExceptions`));
++      exceptions.setAttribute("block-header", loadTimeData.getString(`brSiteSettings${name}BlockedExceptions`));
++      exceptions.setAttribute("search-filter", "[[searchFilter_]]");
++      subpage.appendChild(exceptions);
++
++      let tag = document.createElement("template");
++      tag.setAttribute("is", "dom-if");
++      tag.setAttribute("if", `[[renderView_(routes_.SITE_SETTINGS_${name.toUpperCase()}, currentRoute, inSearchMode)]]`);
++      tag.content.appendChild(subpage);
++
++      content.parentElement!.insertBefore(tag, content);
++    }
++    content.parentElement!.removeChild(content);
++    return template;
+   }
+ 
+   static get properties() {
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index 813eddcd55b..17bb7a4de24 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -8,6 +8,7 @@ import {loadTimeData} from './i18n_setup.js';
+ import {pageVisibility} from './page_visibility.js';
+ import type {SettingsRoutes} from './router.js';
+ import {Route, Router} from './router.js';
++import {setupContentSettingsRoutes} from './site_settings/site_settings_util.js'
+ 
+ /**
+  * Add all of the child routes that originate from the privacy route,
+@@ -134,6 +135,7 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
+     r.SITE_SETTINGS_LOOPBACK_NETWORK =
+         r.SITE_SETTINGS.createChild('loopbackNetwork');
+   }
++  setupContentSettingsRoutes(r);
+ }
+ 
+ /**
+diff --git a/chrome/browser/resources/settings/site_settings/site_details.html b/chrome/browser/resources/settings/site_settings/site_details.html
+index f8f8291410b..ef5baaa8af2 100644
+--- a/chrome/browser/resources/settings/site_settings/site_details.html
++++ b/chrome/browser/resources/settings/site_settings/site_details.html
+@@ -345,5 +345,6 @@
+             label="$i18n{siteSettingsLoopbackNetwork}">
+         </site-details-permission>
+       </template>
++      <div id="bromite-placeholder"></div>
+     </div>
+   </settings-subpage>
+diff --git a/chrome/browser/resources/settings/site_settings/site_details.ts b/chrome/browser/resources/settings/site_settings/site_details.ts
+index 264a2762f87..943cda7d5a1 100644
+--- a/chrome/browser/resources/settings/site_settings/site_details.ts
++++ b/chrome/browser/resources/settings/site_settings/site_details.ts
+@@ -74,8 +74,39 @@ export class SiteDetailsElement extends SiteDetailsElementBase {
+     return 'site-details';
+   }
+ 
++  static getSettingTemplate(template: HTMLTemplateElement,
++                            name: string) : SiteDetailsPermissionElement | undefined {
++    let value : SiteDetailsPermissionElement | undefined = undefined;
++    template.content.querySelectorAll("site-details-permission").forEach(
++      (element: SiteDetailsPermissionElement) => {
++        let setting = element?.getAttribute("category")
++          ?.replace("[[contentSettingsTypesEnum_.", "")
++          ?.replace("]]", "");
++          if (setting && ContentSettingsTypes[setting as keyof typeof ContentSettingsTypes] === name)
++            value = element;
++      });
++    return value;
++  }
++
+   static get template() {
+-    return getTemplate();
++    let template = getTemplate();
++    let content = template.content.getElementById("bromite-placeholder")!;
++
++    for (let index=0; index < loadTimeData.getInteger("br_cs_count"); index++) {
++      let obj = JSON.parse(loadTimeData.getString("br_cs_" + index));
++      let name = obj["name"];
++
++      if (this.getSettingTemplate(template, name))
++        continue;
++
++      let tag = document.createElement("site-details-permission");
++      tag.setAttribute("category", name);
++      tag.setAttribute("icon", `br-settings:${name}`);
++      tag.setAttribute("label", loadTimeData.getString(`brSiteSettings${name}`));
++      content.parentElement!.insertBefore(tag, content);
++    }
++    content.parentElement!.removeChild(content);
++    return template;
+   }
+ 
+   static get properties() {
+diff --git a/chrome/browser/resources/settings/site_settings/site_details_permission.html b/chrome/browser/resources/settings/site_settings/site_details_permission.html
+index 46b4d7824ea..d51564b16f9 100644
+--- a/chrome/browser/resources/settings/site_settings/site_details_permission.html
++++ b/chrome/browser/resources/settings/site_settings/site_details_permission.html
+@@ -58,7 +58,9 @@
+           </option>
+           <option id="allow" value$="[[contentSettingEnum_.ALLOW]]"
+               hidden$="[[!showAllowedSetting_(category)]]">
+-            $i18n{siteSettingsActionAllow}
++            [[allowSettingString_(
++                category,
++                '$i18n{siteSettingsActionAllow}')]]
+           </option>
+           <option id="block" value$="[[contentSettingEnum_.BLOCK]]">
+             [[blockSettingString_(
+@@ -69,7 +71,9 @@
+           <option id="ask" value$="[[contentSettingEnum_.ASK]]"
+               hidden$="[[!showAskSetting_(category, site.setting,
+                                           site.source)]]">
+-            $i18n{siteSettingsActionAsk}
++            [[askSettingString_(
++                category,
++                '$i18n{siteSettingsActionAsk}')]]
+           </option>
+         </select>
+       </div>
+diff --git a/chrome/browser/resources/settings/site_settings/site_details_permission.ts b/chrome/browser/resources/settings/site_settings/site_details_permission.ts
+index 432e89dd7d9..eeb48a00a41 100644
+--- a/chrome/browser/resources/settings/site_settings/site_details_permission.ts
++++ b/chrome/browser/resources/settings/site_settings/site_details_permission.ts
+@@ -20,6 +20,7 @@ import {WebUiListenerMixin} from 'chrome://resources/cr_elements/web_ui_listener
+ import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
+ import {sanitizeInnerHtml} from 'chrome://resources/js/parse_html_subset.js';
+ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
++import {loadTimeData} from '../i18n_setup.js';
+ 
+ import {ChooserType, ContentSetting, ContentSettingsTypes, SiteSettingSource} from './constants.js';
+ import {getTemplate} from './site_details_permission.html.js';
+@@ -304,14 +305,27 @@ export class SiteDetailsPermissionElement extends
+       return this.i18n('siteSettingsActionBlockOnUnfamiliarSitesDefaultMenu');
+     }
+ 
++    let obj = this.getSettingData(category);
+     if (defaultSetting === ContentSetting.ASK) {
++      if (obj) {
++        let v = this.askSettingString_(category, "");
++        if (v !== "") return "(Default) " + v;
++      }
+       return this.i18n('siteSettingsActionAskDefault');
+     } else if (defaultSetting === ContentSetting.ALLOW) {
++      if (obj) {
++        let v = this.allowSettingString_(category, "");
++        if (v !== "") return "(Default) " + v;
++      }
+       if (this.useCustomSoundLabels_(category) && useAutomaticLabel) {
+         return this.i18n('siteSettingsActionAutomaticDefault');
+       }
+       return this.i18n('siteSettingsActionAllowDefault');
+     } else if (defaultSetting === ContentSetting.BLOCK) {
++      if (obj) {
++        let v = this.blockSettingString_(category, "", "");
++        if (v !== "") return "(Default) " + v;
++      }
+       if (this.useCustomSoundLabels_(category)) {
+         return this.i18n('siteSettingsActionMuteDefault');
+       }
+@@ -330,12 +344,40 @@ export class SiteDetailsPermissionElement extends
+   private blockSettingString_(
+       category: ContentSettingsTypes, blockString: string,
+       muteString: string): string {
++    let obj = this.getSettingData(category);
++    if (obj) {
++      let propertyName = "brSiteSettings" + obj["name"] + "Blocked";
++      if (loadTimeData.valueExists(propertyName))
++        return loadTimeData.getString(propertyName);
++    }
+     if (this.useCustomSoundLabels_(category)) {
+       return muteString;
+     }
+     return blockString;
+   }
+ 
++  private allowSettingString_(
++    category: ContentSettingsTypes, defaultString: string): string {
++    let obj = this.getSettingData(category);
++    if (obj) {
++      let propertyName = "brSiteSettings" + obj["name"] + "Allowed";
++      if (loadTimeData.valueExists(propertyName))
++        return loadTimeData.getString(propertyName);
++    }
++    return defaultString;
++  }
++
++  private askSettingString_(
++      category: ContentSettingsTypes, defaultString: string): string {
++    let obj = this.getSettingData(category);
++    if (obj) {
++      let propertyName = "brSiteSettings" + obj["name"] + "Ask";
++      if (loadTimeData.valueExists(propertyName))
++        return loadTimeData.getString(propertyName);
++    }
++    return defaultString;
++  }
++
+   /**
+    * @return true if |this| should be hidden.
+    */
+@@ -426,6 +468,8 @@ export class SiteDetailsPermissionElement extends
+   private showAskSetting_(
+       category: ContentSettingsTypes, setting: ContentSetting,
+       source: SiteSettingSource): boolean {
++    let obj = this.getSettingData(category);
++    if (obj) return obj["allowed_ask"] === "1";
+     // For chooser-based permissions 'ask' takes the place of 'allow'.
+     if (category === ContentSettingsTypes.SERIAL_PORTS ||
+         category === ContentSettingsTypes.USB_DEVICES ||
+diff --git a/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts b/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts
+index a2712cad4de..8d2ed25becb 100644
+--- a/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts
++++ b/chrome/browser/resources/settings/site_settings/site_settings_mixin.ts
+@@ -11,9 +11,10 @@ import type {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polym
+ import {dedupingMixin} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
+ 
+ import type {ContentSettingsTypes} from './constants.js';
+-import {SiteSettingSource} from './constants.js';
++import {ContentSetting, SiteSettingSource} from './constants.js';
+ import type {RawSiteException, SiteException, SiteSettingsBrowserProxy} from './site_settings_browser_proxy.js';
+ import {SiteSettingsBrowserProxyImpl} from './site_settings_browser_proxy.js';
++import {loadTimeData} from '../i18n_setup.js';
+ // clang-format on
+ 
+ type Constructor<T> = new (...args: any[]) => T;
+@@ -75,6 +76,22 @@ export const SiteSettingsMixin = dedupingMixin(
+           return url;
+         }
+ 
++        computeIsSettingAsk(setting: ContentSetting): boolean {
++          return setting === ContentSetting.ASK;
++        }
++
++        // eslint-disable-next-line @typescript-eslint/no-explicit-any
++        getSettingData(category: ContentSettingsTypes): any {
++          for (let index=0; index < loadTimeData.getInteger("br_cs_count"); index++) {
++            let obj = JSON.parse(loadTimeData.getString("br_cs_" + index));
++            let name = obj["name"];
++            if (name == category) {
++              return obj;
++            }
++          }
++          return undefined;
++        }
++
+         /**
+          * Converts a string origin/pattern to a URL.
+          * @param originOrPattern The origin/pattern to convert to URL.
+@@ -154,6 +171,9 @@ export const SiteSettingsMixin = dedupingMixin(
+ export interface SiteSettingsMixinInterface {
+   browserProxy: SiteSettingsBrowserProxy;
+   category: ContentSettingsTypes;
++  computeIsSettingAsk(setting: string): boolean;
++  // eslint-disable-next-line @typescript-eslint/no-explicit-any
++  getSettingData(category: ContentSettingsTypes): any;
+   originRepresentation(origin: string): string;
+   toUrl(originOrPattern: string): URL|null;
+   expandSiteException(exception: RawSiteException): SiteException;
+diff --git a/chrome/browser/resources/settings/site_settings/site_settings_page.ts b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
+index 8bed6495847..dff9d7313a4 100644
+--- a/chrome/browser/resources/settings/site_settings/site_settings_page.ts
++++ b/chrome/browser/resources/settings/site_settings/site_settings_page.ts
+@@ -52,7 +52,7 @@ function getCategoryItemMap(): Map<ContentSettingsTypes, CategoryListItem> {
+   }
+   // The following list is ordered alphabetically by |id|. The order in which
+   // these appear in the UI is determined elsewhere in this file.
+-  const categoryList: CategoryListItem[] = [
++  let categoryList: CategoryListItem[] = [
+     {
+       route: routes.SITE_SETTINGS_ADS,
+       id: Id.ADS,
+@@ -464,10 +464,37 @@ function getCategoryItemMap(): Map<ContentSettingsTypes, CategoryListItem> {
+       icon: 'privacy:cookie',
+     },
+   ];
++  for (let index=0; index < loadTimeData.getInteger("br_cs_count"); index++) {
++    let obj = JSON.parse(loadTimeData.getString("br_cs_" + index));
++    let name = obj["name"];
++
++    if (!categoryList.find(x => x.id == name)) {
++      categoryList.push({
++        // eslint-disable-next-line @typescript-eslint/no-explicit-any
++        route: (routes as any)[`SITE_SETTINGS_${name.toUpperCase()}`],
++        id: name,
++        label: `brSiteSettings${name}`,
++        icon: `br-settings:${name}`,
++        enabledLabel: `brSiteSettings${name}Allowed`,
++        disabledLabel: `brSiteSettings${name}Blocked`,
++      });
++    }
++  }
+   categoryItemMap = new Map(categoryList.map(item => [item.id, item]));
+   return categoryItemMap;
+ }
+ 
++function buildBromiteItemListFromIds(orderedIdList: ContentSettingsTypes[]):
++    CategoryListItem[] {
++  for (let index=0; index < loadTimeData.getInteger("br_cs_count"); index++) {
++    let obj = JSON.parse(loadTimeData.getString("br_cs_" + index));
++    let name = obj["name"];
++    if (orderedIdList.find(x => x == name) == null)
++      orderedIdList.push(name);
++  }
++  return buildItemListFromIds(orderedIdList);
++}
++
+ function buildItemListFromIds(orderedIdList: ContentSettingsTypes[]):
+     CategoryListItem[] {
+   const map = getCategoryItemMap();
+@@ -553,7 +580,7 @@ export class SettingsSiteSettingsPageElement extends
+               Id.LOCAL_NETWORK,
+               Id.LOOPBACK_NETWORK,
+             ]),
+-            contentBasic: buildItemListFromIds([
++            contentBasic: buildBromiteItemListFromIds([
+               Id.COOKIES,
+               Id.JAVASCRIPT,
+               Id.IMAGES,
+diff --git a/chrome/browser/resources/settings/site_settings/site_settings_util.ts b/chrome/browser/resources/settings/site_settings/site_settings_util.ts
+index 482541e4ab6..c81d2485b29 100644
+--- a/chrome/browser/resources/settings/site_settings/site_settings_util.ts
++++ b/chrome/browser/resources/settings/site_settings/site_settings_util.ts
+@@ -6,6 +6,55 @@ import {assertNotReached} from 'chrome://resources/js/assert.js';
+ 
+ import {ContentSetting, ContentSettingsTypes} from './constants.js';
+ 
++import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
++import {Route, Router, SettingsRoutes} from '../router.js';
++
++function createPath_(content: string) : Node {
++  let path = document.createElementNS("http://www.w3.org/2000/svg", "path");
++  path.setAttribute("d", content);
++  path.setAttribute("fill", "#5F6368");
++  return path;
++}
++
++export function setupContentSettingsRoutes(r: Partial<SettingsRoutes>) {
++  let iconset = document.createElement("cr-iconset");
++  iconset.setAttribute("name", "br-settings");
++  iconset.setAttribute("size", "24");
++
++  const svg_ns = "http://www.w3.org/2000/svg";
++  let svg = document.createElementNS(svg_ns, "svg");
++  iconset.appendChild(svg);
++
++  let defs = document.createElementNS(svg_ns, "defs");
++  svg.appendChild(defs);
++
++  // eslint-disable-next-line @typescript-eslint/no-explicit-any
++  let routes: any = r;
++  for (let index=0; index < loadTimeData.getInteger("br_cs_count"); index++) {
++    // create the enum
++    let obj = JSON.parse(loadTimeData.getString("br_cs_" + index));
++    let name = obj["name"];
++    let tag_name = obj["tag_ui"]; if (!tag_name) tag_name = name;
++    routes["SITE_SETTINGS_" + name.toUpperCase()] = r.SITE_SETTINGS!.createChild(tag_name);
++
++    // add the icons (on)
++    let g_on = document.createElementNS(svg_ns, "g");
++    g_on.setAttribute("id", `${name}`);
++    g_on.appendChild(createPath_("M8 16h8v2H8v-2zm0-4h8v2H8v-2zm6-10H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"));
++    defs.appendChild(g_on);
++
++    // add the icons (off)
++    let g_off = document.createElementNS(svg_ns, "g");
++    g_off.setAttribute("id", `${name}-off`);
++    g_off.appendChild(createPath_("M13.002 4.001H7.106L5.252 2.148c.232-.094.485-.147.75-.147h8l6 6v8.896l-2-2V9.001h-5v-5z"));
++    g_off.appendChild(createPath_("M16.002 12.001h-.896l.896.896v-.896zM.6 3.45l1.414-1.414 19.94 19.94-1.414 1.414L.6 3.45zM3.986 20.01V6.84l2 2V20.01h11.172l1.765 1.766c-.28.15-.599.234-.937.234H5.976c-1.1 0-1.99-.9-1.99-2z"));
++    g_off.appendChild(createPath_("M9.158 12.01H7.986v2h3.172l-2-2zM13.158 16.01H7.986v2h7.172l-2-2z"));
++    defs.appendChild(g_off);
++  }
++
++  document.head.appendChild(iconset);
++}
++
+ /**
+  * Determine localization string for i18n for a given content settings type.
+  * Sorted alphabetically by |ContentSettingsType|.
+@@ -112,6 +161,13 @@ export function getLocalizationStringForContentType(
+     case ContentSettingsTypes.SMART_CARD_READERS:
+       return null;
+     default:
++      for (let index=0; index < loadTimeData.getInteger("br_cs_count"); index++) {
++        let obj = JSON.parse(loadTimeData.getString("br_cs_" + index));
++        let name = obj["name"];
++        if (name == contentSettingsType) {
++          return `brSiteSettings${name}MidSentence`;
++        }
++      }
+       assertNotReached();
+   }
+ }
+diff --git a/chrome/browser/ui/views/controls/rich_controls_container_view.h b/chrome/browser/ui/views/controls/rich_controls_container_view.h
+index 81676e1073b..de30f3de472 100644
+--- a/chrome/browser/ui/views/controls/rich_controls_container_view.h
++++ b/chrome/browser/ui/views/controls/rich_controls_container_view.h
+@@ -50,6 +50,13 @@ class RichControlsContainerView : public views::FlexLayoutView {
+     return AddChildView(std::move(control_view));
+   }
+ 
++  template <typename T>
++  T* AddControlUnderLabel(std::unique_ptr<T> control_view) {
++    control_view->SetProperty(views::kInternalPaddingKey,
++                              control_view->GetInsets());
++    return labels_wrapper_->AddChildView(std::move(control_view));
++  }
++
+   int GetFirstLineHeight();
+   gfx::Size FlexRule(const views::View* view,
+                      const views::SizeBounds& maximum_size) const;
+diff --git a/chrome/browser/ui/views/page_info/BUILD.gn b/chrome/browser/ui/views/page_info/BUILD.gn
+index d6e74b52c8f..3ef724e8b39 100644
+--- a/chrome/browser/ui/views/page_info/BUILD.gn
++++ b/chrome/browser/ui/views/page_info/BUILD.gn
+@@ -103,6 +103,7 @@ source_set("impl") {
+     "//chrome/browser/ui/views/frame:browser_view_header",
+     "//chrome/browser/vr",
+     "//components/content_settings/browser/ui",
++    "//components/content_settings/core/browser",
+     "//components/dom_distiller/core",
+     "//components/omnibox/browser:vector_icons",
+     "//components/page_info/core",
+diff --git a/chrome/browser/ui/views/page_info/page_info_bubble_view.cc b/chrome/browser/ui/views/page_info/page_info_bubble_view.cc
+index 72e4e2e06d8..fe8b1d3f296 100644
+--- a/chrome/browser/ui/views/page_info/page_info_bubble_view.cc
++++ b/chrome/browser/ui/views/page_info/page_info_bubble_view.cc
+@@ -279,7 +279,7 @@ void PageInfoBubbleView::OpenMainPage(base::OnceClosure initialized_callback) {
+ 
+   auto* close_button = page_container_->GetViewByID(
+       PageInfoViewFactory::VIEW_ID_PAGE_INFO_CLOSE_BUTTON);
+-  close_button->RequestFocus();
++  if (close_button) close_button->RequestFocus();
+ }
+ 
+ void PageInfoBubbleView::OpenSecurityPage() {
+diff --git a/chrome/browser/ui/views/page_info/page_info_main_view.cc b/chrome/browser/ui/views/page_info/page_info_main_view.cc
+index 7cb610624d8..c30f0db292a 100644
+--- a/chrome/browser/ui/views/page_info/page_info_main_view.cc
++++ b/chrome/browser/ui/views/page_info/page_info_main_view.cc
+@@ -58,6 +58,7 @@
+ #include "ui/views/layout/flex_layout.h"
+ #include "ui/views/metadata/view_factory.h"
+ #include "ui/views/vector_icons.h"
++#include "ui/views/layout/table_layout.h"
+ #include "ui/views/view_class_properties.h"
+ #include "ui/views/widget/widget.h"
+ 
+@@ -340,8 +341,20 @@ void PageInfoMainView::SetPermissionInfo(
+   scroll_view->SetDrawOverflowIndicator(false);
+   auto* content_view =
+       scroll_view->SetContents(std::make_unique<views::View>());
+-  content_view->SetLayoutManager(std::make_unique<views::FlexLayout>())
+-      ->SetOrientation(views::LayoutOrientation::kVertical);
++
++  views::TableLayout* table_layout =
++    content_view->SetLayoutManager(std::make_unique<views::TableLayout>());
++  table_layout->AddColumn(
++          views::LayoutAlignment::kStretch, views::LayoutAlignment::kStretch,
++          views::TableLayout::kFixedSize,
++          views::TableLayout::ColumnSize::kFixed,
++          /*fixed_width=*/250, /*min_width=*/0)
++      .AddColumn(
++          views::LayoutAlignment::kStretch, views::LayoutAlignment::kStretch,
++          views::TableLayout::kFixedSize,
++          views::TableLayout::ColumnSize::kFixed,
++          /*fixed_width=*/250, /*min_width=*/0)
++      .AddRows(/*n=*/1, views::TableLayout::kFixedSize);
+   content_view->SetID(PageInfoViewFactory::VIEW_ID_PAGE_INFO_PERMISSION_VIEW);
+   content_view->SetProperty(views::kElementIdentifierKey,
+                             kPermissionsElementId);
+@@ -381,11 +394,16 @@ void PageInfoMainView::SetPermissionInfo(
+     }
+   }
+ 
++  int count = 0;
+   for (const auto& permission : permission_info_list) {
++    if (++count % 2 == 0)
++      table_layout->AddRows(/*n=*/1, views::TableLayout::kFixedSize);
+     PermissionToggleRowView* toggle_row =
+         content_view->AddChildView(std::make_unique<PermissionToggleRowView>(
+             ui_delegate_, navigation_handler_, permission, should_show_spacer));
+     toggle_row->AddObserver(this);
++    toggle_row->SetProperty(views::kMarginsKey,
++                            gfx::Insets::TLBR(0, 0, 0, 0));
+     toggle_row->SetProperty(views::kCrossAxisAlignmentKey,
+                             views::LayoutAlignment::kStretch);
+     syncable_permission_rows_.emplace(permission.type, toggle_row);
+@@ -393,6 +411,8 @@ void PageInfoMainView::SetPermissionInfo(
+   }
+ 
+   for (auto& object : chosen_object_info_list) {
++    if (++count % 2 == 0)
++      table_layout->AddRows(/*n=*/1, views::TableLayout::kFixedSize);
+     // The view takes ownership of the object info.
+     auto object_view = std::make_unique<ChosenObjectView>(
+         std::move(object),
+@@ -403,6 +423,10 @@ void PageInfoMainView::SetPermissionInfo(
+         content_view->AddChildView(std::move(object_view)));
+   }
+ 
++  table_layout->AddRows(/*n=*/1, views::TableLayout::kFixedSize);
++  if (++count % 2 == 0)
++    content_view->AddChildView(std::make_unique<views::View>());
++
+   reset_button_ = content_view->AddChildView(
+       std::make_unique<views::MdTextButton>(base::BindRepeating(
+           [=](PageInfoMainView* view) {
+diff --git a/chrome/browser/ui/views/page_info/page_info_view_factory.cc b/chrome/browser/ui/views/page_info/page_info_view_factory.cc
+index d5a31045999..92eeeb834c0 100644
+--- a/chrome/browser/ui/views/page_info/page_info_view_factory.cc
++++ b/chrome/browser/ui/views/page_info/page_info_view_factory.cc
+@@ -22,6 +22,8 @@
+ #include "chrome/browser/ui/views/page_info/page_info_permission_content_view.h"
+ #include "chrome/browser/ui/views/page_info/page_info_security_content_view.h"
+ #include "components/content_settings/core/browser/permission_settings_registry.h"
++#include "components/content_settings/core/browser/website_settings_info.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/content_settings/core/common/content_settings.h"
+ #include "components/content_settings/core/common/content_settings_types.h"
+ #include "components/page_info/page_info.h"
+@@ -281,7 +283,14 @@ const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
+     bool blocked_on_system_level) {
+   PermissionSetting setting =
+       permission.setting.value_or(permission.default_setting);
++  return GetPermissionIcon(permission, blocked_on_system_level, setting);
++}
+ 
++// static
++const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
++    const PageInfo::PermissionInfo& permission,
++    bool blocked_on_system_level,
++    PermissionSetting setting) {
+   auto* info = content_settings::PermissionSettingsRegistry::GetInstance()->Get(
+       permission.type);
+   // For guard content settings and Automatic Picture-in-Picture, ASK is treated
+@@ -811,6 +820,17 @@ const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
+                                               : vector_icons::kPrinterOldIcon);
+       break;
+     default:
++      bool found = false;
++      content_settings::WebsiteSettingsRegistry* website_settings =
++          content_settings::WebsiteSettingsRegistry::GetInstance();
++      for (const content_settings::WebsiteSettingsInfo* cs : *website_settings) {
++        if (cs->type() == permission.type && cs->show_into_info_page()) {
++          icon = &vector_icons::kProtectedContentCustomIcon;
++          found = true;
++          break;
++        }
++      }
++      if (found) break;
+       // All other |ContentSettingsType|s do not have icons on desktop or are
+       // not shown in the Page Info bubble.
+       NOTREACHED();
+diff --git a/chrome/browser/ui/views/page_info/page_info_view_factory.h b/chrome/browser/ui/views/page_info/page_info_view_factory.h
+index f65908e54de..8e2b3e2b71c 100644
+--- a/chrome/browser/ui/views/page_info/page_info_view_factory.h
++++ b/chrome/browser/ui/views/page_info/page_info_view_factory.h
+@@ -105,6 +105,11 @@ class PageInfoViewFactory {
+       const PageInfo::PermissionInfo& info,
+       bool blocked_on_system_level = false);
+ 
++  static const ui::ImageModel GetPermissionIcon(
++      const PageInfo::PermissionInfo& info,
++      bool blocked_on_system_level,
++      PermissionSetting setting);
++
+   // Returns the icon for the given object |info|.
+   static const ui::ImageModel GetChosenObjectIcon(
+       const PageInfoUI::ChosenObjectInfo& info,
+diff --git a/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc b/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc
+index 5fa04fcde9b..7366857f2e9 100644
+--- a/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc
++++ b/chrome/browser/ui/views/page_info/permission_toggle_row_view.cc
+@@ -36,6 +36,34 @@
+ #include "ui/views/controls/styled_label.h"
+ #include "ui/views/style/typography.h"
+ #include "ui/views/view_class_properties.h"
++#include "components/content_settings/core/browser/content_settings_registry.h"
++#include "ui/base/mojom/menu_source_type.mojom.h"
++
++namespace {
++  bool IsAllowed(const PageInfo::PermissionInfo& permission) {
++    auto value = std::get<ContentSetting>(permission.setting.value_or(CONTENT_SETTING_DEFAULT));
++    if (value == CONTENT_SETTING_DEFAULT)
++      return std::get<ContentSetting>(permission.default_setting) == CONTENT_SETTING_ALLOW;
++    else
++      return value == CONTENT_SETTING_ALLOW;
++  }
++
++  bool IsBlocked(const PageInfo::PermissionInfo& permission) {
++    auto value = std::get<ContentSetting>(permission.setting.value_or(CONTENT_SETTING_DEFAULT));
++    if (value == CONTENT_SETTING_DEFAULT)
++      return std::get<ContentSetting>(permission.default_setting) == CONTENT_SETTING_BLOCK;
++    else
++      return value == CONTENT_SETTING_BLOCK;
++  }
++
++  bool IsAsk(const PageInfo::PermissionInfo& permission) {
++    auto value = std::get<ContentSetting>(permission.setting.value_or(CONTENT_SETTING_DEFAULT));
++    if (value == CONTENT_SETTING_DEFAULT)
++      return std::get<ContentSetting>(permission.default_setting) == CONTENT_SETTING_ASK;
++    else
++      return value == CONTENT_SETTING_ASK;
++  }
++}
+ 
+ namespace {
+ 
+@@ -75,17 +103,12 @@ PermissionToggleRowView::PermissionToggleRowView(
+       navigation_handler_(navigation_handler) {
+   SetUseDefaultFillLayout(true);
+   row_view_ = AddChildView(std::make_unique<RichControlsContainerView>());
++  row_view_->SetCrossAxisAlignment(views::LayoutAlignment::kCenter);
+ 
+   std::u16string toggle_accessible_name =
+       PageInfoUI::PermissionTypeToUIString(permission.type);
+   row_view_->SetTitle(toggle_accessible_name);
+ 
+-  // Add extra details as sublabel.
+-  std::u16string detail = delegate->GetPermissionDetail(permission.type);
+-  if (!detail.empty()) {
+-    row_view_->AddSecondaryLabel(detail);
+-  }
+-
+   if (permission.requesting_origin.has_value()) {
+     std::u16string requesting_origin_string;
+     switch (permission.type) {
+@@ -183,6 +206,91 @@ void PermissionToggleRowView::UpdatePermission(
+   UpdateUiOnPermissionChanged();
+ }
+ 
++void PermissionToggleRowView::OnShowOptionsMenu() {
++  sources_menu_runner_.reset();
++
++  ContentSettingsType type = permission_.type;
++  const content_settings::WebsiteSettingsInfo* setting_info =
++    content_settings::WebsiteSettingsRegistry::GetInstance()->Get(type);
++
++  sources_menu_model_ = std::make_unique<ui::SimpleMenuModel>(this);
++  if (setting_info->allowed_ui() != 0) {
++    sources_menu_model_->AddCheckItemWithStringId(1, setting_info->allowed_ui());
++  } else {
++    sources_menu_model_->AddCheckItem(1, u"Enabled");
++  }
++  sources_menu_model_->SetIcon(sources_menu_model_->GetItemCount() - 1,
++    PageInfoViewFactory::GetPermissionIcon(permission_, CONTENT_SETTING_DEFAULT));
++
++  auto* content_setting_registry =
++      content_settings::ContentSettingsRegistry::GetInstance();
++  auto* content_setting = content_setting_registry->Get(type);
++  if (content_setting->IsSettingValid(CONTENT_SETTING_ASK)) {
++    if (setting_info->ask_ui() != 0) {
++      sources_menu_model_->AddCheckItemWithStringId(3, setting_info->ask_ui());
++    } else {
++      sources_menu_model_->AddCheckItem(3, u"Ask");
++    }
++    sources_menu_model_->SetIcon(sources_menu_model_->GetItemCount() - 1,
++      PageInfoViewFactory::GetPermissionIcon(permission_, CONTENT_SETTING_ASK));
++  }
++
++  if (setting_info->blocked_ui() != 0) {
++    sources_menu_model_->AddCheckItemWithStringId(2, setting_info->blocked_ui());
++  } else {
++    sources_menu_model_->AddCheckItem(2, u"Disabled");
++  }
++  sources_menu_model_->SetIcon(sources_menu_model_->GetItemCount() - 1,
++    PageInfoViewFactory::GetPermissionIcon(permission_, CONTENT_SETTING_BLOCK));
++
++  sources_menu_model_->AddSeparator(ui::NORMAL_SEPARATOR);
++  sources_menu_model_->AddCheckItem(4, u"Default");
++
++  //sources_menu_model_->ActivatedAt(0);
++
++  // const gfx::Point point = choose_button_->GetMenuPosition();
++  // const gfx::Point origin(point.x() - width(), point.y() - height());
++
++  sources_menu_runner_ = std::make_unique<views::MenuRunner>(
++      sources_menu_model_.get(), views::MenuRunner::COMBOBOX);
++  sources_menu_runner_->RunMenuAt(
++      choose_button_->GetWidget(), nullptr,
++      choose_button_->GetAnchorBoundsInScreen(),
++      views::MenuAnchorPosition::kTopLeft, ui::mojom::MenuSourceType::kMouse);
++}
++
++bool PermissionToggleRowView::IsCommandIdChecked(int command_id) const {
++  auto value = std::get<ContentSetting>(permission_.setting.value_or(CONTENT_SETTING_DEFAULT));
++  if (value == CONTENT_SETTING_DEFAULT && command_id == 4) {
++    return true;
++  } else if (IsAllowed(permission_)) {
++    return command_id == 1;
++  } else if (IsBlocked(permission_)) {
++    return command_id == 2;
++  } else if (IsAsk(permission_)) {
++    return command_id == 3;
++  }
++  return false;
++}
++
++void PermissionToggleRowView::ExecuteCommand(int command_id, int event_flags) {
++  switch(command_id) {
++    case 1:
++      permission_.setting = CONTENT_SETTING_ALLOW;
++      break;
++    case 2:
++      permission_.setting = CONTENT_SETTING_BLOCK;
++      break;
++    case 3:
++      permission_.setting = CONTENT_SETTING_ASK;
++      break;
++    case 4:
++      permission_.setting = std::nullopt;
++      break;
++  }
++  PermissionChanged();
++}
++
+ void PermissionToggleRowView::OnToggleButtonPressed() {
+   PageInfoUI::ToggleBetweenAllowAndBlock(permission_);
+   PermissionChanged();
+@@ -191,27 +299,19 @@ void PermissionToggleRowView::OnToggleButtonPressed() {
+ void PermissionToggleRowView::AddToggleButton(
+     const std::u16string& toggle_accessible_name,
+     int icon_label_spacing) {
+-  // This skips adding a toggle for 'CAPTURED_SURFACE_CONTROL' permission type.
+-  // We want to use the toggle inside the submenu and not here.
+-  if (permission_.type == ContentSettingsType::CAPTURED_SURFACE_CONTROL) {
+-    return;
+-  }
+-
+-  auto toggle_button = std::make_unique<views::ToggleButton>(
+-      base::BindRepeating(&PermissionToggleRowView::OnToggleButtonPressed,
+-                          base::Unretained(this)));
++  auto toggle_button = std::make_unique<views::MdTextButtonWithDownArrow>(
++      base::BindRepeating(&PermissionToggleRowView::OnShowOptionsMenu,
++                          base::Unretained(this)),
++      u"");
++  toggle_button->SetStyle(ui::ButtonStyle::kText);
++  toggle_button->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+   toggle_button->SetID(
+       PageInfoViewFactory::VIEW_ID_PERMISSION_TOGGLE_ROW_TOGGLE_BUTTON);
+-  toggle_button->SetPreferredSize(
+-      gfx::Size(toggle_button->GetPreferredSize().width(),
+-                row_view_->GetFirstLineHeight()));
+-  toggle_button->SetProperty(views::kMarginsKey,
+-                             gfx::Insets::VH(0, icon_label_spacing));
+   toggle_button->SetTooltipText(PageInfoUI::PermissionTooltipUiString(
+       permission_.type, permission_.requesting_origin));
+   toggle_button->GetViewAccessibility().SetName(toggle_accessible_name);
+ 
+-  toggle_button_ = row_view_->AddControl(std::move(toggle_button));
++  choose_button_ = row_view_->AddControlUnderLabel(std::move(toggle_button));
+ }
+ 
+ void PermissionToggleRowView::InitForUserSource(
+@@ -261,12 +361,6 @@ void PermissionToggleRowView::InitForUserSource(
+       auto spacer_view = std::make_unique<views::View>();
+       spacer_view->SetPreferredSize(gfx::Size(icon_size, icon_size));
+       spacer_view_ = row_view_->AddControl(std::move(spacer_view));
+-    } else if (toggle_button_) {
+-      // toggle_button_ could be uninitialized if this row represents
+-      // 'CAPTURED_SURFACE_CONTROL' permission type and that permission type
+-      // is not found in `DoesSupportTemporaryGrants`.
+-      toggle_button_->SetProperty(
+-          views::kMarginsKey, gfx::Insets::TLBR(0, icon_label_spacing, 0, 0));
+     }
+   }
+ }
+@@ -292,6 +386,15 @@ void PermissionToggleRowView::InitForManagedSource(
+ }
+ 
+ void PermissionToggleRowView::UpdateUiOnPermissionChanged() {
++  auto value = std::get<ContentSetting>(permission_.setting.value_or(CONTENT_SETTING_DEFAULT));
++  if (choose_button_) {
++    choose_button_->SetEnabledTextColors(std::nullopt);
++    if (value == CONTENT_SETTING_DEFAULT) {
++      choose_button_->SetTextColor(views::Button::ButtonState::STATE_NORMAL,
++        ui::kColorLabelForeground);
++    }
++  }
++
+   if (blocked_on_system_level_label_) {
+     if (!permission_.setting) {
+       permission_blocked_on_system_level_ = false;
+@@ -336,6 +439,37 @@ void PermissionToggleRowView::UpdateUiOnPermissionChanged() {
+       }
+     }
+   }
++
++  if (choose_button_) {
++    ContentSettingsType type = permission_.type;
++    const content_settings::WebsiteSettingsInfo* setting_info =
++      content_settings::WebsiteSettingsRegistry::GetInstance()->Get(type);
++
++    std::u16string caption;
++    if (IsAllowed(permission_)) {
++      if (setting_info->allowed_ui() != 0)
++        caption = l10n_util::GetStringUTF16(setting_info->allowed_ui());
++      else
++        caption = u"Allowed";
++    } else if (IsBlocked(permission_)) {
++      if (setting_info->blocked_ui() != 0)
++        caption = l10n_util::GetStringUTF16(setting_info->blocked_ui());
++      else
++        caption = u"Blocked";
++    } else if (IsAsk(permission_)) {
++      if (setting_info->ask_ui() != 0)
++        caption = l10n_util::GetStringUTF16(setting_info->ask_ui());
++      else
++        caption = u"Ask";
++    } else {
++      caption = u"Unknown";
++    }
++    choose_button_->SetText(caption);
++    if (value == CONTENT_SETTING_DEFAULT) {
++      choose_button_->SetTextColor(views::Button::ButtonState::STATE_NORMAL,
++        ui::kColorLabelForeground);
++    }
++  }
+ }
+ 
+ void PermissionToggleRowView::ResetPermission() {
+diff --git a/chrome/browser/ui/views/page_info/permission_toggle_row_view.h b/chrome/browser/ui/views/page_info/permission_toggle_row_view.h
+index 760131a5070..72601f054a4 100644
+--- a/chrome/browser/ui/views/page_info/permission_toggle_row_view.h
++++ b/chrome/browser/ui/views/page_info/permission_toggle_row_view.h
+@@ -17,6 +17,11 @@
+ #include "ui/views/controls/label.h"
+ #include "ui/views/view.h"
+ 
++#include "components/content_settings/core/browser/website_settings_registry.h"
++#include "ui/menus/simple_menu_model.h"
++#include "ui/views/controls/menu/menu_runner.h"
++#include "ui/views/controls/button/md_text_button_with_down_arrow.h"
++
+ class ChromePageInfoUiDelegate;
+ class PageInfoNavigationHandler;
+ 
+@@ -32,7 +37,8 @@ class PageInfoBubbleViewTestApi;
+ // A view that shows a permission that a site is able to access, and
+ // allows the user to control via toggle whether that access is granted. Has a
+ // button that opens a subpage with more controls.
+-class PermissionToggleRowView : public views::View {
++class PermissionToggleRowView : public views::View,
++                                public ui::SimpleMenuModel::Delegate {
+   METADATA_HEADER(PermissionToggleRowView, views::View)
+ 
+  public:
+@@ -70,6 +76,12 @@ class PermissionToggleRowView : public views::View {
+  private:
+   friend class test::PageInfoBubbleViewTestApi;
+ 
++  void OnShowOptionsMenu();
++
++  // ui::SimpleMenuModel::Delegate overrides:
++  bool IsCommandIdChecked(int command_id) const override;
++  void ExecuteCommand(int command_id, int event_flags) override;
++
+   void OnToggleButtonPressed();
+   void AddToggleButton(const std::u16string& toggle_accessible_name,
+                        int icon_label_spacing);
+@@ -88,6 +100,10 @@ class PermissionToggleRowView : public views::View {
+   raw_ptr<views::ToggleButton, DanglingUntriaged> toggle_button_ = nullptr;
+   raw_ptr<views::View, DanglingUntriaged> spacer_view_ = nullptr;
+ 
++  raw_ptr<views::MdTextButtonWithDownArrow, DanglingUntriaged> choose_button_ = nullptr;
++  std::unique_ptr<ui::SimpleMenuModel> sources_menu_model_;
++  std::unique_ptr<views::MenuRunner> sources_menu_runner_;
++
+   raw_ptr<ChromePageInfoUiDelegate, DanglingUntriaged> delegate_ = nullptr;
+   raw_ptr<PageInfoNavigationHandler, DanglingUntriaged> navigation_handler_ =
+       nullptr;
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index 817b9d6e52e..dc3adac2dbe 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -14,6 +14,7 @@
+ #include "base/strings/escape.h"
+ #include "base/strings/string_number_conversions.h"
+ #include "base/strings/utf_string_conversions.h"
++#include "base/json/json_writer.h"
+ #include "build/branding_buildflags.h"
+ #include "build/build_config.h"
+ #include "build/buildflag.h"
+@@ -85,6 +86,9 @@
+ #include "components/autofill/core/common/autofill_prefs.h"
+ #include "components/commerce/core/commerce_constants.h"
+ #include "components/content_settings/core/common/features.h"
++#include "components/content_settings/core/browser/content_settings_registry.h"
++#include "components/content_settings/core/browser/website_settings_info.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/device_reauth/device_authenticator.h"
+ #include "components/dom_distiller/core/dom_distiller_features.h"
+ #include "components/google/core/common/google_util.h"
+@@ -4714,6 +4718,56 @@ void AddLocalizedStrings(content::WebUIDataSource* html_source,
+   policy_indicator::AddLocalizedStrings(html_source);
+   AddSecurityKeysStrings(html_source);
+ 
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  auto* content_setting_registry =
++      content_settings::ContentSettingsRegistry::GetInstance();
++  int index = 0;
++  for (const content_settings::WebsiteSettingsInfo* info : *website_settings) {
++    if (info->desktop_ui()) {
++      auto* content_setting = content_setting_registry->Get(info->type());
++      std::string name = info->name();
++      std::string prefix = "brSiteSettings" + name;
++
++      if (info->title_ui())
++        html_source->AddLocalizedString(prefix, info->title_ui());
++      if (info->description_ui())
++        html_source->AddLocalizedString(prefix + "Description", info->description_ui());
++      if (info->allowed_ui())
++        html_source->AddLocalizedString(prefix + "Allowed", info->allowed_ui());
++      if (info->blocked_ui())
++        html_source->AddLocalizedString(prefix + "Blocked", info->blocked_ui());
++      if (info->ask_ui())
++        html_source->AddLocalizedString(prefix + "Ask", info->ask_ui());
++      if (info->allowed_exceptions_ui())
++        html_source->AddLocalizedString(prefix + "AllowedExceptions", info->allowed_exceptions_ui());
++      if (info->blocked_exceptions_ui())
++        html_source->AddLocalizedString(prefix + "BlockedExceptions", info->blocked_exceptions_ui());
++      if (info->mid_sentence_ui())
++        html_source->AddLocalizedString(prefix + "MidSentence", info->mid_sentence_ui());
++
++      base::DictValue dict;
++      dict.Set("name", name);
++      dict.Set("type", (int)info->type());
++      dict.Set("tag_ui", info->tag_ui());
++      dict.Set("default",
++        info->initial_default_value().GetInt() == (int)CONTENT_SETTING_ALLOW ? "allow" :
++        info->initial_default_value().GetInt() == (int)CONTENT_SETTING_BLOCK ? "block" :
++        "ask");
++      dict.Set("allowed_ask",
++        content_setting->IsSettingValid(CONTENT_SETTING_ASK) ? "1" : "0");
++
++      std::string json_string;
++      base::JSONWriter::WriteWithOptions(
++          dict, base::JSONWriter::OPTIONS_PRETTY_PRINT, &json_string);
++      base::TrimWhitespaceASCII(json_string, base::TRIM_ALL, &json_string);
++
++      html_source->AddString("br_cs_" + base::NumberToString(index), json_string);
++      index++;
++    }
++  }
++  html_source->AddInteger("br_cs_count", index);
++
+   html_source->UseStringsJs();
+ }
+ 
+diff --git a/chrome/browser/ui/webui/settings/site_settings_helper.cc b/chrome/browser/ui/webui/settings/site_settings_helper.cc
+index 5f970bd6209..5e48f6106e6 100644
+--- a/chrome/browser/ui/webui/settings/site_settings_helper.cc
++++ b/chrome/browser/ui/webui/settings/site_settings_helper.cc
+@@ -50,6 +50,8 @@
+ #include "chrome/grit/generated_resources.h"
+ #include "components/content_settings/core/browser/content_settings_provider.h"
+ #include "components/content_settings/core/browser/host_content_settings_map.h"
++#include "components/content_settings/core/browser/website_settings_info.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/content_settings/core/common/content_settings.h"
+ #include "components/content_settings/core/common/content_settings_pattern.h"
+ #include "components/content_settings/core/common/content_settings_types.h"
+@@ -264,13 +266,13 @@ constexpr auto kContentSettingsTypeGroupNames = std::to_array<
+     {ContentSettingsType::SUSPICIOUS_SITE_WARNING_DATA, nullptr},
+ });
+ 
+-static_assert(
+-    kContentSettingsTypeGroupNames.size() ==
+-        // Add one since the sequence is kMinValue = -1, 0, ..., kMaxValue
+-        1 + static_cast<int32_t>(ContentSettingsType::kMaxValue) -
+-            static_cast<int32_t>(ContentSettingsType::kMinValue),
+-    "kContentSettingsTypeGroupNames should have the correct number "
+-    "of elements");
++// static_assert(
++//     kContentSettingsTypeGroupNames.size() ==
++//         // Add one since the sequence is kMinValue = -1, 0, ..., kMaxValue
++//         1 + static_cast<int32_t>(ContentSettingsType::kMaxValue) -
++//             static_cast<int32_t>(ContentSettingsType::kMinValue),
++//     "kContentSettingsTypeGroupNames should have the correct number "
++//     "of elements");
+ 
+ struct SiteSettingSourceStringMapping {
+   SiteSettingSource source;
+@@ -532,6 +534,13 @@ bool HasRegisteredGroupName(ContentSettingsType type) {
+       return true;
+     }
+   }
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* cs : *website_settings) {
++    if (type == cs->type() && cs->desktop_ui()) {
++      return true;
++    }
++  }
+   return false;
+ }
+ 
+@@ -545,11 +554,24 @@ ContentSettingsType ContentSettingsTypeFromGroupName(std::string_view name) {
+       return entry.type;
+     }
+   }
+-
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* cs : *website_settings) {
++    if (name == cs->name() && cs->desktop_ui()) {
++      return cs->type();
++    }
++  }
+   return ContentSettingsType::DEFAULT;
+ }
+ 
+ std::string_view ContentSettingsTypeToGroupName(ContentSettingsType type) {
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* cs : *website_settings) {
++    if (type == cs->type() && cs->desktop_ui()) {
++      return cs->name();
++    }
++  }
+   for (const auto& entry : kContentSettingsTypeGroupNames) {
+     if (type == entry.type) {
+       // Content setting types that aren't represented in the settings UI
+@@ -564,7 +586,6 @@ std::string_view ContentSettingsTypeToGroupName(ContentSettingsType type) {
+       return entry.name ? entry.name : std::string_view();
+     }
+   }
+-
+   NOTREACHED() << static_cast<int32_t>(type)
+                << " is not a recognized content settings type.";
+ }
+@@ -668,6 +689,14 @@ std::vector<ContentSettingsType> GetVisiblePermissionCategories(
+       base_types->push_back(ContentSettingsType::LOOPBACK_NETWORK);
+     }
+ 
++    content_settings::WebsiteSettingsRegistry* website_settings =
++        content_settings::WebsiteSettingsRegistry::GetInstance();
++    for (const content_settings::WebsiteSettingsInfo* cs : *website_settings) {
++      if (cs->desktop_ui()) {
++        base_types->push_back(cs->type());
++      }
++    }
++
+     initialized = true;
+   }
+ 
+diff --git a/components/browser_ui/strings/bromite_content_settings/placeholder.txt b/components/browser_ui/strings/bromite_content_settings/placeholder.txt
+new file mode 100644
+index 00000000000..5174b09c227
+--- /dev/null
++++ b/components/browser_ui/strings/bromite_content_settings/placeholder.txt
+@@ -0,0 +1 @@
++this file is intentionally empty
+diff --git a/components/content_settings/core/browser/BUILD.gn b/components/content_settings/core/browser/BUILD.gn
+index ea4cda7c684..8ed6b13a53a 100644
+--- a/components/content_settings/core/browser/BUILD.gn
++++ b/components/content_settings/core/browser/BUILD.gn
+@@ -84,6 +84,8 @@ static_library("browser") {
+ 
+   configs += [ "//build/config/compiler:wexit_time_destructors" ]
+ 
++  deps += [ ":bromite_content_settings" ]
++
+   # TODO(crbug.com/40145057): remove deprecated RWS and this include.
+   # Allow access to /components/privacy_sandbox/privacy_sandbox_prefs.h
+   # from /chrome/browser/ui/page_info/page_info_unittest.cc
+@@ -92,6 +94,11 @@ static_library("browser") {
+   public_deps += [ "//components/privacy_sandbox:privacy_sandbox_prefs" ]
+ }
+ 
++cpp_bromite_include("bromite_content_settings") {
++  inputs = [ "bromite_content_settings/placeholder.txt" ]
++  output_file = "bromite_content_settings.inc"
++}
++
+ source_set("cookie_settings") {
+   sources = [
+     "cookie_settings.cc",
+diff --git a/components/content_settings/core/browser/bromite_content_settings/placeholder.txt b/components/content_settings/core/browser/bromite_content_settings/placeholder.txt
+new file mode 100644
+index 00000000000..5174b09c227
+--- /dev/null
++++ b/components/content_settings/core/browser/bromite_content_settings/placeholder.txt
+@@ -0,0 +1 @@
++this file is intentionally empty
+diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
+index 42580f75732..6ca9372c4ef 100644
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -18,6 +18,7 @@
+ #include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/content_settings/core/common/content_settings.h"
+ #include "components/content_settings/core/common/features.h"
++#include "components/strings/grit/components_strings.h"
+ 
+ namespace content_settings {
+ 
+@@ -829,6 +830,7 @@ void ContentSettingsRegistry::Init() {
+            WebsiteSettingsRegistry::DESKTOP,
+            ContentSettingsInfo::INHERIT_IN_INCOGNITO,
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_AND_INSECURE_ORIGINS);
++#include "components/content_settings/core/browser/bromite_content_settings.inc"
+ }
+ 
+ void ContentSettingsRegistry::Register(
+diff --git a/components/content_settings/core/browser/content_settings_uma_util.cc b/components/content_settings/core/browser/content_settings_uma_util.cc
+index a920b1dd191..0dfd97e3d92 100644
+--- a/components/content_settings/core/browser/content_settings_uma_util.cc
++++ b/components/content_settings/core/browser/content_settings_uma_util.cc
+@@ -22,11 +22,7 @@ void RecordContentSettingsHistogram(const std::string& name,
+ }
+ 
+ int ContentSettingTypeToHistogramValue(ContentSettingsType content_setting) {
+-  static_assert(
+-      content_settings::kContentSettingsTypeToHistogramValue.size() ==
+-          // DEFAULT is not in the histogram, so we want [0, kMaxValue]
+-          1 + static_cast<size_t>(ContentSettingsType::kMaxValue),
+-      "Update content settings histogram lookup");
++  if ((true)) return 0;
+ 
+   auto found = content_settings::kContentSettingsTypeToHistogramValue.find(
+       content_setting);
+diff --git a/components/content_settings/core/browser/content_settings_utils.cc b/components/content_settings/core/browser/content_settings_utils.cc
+index 802fcb3e96d..bcb626e2cdc 100644
+--- a/components/content_settings/core/browser/content_settings_utils.cc
++++ b/components/content_settings/core/browser/content_settings_utils.cc
+@@ -19,6 +19,7 @@
+ #include "components/content_settings/core/browser/permission_settings_info.h"
+ #include "components/content_settings/core/browser/permission_settings_registry.h"
+ #include "components/content_settings/core/browser/website_settings_registry.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/content_settings/core/common/content_settings.h"
+ #include "components/content_settings/core/common/content_settings_types.h"
+ #include "components/content_settings/core/common/content_settings_utils.h"
+@@ -133,6 +134,17 @@ PatternPair ParsePatternString(const std::string& pattern_str) {
+ 
+ void GetRendererContentSettingRules(const HostContentSettingsMap* map,
+                                     RendererContentSettingRules* rules) {
++  content_settings::WebsiteSettingsRegistry* website_settings =
++    content_settings::WebsiteSettingsRegistry::GetInstance();
++  rules->settings_rules.clear();
++  for (const content_settings::WebsiteSettingsInfo* info : *website_settings) {
++    if (info->is_renderer_content_setting()) {
++      ContentSettingRuleSource rule;
++      rule.type = (int32_t)info->type();
++      rule.rules = map->GetSettingsForOneType(info->type());
++      rules->settings_rules.push_back(rule);
++    }
++  }
+ #if !BUILDFLAG(IS_IOS)
+   rules->mixed_content_rules =
+       map->GetSettingsForOneType(ContentSettingsType::MIXEDSCRIPT);
+diff --git a/components/content_settings/core/browser/website_settings_info.h b/components/content_settings/core/browser/website_settings_info.h
+index f01e572fb7f..ffd5e513653 100644
+--- a/components/content_settings/core/browser/website_settings_info.h
++++ b/components/content_settings/core/browser/website_settings_info.h
+@@ -125,6 +125,32 @@ class WebsiteSettingsInfo {
+   ScopingType scoping_type() const { return scoping_type_; }
+   IncognitoBehavior incognito_behavior() const { return incognito_behavior_; }
+ 
++  bool show_into_info_page() const { return show_into_info_page_; }
++  bool is_renderer_content_setting() const { return is_renderer_content_setting_; }
++  bool desktop_ui() const { return desktop_ui_; }
++  std::string tag_ui() const { return tag_ui_; }
++  int title_ui() const { return title_ui_; }
++  int description_ui() const { return description_ui_; }
++  int allowed_ui() const { return allowed_ui_; }
++  int blocked_ui() const { return blocked_ui_; }
++  int ask_ui() const { return ask_ui_; }
++  int allowed_exceptions_ui() const { return allowed_exceptions_ui_; }
++  int blocked_exceptions_ui() const { return blocked_exceptions_ui_; }
++  int mid_sentence_ui() const { return mid_sentence_ui_; }
++
++  WebsiteSettingsInfo& set_show_into_info_page() { show_into_info_page_ = true; return *this; }
++  WebsiteSettingsInfo& set_is_renderer_content_setting() { is_renderer_content_setting_ = true; return *this; }
++  WebsiteSettingsInfo& set_desktop_ui() { desktop_ui_ = true; return *this; }
++  WebsiteSettingsInfo& set_tag_ui(const std::string& value) { tag_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_title_ui(int value) { title_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_description_ui(int value) { description_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_allowed_ui(int value) { allowed_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_blocked_ui(int value) { blocked_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_ask_ui(int value) { ask_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_allowed_exceptions_ui(int value) { allowed_exceptions_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_blocked_exceptions_ui(int value) { blocked_exceptions_ui_ = value; return *this; }
++  WebsiteSettingsInfo& set_mid_sentence_ui(int value) { mid_sentence_ui_ = value; return *this; }
++
+  private:
+   const ContentSettingsType type_;
+   const std::string name_;
+@@ -137,6 +163,18 @@ class WebsiteSettingsInfo {
+   const LossyStatus lossy_status_;
+   const ScopingType scoping_type_;
+   const IncognitoBehavior incognito_behavior_;
++  bool show_into_info_page_ = false;
++  bool is_renderer_content_setting_ = false;
++  bool desktop_ui_ = false;
++  std::string tag_ui_;
++  int title_ui_ = 0;
++  int description_ui_ = 0;
++  int allowed_ui_ = 0;
++  int blocked_ui_ = 0;
++  int ask_ui_ = 0;
++  int allowed_exceptions_ui_ = 0;
++  int blocked_exceptions_ui_ = 0;
++  int mid_sentence_ui_ = 0;
+ };
+ 
+ }  // namespace content_settings
+diff --git a/components/content_settings/core/browser/website_settings_registry.cc b/components/content_settings/core/browser/website_settings_registry.cc
+index 8abc6e3dba1..83365a92a60 100644
+--- a/components/content_settings/core/browser/website_settings_registry.cc
++++ b/components/content_settings/core/browser/website_settings_registry.cc
+@@ -45,6 +45,12 @@ const WebsiteSettingsInfo* WebsiteSettingsRegistry::Get(
+   return nullptr;
+ }
+ 
++raw_ptr<WebsiteSettingsInfo> WebsiteSettingsRegistry::GetMutable(
++    ContentSettingsType type) {
++  const auto& it = website_settings_info_.find(type);
++  return it->second.get();
++}
++
+ const WebsiteSettingsInfo* WebsiteSettingsRegistry::GetByName(
+     const std::string& name) const {
+   for (const auto& entry : website_settings_info_) {
+diff --git a/components/content_settings/core/browser/website_settings_registry.h b/components/content_settings/core/browser/website_settings_registry.h
+index 9fc5048633d..7f257abc200 100644
+--- a/components/content_settings/core/browser/website_settings_registry.h
++++ b/components/content_settings/core/browser/website_settings_registry.h
+@@ -62,6 +62,7 @@ class WebsiteSettingsRegistry {
+   void ResetForTest();
+ 
+   const WebsiteSettingsInfo* Get(ContentSettingsType type) const;
++  raw_ptr<WebsiteSettingsInfo> GetMutable(ContentSettingsType type);
+   const WebsiteSettingsInfo* GetByName(const std::string& name) const;
+ 
+   // Register a new website setting. This maps an origin to an arbitrary
+diff --git a/components/content_settings/core/common/BUILD.gn b/components/content_settings/core/common/BUILD.gn
+index e7148ad2c34..d8ef4967fe3 100644
+--- a/components/content_settings/core/common/BUILD.gn
++++ b/components/content_settings/core/common/BUILD.gn
+@@ -54,6 +54,13 @@ static_library("common") {
+     "//net",
+     "//url",
+   ]
++  deps += [ ":bromite_content_settings" ]
++}
++
++cpp_bromite_include("bromite_content_settings") {
++  inputs = [ "bromite_content_settings/placeholder.txt" ]
++  output_file = "bromite_content_settings.inc"
++  visibility = [ "*" ]
+ }
+ 
+ source_set("unit_tests") {
+@@ -87,6 +94,7 @@ mojom("content_settings_types") {
+   sources = [ "content_settings_types.mojom" ]
+ 
+   public_deps = [ "//mojo/public/mojom/base" ]
++  parser_deps = [ ":bromite_content_settings" ]
+ 
+   webui_module_path = "/"
+   generate_legacy_js_bindings = true
+diff --git a/components/content_settings/core/common/bromite_content_settings/placeholder.txt b/components/content_settings/core/common/bromite_content_settings/placeholder.txt
+new file mode 100644
+index 00000000000..5174b09c227
+--- /dev/null
++++ b/components/content_settings/core/common/bromite_content_settings/placeholder.txt
+@@ -0,0 +1 @@
++this file is intentionally empty
+diff --git a/components/content_settings/core/common/content_settings.cc b/components/content_settings/core/common/content_settings.cc
+index a6660fb35b0..03536b4e405 100644
+--- a/components/content_settings/core/common/content_settings.cc
++++ b/components/content_settings/core/common/content_settings.cc
+@@ -17,11 +17,12 @@
+ #include "components/content_settings/core/common/content_settings_metadata.h"
+ #include "components/content_settings/core/common/content_settings_types.h"
+ #include "components/content_settings/core/common/content_settings_utils.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "third_party/abseil-cpp/absl/functional/overload.h"
+ 
+ namespace {
+ 
+-void FilterRulesForType(ContentSettingsForOneType& settings,
++void FilterRulesForType(ContentSettingsForOneType& settings, // do not remove
+                         const GURL& primary_url) {
+   std::erase_if(settings,
+                 [&primary_url](const ContentSettingPatternSource& source) {
+@@ -105,6 +106,13 @@ std::ostream& operator<<(std::ostream& os,
+ // static
+ bool RendererContentSettingRules::IsRendererContentSetting(
+     ContentSettingsType content_type) {
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* info : *website_settings) {
++      if (info->type() == content_type && info->is_renderer_content_setting()) {
++        return true;
++      }
++  }
+   return content_type == ContentSettingsType::IMAGES ||
+          content_type == ContentSettingsType::JAVASCRIPT ||
+          content_type == ContentSettingsType::POPUPS ||
+@@ -114,7 +122,10 @@ bool RendererContentSettingRules::IsRendererContentSetting(
+ 
+ void RendererContentSettingRules::FilterRulesByOutermostMainFrameURL(
+     const GURL& outermost_main_frame_url) {
+-  FilterRulesForType(mixed_content_rules, outermost_main_frame_url);
++  for (ContentSettingRuleSource& info : settings_rules) {
++      FilterRulesForType(info.rules, outermost_main_frame_url);
++  }
++  FilterRulesForType(mixed_content_rules, outermost_main_frame_url); // do not remove
+ }
+ 
+ RendererContentSettingRules::RendererContentSettingRules() = default;
+@@ -134,7 +145,20 @@ RendererContentSettingRules& RendererContentSettingRules::operator=(
+     RendererContentSettingRules&& rules) = default;
+ 
+ bool RendererContentSettingRules::operator==(
+-    const RendererContentSettingRules& other) const = default;
++    const RendererContentSettingRules& other) const {
++  return std::tie(settings_rules, mixed_content_rules) ==
++         std::tie(other.settings_rules, other.mixed_content_rules);
++}
++
++ContentSettingRuleSource::ContentSettingRuleSource() = default;
++
++ContentSettingRuleSource::~ContentSettingRuleSource() = default;
++
++ContentSettingRuleSource::ContentSettingRuleSource(
++    const ContentSettingRuleSource&) = default;
++
++bool ContentSettingRuleSource::operator==(
++    const ContentSettingRuleSource& other) const = default;
+ 
+ content_settings::SettingInfo::SettingInfo() = default;
+ content_settings::SettingInfo& content_settings::SettingInfo::operator=(
+diff --git a/components/content_settings/core/common/content_settings.h b/components/content_settings/core/common/content_settings.h
+index 882dc2e3877..0643b6d48bf 100644
+--- a/components/content_settings/core/common/content_settings.h
++++ b/components/content_settings/core/common/content_settings.h
+@@ -97,10 +97,22 @@ std::ostream& operator<<(std::ostream& os,
+ 
+ typedef std::vector<ContentSettingPatternSource> ContentSettingsForOneType;
+ 
++struct ContentSettingRuleSource {
++  int type;
++  ContentSettingsForOneType rules;
++
++  ContentSettingRuleSource();
++  ~ContentSettingRuleSource();
++  ContentSettingRuleSource(const ContentSettingRuleSource& source);
++
++  bool operator==(const ContentSettingRuleSource& other) const;
++};
++
+ struct RendererContentSettingRules {
+   // Returns true if |content_type| is a type that is contained in this class.
+   // Any new type added below must also update this method.
+   static bool IsRendererContentSetting(ContentSettingsType content_type);
++  std::vector<ContentSettingRuleSource> settings_rules;
+ 
+   // Filters all the rules by matching the primary pattern with
+   // |outermost_main_frame_url|. Any new type added below that needs to match
+diff --git a/components/content_settings/core/common/content_settings.mojom b/components/content_settings/core/common/content_settings.mojom
+index 08b3576a02e..58ff279a44d 100644
+--- a/components/content_settings/core/common/content_settings.mojom
++++ b/components/content_settings/core/common/content_settings.mojom
+@@ -73,6 +73,11 @@ struct RuleMetaData {
+   bool autorevocation_bypassed_by_user;
+ };
+ 
++struct ContentSettingRuleSource {
++  int32 type;
++  array<ContentSettingPatternSource> rules;
++};
++
+ // This mirrors the C++ type in content_settings.h.
+ struct ContentSettingPatternSource {
+   ContentSettingsPattern primary_pattern;
+@@ -86,5 +91,6 @@ struct ContentSettingPatternSource {
+ // This mirrors the C++ type in content_settings.h.
+ // TODO(crbug.com/40282541): This should be removed.
+ struct RendererContentSettingRules {
++  array<ContentSettingRuleSource> settings_rules;
+   array<ContentSettingPatternSource> mixed_content_rules;
+ };
+diff --git a/components/content_settings/core/common/content_settings_mojom_traits.cc b/components/content_settings/core/common/content_settings_mojom_traits.cc
+index 7e8b417089c..f0eb39dee8f 100644
+--- a/components/content_settings/core/common/content_settings_mojom_traits.cc
++++ b/components/content_settings/core/common/content_settings_mojom_traits.cc
+@@ -113,12 +113,22 @@ bool StructTraits<content_settings::mojom::ContentSettingPatternSourceDataView,
+          data.ReadMetadata(&out->metadata) && data.ReadSource(&out->source);
+ }
+ 
++// static
++bool StructTraits<content_settings::mojom::ContentSettingRuleSourceDataView,
++                  ContentSettingRuleSource>::
++    Read(content_settings::mojom::ContentSettingRuleSourceDataView data,
++         ContentSettingRuleSource* out) {
++  out->type = data.type();
++  return data.ReadRules(&out->rules);
++}
++
+ // static
+ bool StructTraits<content_settings::mojom::RendererContentSettingRulesDataView,
+                   RendererContentSettingRules>::
+     Read(content_settings::mojom::RendererContentSettingRulesDataView data,
+          RendererContentSettingRules* out) {
+-  return data.ReadMixedContentRules(&out->mixed_content_rules);
++  return data.ReadSettingsRules(&out->settings_rules) &&
++         data.ReadMixedContentRules(&out->mixed_content_rules);
+ }
+ 
+ }  // namespace mojo
+diff --git a/components/content_settings/core/common/content_settings_mojom_traits.h b/components/content_settings/core/common/content_settings_mojom_traits.h
+index 06bfcac6395..1eaaebc393a 100644
+--- a/components/content_settings/core/common/content_settings_mojom_traits.h
++++ b/components/content_settings/core/common/content_settings_mojom_traits.h
+@@ -181,10 +181,34 @@ struct StructTraits<
+       ContentSettingPatternSource* out);
+ };
+ 
++template <>
++struct StructTraits<
++    content_settings::mojom::ContentSettingRuleSourceDataView,
++    ContentSettingRuleSource> {
++  static int type(
++      const ContentSettingRuleSource& r) {
++    return r.type;
++  }
++
++  static const std::vector<ContentSettingPatternSource>& rules(
++      const ContentSettingRuleSource& r) {
++    return r.rules;
++  }
++
++  static bool Read(
++      content_settings::mojom::ContentSettingRuleSourceDataView data,
++      ContentSettingRuleSource* out);
++};
++
+ template <>
+ struct StructTraits<
+     content_settings::mojom::RendererContentSettingRulesDataView,
+     RendererContentSettingRules> {
++  static const std::vector<ContentSettingRuleSource>& settings_rules(
++      const RendererContentSettingRules& r) {
++    return r.settings_rules;
++  }
++
+   static const std::vector<ContentSettingPatternSource>& mixed_content_rules(
+       const RendererContentSettingRules& r) {
+     return r.mixed_content_rules;
+diff --git a/components/content_settings/core/common/content_settings_types.mojom b/components/content_settings/core/common/content_settings_types.mojom
+index 26387f4dc48..ff662acccfd 100644
+--- a/components/content_settings/core/common/content_settings_types.mojom
++++ b/components/content_settings/core/common/content_settings_types.mojom
+@@ -480,6 +480,7 @@ enum ContentSettingsType {
+ 
+   // Controls the display of the inline cue menu in a website.
+   INLINE_CUE_MENU,
++#include "components/content_settings/core/common/bromite_content_settings.inc"
+ 
+   // Stores allowlist decisions for Suspicious Site Warnings.
+   SUSPICIOUS_SITE_WARNING_DATA,
+diff --git a/components/content_settings/renderer/content_settings_agent_impl.cc b/components/content_settings/renderer/content_settings_agent_impl.cc
+index 81645b3bb44..1b02a24ed2f 100644
+--- a/components/content_settings/renderer/content_settings_agent_impl.cc
++++ b/components/content_settings/renderer/content_settings_agent_impl.cc
+@@ -225,6 +225,80 @@ void ContentSettingsAgentImpl::SendRendererContentSettingRules(
+       std::move(renderer_settings));
+ }
+ 
++ContentSetting ContentSettingsAgentImpl::GetContentSetting(
++        ContentSettingsType type, ContentSetting default_value) {
++  if (!content_setting_rules_)
++    return default_value;
++
++  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
++  const GURL secondary_url =
++          url::Origin(frame->GetDocument().GetSecurityOrigin()).GetURL();
++  for (ContentSettingRuleSource& info : content_setting_rules_->settings_rules) {
++      if (info.type == (int)type) {
++        return GetContentSettingFromRules(info.rules, secondary_url);
++      }
++  }
++  return default_value;
++}
++
++bool ContentSettingsAgentImpl::AllowContentSetting(
++        ContentSettingsType type, bool default_value) {
++  if (!content_setting_rules_)
++    return default_value;
++
++  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
++  const GURL secondary_url =
++          url::Origin(frame->GetDocument().GetSecurityOrigin()).GetURL();
++  return AllowContentSetting(type, secondary_url, default_value);
++}
++
++bool ContentSettingsAgentImpl::AllowContentSetting(
++        ContentSettingsType type,
++        const blink::WebURL& secondary_url,
++        bool default_value) {
++  if (!content_setting_rules_)
++    return default_value;
++
++  for (ContentSettingRuleSource& info : content_setting_rules_->settings_rules) {
++      if (info.type == (int)type) {
++        return CONTENT_SETTING_ALLOW == GetContentSettingFromRules(
++                  info.rules, secondary_url);
++      }
++  }
++  return default_value;
++}
++
++bool ContentSettingsAgentImpl::IsAllowlistedForContentSettings() const {
++  const WebDocument& document = render_frame()->GetWebFrame()->GetDocument();
++  WebSecurityOrigin origin = document.GetSecurityOrigin();
++  WebURL document_url = document.Url();
++
++  if (document_url.GetString() == content::kUnreachableWebDataURL)
++    return true;
++
++  if (origin.IsNull() || origin.IsOpaque())
++    return false;  // Uninitialized document?
++
++  blink::WebString protocol = origin.Protocol();
++
++  if (protocol == content::kChromeUIScheme)
++    return true;  // Browser UI elements should still work.
++
++  if (protocol == content::kChromeDevToolsScheme)
++    return true;  // DevTools UI elements should still work.
++
++  if (document_url.ProtocolIs("chrome-extension"))
++    return true;  // Extension pages should still work.
++
++  // If the scheme is file:, an empty file name indicates a directory listing,
++  // which requires JavaScript to function properly.
++  if (protocol == url::kFileScheme &&
++      document_url.ProtocolIs(url::kFileScheme)) {
++    return GURL(document_url).ExtractFileName().empty();
++  }
++  return false;
++}
++
+ void ContentSettingsAgentImpl::OnContentSettingsAgentRequest(
+     mojo::PendingAssociatedReceiver<mojom::ContentSettingsAgent> receiver) {
+   receivers_.Add(this, std::move(receiver));
+diff --git a/components/content_settings/renderer/content_settings_agent_impl.h b/components/content_settings/renderer/content_settings_agent_impl.h
+index 3ced460d084..009d70427ff 100644
+--- a/components/content_settings/renderer/content_settings_agent_impl.h
++++ b/components/content_settings/renderer/content_settings_agent_impl.h
+@@ -72,6 +72,13 @@ class ContentSettingsAgentImpl
+   static mojom::ContentSettingsManager::StorageType ConvertToMojoStorageType(
+       StorageType storage_type);
+ 
++  bool AllowContentSetting(
++          ContentSettingsType type, const blink::WebURL& secondary_url, bool default_value) override;
++  bool AllowContentSetting(
++          ContentSettingsType type, bool default_value) override;
++  ContentSetting GetContentSetting(
++          ContentSettingsType type, ContentSetting default_value);
++
+   // blink::WebContentSettingsClient:
+   void AllowStorageAccess(StorageType storage_type,
+                           base::OnceCallback<void(bool)> callback) override;
+@@ -123,6 +130,8 @@ class ContentSettingsAgentImpl
+   // Resets the `content_blocked_` array.
+   void ClearBlockedContentSettings();
+ 
++  bool IsAllowlistedForContentSettings() const;
++
+   // A getter for `content_settings_manager_` that ensures it is bound.
+   mojom::ContentSettingsManager& GetContentSettingsManager();
+ 
+diff --git a/components/page_info/android/page_info_controller_android.cc b/components/page_info/android/page_info_controller_android.cc
+index 13c042ca2eb..a676fdf832d 100644
+--- a/components/page_info/android/page_info_controller_android.cc
++++ b/components/page_info/android/page_info_controller_android.cc
+@@ -16,6 +16,7 @@
+ #include "base/notimplemented.h"
+ #include "components/content_settings/core/browser/host_content_settings_map.h"
+ #include "components/content_settings/core/browser/permission_settings_registry.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/content_settings/core/common/content_settings.h"
+ #include "components/content_settings/core/common/content_settings_types.h"
+ #include "components/content_settings/core/common/content_settings_utils.h"
+@@ -250,6 +251,15 @@ void PageInfoControllerAndroid::SetPermissionInfo(
+   }
+   permissions_to_display.push_back(ContentSettingsType::SENSORS);
+ 
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* info : *website_settings) {
++    if (info->show_into_info_page() &&
++          !std::ranges::contains(permissions_to_display, info->type())) {
++       permissions_to_display.push_back(info->type());
++    }
++  }
++
+   std::map<ContentSettingsType, /*allowed*/ bool>
+       user_specified_settings_to_display;
+ 
+@@ -331,6 +341,14 @@ std::optional<PermissionSetting> PageInfoControllerAndroid::GetSettingToDisplay(
+     return permission.setting;
+   }
+ 
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* info : *website_settings) {
++    if (info->type() == permission.type && info->show_into_info_page()) {
++      return permission.default_setting;
++    }
++  }
++
+   // Handle exceptions for permissions which need to be displayed even if they
+   // are set to the default.
+   if (permission.type == ContentSettingsType::ADS) {
+diff --git a/components/page_info/page_info.cc b/components/page_info/page_info.cc
+index a8402e7de85..0438d763f01 100644
+--- a/components/page_info/page_info.cc
++++ b/components/page_info/page_info.cc
+@@ -25,6 +25,7 @@
+ #include "base/values.h"
+ #include "build/build_config.h"
+ #include "components/browsing_data/content/browsing_data_helper.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/content_settings/browser/ui/cookie_controls_controller.h"
+ #include "components/content_settings/core/browser/content_settings_registry.h"
+ #include "components/content_settings/core/browser/content_settings_uma_util.h"
+@@ -1448,6 +1449,14 @@ bool PageInfo::ShouldShowPermission(
+   }
+ #endif  // BUILDFLAG(IS_ANDROID)
+ 
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* winfo : *website_settings) {
++    if (info.type == winfo->type() &&
++        winfo->show_into_info_page()) {
++      return true;
++    }
++  }
+   // Note |ContentSettingsType::ADS| will show up regardless of its default
+   // value when it has been activated on the current origin.
+   if (info.type == ContentSettingsType::ADS) {
+@@ -1587,7 +1596,19 @@ void PageInfo::PresentSitePermissions() {
+ 
+   HostContentSettingsMap* content_settings = GetContentSettings();
+   DCHECK(web_contents_);
+-  for (const ContentSettingsType type : kPermissionType) {
++  std::vector<ContentSettingsType> permission_list;
++  for (const ContentSettingsType type : kPermissionType)
++    permission_list.push_back(type);
++
++  content_settings::WebsiteSettingsRegistry* website_settings =
++      content_settings::WebsiteSettingsRegistry::GetInstance();
++  for (const content_settings::WebsiteSettingsInfo* info : *website_settings) {
++    if (info->show_into_info_page() &&
++          !std::ranges::contains(permission_list, info->type())) {
++      permission_list.push_back(info->type());
++    }
++  }
++  for (const ContentSettingsType type : permission_list) {
+     PermissionInfo permission_info;
+     permission_info.type = type;
+ 
+diff --git a/components/page_info/page_info_ui.cc b/components/page_info/page_info_ui.cc
+index a4c1c51327f..4f52b8be277 100644
+--- a/components/page_info/page_info_ui.cc
++++ b/components/page_info/page_info_ui.cc
+@@ -16,6 +16,7 @@
+ #include "components/content_settings/core/browser/permission_settings_registry.h"
+ #include "components/content_settings/core/common/content_settings.h"
+ #include "components/content_settings/core/common/content_settings_types.h"
++#include "components/content_settings/core/browser/website_settings_registry.h"
+ #include "components/page_info/core/features.h"
+ #include "components/page_info/page_info.h"
+ #include "components/page_info/page_info_ui.h"
+@@ -255,6 +256,13 @@ void CreateOppositeToDefaultSiteException(
+ std::u16string GetPermissionAskStateString(ContentSettingsType type) {
+   int message_id = kInvalidResourceID;
+ 
++  const content_settings::WebsiteSettingsInfo* settingInfo =
++    content_settings::WebsiteSettingsRegistry::GetInstance()->Get(type);
++  if (settingInfo && settingInfo->show_into_info_page()) {
++    if (settingInfo->ask_ui() != 0)
++      return l10n_util::GetStringUTF16(settingInfo->ask_ui());
++  }
++
+   switch (type) {
+     case ContentSettingsType::GEOLOCATION:
+       message_id = IDS_PAGE_INFO_STATE_TEXT_LOCATION_ASK;
+@@ -560,6 +568,12 @@ PageInfoUI::~PageInfoUI() = default;
+ 
+ // static
+ std::u16string PageInfoUI::PermissionTypeToUIString(ContentSettingsType type) {
++  const content_settings::WebsiteSettingsInfo* settingInfo =
++    content_settings::WebsiteSettingsRegistry::GetInstance()->Get(type);
++  if (settingInfo && settingInfo->show_into_info_page()) {
++    if (settingInfo->title_ui() != 0)
++      return l10n_util::GetStringUTF16(settingInfo->title_ui());
++  }
+   for (const PermissionUIInfo& info : GetContentSettingsUIInfo()) {
+     if (info.type == type)
+       return l10n_util::GetStringUTF16(info.string_id);
+@@ -570,6 +584,12 @@ std::u16string PageInfoUI::PermissionTypeToUIString(ContentSettingsType type) {
+ // static
+ std::u16string PageInfoUI::PermissionTypeToUIStringMidSentence(
+     ContentSettingsType type) {
++  const content_settings::WebsiteSettingsInfo* settingInfo =
++    content_settings::WebsiteSettingsRegistry::GetInstance()->Get(type);
++  if (settingInfo && settingInfo->show_into_info_page()) {
++    if (settingInfo->mid_sentence_ui() != 0)
++      return l10n_util::GetStringUTF16(settingInfo->mid_sentence_ui());
++  }
+   for (const PermissionUIInfo& info : GetContentSettingsUIInfo()) {
+     if (info.type == type)
+       return l10n_util::GetStringUTF16(info.string_id_mid_sentence);
+@@ -963,6 +983,11 @@ bool PageInfoUI::ContentSettingsTypeInPageInfo(ContentSettingsType type) {
+     if (info.type == type)
+       return true;
+   }
++  const content_settings::WebsiteSettingsInfo* settingInfo =
++    content_settings::WebsiteSettingsRegistry::GetInstance()->Get(type);
++  if (settingInfo) {
++    return settingInfo->show_into_info_page();
++  }
+   return false;
+ }
+ 
+diff --git a/components/site_settings_strings.grdp b/components/site_settings_strings.grdp
+index ab3c100b747..dd1b4c39e60 100644
+--- a/components/site_settings_strings.grdp
++++ b/components/site_settings_strings.grdp
+@@ -1,5 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <grit-part>
++  <part file="browser_ui/strings/bromite_content_settings/placeholder.txt"/>
+   <!-- Site Settings common -->
+   <message name="IDS_SITE_SETTINGS_TYPE_ADS" desc="This string is the name of the intrusive ads setting (visit chrome://settings/content and click 'Additional content settings').">
+     Intrusive ads
+diff --git a/third_party/blink/public/platform/web_content_settings_client.h b/third_party/blink/public/platform/web_content_settings_client.h
+index 36410ff29d9..791016c8f5e 100644
+--- a/third_party/blink/public/platform/web_content_settings_client.h
++++ b/third_party/blink/public/platform/web_content_settings_client.h
+@@ -10,6 +10,11 @@
+ 
+ #include "base/functional/callback.h"
+ 
++#include "base/time/time.h"
++#include "components/content_settings/core/common/content_settings_types.h"
++#include "third_party/blink/public/common/client_hints/enabled_client_hints.h"
++#include "third_party/blink/public/mojom/navigation/renderer_content_settings.mojom.h"
++
+ namespace blink {
+ 
+ class WebURL;
+@@ -42,6 +47,14 @@ class WebContentSettingsClient {
+   // Blocks until done.
+   virtual bool AllowStorageAccessSync(StorageType storage_type) { return true; }
+ 
++  virtual bool AllowContentSetting(ContentSettingsType type, bool enabled_per_settings) {
++    return enabled_per_settings;
++  }
++
++  virtual bool AllowContentSetting(ContentSettingsType type, const WebURL& secondary_url, bool enabled_per_settings) {
++    return enabled_per_settings;
++  }
++
+   // Controls whether insecure scripts are allowed to execute for this frame.
+   virtual bool AllowRunningInsecureContent(bool enabled_per_settings,
+                                            const WebURL&) {
+diff --git a/third_party/blink/renderer/core/execution_context/execution_context.cc b/third_party/blink/renderer/core/execution_context/execution_context.cc
+index d62a75389d6..c0fbff0af26 100644
+--- a/third_party/blink/renderer/core/execution_context/execution_context.cc
++++ b/third_party/blink/renderer/core/execution_context/execution_context.cc
+@@ -71,6 +71,22 @@
+ 
+ namespace blink {
+ 
++blink::WebContentSettingsClient* GetContentSettingsClientFor(
++    ExecutionContext* context) {
++  blink::WebContentSettingsClient* settings = nullptr;
++  if (!context)
++    return settings;
++  if (auto* window = blink::DynamicTo<blink::LocalDOMWindow>(context)) {
++    auto* frame = window->GetFrame();
++    if (frame)
++      settings = frame->GetContentSettingsClient();
++  } else if (context->IsWorkerGlobalScope()) {
++    settings =
++        blink::To<blink::WorkerGlobalScope>(context)->ContentSettingsClient();
++  }
++  return settings;
++}
++
+ ExecutionContext::ExecutionContext(v8::Isolate* isolate,
+                                    Agent* agent,
+                                    bool is_window)
+diff --git a/third_party/blink/renderer/core/execution_context/execution_context.h b/third_party/blink/renderer/core/execution_context/execution_context.h
+index 7e039f43153..6120fa226fc 100644
+--- a/third_party/blink/renderer/core/execution_context/execution_context.h
++++ b/third_party/blink/renderer/core/execution_context/execution_context.h
+@@ -44,6 +44,7 @@
+ #include "third_party/blink/public/mojom/origin_trials/origin_trial_feature.mojom-blink-forward.h"
+ #include "third_party/blink/public/mojom/permissions_policy/policy_disposition.mojom-blink-forward.h"
+ #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink-forward.h"
++#include "third_party/blink/public/platform/web_content_settings_client.h"
+ #include "third_party/blink/renderer/bindings/core/v8/sanitize_script_errors.h"
+ #include "third_party/blink/renderer/core/core_export.h"
+ #include "third_party/blink/renderer/core/execution_context/security_context.h"
+@@ -100,6 +101,10 @@ class SecurityOrigin;
+ class ScriptState;
+ class ScriptWrappable;
+ class TrustedTypePolicyFactory;
++class WebContentSettingsClient;
++
++CORE_EXPORT WebContentSettingsClient* GetContentSettingsClientFor(
++    ExecutionContext* context);
+ 
+ enum ReasonForCallingCanExecuteScripts {
+   kAboutToExecuteScript,

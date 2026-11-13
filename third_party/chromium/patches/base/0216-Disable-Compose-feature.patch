@@ -1,0 +1,133 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 26 Feb 2024 16:35:16 +0000
+Subject: [PATCH 216/310] Disable Compose feature
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-Compose-feature.patch
+---
+ chrome/browser/glic/BUILD.gn                        | 5 +++++
+ chrome/browser/renderer_context_menu/BUILD.gn       | 6 +++---
+ chrome/browser/ui/webui/settings/BUILD.gn           | 7 +++++++
+ chrome/browser/ui/webui/settings/settings_ui.cc     | 4 ++--
+ components/compose/core/browser/compose_features.cc | 3 +++
+ components/compose/features.gni                     | 2 +-
+ 6 files changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/chrome/browser/glic/BUILD.gn b/chrome/browser/glic/BUILD.gn
+index e42a0cebb38..7c027d48838 100644
+--- a/chrome/browser/glic/BUILD.gn
++++ b/chrome/browser/glic/BUILD.gn
+@@ -1300,6 +1300,11 @@ if (!is_android) {
+       "//content/test:test_support",
+       "//ui/display:test_support",
+     ]
++    if (!enable_compose) {
++      deps -= [
++        "//chrome/browser/compose",
++      ]
++    }
+     if (enable_pdf) {
+       deps += [
+         "//chrome/browser/pdf:pdf_extension_test_utils",
+diff --git a/chrome/browser/renderer_context_menu/BUILD.gn b/chrome/browser/renderer_context_menu/BUILD.gn
+index 710da547b7e..5d98e7f5833 100644
+--- a/chrome/browser/renderer_context_menu/BUILD.gn
++++ b/chrome/browser/renderer_context_menu/BUILD.gn
+@@ -121,7 +121,7 @@ source_set("impl") {
+       "//chrome/browser/apps/app_service",
+       "//chrome/browser/apps/platform_apps",
+       "//chrome/browser/autocomplete",
+-      "//chrome/browser/compose",
++      #"//chrome/browser/compose",
+       "//chrome/browser/context_hub",
+       "//chrome/browser/contextual_tasks",
+       "//chrome/browser/custom_handlers",
+@@ -285,7 +285,7 @@ static_library("test_support") {
+     ]
+     public_deps += [ "//extensions/buildflags" ]
+     deps += [
+-      "//chrome/browser/compose",
++      #"//chrome/browser/compose",
+       "//chrome/browser/indigo",
+     ]
+   }
+@@ -392,7 +392,7 @@ if (!is_android) {
+       ":test_support",
+       "//base/test:test_support",
+       "//chrome/browser",
+-      "//chrome/browser/compose:test_support",
++      #"//chrome/browser/compose:test_support",
+       "//chrome/browser/context_hub",
+       "//chrome/browser/contextual_tasks",
+       "//chrome/browser/devtools",
+diff --git a/chrome/browser/ui/webui/settings/BUILD.gn b/chrome/browser/ui/webui/settings/BUILD.gn
+index cb8aa3beaff..5032e07c585 100644
+--- a/chrome/browser/ui/webui/settings/BUILD.gn
++++ b/chrome/browser/ui/webui/settings/BUILD.gn
+@@ -5,6 +5,7 @@
+ import("//build/config/ozone.gni")
+ import("//build/config/ui.gni")
+ import("//components/signin/features.gni")
++import("//components/compose/features.gni")
+ 
+ assert(is_win || is_mac || is_linux || is_chromeos)
+ 
+@@ -353,6 +354,12 @@ source_set("impl") {
+     "//v8:v8_version",
+   ]
+ 
++  if (!enable_compose) {
++    deps -= [
++      "//chrome/browser/compose",
++    ]
++  }
++
+   if (is_win || is_mac || is_linux) {
+     sources += [
+       "settings_default_browser_handler.cc",
+diff --git a/chrome/browser/ui/webui/settings/settings_ui.cc b/chrome/browser/ui/webui/settings/settings_ui.cc
+index 9ab115e67fd..13f4e603573 100644
+--- a/chrome/browser/ui/webui/settings/settings_ui.cc
++++ b/chrome/browser/ui/webui/settings/settings_ui.cc
+@@ -21,7 +21,7 @@
+ #include "chrome/browser/browser_features.h"
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/commerce/shopping_service_factory.h"
+-#include "chrome/browser/compose/compose_enabling.h"
++// #include "chrome/browser/compose/compose_enabling.h"
+ #include "chrome/browser/contextual_cueing/features.h"
+ #include "chrome/browser/contextual_tasks/contextual_tasks_context_service.h"
+ #include "chrome/browser/dictation/dictation_keyed_service.h"
+@@ -393,7 +393,7 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
+       base::FeatureList::IsEnabled(permissions::features::kKeyboardLockPrompt));
+ 
+ #if BUILDFLAG(ENABLE_COMPOSE)
+-  const bool compose_enabled = ComposeEnabling::IsEnabledForProfile(profile);
++  const bool compose_enabled = false;
+   const bool compose_visible = ComposeEnabling::IsSettingVisible(profile);
+ #else
+   const bool compose_enabled = false;
+diff --git a/components/compose/core/browser/compose_features.cc b/components/compose/core/browser/compose_features.cc
+index bc0d7b5a05d..c61fed2e293 100644
+--- a/components/compose/core/browser/compose_features.cc
++++ b/components/compose/core/browser/compose_features.cc
+@@ -76,4 +76,7 @@ BASE_FEATURE(kComposeUpfrontInputModes, base::FEATURE_ENABLED_BY_DEFAULT);
+ BASE_FEATURE(kComposeHideComposeNudgesAsynchronously,
+              base::FEATURE_ENABLED_BY_DEFAULT);
+ 
++SET_CROMITE_FEATURE_DISABLED(kEnableCompose);
++SET_CROMITE_FEATURE_DISABLED(kComposeEligible);
++
+ }  // namespace compose::features
+diff --git a/components/compose/features.gni b/components/compose/features.gni
+index a646cb40e64..a633dbe86df 100644
+--- a/components/compose/features.gni
++++ b/components/compose/features.gni
+@@ -4,5 +4,5 @@
+ 
+ declare_args() {
+   # Whether Compose is enabled in the build.
+-  enable_compose = is_mac || is_win || is_linux || is_chromeos
++  enable_compose = false
+ }

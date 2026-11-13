@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Thu, 9 Jun 2022 19:45:03 +0000
+Subject: [PATCH 125/310] Remove segmentation platform
+
+Also fixes a crash on startup.
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Remove-segmentation-platform.patch
+---
+ .../chrome_browser_main_extra_parts_segmentation_platform.cc  | 4 ++++
+ components/segmentation_platform/public/features.cc           | 4 ++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc b/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc
+index 7a6085506dd..b392a55b921 100644
+--- a/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc
++++ b/chrome/browser/segmentation_platform/chrome_browser_main_extra_parts_segmentation_platform.cc
+@@ -12,11 +12,13 @@
+ #include "components/segmentation_platform/public/segmentation_platform_service.h"
+ 
+ void ChromeBrowserMainExtraPartsSegmentationPlatform::PreCreateThreads() {
++  if ((true)) return;
+   segmentation_platform::LocalStateHelper::GetInstance().Initialize(
+       g_browser_process->local_state());
+ }
+ 
+ void ChromeBrowserMainExtraPartsSegmentationPlatform::PreProfileInit() {
++  if ((true)) return;
+   segmentation_platform::UkmDatabaseClientHolder::GetClientInstance(nullptr)
+       .PreProfileInit(
+           /*in_memory_database=*/false);
+@@ -25,6 +27,7 @@ void ChromeBrowserMainExtraPartsSegmentationPlatform::PreProfileInit() {
+ void ChromeBrowserMainExtraPartsSegmentationPlatform::PostProfileInit(
+     Profile* profile,
+     bool is_initial_profile) {
++  if ((true)) return;
+   if (!profile || profile->IsOffTheRecord())
+     return;
+ 
+@@ -36,6 +39,7 @@ void ChromeBrowserMainExtraPartsSegmentationPlatform::PostProfileInit(
+ }
+ 
+ void ChromeBrowserMainExtraPartsSegmentationPlatform::PostMainMessageLoopRun() {
++  if ((true)) return;
+   segmentation_platform::UkmDatabaseClientHolder::GetClientInstance(nullptr)
+       .PostMessageLoopRun();
+ }
+diff --git a/components/segmentation_platform/public/features.cc b/components/segmentation_platform/public/features.cc
+index 01abb4a9b8b..2c97e114c68 100644
+--- a/components/segmentation_platform/public/features.cc
++++ b/components/segmentation_platform/public/features.cc
+@@ -283,4 +283,8 @@ bool IsMagicStackTipsV2IosActionableEnabled() {
+          kMagicStackTipsV2IosActionable.Get();
+ }
+ 
++SET_CROMITE_FEATURE_DISABLED(kSegmentationPlatformFeature);
++SET_CROMITE_FEATURE_DISABLED(kSegmentationPlatformFeedSegmentFeature);
++SET_CROMITE_FEATURE_DISABLED(kSegmentationPlatformAdaptiveToolbarV2Feature);
++SET_CROMITE_FEATURE_DISABLED(kNewTabPageCustomizationV2);
+ }  // namespace segmentation_platform::features

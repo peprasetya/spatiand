@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sat, 20 Nov 2021 15:36:54 +0000
+Subject: [PATCH 082/310] Add option to use home page as NTP
+
+And allow use about:blank as default homepage
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-option-to-use-home-page-as-NTP.patch
+---
+ chrome/browser/ui/browser_ui_prefs.cc | 2 ++
+ chrome/common/pref_names.h            | 4 ++++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/chrome/browser/ui/browser_ui_prefs.cc b/chrome/browser/ui/browser_ui_prefs.cc
+index cfcf46dedbc..9d9f0e356c8 100644
+--- a/chrome/browser/ui/browser_ui_prefs.cc
++++ b/chrome/browser/ui/browser_ui_prefs.cc
+@@ -140,6 +140,8 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
+                                 pref_registration_flags);
+   registry->RegisterBooleanPref(prefs::kPinSplitTabButton, false,
+                                 pref_registration_flags);
++  registry->RegisterBooleanPref(prefs::kNewTabPageIsHomePage, false,
++                                PrefRegistry::NO_REGISTRATION_FLAGS);
+ 
+   registry->RegisterBooleanPref(prefs::kWebAppCreateOnDesktop, true);
+   registry->RegisterBooleanPref(prefs::kWebAppCreateInAppsMenu, true);
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index 067bce80067..b474bd710e7 100644
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -657,6 +657,10 @@ inline constexpr char kSplitViewDragAndDropNudgeUsedCount[] =
+ // recently used tabs.
+ inline constexpr char kCtrlTabMru[] = "browser.ctrl_tab_mru";
+ 
++// A boolean specifying whether opening a new tab should open the Home page
++// instead of the New Tab page.
++inline constexpr char kNewTabPageIsHomePage[] = "newtabpage_is_homepage";
++
+ // An int pref that controls the voice typing feature. This is managed by
+ // enterprise policy.
+ inline constexpr char kVoiceTypingSettings[] = "browser.voice_typing_settings";

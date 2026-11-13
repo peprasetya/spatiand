@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 12 Apr 2022 15:58:01 +0000
+Subject: [PATCH 039/310] Add support for writing URIs
+
+Allows native-side URI file writing
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Add-support-for-writing-URIs.patch
+---
+ base/android/content_uri_utils.cc | 10 ++++++++++
+ base/android/content_uri_utils.h  |  4 ++++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/base/android/content_uri_utils.cc b/base/android/content_uri_utils.cc
+index 82c59768fec..328148f4df6 100644
+--- a/base/android/content_uri_utils.cc
++++ b/base/android/content_uri_utils.cc
+@@ -157,6 +157,16 @@ bool IsContentUriFromThisApp(const FilePath& content_uri) {
+   return Java_ContentUriUtils_isUriFromThisApp(env, content_uri.value());
+ }
+ 
++File OpenContentUriForWrite(const FilePath& content_uri) {
++  JNIEnv* env = base::android::AttachCurrentThread();
++  ScopedJavaLocalRef<jstring> j_uri =
++      ConvertUTF8ToJavaString(env, content_uri.value());
++  jint fd = Java_ContentUriUtils_openContentUriForWrite(env, j_uri);
++  if (fd < 0)
++    return File();
++  return File(fd);
++}
++
+ std::string GetContentUriMimeType(const FilePath& content_uri) {
+   JNIEnv* env = android::AttachCurrentThread();
+   return Java_ContentUriUtils_getMimeType(env, content_uri.value());
+diff --git a/base/android/content_uri_utils.h b/base/android/content_uri_utils.h
+index 1ab9af4432c..d622e439c76 100644
+--- a/base/android/content_uri_utils.h
++++ b/base/android/content_uri_utils.h
+@@ -46,6 +46,10 @@ int ContentUriGetFd(
+ void ContentUriClose(
+     const base::android::JavaRef<jobject>& java_parcel_file_descriptor);
+ 
++// Opens a content URI for write and returns the file descriptor to the caller.
++// Returns -1 if the URI is invalid.
++BASE_EXPORT File OpenContentUriForWrite(const FilePath& content_uri);
++
+ // Returns true if file exists and results are populated, else returns false.
+ bool ContentUriGetFileInfo(const FilePath& content_uri,
+                            FileEnumerator::FileInfo* results);

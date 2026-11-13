@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Thu, 27 Feb 2020 23:23:59 +0100
+Subject: [PATCH 011/310] Do not compile QR code sharing
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Do-not-compile-QR-code-sharing.patch
+---
+ chrome/browser/prefs/browser_prefs.cc                       | 2 +-
+ chrome/browser/share/BUILD.gn                               | 1 -
+ chrome/browser/sharing_hub/sharing_hub_features.cc          | 2 +-
+ chrome/browser/ui/browser_command_controller.cc             | 6 +++---
+ chrome/browser/ui/browser_commands.cc                       | 1 +
+ .../qrcode_generator/qrcode_generator_bubble_controller.cc  | 1 +
+ 6 files changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/chrome/browser/prefs/browser_prefs.cc b/chrome/browser/prefs/browser_prefs.cc
+index 261db8159f0..55900e6aa35 100644
+--- a/chrome/browser/prefs/browser_prefs.cc
++++ b/chrome/browser/prefs/browser_prefs.cc
+@@ -1966,7 +1966,7 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
+   registry->RegisterBooleanPref(prefs::kChromeForTestingAllowed, true);
+ #endif
+ 
+-  registry->RegisterBooleanPref(prefs::kQRCodeGeneratorEnabled, true);
++  registry->RegisterBooleanPref(prefs::kQRCodeGeneratorEnabled, false);
+ 
+   registry->RegisterIntegerPref(prefs::kChromeDataRegionSetting, 0);
+ 
+diff --git a/chrome/browser/share/BUILD.gn b/chrome/browser/share/BUILD.gn
+index 736632cc44c..5066089c343 100644
+--- a/chrome/browser/share/BUILD.gn
++++ b/chrome/browser/share/BUILD.gn
+@@ -62,7 +62,6 @@ source_set("impl") {
+       "default_ranking_android.cc",
+       "editor_screenshot_task.cc",
+       "link_to_text_bridge.cc",
+-      "qr_code_generator_android.cc",
+       "share_history.cc",
+       "share_ranking.cc",
+     ]
+diff --git a/chrome/browser/sharing_hub/sharing_hub_features.cc b/chrome/browser/sharing_hub/sharing_hub_features.cc
+index 4ae3f73a0b9..7d6f4ee0340 100644
+--- a/chrome/browser/sharing_hub/sharing_hub_features.cc
++++ b/chrome/browser/sharing_hub/sharing_hub_features.cc
+@@ -70,7 +70,7 @@ BASE_FEATURE(kDesktopScreenshots, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
+ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+-  registry->RegisterBooleanPref(prefs::kDesktopSharingHubEnabled, true);
++  registry->RegisterBooleanPref(prefs::kDesktopSharingHubEnabled, false);
+ }
+ #endif
+ 
+diff --git a/chrome/browser/ui/browser_command_controller.cc b/chrome/browser/ui/browser_command_controller.cc
+index 8db56950966..eee8ca151cc 100644
+--- a/chrome/browser/ui/browser_command_controller.cc
++++ b/chrome/browser/ui/browser_command_controller.cc
+@@ -2480,10 +2480,10 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
+   command_updater_->UpdateCommandEnabled(IDC_CHROME_WHATS_NEW, show_main_ui);
+ #endif
+   command_updater_->UpdateCommandEnabled(IDC_CONTENT_CONTEXT_SHARING_SUBMENU,
+-                                         show_main_ui);
+-  command_updater_->UpdateCommandEnabled(IDC_SHARING_HUB, show_main_ui);
++                                         false);
++  command_updater_->UpdateCommandEnabled(IDC_SHARING_HUB, false);
+   command_updater_->UpdateCommandEnabled(IDC_SHARING_HUB_SCREENSHOT,
+-                                         show_main_ui);
++                                         false);
+   command_updater_->UpdateCommandEnabled(IDC_SHOW_APP_MENU, show_main_ui);
+   command_updater_->UpdateCommandEnabled(IDC_SHOW_MANAGEMENT_PAGE, true);
+ 
+diff --git a/chrome/browser/ui/browser_commands.cc b/chrome/browser/ui/browser_commands.cc
+index 365dcd789df..8588363a65f 100644
+--- a/chrome/browser/ui/browser_commands.cc
++++ b/chrome/browser/ui/browser_commands.cc
+@@ -2377,6 +2377,7 @@ void SendTabToSelf(BrowserWindowInterface* browser) {
+ }
+ 
+ bool CanGenerateQrCode(BrowserWindowInterface* browser) {
++  if ((true)) return false;
+   return !sharing_hub::SharingIsDisabledByPolicy(browser->GetProfile()) &&
+          qrcode_generator::QRCodeGeneratorBubbleController::
+              IsGeneratorAvailable(browser->GetTabStripModel()
+diff --git a/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc b/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc
+index ccfc9c792b4..995d0dc4a95 100644
+--- a/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc
++++ b/chrome/browser/ui/qrcode_generator/qrcode_generator_bubble_controller.cc
+@@ -38,6 +38,7 @@ QRCodeGeneratorBubbleController::~QRCodeGeneratorBubbleController() {
+ 
+ // static
+ bool QRCodeGeneratorBubbleController::IsGeneratorAvailable(const GURL& url) {
++  if ((true)) return false;
+   if (!url.SchemeIsHTTPOrHTTPS()) {
+     return false;
+   }

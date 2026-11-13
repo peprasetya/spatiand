@@ -1,0 +1,316 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 12 Apr 2023 08:22:00 +0000
+Subject: [PATCH 161/310] Add setting to invert tap and long tap
+
+Reverses single tap to long tap in android for accessibility reasons.
+The feature can be activated from the accessibility settings.
+
+Need: bromite-build-utils.patch
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Add-setting-to-invert-tap-and-long-tap.patch
+---
+ .../flags/android/chrome_feature_list.cc      |  1 +
+ ...Add-setting-to-invert-tap-and-long-tap.inc |  8 +++++
+ ...Add-setting-to-invert-tap-and-long-tap.inc |  3 ++
+ ...Add-setting-to-invert-tap-and-long-tap.inc |  1 +
+ .../renderer/core/html/html_anchor_element.cc | 36 +++++++++++++++----
+ .../renderer/core/html/html_anchor_element.h  |  7 +++-
+ .../renderer/core/html/html_image_element.cc  | 17 +++++++++
+ .../renderer/core/html/html_image_element.h   |  2 ++
+ .../core/page/context_menu_controller.cc      | 23 +++++++++---
+ .../core/page/context_menu_controller.h       |  5 +--
+ 10 files changed, 88 insertions(+), 15 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-invert-tap-and-long-tap.inc
+ create mode 100644 cromite_flags/third_party/blink/common/features_cc/Add-setting-to-invert-tap-and-long-tap.inc
+ create mode 100644 cromite_flags/third_party/blink/common/features_h/Add-setting-to-invert-tap-and-long-tap.inc
+
+diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
+index f72c48813e4..00566905eab 100644
+--- a/chrome/browser/flags/android/chrome_feature_list.cc
++++ b/chrome/browser/flags/android/chrome_feature_list.cc
+@@ -516,6 +516,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
+     &kShareCustomActionsInCCT,
+     &kSharedIntentUI,
+     &kShortCircuitUnfocusAnimation,
++    &blink::features::kShowAlwaysContextMenuOnLinks,
+     &kShowTabListAnimations,
+     &kSidePanelTopHairlineRefactorAndroid,
+     &kSideUiAllowPause,
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-invert-tap-and-long-tap.inc b/cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-invert-tap-and-long-tap.inc
+new file mode 100644
+index 00000000000..b2553e483b5
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-invert-tap-and-long-tap.inc
+@@ -0,0 +1,8 @@
++#ifdef FLAG_SECTION
++
++    {"show-always-context-menu-on-links",
++     "Always show contextmenu on links",
++     "Use accessibility settings to set it.", kOsAndroid,
++     FEATURE_VALUE_TYPE(blink::features::kShowAlwaysContextMenuOnLinks)},
++
++#endif
+diff --git a/cromite_flags/third_party/blink/common/features_cc/Add-setting-to-invert-tap-and-long-tap.inc b/cromite_flags/third_party/blink/common/features_cc/Add-setting-to-invert-tap-and-long-tap.inc
+new file mode 100644
+index 00000000000..1165ada5d18
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_cc/Add-setting-to-invert-tap-and-long-tap.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kShowAlwaysContextMenuOnLinks,
++                "ShowAlwaysContextMenuOnLinks",
++                base::FEATURE_DISABLED_BY_DEFAULT);
+diff --git a/cromite_flags/third_party/blink/common/features_h/Add-setting-to-invert-tap-and-long-tap.inc b/cromite_flags/third_party/blink/common/features_h/Add-setting-to-invert-tap-and-long-tap.inc
+new file mode 100644
+index 00000000000..69a3e5e1b2e
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_h/Add-setting-to-invert-tap-and-long-tap.inc
+@@ -0,0 +1 @@
++BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kShowAlwaysContextMenuOnLinks);
+diff --git a/third_party/blink/renderer/core/html/html_anchor_element.cc b/third_party/blink/renderer/core/html/html_anchor_element.cc
+index a9f2c1b74fe..11dd6002a99 100644
+--- a/third_party/blink/renderer/core/html/html_anchor_element.cc
++++ b/third_party/blink/renderer/core/html/html_anchor_element.cc
+@@ -67,6 +67,7 @@
+ #include "third_party/blink/renderer/core/loader/render_blocking_resource_manager.h"
+ #include "third_party/blink/renderer/core/navigation_api/navigation_api.h"
+ #include "third_party/blink/renderer/core/page/chrome_client.h"
++#include "third_party/blink/renderer/core/page/context_menu_controller.h"
+ #include "third_party/blink/renderer/core/page/page.h"
+ #include "third_party/blink/renderer/core/scroll/scroll_into_view_util.h"
+ #include "third_party/blink/renderer/core/speculation_rules/document_speculation_rules.h"
+@@ -400,6 +401,17 @@ void HTMLAnchorElementBase::NavigateToHyperlink(
+     bool is_trusted,
+     base::TimeTicks platform_time_stamp,
+     KURL completed_url) {
++  UIEvent& event = *UIEvent::Create();
++  NavigateToHyperlink2(std::move(request), navigation_policy, is_trusted, platform_time_stamp,
++    std::move(completed_url), event, true);
++}
++
++void HTMLAnchorElementBase::NavigateToHyperlink2(ResourceRequest request,
++                                            NavigationPolicy navigation_policy,
++                                            bool is_trusted,
++                                            base::TimeTicks platform_time_stamp,
++                                            KURL completed_url,
++                                            Event& event, bool do_not_show_context_menu) {
+   LocalDOMWindow* window = GetDocument().domWindow();
+   if (!window) {
+     return;
+@@ -430,6 +442,15 @@ void HTMLAnchorElementBase::NavigateToHyperlink(
+                  : mojom::blink::TriggeringEventInfo::kFromUntrustedEvent);
+   frame_request.SetInputStartTime(platform_time_stamp);
+ 
++  if (!do_not_show_context_menu &&
++      base::FeatureList::IsEnabled(features::kShowAlwaysContextMenuOnLinks)) {
++    if (Page* page = GetDocument().GetPage()) {
++      page->GetContextMenuController().HandleContextMenuEvent(
++          To<MouseEvent>(&event), /*do_not_show_context_menu*/true);
++      return;
++    }
++  }
++
+   Frame* target_frame =
+       frame->Tree().FindOrCreateFrameForNavigation(frame_request, target).frame;
+ 
+@@ -465,7 +486,7 @@ bool HTMLAnchorElementBase::IsValidInterestInvoker(Element& target) const {
+   return IsLink();
+ }
+ 
+-void HTMLAnchorElementBase::HandleClick(MouseEvent& event) {
++void HTMLAnchorElementBase::HandleClick(MouseEvent& event, bool do_not_show_context_menu) {
+   event.SetDefaultHandled();
+ 
+   // It's unclear whether synthesized middle-button "click" events should be
+@@ -536,12 +557,11 @@ void HTMLAnchorElementBase::HandleClick(MouseEvent& event) {
+     return;
+   }
+ 
+-  base::OnceClosure navigate_closure = blink::BindOnce(
+-      &HTMLAnchorElementBase::NavigateToHyperlink, WrapWeakPersistent(this),
+-      std::move(request), navigation_policy, event.isTrusted(),
+-      event.PlatformTimeStamp(), std::move(completed_url));
+-
+   if (navigation_policy == kNavigationPolicyDownload) {
++    base::OnceClosure navigate_closure = blink::BindOnce(
++        &HTMLAnchorElementBase::NavigateToHyperlink, WrapWeakPersistent(this),
++        std::move(request), navigation_policy, event.isTrusted(),
++        event.PlatformTimeStamp(), std::move(completed_url));
+     // We distinguish single/double click with some modifiers.
+     // See the comment of `EventHandler.delayed_navigation_task_handle_`.
+     auto task_handle = PostDelayedCancellableTask(
+@@ -551,7 +571,9 @@ void HTMLAnchorElementBase::HandleClick(MouseEvent& event) {
+     frame->GetEventHandler().SetDelayedNavigationTaskHandle(
+         std::move(task_handle));
+   } else {
+-    std::move(navigate_closure).Run();
++    HTMLAnchorElementBase::NavigateToHyperlink2(std::move(request), navigation_policy,
++      event.isTrusted(), event.PlatformTimeStamp(), std::move(completed_url),
++      event, do_not_show_context_menu);
+   }
+ }
+ 
+diff --git a/third_party/blink/renderer/core/html/html_anchor_element.h b/third_party/blink/renderer/core/html/html_anchor_element.h
+index addde19af78..3024080da00 100644
+--- a/third_party/blink/renderer/core/html/html_anchor_element.h
++++ b/third_party/blink/renderer/core/html/html_anchor_element.h
+@@ -90,6 +90,7 @@ class CORE_EXPORT HTMLAnchorElementBase : public HTMLElement,
+   bool IsValidInterestInvoker(Element& target) const override;
+ 
+   void Trace(Visitor*) const override;
++  void HandleClick(MouseEvent&, bool do_not_show_context_menu = false);
+ 
+  protected:
+   HTMLAnchorElementBase(const QualifiedName& tag_name, Document&);
+@@ -123,7 +124,11 @@ class CORE_EXPORT HTMLAnchorElementBase : public HTMLElement,
+                            bool is_trusted,
+                            base::TimeTicks platform_time_stamp,
+                            KURL);
+-  void HandleClick(MouseEvent&);
++ void NavigateToHyperlink2(ResourceRequest,
++                           NavigationPolicy,
++                           bool is_trusted,
++                           base::TimeTicks platform_time_stamp,
++                           KURL, Event&, bool do_not_show_context_menu);
+ 
+   unsigned link_relations_ : 31;
+   mutable LinkHash cached_visited_link_hash_;
+diff --git a/third_party/blink/renderer/core/html/html_image_element.cc b/third_party/blink/renderer/core/html/html_image_element.cc
+index be2e96c1294..45b973c6a0e 100644
+--- a/third_party/blink/renderer/core/html/html_image_element.cc
++++ b/third_party/blink/renderer/core/html/html_image_element.cc
+@@ -39,6 +39,7 @@
+ #include "third_party/blink/renderer/core/dom/events/event_dispatch_forbidden_scope.h"
+ #include "third_party/blink/renderer/core/dom/node_traversal.h"
+ #include "third_party/blink/renderer/core/dom/shadow_root.h"
++#include "third_party/blink/renderer/core/events/mouse_event.h"
+ #include "third_party/blink/renderer/core/event_type_names.h"
+ #include "third_party/blink/renderer/core/frame/deprecation/deprecation.h"
+ #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+@@ -73,6 +74,7 @@
+ #include "third_party/blink/renderer/core/media_type_names.h"
+ #include "third_party/blink/renderer/core/page/chrome_client.h"
+ #include "third_party/blink/renderer/core/page/page.h"
++#include "third_party/blink/renderer/core/page/context_menu_controller.h"
+ #include "third_party/blink/renderer/core/paint/timing/paint_timing.h"
+ #include "third_party/blink/renderer/core/probe/core_probes.h"
+ #include "third_party/blink/renderer/core/resize_observer/resize_observer_entry.h"
+@@ -854,6 +856,21 @@ void HTMLImageElement::DidFinishLayout() {
+   }
+ }
+ 
++void HTMLImageElement::DefaultEventHandler(Event& event) {
++  if (base::FeatureList::IsEnabled(features::kShowAlwaysContextMenuOnLinks)) {
++    auto* mouse_event = DynamicTo<MouseEvent>(&event);
++    if (mouse_event && mouse_event->type() == event_type_names::kClick) {
++      if (Page* page = GetDocument().GetPage()) {
++        page->GetContextMenuController().HandleContextMenuEvent(
++            mouse_event, /*do_not_show_context_menu*/true);
++        return;
++      }
++    }
++  }
++
++  HTMLElement::DefaultEventHandler(event);
++}
++
+ bool HTMLImageElement::draggable() const {
+   // Image elements are draggable by default.
+   return !EqualIgnoringAsciiCase(FastGetAttribute(html_names::kDraggableAttr),
+diff --git a/third_party/blink/renderer/core/html/html_image_element.h b/third_party/blink/renderer/core/html/html_image_element.h
+index 265f173f591..0e605dc3c60 100644
+--- a/third_party/blink/renderer/core/html/html_image_element.h
++++ b/third_party/blink/renderer/core/html/html_image_element.h
+@@ -248,6 +248,8 @@ class CORE_EXPORT HTMLImageElement
+ 
+   void AdjustStyle(ComputedStyleBuilder&) override;
+ 
++  void DefaultEventHandler(Event&) override;
++
+  private:
+   void ParseAttribute(const AttributeModificationParams&) override;
+   bool IsPresentationAttribute(const QualifiedName&) const override;
+diff --git a/third_party/blink/renderer/core/page/context_menu_controller.cc b/third_party/blink/renderer/core/page/context_menu_controller.cc
+index 48672107f71..cd4350fd606 100644
+--- a/third_party/blink/renderer/core/page/context_menu_controller.cc
++++ b/third_party/blink/renderer/core/page/context_menu_controller.cc
+@@ -230,15 +230,17 @@ void ContextMenuController::DocumentDetached(Document* document) {
+   }
+ }
+ 
+-void ContextMenuController::HandleContextMenuEvent(MouseEvent* mouse_event) {
+-  DCHECK(mouse_event->type() == event_type_names::kContextmenu);
++void ContextMenuController::HandleContextMenuEvent(MouseEvent* mouse_event, bool do_not_show_context_menu) {
++  if (!base::FeatureList::IsEnabled(features::kShowAlwaysContextMenuOnLinks)) {
++    DCHECK(mouse_event->type() == event_type_names::kContextmenu);
++  }
+   LocalFrame* frame =
+       mouse_event->RawTarget()->ToNode()->GetDocument().GetFrame();
+   PhysicalOffset location =
+       PhysicalOffset::FromPointFRound(mouse_event->AbsoluteLocation());
+ 
+   if (ShowContextMenu(frame, location, mouse_event->GetMenuSourceType(),
+-                      mouse_event))
++                      mouse_event, do_not_show_context_menu))
+     mouse_event->SetDefaultHandled();
+ }
+ 
+@@ -466,7 +468,8 @@ bool ContextMenuController::ShowContextMenu(
+     LocalFrame* frame,
+     const PhysicalOffset& point,
+     ui::mojom::blink::MenuSourceType source_type,
+-    const MouseEvent* mouse_event) {
++    const MouseEvent* mouse_event,
++    bool do_not_show_context_menu) {
+   // Displaying the context menu in this function is a big hack as we don't
+   // have context, i.e. whether this is being invoked via a script or in
+   // response to user input (Mouse event WM_RBUTTONDOWN,
+@@ -489,6 +492,16 @@ bool ContextMenuController::ShowContextMenu(
+   if (!result.InnerNodeOrImageMapImage())
+     return false;
+ 
++  if (!do_not_show_context_menu &&
++        base::FeatureList::IsEnabled(features::kShowAlwaysContextMenuOnLinks)) {
++    if (auto* anchor_element = DynamicTo<HTMLAnchorElement>(result.URLElement())) {
++      MouseEvent& event = *MouseEvent::Create();
++      event.SetTarget(mouse_event->target());
++      anchor_element->HandleClick(event, /*do_not_show_context_menu*/true);
++      return true;
++    }
++  }
++
+   // Clear any previously set cached results if we are resetting the hit test
+   // result.
+   image_selection_cached_result_ = nullptr;
+@@ -874,7 +887,7 @@ bool ContextMenuController::ShowContextMenu(
+ 
+   SetAutofillData(result.InnerNode(), data);
+ 
+-  if (from_touch && !ShouldShowContextMenuFromTouch(data))
++  if (!base::FeatureList::IsEnabled(features::kShowAlwaysContextMenuOnLinks) && from_touch && !ShouldShowContextMenuFromTouch(data))
+     return false;
+ 
+   WebLocalFrameImpl* selected_web_frame =
+diff --git a/third_party/blink/renderer/core/page/context_menu_controller.h b/third_party/blink/renderer/core/page/context_menu_controller.h
+index c5c79917195..ad5fe3a9655 100644
+--- a/third_party/blink/renderer/core/page/context_menu_controller.h
++++ b/third_party/blink/renderer/core/page/context_menu_controller.h
+@@ -57,7 +57,7 @@ class CORE_EXPORT ContextMenuController
+ 
+   void DocumentDetached(Document*);
+ 
+-  void HandleContextMenuEvent(MouseEvent*);
++  void HandleContextMenuEvent(MouseEvent*, bool do_not_show_context_menu = false);
+   void ShowContextMenuAtPoint(LocalFrame*,
+                               float x,
+                               float y,
+@@ -127,7 +127,8 @@ class CORE_EXPORT ContextMenuController
+   virtual bool ShowContextMenu(LocalFrame*,
+                                const PhysicalOffset&,
+                                ui::mojom::blink::MenuSourceType,
+-                               const MouseEvent* mouse_event);
++                               const MouseEvent* mouse_event,
++                               bool do_not_show_context_menu = false);
+ 
+   bool ShouldShowContextMenuFromTouch(const ContextMenuData&);
+ 

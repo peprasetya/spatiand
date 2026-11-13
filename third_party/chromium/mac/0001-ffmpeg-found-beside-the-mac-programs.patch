@@ -1,14 +1,14 @@
-From 2e00367f8335f27f88aa6f7341865cdba07e446d Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <spatiand@localhost>
 Date: Mon, 9 Nov 2026 22:44:22 +0700
-Subject: [PATCH] Spatiand: FFmpeg found beside the Mac programs
+Subject: [PATCH 1/2] Spatiand: FFmpeg found beside the Mac programs
 
 ---
  build/linux/unbundle/ffmpeg.gn | 18 ++++++++++++++----
  1 file changed, 14 insertions(+), 4 deletions(-)
 
 diff --git a/build/linux/unbundle/ffmpeg.gn b/build/linux/unbundle/ffmpeg.gn
-index e29b9a7e37..ca8f63c820 100644
+index e29b9a7e37d..ca8f63c820b 100644
 --- a/build/linux/unbundle/ffmpeg.gn
 +++ b/build/linux/unbundle/ffmpeg.gn
 @@ -23,10 +23,20 @@ config("system_ffmpeg") {
@@ -36,6 +36,3 @@ index e29b9a7e37..ca8f63c820 100644
  }
  
  buildflag_header("ffmpeg_features") {
--- 
-2.54.0 (Apple Git-157)
-

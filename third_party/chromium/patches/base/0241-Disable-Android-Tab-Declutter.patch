@@ -1,0 +1,20 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 1 Apr 2025 11:37:52 +0000
+Subject: [PATCH 241/310] Disable Android Tab Declutter
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Disable-Android-Tab-Declutter.patch
+---
+ .../chrome_feature_list_cc/Disable-Android-Tab-Declutter.inc     | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Android-Tab-Declutter.inc
+
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Android-Tab-Declutter.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Android-Tab-Declutter.inc
+new file mode 100644
+index 00000000000..8b1a393741c
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-Android-Tab-Declutter.inc
+@@ -0,0 +1 @@
++// empty

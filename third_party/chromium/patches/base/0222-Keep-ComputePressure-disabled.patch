@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Tue, 14 May 2024 15:33:59 +0000
+Subject: [PATCH 222/310] Keep ComputePressure disabled
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Keep-ComputePressure-disabled.patch
+---
+ .../renderer/platform/runtime_enabled_features.json5      | 8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/third_party/blink/renderer/platform/runtime_enabled_features.json5 b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+index b41dc712f03..2fd192607f6 100644
+--- a/third_party/blink/renderer/platform/runtime_enabled_features.json5
++++ b/third_party/blink/renderer/platform/runtime_enabled_features.json5
+@@ -1447,11 +1447,9 @@
+       status: "experimental",
+     },
+     {
+-      name: "ComputePressure",
+-      status: {
+-        "Android": "",
+-        "default": "stable",
+-      }
++      name: "ComputePressure", // disabled
++      status: "experimental",  // by default
++      public: true,
+     },
+     {
+       // If enabled, allow concurrent animations via native paint worklets to

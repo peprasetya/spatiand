@@ -1,8 +1,8 @@
-From 0000000000000000000000000000000000000031 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand-build <claude@prasetya.id>
 Date: Fri, 13 Nov 2026 08:40:00 +0700
-Subject: [PATCH] Spatiand: an unpacked extension too large to share stays
- where it was loaded
+Subject: [PATCH 310/310] Spatiand: an unpacked extension too large to share
+ stays where it was loaded
 
 ExtensionSync notes an extension as shared when it asks for its copy; the copy
 of a folder too large is refused and no record written, and three seconds
@@ -14,7 +14,7 @@ out for not being in the list.
  1 file changed, 8 insertions(+)
 
 diff --git a/chrome/browser/spatiand/extension_sync.cc b/chrome/browser/spatiand/extension_sync.cc
-index b5f0aa3..483e83b 100644
+index b5f0aa3d4f1..483e83b2eb4 100644
 --- a/chrome/browser/spatiand/extension_sync.cc
 +++ b/chrome/browser/spatiand/extension_sync.cc
 @@ -232,6 +232,14 @@ void ExtensionSync::Reconcile(Records records) {
@@ -32,6 +32,3 @@ index b5f0aa3..483e83b 100644
      if (known_.contains(extension->id())) {
        // It was in the list, and is gone from it: removed on another machine.
        known_.erase(extension->id());
--- 
-2.53.0
-

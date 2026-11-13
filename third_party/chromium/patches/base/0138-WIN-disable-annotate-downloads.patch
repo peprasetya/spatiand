@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Wed, 28 Dec 2022 15:46:59 +0000
+Subject: [PATCH 138/310] WIN disable annotate downloads
+
+FILE:WIN-disable-annotate-downloads.patch
+---
+ components/download/internal/common/download_file_impl.cc | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/components/download/internal/common/download_file_impl.cc b/components/download/internal/common/download_file_impl.cc
+index feac44591de..319d882d49f 100644
+--- a/components/download/internal/common/download_file_impl.cc
++++ b/components/download/internal/common/download_file_impl.cc
+@@ -418,8 +418,8 @@ void DownloadFileImpl::RenameAndAnnotate(
+   std::unique_ptr<RenameParameters> parameters(new RenameParameters(
+       ANNOTATE_WITH_SOURCE_INFORMATION, full_path, std::move(callback)));
+   parameters->client_guid = client_guid;
+-  parameters->source_url = source_url;
+-  parameters->referrer_url = referrer_url;
++  parameters->source_url = GURL();
++  parameters->referrer_url = GURL();
+   parameters->request_initiator = request_initiator;
+   parameters->remote_quarantine = std::move(remote_quarantine);
+   RenameWithRetryInternal(std::move(parameters));

@@ -1,0 +1,2412 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <spatiand@localhost>
+Date: Fri, 13 Nov 2026 22:54:59 +0700
+Subject: [PATCH 2/2] Android fonts fingerprinting mitigation
+
+---
+ include/ports/SkFontConfigInterface.h      |    2 +
+ include/ports/SkFontMgr_android.h          |   42 +-
+ src/ports/SkFontConfigInterface.cpp        |    5 +
+ src/ports/SkFontConfigInterface_direct.cpp |    5 +
+ src/ports/SkFontConfigInterface_direct.h   |    1 +
+ src/ports/SkFontMgr_android.cpp            |  286 +++-
+ src/ports/SkFontMgr_android_data.cpp       | 1641 ++++++++++++++++++++
+ src/ports/SkFontMgr_android_ndk.cpp        |    2 +-
+ src/ports/SkFontMgr_android_parser.cpp     |   69 +-
+ src/ports/SkFontMgr_android_parser.h       |    5 +-
+ 10 files changed, 1980 insertions(+), 78 deletions(-)
+ create mode 100644 src/ports/SkFontMgr_android_data.cpp
+
+diff --git a/include/ports/SkFontConfigInterface.h b/include/ports/SkFontConfigInterface.h
+index f8fdca5..4cec914 100644
+--- a/include/ports/SkFontConfigInterface.h
++++ b/include/ports/SkFontConfigInterface.h
+@@ -91,6 +91,8 @@ public:
+      */
+     virtual SkStreamAsset* openStream(const FontIdentity&) = 0;
+ 
++    virtual SkStreamAsset* openStreamFromName(const char* filename) = 0;
++
+     /**
+      *  Return an SkTypeface for the given FontIdentity.
+      *
+diff --git a/include/ports/SkFontMgr_android.h b/include/ports/SkFontMgr_android.h
+index 3daa92d..d003584 100644
+--- a/include/ports/SkFontMgr_android.h
++++ b/include/ports/SkFontMgr_android.h
+@@ -9,6 +9,11 @@
+ #define SkFontMgr_android_DEFINED
+ 
+ #include "include/core/SkRefCnt.h"
++#include "include/core/SkStream.h"
++#include "src/core/SkTHash.h"
++
++#include "include/ports/SkFontConfigInterface.h"
++#include "include/ports/SkFontMgr_FontConfigInterface.h"
+ 
+ #include <memory>
+ 
+@@ -40,9 +45,44 @@ struct SkFontMgr_Android_CustomFonts {
+      *  system IO resources on initialization.
+      */
+     bool fIsolated;
++
++    struct SkFontMgr_Android_CustomFonts_MappedData {
++        int fd;
++        int64_t offset;
++        size_t size;
++    };
++    skia_private::THashMap<std::string,
++        SkFontMgr_Android_CustomFonts_MappedData> platform_file_map;
++
++    void add_platform_file(std::string key, int fd, int64_t offset, size_t size) {
++        SkFontMgr_Android_CustomFonts_MappedData data = {fd, offset, size};
++        platform_file_map.set(key, std::move(data));
++    }
++
++    std::unique_ptr<SkStreamAsset> getPlatformFile(const char* filename) const {
++        // SkDebugf("-- open platform file '%s'\n", filename);
++        sk_sp<SkFontConfigInterface> fci(SkFontConfigInterface::RefGlobal());
++        SkStreamAsset* asset = fci->openStreamFromName(filename);
++        if (asset) {
++            return std::unique_ptr<SkStreamAsset>(asset);
++        }
++
++        const auto* it = platform_file_map.find(filename);
++        if (!it) {
++            return nullptr;
++        }
++        auto whole_data = SkData::MakeFromFD(it->fd);
++        auto data = SkData::MakeSubset(whole_data.get(), it->offset, it->size);
++        if (!data) {
++            return nullptr;
++        }
++        return std::unique_ptr<SkStreamAsset>(new SkMemoryStream(std::move(data)));
++    }
+ };
+ 
+ /** Create a font manager for Android. If 'custom' is NULL, use only system fonts. */
+-SK_API sk_sp<SkFontMgr> SkFontMgr_New_Android(const SkFontMgr_Android_CustomFonts* custom,
++SK_API sk_sp<SkFontMgr> SkFontMgr_New_Android(std::unique_ptr<SkFontMgr_Android_CustomFonts> custom);
++
++SK_API sk_sp<SkFontMgr> SkFontMgr_New_Android(std::unique_ptr<SkFontMgr_Android_CustomFonts> custom,
+                                               std::unique_ptr<SkFontScanner> scanner);
+ #endif // SkFontMgr_android_DEFINED
+diff --git a/src/ports/SkFontConfigInterface.cpp b/src/ports/SkFontConfigInterface.cpp
+index f836a92..8290bd7 100644
+--- a/src/ports/SkFontConfigInterface.cpp
++++ b/src/ports/SkFontConfigInterface.cpp
+@@ -22,7 +22,12 @@ sk_sp<SkFontConfigInterface> SkFontConfigInterface::RefGlobal() {
+     if (gFontConfigInterface) {
+         return sk_ref_sp(gFontConfigInterface);
+     }
++#if defined(CROMITE_IS_ANDROID)
++    SkASSERT(false);
++    return nullptr;
++#else
+     return sk_ref_sp(SkFontConfigInterface::GetSingletonDirectInterface());
++#endif
+ }
+ 
+ void SkFontConfigInterface::SetGlobal(sk_sp<SkFontConfigInterface> fc) {
+diff --git a/src/ports/SkFontConfigInterface_direct.cpp b/src/ports/SkFontConfigInterface_direct.cpp
+index ca2c70f..7890e37 100644
+--- a/src/ports/SkFontConfigInterface_direct.cpp
++++ b/src/ports/SkFontConfigInterface_direct.cpp
+@@ -750,3 +750,8 @@ bool SkFontConfigInterfaceDirect::matchFamilyName(const char familyName[],
+ SkStreamAsset* SkFontConfigInterfaceDirect::openStream(const FontIdentity& identity) {
+     return SkStream::MakeFromFile(identity.fString.c_str()).release();
+ }
++
++SkStreamAsset* SkFontConfigInterfaceDirect::openStreamFromName(const char* filename) {
++    SkASSERT(false);
++    return nullptr;
++}
+diff --git a/src/ports/SkFontConfigInterface_direct.h b/src/ports/SkFontConfigInterface_direct.h
+index ef53b5c..44f9210 100644
+--- a/src/ports/SkFontConfigInterface_direct.h
++++ b/src/ports/SkFontConfigInterface_direct.h
+@@ -29,6 +29,7 @@ public:
+                          SkFontStyle* outStyle) override;
+ 
+     SkStreamAsset* openStream(const FontIdentity&) override;
++    SkStreamAsset* openStreamFromName(const char* filename) override;
+ 
+ protected:
+     virtual bool isAccessible(const char* filename);
+diff --git a/src/ports/SkFontMgr_android.cpp b/src/ports/SkFontMgr_android.cpp
+index fd73d3a..9209ab9 100644
+--- a/src/ports/SkFontMgr_android.cpp
++++ b/src/ports/SkFontMgr_android.cpp
+@@ -16,6 +16,7 @@
+ #include "include/core/SkStream.h"
+ #include "include/core/SkString.h"
+ #include "include/ports/SkFontMgr_android.h"
++#include "include/ports/SkFontScanner_FreeType.h"
+ #include "include/private/SkFixed.h"
+ #include "include/private/SkTArray.h"
+ #include "include/private/SkTDArray.h"
+@@ -27,6 +28,7 @@
+ #include "src/core/SkTypefaceCache.h"
+ #include "src/ports/SkFontMgr_android_parser.h"
+ #include "src/ports/SkTypeface_proxy.h"
++#include "src/ports/SkFontScanner_FreeType_priv.h"
+ 
+ #include <algorithm>
+ #include <array>
+@@ -38,7 +40,95 @@ class SkData;
+ 
+ namespace {
+ 
+-[[maybe_unused]] static inline const constexpr bool kSkFontMgrVerbose = false;
++static inline const constexpr bool kSkFontMgrVerbose = true;
++
++#include "SkFontMgr_android_data.cpp"
++
++class SkTypeface_AndroidSystemCustom : public SkTypeface_FreeType {
++public:
++    SkTypeface_AndroidSystemCustom(const SkString& pathName,
++                             int index,
++                             const SkFixed* axes, int axesCount,
++                             const SkFontStyle& style,
++                             bool isFixedPitch,
++                             const SkString& familyName,
++                             const TArray<SkLanguage, true>& lang,
++                             FontVariant variantStyle,
++                             const SkFontMgr_Android_CustomFonts* custom)
++        : INHERITED(style, isFixedPitch)
++        , fPathName(pathName)
++        , fFamilyName(familyName)
++        , fIndex(index)
++        , fAxes(axes, axesCount)
++        , fLang(lang)
++        , fVariantStyle(variantStyle)
++        , fFile(nullptr)
++        , custom_(custom) {}
++
++    std::unique_ptr<SkStreamAsset> makeStream() const {
++        if (custom_) {
++            return custom_->getPlatformFile(fPathName.c_str());
++        }
++        if (fFile) {
++            sk_sp<SkData> data(SkData::MakeFromFILE(fFile));
++            return data ? std::make_unique<SkMemoryStream>(std::move(data)) : nullptr;
++        }
++        return SkStream::MakeFromFile(fPathName.c_str());
++    }
++
++    void onGetFamilyName(SkString* familyName) const override {
++        *familyName = fFamilyName;
++    }
++
++    void onGetFontDescriptor(SkFontDescriptor* desc, bool* serialize) const override {
++        SkASSERT(desc);
++        SkASSERT(serialize);
++        desc->setFamilyName(fFamilyName.c_str());
++        desc->setStyle(this->fontStyle());
++        desc->setFactoryId(SkTypeface_FreeType::FactoryId);
++        *serialize = false;
++    }
++
++    std::unique_ptr<SkStreamAsset> onOpenStream(int* ttcIndex) const override {
++        *ttcIndex = fIndex;
++        return this->makeStream();
++    }
++
++    std::unique_ptr<SkFontData> onMakeFontData() const override {
++        return std::make_unique<SkFontData>(
++                this->makeStream(), fIndex, 0, fAxes.begin(), fAxes.size(), nullptr, 0);
++    }
++
++    sk_sp<SkTypeface> onMakeClone(const SkFontArguments& args) const override {
++        SkFontStyle style = this->fontStyle();
++        std::unique_ptr<SkFontData> data = this->cloneFontData(args, &style);
++        if (!data) {
++            SkASSERT(false);
++            return nullptr;
++        }
++        return sk_make_sp<SkTypeface_AndroidSystemCustom>(
++            fPathName,
++            fIndex,
++            data->getAxis(),
++            data->getAxisCount(),
++            style,
++            this->isFixedPitch(),
++            fFamilyName,
++            fLang,
++            fVariantStyle, custom_);
++    }
++
++    const SkString fPathName;
++    const SkString fFamilyName;
++    int fIndex;
++    const STArray<4, SkFixed, true> fAxes;
++    const STArray<4, SkLanguage, true> fLang;
++    const FontVariant fVariantStyle;
++    SkAutoTCallVProc<FILE, sk_fclose> fFile;
++    const SkFontMgr_Android_CustomFonts* custom_;
++
++    using INHERITED = SkTypeface_FreeType;
++};
+ 
+ class SkTypeface_AndroidSystem : public SkTypeface_proxy {
+ public:
+@@ -113,7 +203,8 @@ using StreamForPathCache = skia_private::THashMap<SkString, std::unique_ptr<SkSt
+ class SkFontStyleSet_Android : public SkFontStyleSet {
+ public:
+     explicit SkFontStyleSet_Android(const FontFamily& family, const SkFontScanner* scanner,
+-                                    const bool cacheFontFiles, StreamForPathCache& streamForPath) {
++                                    const bool cacheFontFiles, StreamForPathCache& streamForPath,
++                                    const SkFontMgr_Android_CustomFonts* custom) {
+         const SkString* cannonicalFamilyName = nullptr;
+         if (!family.fNames.empty()) {
+             cannonicalFamilyName = &family.fNames[0];
+@@ -122,38 +213,60 @@ public:
+ 
+         // TODO? make this lazy
+         for (int i = 0; i < family.fFonts.size(); ++i) {
++            bool use_custom = false;
+             const FontFileInfo& fontFile = family.fFonts[i];
+ 
+             SkString pathName(family.fBasePath);
+             pathName.append(fontFile.fFileName);
+ 
+-            std::unique_ptr<SkStreamAsset>* streamPtr = streamForPath.find(pathName);
+-            if (!streamPtr) {
+-                streamPtr = streamForPath.set(pathName, SkStream::MakeFromFile(pathName.c_str()));
+-            }
+-            if (!*streamPtr) {
+-                SkDEBUGF("Requested font file %s cannot be opened.\n", pathName.c_str());
+-                continue;
+-            }
+-            std::unique_ptr<SkStreamAsset> stream = (*streamPtr)->duplicate();
+-            if (!stream) {
+-                SkDEBUGF("Requested font file %s could not be duplicated.\n", pathName.c_str());
+-                continue;
++            const int ttcIndex = fontFile.fIndex;
++            SkString familyName;
++            SkFontStyle fontStyle;
++            bool isFixedWidth;
++            SkFontScanner::AxisDefinitions axisDefinitions;
++            SkFontScanner::VariationPosition current;
++            SkFontArguments::VariationPosition position;
++
++            std::unique_ptr<SkStreamAsset> stream;
++            if (!custom && !fontFile.fFileName.startsWith('#')) {
++                std::unique_ptr<SkStreamAsset>* streamPtr = streamForPath.find(pathName);
++                if (!streamPtr) {
++                    streamPtr = streamForPath.set(pathName, SkStream::MakeFromFile(pathName.c_str()));
++                }
++                if (!*streamPtr) {
++                    SkDEBUGF("Requested font file %s cannot be opened.\n", pathName.c_str());
++                    continue;
++                }
++                stream = (*streamPtr)->duplicate();
++                if (!stream) {
++                    SkDEBUGF("Requested font file %s could not be duplicated.\n", pathName.c_str());
++                    continue;
++                }
++            } else if (custom) {
++                use_custom = true;
++                if (!GetFontData(fontFile.fFileName,
++                                  &familyName, &fontStyle, &isFixedWidth, &axisDefinitions)) {
++                    stream = custom->getPlatformFile(fontFile.fFileName.c_str());
++                }
++                pathName = fontFile.fFileName;
+             }
+ 
+-            SkFontArguments::VariationPosition position = {
+-                    fontFile.fVariationDesignPosition.begin(),
+-                    fontFile.fVariationDesignPosition.size()
++            sk_sp<SkTypeface> proxy;
++            position = {
++                fontFile.fVariationDesignPosition.begin(),
++                fontFile.fVariationDesignPosition.size()
+             };
+             // TODO: this creates the proxy with the given stream, so always cacheFontFiles.
+-            auto proxy = scanner->MakeFromStream(
+-                std::move(stream),
+-                SkFontArguments().setCollectionIndex(fontFile.fIndex)
+-                                 .setVariationDesignPosition(position));
+-            if (!proxy) {
+-                SkDEBUGF("Requested font file %s does not have valid font data.\n",
+-                         pathName.c_str());
+-                continue;
++            if (!use_custom || stream) {
++                proxy = scanner->MakeFromStream(
++                    std::move(stream),
++                    SkFontArguments().setCollectionIndex(fontFile.fIndex)
++                                     .setVariationDesignPosition(position));
++                if (!proxy) {
++                    SkDEBUGF("Requested font file %s does not have valid font data.\n",
++                            pathName.c_str());
++                    continue;
++                }
+             }
+ 
+             uint32_t variant = family.fVariant;
+@@ -164,13 +277,25 @@ public:
+             // The first specified family name overrides the family name found in the font.
+             // TODO: SkTypeface_AndroidSystem::onCreateFamilyNameIterator should return
+             // all of the specified family names in addition to the names found in the font.
+-            SkString familyName;
+-            proxy->getFamilyName(&familyName);
+-            if (cannonicalFamilyName != nullptr) {
+-                familyName = *cannonicalFamilyName;
+-            }
++            AutoSTMalloc<4, SkFixed> axisValues(axisDefinitions.size());
+ 
+-            SkFontStyle fontStyle = proxy->fontStyle();
++            if (!use_custom || stream) {
++                proxy->getFamilyName(&familyName);
++                if (cannonicalFamilyName != nullptr) {
++                    familyName = *cannonicalFamilyName;
++                }
++                fontStyle = proxy->fontStyle();
++                isFixedWidth = proxy->isFixedPitch();
++            } else {
++                variant = kCompact_FontVariant | kElegant_FontVariant;
++                SkFontScanner_FreeType::computeAxisValues(
++                    axisDefinitions,
++                    SkFontArguments::VariationPosition{current.data(), current.size()},
++                    position, axisValues, familyName, &fontStyle);
++                if (cannonicalFamilyName != nullptr) {
++                    familyName = *cannonicalFamilyName;
++                }
++            }
+             int weight = fontFile.fWeight != 0 ? fontFile.fWeight : fontStyle.weight();
+             SkFontStyle::Slant slant = fontStyle.slant();
+             switch (fontFile.fStyle) {
+@@ -181,6 +306,19 @@ public:
+             }
+             fontStyle = SkFontStyle(weight, fontStyle.width(), slant);
+ 
++            if (use_custom) {
++                fStyles.push_back().reset(
++                    new SkTypeface_AndroidSystemCustom(pathName,
++                                                       fontFile.fIndex,
++                                                       axisValues.get(), axisDefinitions.size(),
++                                                       fontStyle,
++                                                       isFixedWidth,
++                                                       familyName,
++                                                       family.fLanguages,
++                                                       variant,
++                                                       custom));
++                continue;
++            }
+             fStyles.push_back(
+                 SkTypeface_AndroidSystem::Make(proxy,
+                                                fontStyle, proxy->isFixedPitch(),
+@@ -209,15 +347,18 @@ public:
+         return fStyles[index];
+     }
+ 
+-    sk_sp<SkTypeface_AndroidSystem> matchAStyle(const SkFontStyle& pattern) {
++    sk_sp<SkTypeface_AndroidSystemCustom> matchCromiteStyle(const SkFontStyle& pattern) {
++        return sk_sp_static_cast<SkTypeface_AndroidSystemCustom>(this->matchStyleCSS3(pattern));
++    }
++    sk_sp<SkTypeface_AndroidSystem> matchAndroidStyle(const SkFontStyle& pattern) {
+         return sk_sp_static_cast<SkTypeface_AndroidSystem>(this->matchStyleCSS3(pattern));
+     }
+     sk_sp<SkTypeface> matchStyle(const SkFontStyle& pattern) override {
+-        return this->matchAStyle(pattern);
++        return this->matchStyleCSS3(pattern);
+     }
+ 
+ private:
+-    TArray<sk_sp<SkTypeface_AndroidSystem>> fStyles;
++    TArray<sk_sp<SkTypeface>> fStyles;
+     SkString fFallbackFor;
+ 
+     friend struct NameToFamily;
+@@ -238,24 +379,26 @@ struct NameToFamily {
+ 
+ class SkFontMgr_Android : public SkFontMgr {
+ public:
+-    SkFontMgr_Android(const SkFontMgr_Android_CustomFonts* custom,
++    SkFontMgr_Android(std::unique_ptr<SkFontMgr_Android_CustomFonts> custom_in,
+                       std::unique_ptr<SkFontScanner> scanner)
+         : fScanner(std::move(scanner)) {
++        custom_ = std::move(custom_in);
++        auto* custom = custom_.get();
+         std::vector<std::unique_ptr<FontFamily>> families;
+         if (custom && SkFontMgr_Android_CustomFonts::kPreferSystem != custom->fSystemFontUse) {
+             SkString base(custom->fBasePath);
+             SkFontMgr_Android_Parser::GetCustomFontFamilies(
+-                families, base, custom->fFontsXml, custom->fFallbackFontsXml);
++                families, base, custom, custom->fFontsXml, custom->fFallbackFontsXml);
+         }
+         if (!custom ||
+             (custom && SkFontMgr_Android_CustomFonts::kOnlyCustom != custom->fSystemFontUse))
+         {
+-            SkFontMgr_Android_Parser::GetSystemFontFamilies(families);
++            SkFontMgr_Android_Parser::GetSystemFontFamilies(families, custom);
+         }
+         if (custom && SkFontMgr_Android_CustomFonts::kPreferSystem == custom->fSystemFontUse) {
+             SkString base(custom->fBasePath);
+             SkFontMgr_Android_Parser::GetCustomFontFamilies(
+-                families, base, custom->fFontsXml, custom->fFallbackFontsXml);
++                families, base, custom, custom->fFontsXml, custom->fFallbackFontsXml);
+         }
+         this->buildNameToFamilyMap(families, custom ? custom->fIsolated : false);
+         this->findDefaultStyleSet();
+@@ -310,33 +453,53 @@ protected:
+     }
+ 
+     using Matcher = bool (*)(const SkString& familyName, const NameToFamily&);
+-    static sk_sp<SkTypeface_AndroidSystem> find_family_style_character(
++    sk_sp<SkTypeface> find_family_style_character(
+             const SkString& familyName,
+             const TArray<NameToFamily, true>& nameToFamilyMap,
+             const SkFontStyle& style, bool elegant,
+             const SkString& langTag, SkUnichar character,
+-            Matcher matcher)
++            Matcher matcher) const
+     {
+         for (auto&& nameToFamily : nameToFamilyMap) {
+             if (!matcher(familyName, nameToFamily)) {
+                 continue;
+             }
+-            sk_sp<SkTypeface_AndroidSystem> face(nameToFamily.styleSet->matchAStyle(style));
++            if (custom_) {
++                sk_sp<SkTypeface_AndroidSystemCustom> face(nameToFamily.styleSet->matchCromiteStyle(style));
++
++                if (!langTag.isEmpty() &&
++                    std::none_of(face->fLang.begin(), face->fLang.end(), [&](const SkLanguage& lang){
++                        return lang.getTag().startsWith(langTag.c_str());
++                    }))
++                {
++                    continue;
++                }
+ 
+-            if (!langTag.isEmpty() &&
+-                std::none_of(face->fLang.begin(), face->fLang.end(), [&](const SkLanguage& lang){
+-                    return lang.getTag().startsWith(langTag.c_str());
+-                }))
+-            {
+-                continue;
+-            }
++                if (SkToBool(face->fVariantStyle & kElegant_FontVariant) != elegant) {
++                    continue;
++                }
+ 
+-            if (SkToBool(face->fVariantStyle & kElegant_FontVariant) != elegant) {
+-                continue;
+-            }
++                if (face->unicharToGlyph(character) != 0) {
++                    return face;
++                }
++            } else {
++                sk_sp<SkTypeface_AndroidSystem> face(nameToFamily.styleSet->matchAndroidStyle(style));
++
++                if (!langTag.isEmpty() &&
++                    std::none_of(face->fLang.begin(), face->fLang.end(), [&](const SkLanguage& lang){
++                        return lang.getTag().startsWith(langTag.c_str());
++                    }))
++                {
++                    continue;
++                }
++
++                if (SkToBool(face->fVariantStyle & kElegant_FontVariant) != elegant) {
++                    continue;
++                }
+ 
+-            if (face->unicharToGlyph(character) != 0) {
+-                return face;
++                if (face->unicharToGlyph(character) != 0) {
++                    return face;
++                }
+             }
+         }
+         return nullptr;
+@@ -361,9 +524,9 @@ protected:
+ 
+         auto find = [this, &style, &character](const SkString& familyName,
+                                                const SkString& lang,
+-                                               bool elegant) -> sk_sp<SkTypeface_AndroidSystem>
++                                               bool elegant) -> sk_sp<SkTypeface>
+         {
+-            sk_sp<SkTypeface_AndroidSystem> matchingTypeface;
++            sk_sp<SkTypeface> matchingTypeface;
+             if (!familyName.isEmpty()) {
+                 matchingTypeface = find_family_style_character(
+                     familyName, fNameToFamilyMap, style, elegant, lang, character,
+@@ -411,7 +574,7 @@ protected:
+         };
+ 
+ 
+-        sk_sp<SkTypeface_AndroidSystem> matchingTypeface;
++        sk_sp<SkTypeface> matchingTypeface;
+         // If familyName is empty, don't look through everything twice.
+         SkString familyNames[2] = { SkString(familyName), SkString() };
+         size_t familyNamesCount = familyNames[0].isEmpty() ? 1 : 2;
+@@ -476,6 +639,7 @@ protected:
+ private:
+ 
+     std::unique_ptr<SkFontScanner> fScanner;
++    std::unique_ptr<SkFontMgr_Android_CustomFonts> custom_;
+ 
+     TArray<sk_sp<SkFontStyleSet_Android>> fStyleSets;
+     sk_sp<SkFontStyleSet> fDefaultStyleSet;
+@@ -497,7 +661,7 @@ private:
+         }
+ 
+         sk_sp<SkFontStyleSet_Android> newSet =
+-            sk_make_sp<SkFontStyleSet_Android>(family, fScanner.get(), isolated, streamForPath);
++            sk_make_sp<SkFontStyleSet_Android>(family, fScanner.get(), isolated, streamForPath, custom_.get());
+         if (0 == newSet->count()) {
+             return;
+         }
+@@ -545,7 +709,11 @@ static constexpr auto gSystemFontUseStrings = std::to_array<const char*>({
+ 
+ }  // namespace
+ 
+-sk_sp<SkFontMgr> SkFontMgr_New_Android(const SkFontMgr_Android_CustomFonts* custom,
++sk_sp<SkFontMgr> SkFontMgr_New_Android(std::unique_ptr<SkFontMgr_Android_CustomFonts> custom) {
++    return SkFontMgr_New_Android(std::move(custom), SkFontScanner_Make_FreeType());
++}
++
++sk_sp<SkFontMgr> SkFontMgr_New_Android(std::unique_ptr<SkFontMgr_Android_CustomFonts> custom,
+                                        std::unique_ptr<SkFontScanner> scanner) {
+     if (custom) {
+         SkASSERT(0 <= custom->fSystemFontUse);
+@@ -558,5 +726,5 @@ sk_sp<SkFontMgr> SkFontMgr_New_Android(const SkFontMgr_Android_CustomFonts* cust
+                      custom->fFallbackFontsXml);
+         }
+     }
+-    return sk_make_sp<SkFontMgr_Android>(custom, std::move(scanner));
++    return sk_make_sp<SkFontMgr_Android>(std::move(custom), std::move(scanner));
+ }
+diff --git a/src/ports/SkFontMgr_android_data.cpp b/src/ports/SkFontMgr_android_data.cpp
+new file mode 100644
+index 0000000..7f773dd
+--- /dev/null
++++ b/src/ports/SkFontMgr_android_data.cpp
+@@ -0,0 +1,1641 @@
++// AUTOGENERATED
++//
++// SkString dumpAxis("axis|");
++// dumpAxis.appendS32(axisDefinitions.size());
++// dumpAxis.append("|");
++// for (auto& def : axisDefinitions) {
++//     dumpAxis.appendS32(def.fTag);
++//     dumpAxis.append("|");
++//     dumpAxis.appendScalar(def.fMinimum);
++//     dumpAxis.append("|");
++//     dumpAxis.appendScalar(def.fDefault);
++//     dumpAxis.append("|");
++//     dumpAxis.appendScalar(def.fMaximum);
++//     dumpAxis.append("|");
++// }
++// SkDEBUGF("font file='%s' familyName='%s' width=%d weight=%d slant=%d axisDefinitions=%d isFixedWidth=%d axis=%s\n",
++//             pathName.c_str(),
++//             familyName.c_str(),
++//             style.width(),
++//             style.weight(),
++//             style.slant(),
++//             axisDefinitions.size(),
++//             (int)isFixedWidth,
++//             dumpAxis.c_str());
++
++bool GetFontData(const SkString& file,
++                 SkString* familyName,
++                 SkFontStyle* style,
++                 bool* isFixedPitch,
++                 SkFontScanner::AxisDefinitions* axes) {
++    if (file.equals("CarroisGothicSC-Regular.ttf")) {
++        familyName->set("Carrois Gothic SC");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("ComingSoon.ttf")) {
++        familyName->set("Coming Soon");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("CutiveMono.ttf")) {
++        familyName->set("Cutive Mono");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = true;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("DancingScript-Bold.ttf")) {
++        familyName->set("Dancing Script");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("DancingScript-Regular.ttf")) {
++        familyName->set("Dancing Script");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("DroidSansMono.ttf")) {
++        familyName->set("Droid Sans Mono");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = true;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoColorEmoji.ttf")) {
++        familyName->set("Noto Color Emoji");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoColorEmojiFlags.ttf")) {
++        familyName->set("Noto Color Emoji Flags");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = true;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoColorEmojiLegacy.ttf")) {
++        familyName->set("Noto Color Emoji");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = true;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoNaskhArabic-Bold.ttf")) {
++        familyName->set("Noto Naskh Arabic");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoNaskhArabic-Regular.ttf")) {
++        familyName->set("Noto Naskh Arabic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoNaskhArabicUI-Bold.ttf")) {
++        familyName->set("Noto Naskh Arabic UI");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoNaskhArabicUI-Regular.ttf")) {
++        familyName->set("Noto Naskh Arabic UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansAdlam-VF.ttf")) {
++        familyName->set("Noto Sans Adlam");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansAhom-Regular.otf")) {
++        familyName->set("Noto Sans Ahom");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansAnatolianHieroglyphs-Regular.otf")) {
++        familyName->set("Noto Sans Anatolian Hieroglyphs");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansArmenian-VF.ttf")) {
++        familyName->set("Noto Sans Armenian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansAvestan-Regular.ttf")) {
++        familyName->set("Noto Sans Avestan");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBalinese-Regular.ttf")) {
++        familyName->set("Noto Sans Balinese");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBamum-Regular.ttf")) {
++        familyName->set("Noto Sans Bamum");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBassaVah-Regular.otf")) {
++        familyName->set("Noto Sans Bassa Vah");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBatak-Regular.ttf")) {
++        familyName->set("Noto Sans Batak");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBengaliUI-VF.ttf")) {
++        familyName->set("Noto Sans Bengali UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansBengali-VF.ttf")) {
++        familyName->set("Noto Sans Bengali");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansBhaiksuki-Regular.otf")) {
++        familyName->set("Noto Sans Bhaiksuki");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBrahmi-Regular.ttf")) {
++        familyName->set("Noto Sans Brahmi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBuginese-Regular.ttf")) {
++        familyName->set("Noto Sans Buginese");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansBuhid-Regular.ttf")) {
++        familyName->set("Noto Sans Buhid");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCanadianAboriginal-Regular.ttf")) {
++        familyName->set("Noto Sans Canadian Aboriginal");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCarian-Regular.ttf")) {
++        familyName->set("Noto Sans Carian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansChakma-Regular.otf")) {
++        familyName->set("Noto Sans Chakma");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCham-Bold.ttf")) {
++        familyName->set("Noto Sans Cham");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCham-Regular.ttf")) {
++        familyName->set("Noto Sans Cham");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCherokee-Regular.ttf")) {
++        familyName->set("Noto Sans Cherokee");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCJK-Regular.ttc")) {
++        familyName->set("Noto Sans CJK SC");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCoptic-Regular.ttf")) {
++        familyName->set("Noto Sans Coptic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCuneiform-Regular.ttf")) {
++        familyName->set("Noto Sans Cuneiform");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansCypriot-Regular.ttf")) {
++        familyName->set("Noto Sans Cypriot");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansDeseret-Regular.ttf")) {
++        familyName->set("Noto Sans Deseret");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansDevanagariUI-VF.ttf")) {
++        familyName->set("Noto Sans Devanagari UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansDevanagari-VF.ttf")) {
++        familyName->set("Noto Sans Devanagari");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansEgyptianHieroglyphs-Regular.ttf")) {
++        familyName->set("Noto Sans Egyptian Hieroglyphs");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansElbasan-Regular.otf")) {
++        familyName->set("Noto Sans Elbasan");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansEthiopic-VF.ttf")) {
++        familyName->set("Noto Sans Ethiopic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansGeorgian-VF.ttf")) {
++        familyName->set("Noto Sans Georgian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansGlagolitic-Regular.ttf")) {
++        familyName->set("Noto Sans Glagolitic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGothic-Regular.ttf")) {
++        familyName->set("Noto Sans Gothic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGrantha-Regular.ttf")) {
++        familyName->set("Noto Sans Grantha");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGujarati-Bold.ttf")) {
++        familyName->set("Noto Sans Gujarati");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGujarati-Regular.ttf")) {
++        familyName->set("Noto Sans Gujarati");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGujaratiUI-Bold.ttf")) {
++        familyName->set("Noto Sans Gujarati UI");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGujaratiUI-Regular.ttf")) {
++        familyName->set("Noto Sans Gujarati UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGunjalaGondi-Regular.otf")) {
++        familyName->set("Noto Sans Gunjala Gondi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansGurmukhiUI-VF.ttf")) {
++        familyName->set("Noto Sans Gurmukhi UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansGurmukhi-VF.ttf")) {
++        familyName->set("Noto Sans Gurmukhi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansHanifiRohingya-Regular.otf")) {
++        familyName->set("Noto Sans Hanifi Rohingya");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansHanunoo-Regular.ttf")) {
++        familyName->set("Noto Sans Hanunoo");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansHatran-Regular.otf")) {
++        familyName->set("Noto Sans Hatran");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansHebrew-Bold.ttf")) {
++        familyName->set("Noto Sans Hebrew");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansHebrew-Regular.ttf")) {
++        familyName->set("Noto Sans Hebrew");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansImperialAramaic-Regular.ttf")) {
++        familyName->set("Noto Sans Imperial Aramaic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansInscriptionalPahlavi-Regular.ttf")) {
++        familyName->set("Noto Sans Inscriptional Pahlavi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansInscriptionalParthian-Regular.ttf")) {
++        familyName->set("Noto Sans Inscriptional Parthian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansJavanese-Regular.otf")) {
++        familyName->set("Noto Sans Javanese");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansKaithi-Regular.ttf")) {
++        familyName->set("Noto Sans Kaithi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansKannadaUI-VF.ttf")) {
++        familyName->set("Noto Sans Kannada UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansKannada-VF.ttf")) {
++        familyName->set("Noto Sans Kannada");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansKayahLi-Regular.ttf")) {
++        familyName->set("Noto Sans Kayah Li");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansKharoshthi-Regular.ttf")) {
++        familyName->set("Noto Sans Kharoshthi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansKhmerUI-Bold.ttf")) {
++        familyName->set("Noto Sans Khmer UI");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansKhmerUI-Regular.ttf")) {
++        familyName->set("Noto Sans Khmer UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansKhmer-VF.ttf")) {
++        familyName->set("Noto Sans Khmer");
++        *style = SkFontStyle(90, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(2);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 26;
++        (*axes)[0].def = 90;
++        (*axes)[0].max = 190;
++        (*axes)[1].tag = SkSetFourByteTag('w', 'd', 't', 'h');
++        (*axes)[1].min = 70;
++        (*axes)[1].def = 100;
++        (*axes)[1].max = 100;
++        return true;
++    }
++    else if (file.equals("NotoSansKhojki-Regular.otf")) {
++        familyName->set("Noto Sans Khojki");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLao-Bold.ttf")) {
++        familyName->set("Noto Sans Lao");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLao-Regular.ttf")) {
++        familyName->set("Noto Sans Lao");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLaoUI-Bold.ttf")) {
++        familyName->set("Noto Sans Lao UI");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLaoUI-Regular.ttf")) {
++        familyName->set("Noto Sans Lao UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLepcha-Regular.ttf")) {
++        familyName->set("Noto Sans Lepcha");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLimbu-Regular.ttf")) {
++        familyName->set("Noto Sans Limbu");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLinearA-Regular.otf")) {
++        familyName->set("Noto Sans Linear A");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLinearB-Regular.ttf")) {
++        familyName->set("Noto Sans Linear B");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLisu-Regular.ttf")) {
++        familyName->set("Noto Sans Lisu");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLycian-Regular.ttf")) {
++        familyName->set("Noto Sans Lycian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansLydian-Regular.ttf")) {
++        familyName->set("Noto Sans Lydian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMalayalamUI-VF.ttf")) {
++        familyName->set("Noto Sans Malayalam UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansMalayalam-VF.ttf")) {
++        familyName->set("Noto Sans Malayalam");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansMandaic-Regular.ttf")) {
++        familyName->set("Noto Sans Mandaic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansManichaean-Regular.otf")) {
++        familyName->set("Noto Sans Manichaean");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMarchen-Regular.otf")) {
++        familyName->set("Noto Sans Marchen");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMasaramGondi-Regular.otf")) {
++        familyName->set("Noto Sans Masaram Gondi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMedefaidrin-VF.ttf")) {
++        familyName->set("Noto Sans Medefaidrin");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansMeeteiMayek-Regular.ttf")) {
++        familyName->set("Noto Sans Meetei Mayek");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMeroitic-Regular.otf")) {
++        familyName->set("Noto Sans Meroitic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMiao-Regular.otf")) {
++        familyName->set("Noto Sans Miao");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansModi-Regular.ttf")) {
++        familyName->set("Noto Sans Modi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMongolian-Regular.ttf")) {
++        familyName->set("Noto Sans Mongolian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMro-Regular.otf")) {
++        familyName->set("Noto Sans Mro");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMultani-Regular.otf")) {
++        familyName->set("Noto Sans Multani");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMyanmar-Bold.otf")) {
++        familyName->set("Noto Sans Myanmar");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMyanmar-Medium.otf")) {
++        familyName->set("Noto Sans Myanmar");
++        *style = SkFontStyle(500, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMyanmar-Regular.otf")) {
++        familyName->set("Noto Sans Myanmar");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMyanmarUI-Bold.otf")) {
++        familyName->set("Noto Sans Myanmar UI");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMyanmarUI-Medium.otf")) {
++        familyName->set("Noto Sans Myanmar UI");
++        *style = SkFontStyle(500, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansMyanmarUI-Regular.otf")) {
++        familyName->set("Noto Sans Myanmar UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansNabataean-Regular.otf")) {
++        familyName->set("Noto Sans Nabataean");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansNewa-Regular.otf")) {
++        familyName->set("Noto Sans Newa");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansNewTaiLue-Regular.ttf")) {
++        familyName->set("Noto Sans New Tai Lue");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansNKo-Regular.ttf")) {
++        familyName->set("Noto Sans NKo");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOgham-Regular.ttf")) {
++        familyName->set("Noto Sans Ogham");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOlChiki-Regular.ttf")) {
++        familyName->set("Noto Sans Ol Chiki");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOldItalic-Regular.ttf")) {
++        familyName->set("Noto Sans Old Italic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOldNorthArabian-Regular.otf")) {
++        familyName->set("Noto Sans Old North Arabian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOldPermic-Regular.otf")) {
++        familyName->set("Noto Sans Old Permic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOldPersian-Regular.ttf")) {
++        familyName->set("Noto Sans Old Persian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOldSouthArabian-Regular.ttf")) {
++        familyName->set("Noto Sans Old South Arabian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOldTurkic-Regular.ttf")) {
++        familyName->set("Noto Sans Old Turkic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOriya-Bold.ttf")) {
++        familyName->set("Noto Sans Oriya");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOriya-Regular.ttf")) {
++        familyName->set("Noto Sans Oriya");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOriyaUI-Bold.ttf")) {
++        familyName->set("Noto Sans Oriya UI");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOriyaUI-Regular.ttf")) {
++        familyName->set("Noto Sans Oriya UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOsage-Regular.ttf")) {
++        familyName->set("Noto Sans Osage");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansOsmanya-Regular.ttf")) {
++        familyName->set("Noto Sans Osmanya");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansPahawhHmong-Regular.otf")) {
++        familyName->set("Noto Sans Pahawh Hmong");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansPalmyrene-Regular.otf")) {
++        familyName->set("Noto Sans Palmyrene");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansPauCinHau-Regular.otf")) {
++        familyName->set("Noto Sans Pau Cin Hau");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansPhagsPa-Regular.ttf")) {
++        familyName->set("Noto Sans Phags Pa");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansPhoenician-Regular.ttf")) {
++        familyName->set("Noto Sans Phoenician");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansRejang-Regular.ttf")) {
++        familyName->set("Noto Sans Rejang");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansRunic-Regular.ttf")) {
++        familyName->set("Noto Sans Runic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSamaritan-Regular.ttf")) {
++        familyName->set("Noto Sans Samaritan");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSaurashtra-Regular.ttf")) {
++        familyName->set("Noto Sans Saurashtra");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSharada-Regular.otf")) {
++        familyName->set("Noto Sans Sharada");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansShavian-Regular.ttf")) {
++        familyName->set("Noto Sans Shavian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSinhalaUI-VF.ttf")) {
++        familyName->set("Noto Sans Sinhala UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansSinhala-VF.ttf")) {
++        familyName->set("Noto Sans Sinhala");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansSoraSompeng-Regular.otf")) {
++        familyName->set("Noto Sans Sora Sompeng");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSoyombo-VF.ttf")) {
++        familyName->set("Noto Sans Soyombo");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansSundanese-Regular.ttf")) {
++        familyName->set("Noto Sans Sundanese");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSylotiNagri-Regular.ttf")) {
++        familyName->set("Noto Sans Syloti Nagri");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSymbols-Regular-Subsetted.ttf")) {
++        familyName->set("Noto Sans Symbols");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSymbols-Regular-Subsetted2.ttf")) {
++        familyName->set("Noto Sans Symbols");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSyriacEastern-Regular.ttf")) {
++        familyName->set("Noto Sans Syriac Eastern");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSyriacEstrangela-Regular.ttf")) {
++        familyName->set("Noto Sans Syriac Estrangela");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansSyriacWestern-Regular.ttf")) {
++        familyName->set("Noto Sans Syriac Western");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansTagalog-Regular.ttf")) {
++        familyName->set("Noto Sans Tagalog");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansTagbanwa-Regular.ttf")) {
++        familyName->set("Noto Sans Tagbanwa");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansTaiLe-Regular.ttf")) {
++        familyName->set("Noto Sans Tai Le");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansTaiTham-Regular.ttf")) {
++        familyName->set("Noto Sans Tai Tham");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansTaiViet-Regular.ttf")) {
++        familyName->set("Noto Sans Tai Viet");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansTakri-VF.ttf")) {
++        familyName->set("Noto Sans Takri");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansTamilUI-VF.ttf")) {
++        familyName->set("Noto Sans Tamil");
++        *style = SkFontStyle(400, 2, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansTamil-VF.ttf")) {
++        familyName->set("Noto Sans Tamil");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansTeluguUI-VF.ttf")) {
++        familyName->set("Noto Sans Telugu UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansTelugu-VF.ttf")) {
++        familyName->set("Noto Sans Telugu");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSansThaana-Bold.ttf")) {
++        familyName->set("Noto Sans Thaana");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansThaana-Regular.ttf")) {
++        familyName->set("Noto Sans Thaana");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansThai-Bold.ttf")) {
++        familyName->set("Noto Sans Thai");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansThai-Regular.ttf")) {
++        familyName->set("Noto Sans Thai");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansThaiUI-Bold.ttf")) {
++        familyName->set("Noto Sans Thai UI");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansThaiUI-Regular.ttf")) {
++        familyName->set("Noto Sans Thai UI");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansTifinagh-Regular.otf")) {
++        familyName->set("Noto Sans Tifinagh");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansUgaritic-Regular.ttf")) {
++        familyName->set("Noto Sans Ugaritic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansVai-Regular.ttf")) {
++        familyName->set("Noto Sans Vai");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansWancho-Regular.otf")) {
++        familyName->set("Noto Sans Wancho");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansWarangCiti-Regular.otf")) {
++        familyName->set("Noto Sans Warang Citi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSansYi-Regular.ttf")) {
++        familyName->set("Noto Sans Yi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifArmenian-VF.ttf")) {
++        familyName->set("Noto Serif Armenian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifBengali-VF.ttf")) {
++        familyName->set("Noto Serif Bengali");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerif-Bold.ttf")) {
++        familyName->set("Noto Serif");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerif-BoldItalic.ttf")) {
++        familyName->set("Noto Serif");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifCJK-Regular.ttc")) {
++        familyName->set("Noto Serif CJK SC");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifDevanagari-VF.ttf")) {
++        familyName->set("Noto Serif Devanagari");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifDogra-Regular.ttf")) {
++        familyName->set("Noto Serif Dogra");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifEthiopic-VF.ttf")) {
++        familyName->set("Noto Serif Ethiopic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifGeorgian-VF.ttf")) {
++        familyName->set("Noto Serif Georgian");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifGujarati-VF.ttf")) {
++        familyName->set("Noto Serif Gujarati");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifGurmukhi-VF.ttf")) {
++        familyName->set("Noto Serif Gurmukhi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifHebrew-Bold.ttf")) {
++        familyName->set("Noto Serif Hebrew");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifHebrew-Regular.ttf")) {
++        familyName->set("Noto Serif Hebrew");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerif-Italic.ttf")) {
++        familyName->set("Noto Serif");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifKannada-VF.ttf")) {
++        familyName->set("Noto Serif Kannada");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifKhmer-Bold.otf")) {
++        familyName->set("Noto Serif Khmer");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifKhmer-Regular.otf")) {
++        familyName->set("Noto Serif Khmer");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifLao-Bold.ttf")) {
++        familyName->set("Noto Serif Lao");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifLao-Regular.ttf")) {
++        familyName->set("Noto Serif Lao");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifMalayalam-VF.ttf")) {
++        familyName->set("Noto Serif Malayalam");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifMyanmar-Bold.otf")) {
++        familyName->set("Noto Serif Myanmar");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifMyanmar-Regular.otf")) {
++        familyName->set("Noto Serif Myanmar");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifNyiakengPuachueHmong-VF.ttf")) {
++        familyName->set("Noto Serif Nyiakeng Puachue Hmong");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerif-Regular.ttf")) {
++        familyName->set("Noto Serif");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifSinhala-VF.ttf")) {
++        familyName->set("Noto Serif Sinhala");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifTamil-VF.ttf")) {
++        familyName->set("Noto Serif Tamil");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifTelugu-VF.ttf")) {
++        familyName->set("Noto Serif Telugu");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifThai-Bold.ttf")) {
++        familyName->set("Noto Serif Thai");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifThai-Regular.ttf")) {
++        familyName->set("Noto Serif Thai");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("NotoSerifTibetan-VF.ttf")) {
++        familyName->set("Noto Serif Tibetan");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("NotoSerifYezidi-VF.ttf")) {
++        familyName->set("Noto Serif Yezidi");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(1);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 400;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 700;
++        return true;
++    }
++    else if (file.equals("Roboto-Regular.ttf")) {
++        familyName->set("Roboto");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(3);
++        (*axes)[0].tag = SkSetFourByteTag('w', 'g', 'h', 't');;
++        (*axes)[0].min = 100;
++        (*axes)[0].def = 400;
++        (*axes)[0].max = 900;
++        (*axes)[1].tag = SkSetFourByteTag('w', 'd', 't', 'h');
++        (*axes)[1].min = 75;
++        (*axes)[1].def = 100;
++        (*axes)[1].max = 100;
++        (*axes)[2].tag = SkSetFourByteTag('i', 't', 'a', 'l');
++        (*axes)[2].min = 0;
++        (*axes)[2].def = 0;
++        (*axes)[2].max = 1;
++        return true;
++    }
++    else if (file.equals("RobotoStatic-Regular.ttf")) {
++        // see https://android.googlesource.com/platform/frameworks/base/+/89abe560d722a6f4136b7a05d80f23b269413aad
++        familyName->set("RobotoStatic");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("SourceSansPro-Bold.ttf")) {
++        familyName->set("Source Sans Pro");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("SourceSansPro-BoldItalic.ttf")) {
++        familyName->set("Source Sans Pro");
++        *style = SkFontStyle(700, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("SourceSansPro-Italic.ttf")) {
++        familyName->set("Source Sans Pro");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("SourceSansPro-Regular.ttf")) {
++        familyName->set("Source Sans Pro");
++        *style = SkFontStyle(400, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("SourceSansPro-SemiBold.ttf")) {
++        familyName->set("Source Sans Pro");
++        *style = SkFontStyle(600, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++    else if (file.equals("SourceSansPro-SemiBoldItalic.ttf")) {
++        familyName->set("Source Sans Pro");
++        *style = SkFontStyle(600, 5, SkFontStyle::kUpright_Slant);
++        *isFixedPitch = false;
++        axes->reset(0);
++        return true;
++    }
++
++    return false;
++}
+diff --git a/src/ports/SkFontMgr_android_ndk.cpp b/src/ports/SkFontMgr_android_ndk.cpp
+index e6f4f97..938d055 100644
+--- a/src/ports/SkFontMgr_android_ndk.cpp
++++ b/src/ports/SkFontMgr_android_ndk.cpp
+@@ -996,7 +996,7 @@ public:
+         }
+ 
+         std::vector<std::unique_ptr<FontFamily>> xmlFamilies;
+-        SkFontMgr_Android_Parser::GetSystemFontFamilies(xmlFamilies);
++        SkFontMgr_Android_Parser::GetSystemFontFamilies(xmlFamilies, /*custom*/ nullptr);
+ 
+         skia_private::THashMap<SkString, std::unique_ptr<SkStreamAsset>> streamForPath;
+ 
+diff --git a/src/ports/SkFontMgr_android_parser.cpp b/src/ports/SkFontMgr_android_parser.cpp
+index 462073b..d983a14 100644
+--- a/src/ports/SkFontMgr_android_parser.cpp
++++ b/src/ports/SkFontMgr_android_parser.cpp
+@@ -714,14 +714,27 @@ static const XML_Memory_Handling_Suite sk_XML_alloc = {
+  */
+ static int parse_config_file(const char* filename,
+                              std::vector<std::unique_ptr<FontFamily>>& families,
+-                             const SkString& basePath, bool isFallback)
++                             const SkString& basePath, bool isFallback,
++                             const SkFontMgr_Android_CustomFonts* custom = nullptr)
+ {
+     SkFILEStream file(filename);
+-
+-    // Some of the files we attempt to parse (in particular, /vendor/etc/fallback_fonts.xml)
+-    // are optional - failure here is okay because one of these optional files may not exist.
+-    if (!file.isValid()) {
+-        SkDebugf(SK_FONTMGR_ANDROID_PARSER_PREFIX "'%s' could not be opened\n", filename);
++    std::unique_ptr<SkStreamAsset> stream;
++    if (!custom && filename[0] != '#') {
++        // Some of the files we attempt to parse (in particular, /vendor/etc/fallback_fonts.xml)
++        // are optional - failure here is okay because one of these optional files may not exist.
++        if (!file.isValid()) {
++            SkDebugf(SK_FONTMGR_ANDROID_PARSER_PREFIX "'%s' could not be opened\n", filename);
++            return -1;
++        }
++        stream = file.fork();
++    } else if (custom) {
++        stream = custom->getPlatformFile(filename);
++        if (!stream) {
++            SkDebugf(SK_FONTMGR_ANDROID_PARSER_PREFIX "'%s' platform file map not found\n", filename);
++            return -1;
++        }
++    } else {
++        SkDebugf(SK_FONTMGR_ANDROID_PARSER_PREFIX "'%s' custom fonts not set\n", filename);
+         return -1;
+     }
+ 
+@@ -753,8 +766,8 @@ static int parse_config_file(const char* filename,
+             SkDebugf(SK_FONTMGR_ANDROID_PARSER_PREFIX "could not buffer enough to continue\n");
+             return -1;
+         }
+-        size_t len = file.read(buffer, bufferSize);
+-        done = file.isAtEnd();
++        size_t len = stream->read(buffer, bufferSize);
++        done = stream->isAtEnd();
+         XML_Status status = XML_ParseBuffer(parser, len, done);
+         if (XML_STATUS_ERROR == status) {
+             XML_Error error = XML_GetErrorCode(parser);
+@@ -766,6 +779,23 @@ static int parse_config_file(const char* filename,
+             return -1;
+         }
+     }
++    if (custom) {
++        // remove NotoColorEmojiLegacy.ttf
++        for (int i = 0; i < families.size(); ++i) {
++            bool exists = false;
++            auto& family = families[i];
++            for (auto& font : family->fFonts) {
++                if (font.fFileName.equals("NotoColorEmojiLegacy.ttf")) {
++                    exists = true;
++                    break;
++                }
++            }
++            if (exists) {
++                families.erase(families.begin() + i);
++                break;
++            }
++        }
++    }
+     return self.fVersion;
+ }
+ 
+@@ -828,8 +858,10 @@ static void append_fallback_font_families_for_locale(
+ 
+ static void append_system_fallback_font_families(
+     std::vector<std::unique_ptr<FontFamily>>& fallbackFonts,
+-    const SkString& basePath)
++    const SkString& basePath,
++    const SkFontMgr_Android_CustomFonts* custom)
+ {
++    if (custom) return;
+     parse_config_file(FALLBACK_FONTS_FILE, fallbackFonts, basePath, true);
+     append_fallback_font_families_for_locale(fallbackFonts,
+                                              LOCALE_FALLBACK_FONTS_SYSTEM_DIR,
+@@ -838,8 +870,10 @@ static void append_system_fallback_font_families(
+ 
+ static void mixin_vendor_fallback_font_families(
+         std::vector<std::unique_ptr<FontFamily>>& fallbackFonts,
+-        const SkString& basePath)
++        const SkString& basePath,
++        const SkFontMgr_Android_CustomFonts* custom)
+ {
++    if (custom) return;
+     std::vector<std::unique_ptr<FontFamily>> vendorFonts;
+     parse_config_file(VENDOR_FONTS_FILE, vendorFonts, basePath, true);
+     append_fallback_font_families_for_locale(vendorFonts,
+@@ -871,7 +905,8 @@ static void mixin_vendor_fallback_font_families(
+ }
+ 
+ void SkFontMgr_Android_Parser::GetSystemFontFamilies(
+-        std::vector<std::unique_ptr<FontFamily>>& fontFamilies) {
++        std::vector<std::unique_ptr<FontFamily>>& fontFamilies,
++        const SkFontMgr_Android_CustomFonts* custom) {
+     static constexpr char kFontFilePrefix[] = "/fonts/";
+ 
+     // Version 21 of the system font configuration does not need any fallback configuration files.
+@@ -882,15 +917,16 @@ void SkFontMgr_Android_Parser::GetSystemFontFamilies(
+         // Product fonts (fonts_customization.xml) leverage <fonts-modification version="21">
+         // Therefore, we only attempt to parse them on modern devices (Android Lollipop+).
+         // Pre-21 systems fall through to the legacy fallback fonts handling below.
++        if (!custom)
+         SkFontMgr_Android_Parser::GetCustomFontFamilies(
+-                fontFamilies, basePath, PRODUCT_CUSTOMIZATION_FILE, nullptr, nullptr);
++                fontFamilies, basePath, custom, PRODUCT_CUSTOMIZATION_FILE, nullptr, nullptr);
+         return;
+     }
+ 
+     // Append all the fallback fonts to system fonts
+     std::vector<std::unique_ptr<FontFamily>> fallbackFonts;
+-    append_system_fallback_font_families(fallbackFonts, basePath);
+-    mixin_vendor_fallback_font_families(fallbackFonts, basePath);
++    append_system_fallback_font_families(fallbackFonts, basePath, custom);
++    mixin_vendor_fallback_font_families(fallbackFonts, basePath, custom);
+     fontFamilies.insert(fontFamilies.end(),
+                         std::make_move_iterator(fallbackFonts.begin()),
+                         std::make_move_iterator(fallbackFonts.end()));
+@@ -899,15 +935,16 @@ void SkFontMgr_Android_Parser::GetSystemFontFamilies(
+ void SkFontMgr_Android_Parser::GetCustomFontFamilies(
+         std::vector<std::unique_ptr<FontFamily>>& fontFamilies,
+         const SkString& basePath,
++        const SkFontMgr_Android_CustomFonts* custom,
+         const char* fontsXml,
+         const char* fallbackFontsXml,
+         const char* langFallbackFontsDir)
+ {
+     if (fontsXml) {
+-        parse_config_file(fontsXml, fontFamilies, basePath, false);
++        parse_config_file(fontsXml, fontFamilies, basePath, false, custom);
+     }
+     if (fallbackFontsXml) {
+-        parse_config_file(fallbackFontsXml, fontFamilies, basePath, true);
++        parse_config_file(fallbackFontsXml, fontFamilies, basePath, true, custom);
+     }
+     if (langFallbackFontsDir) {
+         append_fallback_font_families_for_locale(fontFamilies,
+diff --git a/src/ports/SkFontMgr_android_parser.h b/src/ports/SkFontMgr_android_parser.h
+index c9b87c8..e532b21 100644
+--- a/src/ports/SkFontMgr_android_parser.h
++++ b/src/ports/SkFontMgr_android_parser.h
+@@ -16,6 +16,7 @@
+ #include "include/core/SkTypes.h"
+ #include "include/private/SkTArray.h"
+ #include "include/private/SkTDArray.h"
++#include "include/ports/SkFontMgr_android.h"
+ #include "src/core/SkTHash.h"
+ 
+ #include <climits>
+@@ -109,11 +110,13 @@ struct FontFamily {
+ namespace SkFontMgr_Android_Parser {
+ 
+ /** Parses system font configuration files and appends result to fontFamilies. */
+-void GetSystemFontFamilies(std::vector<std::unique_ptr<FontFamily>>& fontFamilies);
++void GetSystemFontFamilies(std::vector<std::unique_ptr<FontFamily>>& fontFamilies,
++                           const SkFontMgr_Android_CustomFonts* custom);
+ 
+ /** Parses font configuration files and appends result to fontFamilies. */
+ void GetCustomFontFamilies(std::vector<std::unique_ptr<FontFamily>>& fontFamilies,
+                            const SkString& basePath,
++                           const SkFontMgr_Android_CustomFonts* custom,
+                            const char* fontsXml,
+                            const char* fallbackFontsXml,
+                            const char* langFallbackFontsDir = nullptr);

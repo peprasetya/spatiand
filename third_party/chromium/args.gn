@@ -1,0 +1,74 @@
+# SpatiMesh's GN arguments on every system: what Cromite built with at Chromium 153 (taken over
+# with its patches, patches/README.md), less what only its Android app and Windows build read.
+# build.sh changes single values in place for each target (GN refuses a value set twice), so a
+# line's exact spelling here is matched there.
+blink_symbol_level=1
+chrome_pgo_phase=0
+dcheck_always_on=false
+disable_fieldtrial_testing_config=true
+enable_hangout_services_extension=false
+enable_iterator_debugging=false
+enable_mdns=false
+enable_remoting=false
+enable_reporting=false
+enable_vr=false
+exclude_unwind_tables=false
+icu_use_data_file=true
+is_component_build=false
+is_debug=false
+is_official_build=true
+rtc_build_examples=false
+symbol_level=1
+treat_warnings_as_errors=true
+use_official_google_api_keys=false
+use_rtti=false
+enable_arcore=false
+enable_openxr=false
+enable_cardboard=false
+
+# media section
+proprietary_codecs=true
+ffmpeg_branding="Chrome"
+enable_av1_decoder=true
+enable_dav1d_decoder=true
+
+# disable cisco OpenH264
+media_use_openh264 = false
+
+# disable passthrough audio codecs
+enable_platform_dts_audio = false
+
+# disabled the use of the context snapshot
+# see https://github.com/uazo/cromite/pull/317 for context
+use_v8_context_snapshot = false
+
+# disable automatic update of sync-related cookies
+# initial commit: https://source.chromium.org/chromium/chromium/src/+/fd9a841f7a63b9f5510f6b713d9c833d259c63ad
+enable_bound_session_credentials = false
+
+# Allows building without //third_party/unrar included, for license reasons
+safe_browsing_use_unrar = false
+
+# Keep disabled Google Request Header Integrity
+# see https://chromium-review.googlesource.com/c/chromium/src/+/5778493
+enable_request_header_integrity = false
+
+# Disable precompiled headers because they are incompatible with the unsafe_buffers configuration
+enable_precompiled_headers = false
+
+# Disable TFLite with XNNPACK
+build_tflite_with_xnnpack = false
+build_litert_with_xnnpack = false
+
+if (target_os == "linux") {
+  target_os = "linux" # fix traffic annotation auditor
+  target_cpu = "x64"
+  symbol_level = 0
+
+  enable_pdf = true
+  pdf_is_complete_lib = true
+  enable_plugins = true
+
+  use_sysroot = true
+  chrome_pgo_phase = 2 # enable pgo
+}

@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 2 Sep 2024 07:04:11 +0000
+Subject: [PATCH 233/310] Override the MV2 deprecation
+
+Uses the flag used in tests to forcibly enable MV2
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Override-the-MV2-deprecation.patch
+---
+ extensions/browser/manifest_v2_handler.cc | 2 +-
+ extensions/common/extension.cc            | 6 ------
+ 2 files changed, 1 insertion(+), 7 deletions(-)
+
+diff --git a/extensions/browser/manifest_v2_handler.cc b/extensions/browser/manifest_v2_handler.cc
+index 5841d3dfbc8..5e6b5c88e27 100644
+--- a/extensions/browser/manifest_v2_handler.cc
++++ b/extensions/browser/manifest_v2_handler.cc
+@@ -32,7 +32,7 @@ namespace extensions {
+ namespace {
+ 
+ // Whether to override the MV2 deprecation for testing purposes.
+-bool g_allow_mv2_for_testing = false;
++bool g_allow_mv2_for_testing = true;
+ 
+ // Returns the suffix to use for histograms related to the manifest location
+ // grouping.
+diff --git a/extensions/common/extension.cc b/extensions/common/extension.cc
+index 28a3cac3756..538a937aca0 100644
+--- a/extensions/common/extension.cc
++++ b/extensions/common/extension.cc
+@@ -97,12 +97,6 @@ bool IsManifestSupported(int manifest_version,
+   // Supported versions are always safe.
+   if (manifest_version >= kMinimumSupportedManifestVersion &&
+       manifest_version <= kMaximumSupportedManifestVersion) {
+-    // Emit a warning for unpacked extensions on Manifest V2 warning that
+-    // MV2 is deprecated.
+-    if (type == Manifest::Type::kExtension && manifest_version == 2 &&
+-        Manifest::IsUnpackedLocation(location)) {
+-      *warning = errors::kManifestV2IsDeprecatedWarning;
+-    }
+     return true;
+   }
+ 

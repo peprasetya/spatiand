@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sat, 4 Dec 2021 11:41:31 +0100
+Subject: [PATCH 103/310] Restore offline-indicator-v2 flag
+
+Reverts acc8b6f4542703211e5f3c5181914fd3374c9e84
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Restore-offline-indicator-v2-flag.patch
+---
+ chrome/browser/flags/android/chrome_feature_list.cc  |  1 +
+ .../Restore-offline-indicator-v2-flag.inc            | 12 ++++++++++++
+ .../Restore-offline-indicator-v2-flag.inc            |  3 +++
+ .../Restore-offline-indicator-v2-flag.inc            |  1 +
+ 4 files changed, 17 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Restore-offline-indicator-v2-flag.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-offline-indicator-v2-flag.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-offline-indicator-v2-flag.inc
+
+diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
+index d969e455a0e..9369f808855 100644
+--- a/chrome/browser/flags/android/chrome_feature_list.cc
++++ b/chrome/browser/flags/android/chrome_feature_list.cc
+@@ -474,6 +474,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
+     &kNtpAuroraV2,
+     &kNtpMvcRefactor,
+     &kNtpVision,
++    &kOfflineIndicatorV2,
+     &kOmahaMinSdkVersionAndroid,
+     &kOnDemandBackgroundTabContextCapture,
+     &kOnDemandBackgroundTabContextCaptureOptimization,
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Restore-offline-indicator-v2-flag.inc b/cromite_flags/chrome/browser/about_flags_cc/Restore-offline-indicator-v2-flag.inc
+new file mode 100644
+index 00000000000..53e9183ab5a
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Restore-offline-indicator-v2-flag.inc
+@@ -0,0 +1,12 @@
++#if BUILDFLAG(IS_ANDROID)
++
++#ifdef FLAG_SECTION
++
++    {"offline-indicator-v2",
++     "Offline indicator V2",
++     "Show a persistent offline indicator when offline.", kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kOfflineIndicatorV2)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-offline-indicator-v2-flag.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-offline-indicator-v2-flag.inc
+new file mode 100644
+index 00000000000..7d9137643a5
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Restore-offline-indicator-v2-flag.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kOfflineIndicatorV2,
++                "OfflineIndicatorV2",
++                base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-offline-indicator-v2-flag.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-offline-indicator-v2-flag.inc
+new file mode 100644
+index 00000000000..34eacba3369
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Restore-offline-indicator-v2-flag.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kOfflineIndicatorV2);

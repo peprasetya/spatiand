@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 20 Jul 2026 06:36:17 +0000
+Subject: [PATCH 264/310] Disable Android HDR
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-Android-HDR.patch
+---
+ content/browser/renderer_host/render_widget_host_impl.cc | 2 +-
+ ui/android/ui_android_features.cc                        | 1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/content/browser/renderer_host/render_widget_host_impl.cc b/content/browser/renderer_host/render_widget_host_impl.cc
+index 4b2fbef868d..22f00d28ed8 100644
+--- a/content/browser/renderer_host/render_widget_host_impl.cc
++++ b/content/browser/renderer_host/render_widget_host_impl.cc
+@@ -1094,7 +1094,7 @@ blink::VisualProperties RenderWidgetHostImpl::GetVisualProperties() {
+   // If hardware acceleration is disabled then do not report the display as
+   // HDR or high bit depth because it is too resource intensive to run on the
+   // CPU.
+-  if (!GpuDataManager::GetInstance()->HardwareAccelerationEnabled()) {
++  if (((true)) || !GpuDataManager::GetInstance()->HardwareAccelerationEnabled()) {
+     for (auto& screen_info : visual_properties.screen_infos.screen_infos) {
+       display::DisplayUtil::DisableHdrAndHighBitDepth(&screen_info);
+     }
+diff --git a/ui/android/ui_android_features.cc b/ui/android/ui_android_features.cc
+index d8523daeb15..4f8bbdafa89 100644
+--- a/ui/android/ui_android_features.cc
++++ b/ui/android/ui_android_features.cc
+@@ -9,6 +9,7 @@
+ namespace ui {
+ 
+ BASE_FEATURE(kAndroidHDR, base::FEATURE_ENABLED_BY_DEFAULT);
++SET_CROMITE_FEATURE_DISABLED(kAndroidHDR);
+ 
+ BASE_FEATURE(kAndroidResourceMemoryOptimization,
+              base::FEATURE_DISABLED_BY_DEFAULT);

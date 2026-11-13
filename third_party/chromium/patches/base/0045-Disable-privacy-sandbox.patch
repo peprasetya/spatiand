@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sat, 13 Nov 2021 09:17:06 +0000
+Subject: [PATCH 045/310] Disable privacy sandbox
+
+Remove UI from the settings and set the flags to inactive
+Permanently removes FLoC support, disabling the download of LSH clusters,
+the marking the history navigation and the javascript API and permission policies.
+Also disable FirstPartySets and StorageAccessAPI.
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Disable-privacy-sandbox.patch
+---
+ chrome/browser/chrome_content_browser_client.cc           | 2 +-
+ .../first_party_sets/first_party_sets_policy_service.cc   | 2 ++
+ .../privacy_sandbox/privacy_sandbox_service_impl.cc       | 3 ++-
+ chrome/test/BUILD.gn                                      | 2 --
+ .../privacy_sandbox/privacy_sandbox_attestations/BUILD.gn | 6 ------
+ .../privacy_sandbox_attestations/preload/BUILD.gn         | 2 +-
+ .../privacy_sandbox_attestations.cc                       | 8 +++-----
+ components/privacy_sandbox/privacy_sandbox_features.cc    | 2 ++
+ components/privacy_sandbox/privacy_sandbox_prefs.cc       | 2 +-
+ content/public/browser/content_browser_client.cc          | 2 +-
+ .../common/features_cc/Disable-privacy-sandbox.inc        | 1 +
+ .../content_features_cc/Disable-privacy-sandbox.inc       | 1 +
+ .../public/cpp/features_cc/Disable-privacy-sandbox.inc    | 1 +
+ .../blink/common/features_cc/Disable-privacy-sandbox.inc  | 1 +
+ third_party/blink/common/features.cc                      | 1 +
+ 15 files changed, 18 insertions(+), 18 deletions(-)
+ create mode 100644 cromite_flags/content/common/features_cc/Disable-privacy-sandbox.inc
+ create mode 100644 cromite_flags/content/public/common/content_features_cc/Disable-privacy-sandbox.inc
+ create mode 100644 cromite_flags/services/network/public/cpp/features_cc/Disable-privacy-sandbox.inc
+ create mode 100644 cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc
+
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index fc34583652a..0e2124251ce 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -8829,7 +8829,7 @@ bool ChromeContentBrowserClient::ShouldDisableOriginAgentClusterDefault(
+ }
+ 
+ bool ChromeContentBrowserClient::WillProvidePublicFirstPartySets() {
+-  return !is_minimal_mode_ &&
++  return ((false)) && !is_minimal_mode_ &&
+          !base::CommandLine::ForCurrentProcess()->HasSwitch(
+              switches::kDisableComponentUpdate);
+ }
+diff --git a/chrome/browser/first_party_sets/first_party_sets_policy_service.cc b/chrome/browser/first_party_sets/first_party_sets_policy_service.cc
+index 218f2b6bd6b..aab8e615fc9 100644
+--- a/chrome/browser/first_party_sets/first_party_sets_policy_service.cc
++++ b/chrome/browser/first_party_sets/first_party_sets_policy_service.cc
+@@ -35,6 +35,7 @@ namespace {
+ using ServiceState = FirstPartySetsPolicyService::ServiceState;
+ 
+ ServiceState GetServiceState(Profile* profile, bool pref_enabled) {
++  if ((true)) return ServiceState::kPermanentlyDisabled;
+   if (profile->IsSystemProfile() || profile->IsGuestSession() ||
+       profile->IsOffTheRecord()) {
+     return ServiceState::kPermanentlyDisabled;
+@@ -78,6 +79,7 @@ void FirstPartySetsPolicyService::Init() {
+ 
+   service_state_ = GetServiceState(
+       profile, privacy_sandbox_settings_->AreRelatedWebsiteSetsEnabled());
++  service_state_ = ServiceState::kPermanentlyDisabled;
+ 
+   if (service_state_ == ServiceState::kPermanentlyDisabled ||
+       service_state_ == ServiceState::kDisabled) {
+diff --git a/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc b/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc
+index 1c195655807..1e8c06239ba 100644
+--- a/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc
++++ b/chrome/browser/privacy_sandbox/privacy_sandbox_service_impl.cc
+@@ -94,7 +94,7 @@ void PrivacySandboxServiceImpl::Shutdown() {
+ void PrivacySandboxServiceImpl::SetRelatedWebsiteSetsDataAccessEnabled(
+     bool enabled) {
+   pref_service_->SetBoolean(prefs::kPrivacySandboxRelatedWebsiteSetsEnabled,
+-                            enabled);
++                            false);
+ }
+ 
+ bool PrivacySandboxServiceImpl::IsRelatedWebsiteSetsDataAccessEnabled() const {
+@@ -155,6 +155,7 @@ void PrivacySandboxServiceImpl::RecordFirstPartySetsStateHistogram() {
+ }
+ 
+ void PrivacySandboxServiceImpl::LogPrivacySandboxState() {
++  if ((true)) return;
+   // Do not record metrics for non-regular profiles.
+   if (!IsRegularProfile(profile_type_)) {
+     return;
+diff --git a/chrome/test/BUILD.gn b/chrome/test/BUILD.gn
+index bbf9901ab10..ad077e9e35c 100644
+--- a/chrome/test/BUILD.gn
++++ b/chrome/test/BUILD.gn
+@@ -1031,8 +1031,6 @@ if (is_android) {
+       "//components/privacy_sandbox/privacy_sandbox_attestations",
+       "//components/privacy_sandbox/privacy_sandbox_attestations:metrics",
+       "//components/privacy_sandbox/privacy_sandbox_attestations:test_support",
+-      "//components/privacy_sandbox/privacy_sandbox_attestations/preload",
+-      "//components/privacy_sandbox/privacy_sandbox_attestations/preload:privacy_sandbox_attestations_assets",
+       "//components/privacy_sandbox/privacy_sandbox_attestations/proto",
+       "//components/qr_code_generator:bitmap_generator",
+       "//components/safe_browsing/content/common:interfaces",
+diff --git a/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn b/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn
+index 03a3029238a..36f4461b7c9 100644
+--- a/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn
++++ b/components/privacy_sandbox/privacy_sandbox_attestations/BUILD.gn
+@@ -25,12 +25,6 @@ if (use_blink) {
+       "//content/public/browser",
+     ]
+ 
+-    if (is_android) {
+-      deps += [
+-        "//components/privacy_sandbox/privacy_sandbox_attestations/preload",
+-      ]
+-    }
+-
+     public_deps = [
+       "//base",
+       "//build:buildflag_header_h",
+diff --git a/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn b/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn
+index 5ba7db227f5..2a786acc6e0 100644
+--- a/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn
++++ b/components/privacy_sandbox/privacy_sandbox_attestations/preload/BUILD.gn
+@@ -23,7 +23,7 @@ if (is_mac) {
+   }
+ }
+ 
+-if (is_android) {
++if (((false)) && is_android) {
+   import("//build/config/android/rules.gni")
+ 
+   # Bundle the preload attestations list to Android APK assets.
+diff --git a/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc b/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc
+index eb01eb911fe..90c1b46f1c8 100644
+--- a/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc
++++ b/components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.cc
+@@ -42,7 +42,7 @@
+ #include "net/base/schemeful_site.h"
+ #include "url/gurl.h"
+ 
+-#if BUILDFLAG(IS_ANDROID)
++#if ((false)) && BUILDFLAG(IS_ANDROID)
+ #include "base/android/apk_assets.h"
+ #include "base/containers/span.h"
+ #include "base/files/memory_mapped_file.h"
+@@ -107,7 +107,7 @@ LoadAttestationsInternal(base::FilePath installed_file_path) {
+   return ParseAttestationsMap(proto_str);
+ }
+ 
+-#if BUILDFLAG(IS_ANDROID)
++#if ((false)) && BUILDFLAG(IS_ANDROID)
+ 
+ void RecordLoadAPKAssetStatusHistogram(LoadAPKAssetStatus status) {
+   base::UmaHistogramEnumeration(kAttestationsLoadAPKAssetStatusUMA, status);
+@@ -433,8 +433,6 @@ void PrivacySandboxAttestations::OnAttestationsParsed(
+   if (attestations_map.has_value() &&
+       (!file_version_.IsValid() || file_version_.CompareTo(version) < 0)) {
+     // Parsing succeeded and the attestations file has newer version.
+-    file_version_ = std::move(version);
+-    attestations_map_ = std::move(attestations_map.value());
+   }
+ 
+   SetIsPreInstalled(is_pre_installed);
+@@ -460,7 +458,7 @@ void PrivacySandboxAttestations::OnAttestationsFileCheckComplete() {
+ // the in-memory attestations map.
+ // TODO(crbug.com/406020732): Consider also loading the attestations component
+ // from APK assets if the parsing has finished with error.
+-#if BUILDFLAG(IS_ANDROID)
++#if ((false)) && BUILDFLAG(IS_ANDROID)
+   if (attestations_parse_progress_ == Progress::kNotStarted &&
+       base::FeatureList::IsEnabled(
+           privacy_sandbox::kPrivacySandboxAttestationsLoadFromAPKAsset)) {
+diff --git a/components/privacy_sandbox/privacy_sandbox_features.cc b/components/privacy_sandbox/privacy_sandbox_features.cc
+index 11ff98e1357..7a061e6985a 100644
+--- a/components/privacy_sandbox/privacy_sandbox_features.cc
++++ b/components/privacy_sandbox/privacy_sandbox_features.cc
+@@ -24,4 +24,6 @@ BASE_FEATURE(kRelatedWebsiteSetsUi, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kPrivacySandboxAdPrivacyUxDeprecation,
+              base::FEATURE_ENABLED_BY_DEFAULT);
+ 
++SET_CROMITE_FEATURE_DISABLED(kEnforcePrivacySandboxAttestations);
++
+ }  // namespace privacy_sandbox
+diff --git a/components/privacy_sandbox/privacy_sandbox_prefs.cc b/components/privacy_sandbox/privacy_sandbox_prefs.cc
+index 3fad8a7681b..49705a9f6cf 100644
+--- a/components/privacy_sandbox/privacy_sandbox_prefs.cc
++++ b/components/privacy_sandbox/privacy_sandbox_prefs.cc
+@@ -23,7 +23,7 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+       prefs::kPrivacySandboxRelatedWebsiteSetsDataAccessAllowedInitialized,
+       false);
+   registry->RegisterBooleanPref(
+-      prefs::kPrivacySandboxRelatedWebsiteSetsEnabled, true,
++      prefs::kPrivacySandboxRelatedWebsiteSetsEnabled, false,  // must be disabled
+       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+ }
+ 
+diff --git a/content/public/browser/content_browser_client.cc b/content/public/browser/content_browser_client.cc
+index 92be4ef5f55..8ce3bac8508 100644
+--- a/content/public/browser/content_browser_client.cc
++++ b/content/public/browser/content_browser_client.cc
+@@ -1733,7 +1733,7 @@ bool ContentBrowserClient::ShouldPreconnectNavigation(
+ }
+ 
+ bool ContentBrowserClient::IsFirstPartySetsEnabled() {
+-  return true;
++  return false;
+ }
+ 
+ bool ContentBrowserClient::WillProvidePublicFirstPartySets() {
+diff --git a/cromite_flags/content/common/features_cc/Disable-privacy-sandbox.inc b/cromite_flags/content/common/features_cc/Disable-privacy-sandbox.inc
+new file mode 100644
+index 00000000000..4715caf4b09
+--- /dev/null
++++ b/cromite_flags/content/common/features_cc/Disable-privacy-sandbox.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_DISABLED(kPrivacySandboxAdsAPIsM1Override);
+diff --git a/cromite_flags/content/public/common/content_features_cc/Disable-privacy-sandbox.inc b/cromite_flags/content/public/common/content_features_cc/Disable-privacy-sandbox.inc
+new file mode 100644
+index 00000000000..1098fb520ad
+--- /dev/null
++++ b/cromite_flags/content/public/common/content_features_cc/Disable-privacy-sandbox.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_DISABLED(kPrivacySandboxAdsAPIsOverride);
+diff --git a/cromite_flags/services/network/public/cpp/features_cc/Disable-privacy-sandbox.inc b/cromite_flags/services/network/public/cpp/features_cc/Disable-privacy-sandbox.inc
+new file mode 100644
+index 00000000000..4bd8276f349
+--- /dev/null
++++ b/cromite_flags/services/network/public/cpp/features_cc/Disable-privacy-sandbox.inc
+@@ -0,0 +1 @@
++// empty file
+diff --git a/cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc b/cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc
+new file mode 100644
+index 00000000000..a31afd31476
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_cc/Disable-privacy-sandbox.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_DISABLED(kFencedFrames);
+diff --git a/third_party/blink/common/features.cc b/third_party/blink/common/features.cc
+index 8133ed5a78f..5c29d8e7ed6 100644
+--- a/third_party/blink/common/features.cc
++++ b/third_party/blink/common/features.cc
+@@ -2485,6 +2485,7 @@ BASE_FEATURE(kXrDevice, base::FEATURE_DISABLED_BY_DEFAULT);
+ // constants for features in the section above.
+ 
+ bool IsAllowURNsInIframeEnabled() {
++  if ((true)) return false; // see https://chromium-review.googlesource.com/c/chromium/src/+/3690741
+   return base::FeatureList::IsEnabled(blink::features::kAllowURNsInIframes);
+ }
+ 

@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sat, 28 Dec 2019 10:23:04 +0100
+Subject: [PATCH 181/310] Show site settings for cookies, javascript and ads
+
+Avoid displaying info about intrusive ads
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Show-site-settings-for-cookies-javascript-and-ads.patch
+---
+ .../core/browser/bromite_content_settings/javascript.inc      | 4 ++++
+ 1 file changed, 4 insertions(+)
+ create mode 100644 components/content_settings/core/browser/bromite_content_settings/javascript.inc
+
+diff --git a/components/content_settings/core/browser/bromite_content_settings/javascript.inc b/components/content_settings/core/browser/bromite_content_settings/javascript.inc
+new file mode 100644
+index 00000000000..9bfc38e3faf
+--- /dev/null
++++ b/components/content_settings/core/browser/bromite_content_settings/javascript.inc
+@@ -0,0 +1,4 @@
++  content_settings::WebsiteSettingsRegistry::GetInstance()
++    ->GetMutable(ContentSettingsType::JAVASCRIPT)
++    ->set_show_into_info_page()
++    .set_is_renderer_content_setting();

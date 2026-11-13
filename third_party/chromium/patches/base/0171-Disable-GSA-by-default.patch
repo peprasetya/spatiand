@@ -1,0 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 7 May 2023 14:01:56 +0000
+Subject: [PATCH 171/310] Disable GSA by default
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-GSA-by-default.patch
+---
+ .../android/chrome_feature_list_cc/Disable-GSA-by-default.inc    | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-GSA-by-default.inc
+
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-GSA-by-default.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-GSA-by-default.inc
+new file mode 100644
+index 00000000000..6798f58714e
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Disable-GSA-by-default.inc
+@@ -0,0 +1 @@
++SET_CROMITE_FEATURE_DISABLED(kExperimentsForAgsa);

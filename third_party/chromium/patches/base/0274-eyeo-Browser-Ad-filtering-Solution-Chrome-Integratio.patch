@@ -1,0 +1,484 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: chromium-sdk <project_26591639_bot@noreply.gitlab.com>
+Date: Fri, 14 Feb 2025 08:26:33 +0100
+Subject: [PATCH 274/310] eyeo Browser Ad filtering Solution: Chrome
+ Integration Module
+
+Based on Chromium 133.0.6943.49
+
+Pre-requisites: eyeo Browser Ad filtering Solution: Base Module
+FILE:eyeo-133.0.6943.49-chrome_integration.patch
+---
+ chrome/app/chrome_main_delegate.cc            |  7 ++++-
+ chrome/browser/BUILD.gn                       |  7 +++++
+ chrome/browser/adblock/README.md              |  3 ++
+ .../adblock_chrome_content_browser_client.cc  | 27 ++++++++++++++++
+ .../adblock_chrome_content_browser_client.h   | 31 +++++++++++++++++++
+ chrome/browser/chrome_browser_main.cc         |  8 +++++
+ chrome/browser/preferences/BUILD.gn           |  4 +++
+ .../prefs/chrome_pref_service_factory.cc      | 11 +++++++
+ ...hrome_browser_main_extra_parts_profiles.cc | 22 +++++++++++++
+ chrome/browser/resources/BUILD.gn             |  5 +++
+ chrome/browser/ui/BUILD.gn                    |  3 ++
+ chrome/browser/ui/prefs/pref_watcher.cc       | 13 ++++++++
+ chrome/browser/ui/tab_helpers.cc              | 12 +++++++
+ chrome/chrome_paks.gni                        |  5 +++
+ chrome/common/BUILD.gn                        |  3 ++
+ 15 files changed, 160 insertions(+), 1 deletion(-)
+ create mode 100644 chrome/browser/adblock/README.md
+ create mode 100644 chrome/browser/adblock/adblock_chrome_content_browser_client.cc
+ create mode 100644 chrome/browser/adblock/adblock_chrome_content_browser_client.h
+
+diff --git a/chrome/app/chrome_main_delegate.cc b/chrome/app/chrome_main_delegate.cc
+index 0ca4f22bed0..0492b797e0a 100644
+--- a/chrome/app/chrome_main_delegate.cc
++++ b/chrome/app/chrome_main_delegate.cc
+@@ -1,6 +1,10 @@
+ // Copyright 2012 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
++//
++// This source code is a part of eyeo Chromium SDK.
++// Use of this source code is governed by the GPLv3 that can be found in the
++// components/adblock/LICENSE file.
+ 
+ #include "chrome/app/chrome_main_delegate.h"
+ 
+@@ -41,6 +45,7 @@
+ #include "base/time/time.h"
+ #include "base/timer/timer.h"
+ #include "build/build_config.h"
++#include "chrome/browser/adblock/adblock_chrome_content_browser_client.h"
+ #include "chrome/common/buildflags.h"
+ #include "chrome/common/channel_info.h"
+ #include "chrome/common/chrome_constants.h"
+@@ -1898,7 +1903,7 @@ content::ContentBrowserClient*
+ ChromeMainDelegate::CreateContentBrowserClient() {
+ #if !defined(BUILDING_CHROME_RENDERER)
+   chrome_content_browser_client_ =
+-      std::make_unique<ChromeContentBrowserClient>();
++      std::make_unique<AdblockChromeContentBrowserClient>();
+ #if !BUILDFLAG(IS_ANDROID)
+   // Android does this in `ChromeMainDelegateAndroid::PreSandboxStartup`.
+   CHECK(sampling_profiler_);
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 34b9bf448de..04d78bac9e8 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1,6 +1,9 @@
+ # Copyright 2014 The Chromium Authors
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
++#
++# This source code is a part of eyeo Chromium SDK.
++# Use of this source code is governed by the GPLv3 that can be found in the components/adblock/LICENSE file.
+ 
+ import("//base/allocator/allocator.gni")
+ import("//build/buildflag_header.gni")
+@@ -999,6 +1002,8 @@ source_set("process_singleton_internal") {
+ source_set("core") {
+   sources = [
+     "about_flags.cc",
++    "adblock/adblock_chrome_content_browser_client.cc",
++    "adblock/adblock_chrome_content_browser_client.h",
+     "after_startup_task_utils.cc",
+     "browser_about_handler.cc",
+     "browser_process_impl.cc",
+@@ -2600,6 +2605,7 @@ source_set("browser") {
+     "//chrome/browser/visited_url_ranking:impl",
+     "//chrome/browser/vr",
+     "//chrome/browser/vr:impl",
++    "//components/adblock/content:browser",
+     "//components/certificate_transparency",
+     "//components/certificate_transparency:proto",
+     "//components/collaboration/internal",
+@@ -5327,6 +5333,7 @@ group("browser_public_dependencies") {
+     "//chrome/common/compose:mojo_bindings",
+     "//chrome/services/file_util/public/mojom",
+     "//components/account_id",
++    "//components/adblock/content:browser",
+     "//components/autofill/content/browser",
+     "//components/autofill/core/browser",
+     "//components/compose/core/browser:mojo_bindings",
+diff --git a/chrome/browser/adblock/README.md b/chrome/browser/adblock/README.md
+new file mode 100644
+index 00000000000..d096ec3e2d9
+--- /dev/null
++++ b/chrome/browser/adblock/README.md
+@@ -0,0 +1,3 @@
++This folder contains the OS-agnostic, Chrome-specific source code of eyeo Chromium SDK.
++
++For the full documentation, refer to [components/adblock](/components/adblock).
+diff --git a/chrome/browser/adblock/adblock_chrome_content_browser_client.cc b/chrome/browser/adblock/adblock_chrome_content_browser_client.cc
+new file mode 100644
+index 00000000000..c911980ccbd
+--- /dev/null
++++ b/chrome/browser/adblock/adblock_chrome_content_browser_client.cc
+@@ -0,0 +1,27 @@
++/*
++ * This file is part of eyeo Chromium SDK,
++ * Copyright (C) 2006-present eyeo GmbH
++ *
++ * eyeo Chromium SDK is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 3 as
++ * published by the Free Software Foundation.
++ *
++ * eyeo Chromium SDK is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "chrome/browser/adblock/adblock_chrome_content_browser_client.h"
++
++#include "chrome/browser/profiles/profile.h"
++
++content::BrowserContext*
++AdblockChromeContentBrowserClient::GetBrowserContextForEyeoFactories(
++    content::BrowserContext* current_browser_context) {
++  return Profile::FromBrowserContext(current_browser_context)
++      ->GetOriginalProfile();
++}
+diff --git a/chrome/browser/adblock/adblock_chrome_content_browser_client.h b/chrome/browser/adblock/adblock_chrome_content_browser_client.h
+new file mode 100644
+index 00000000000..a93a0ffa982
+--- /dev/null
++++ b/chrome/browser/adblock/adblock_chrome_content_browser_client.h
+@@ -0,0 +1,31 @@
++/*
++ * This file is part of eyeo Chromium SDK,
++ * Copyright (C) 2006-present eyeo GmbH
++ *
++ * eyeo Chromium SDK is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 3 as
++ * published by the Free Software Foundation.
++ *
++ * eyeo Chromium SDK is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with eyeo Chromium SDK.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef CHROME_BROWSER_ADBLOCK_ADBLOCK_CHROME_CONTENT_BROWSER_CLIENT_H_
++#define CHROME_BROWSER_ADBLOCK_ADBLOCK_CHROME_CONTENT_BROWSER_CLIENT_H_
++
++#include "chrome/browser/chrome_content_browser_client.h"
++#include "components/adblock/content/browser/adblock_content_browser_client.h"
++
++class AdblockChromeContentBrowserClient
++    : public adblock::AdblockContentBrowserClient<ChromeContentBrowserClient> {
++ private:
++  content::BrowserContext* GetBrowserContextForEyeoFactories(
++      content::BrowserContext* current_browser_context) override;
++};
++
++#endif  // CHROME_BROWSER_ADBLOCK_ADBLOCK_CHROME_CONTENT_BROWSER_CLIENT_H_
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index b1127d38e3a..6dcbe8c1908 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -1,6 +1,10 @@
+ // Copyright 2012 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
++//
++// This source code is a part of eyeo Chromium SDK.
++// Use of this source code is governed by the GPLv3 that can be found in the
++// components/adblock/LICENSE file.
+ 
+ #include "chrome/browser/chrome_browser_main.h"
+ 
+@@ -93,6 +97,7 @@
+ #include "chrome/common/profiler/thread_profiler_configuration.h"
+ #include "chrome/grit/branded_strings.h"
+ #include "chrome/installer/util/google_update_settings.h"
++#include "components/adblock/content/browser/adblock_web_ui_controller_factory.h"
+ #include "components/color/color_mixers.h"
+ #include "components/device_event_log/device_event_log.h"
+ #include "components/embedder_support/origin_trials/component_updater_utils.h"
+@@ -1903,8 +1908,11 @@ int ChromeBrowserMainParts::PreMainMessageLoopRunImpl() {
+   // Register WebUI configs before profile creation, so that profile-level
+   // prewarming has access to registered WebUI data sources. Also login manager
+   // on CrOS is called inside `PostProfileInit()`.
++
+   content::WebUIControllerFactory::RegisterFactory(
+       ChromeWebUIControllerFactory::GetInstance());
++  content::WebUIControllerFactory::RegisterFactory(
++      adblock::AdblockWebUIControllerFactory::GetInstance());
+   RegisterChromeWebUIConfigs();
+   RegisterChromeUntrustedWebUIConfigs();
+ 
+diff --git a/chrome/browser/preferences/BUILD.gn b/chrome/browser/preferences/BUILD.gn
+index 785dd414fb7..c06504600d4 100644
+--- a/chrome/browser/preferences/BUILD.gn
++++ b/chrome/browser/preferences/BUILD.gn
+@@ -1,6 +1,9 @@
+ # Copyright 2019 The Chromium Authors
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
++#
++# This source code is a part of eyeo Chromium SDK.
++# Use of this source code is governed by the GPLv3 that can be found in the components/adblock/LICENSE file.
+ 
+ import("//build/config/android/rules.gni")
+ import("//third_party/jni_zero/jni_zero.gni")
+@@ -54,6 +57,7 @@ java_cpp_strings("java_pref_names_srcjar") {
+     "//chrome/browser/new_tab_page/prefs/ntp_pref_names.h",
+     "//chrome/browser/ui/safety_hub/safety_hub_prefs.h",
+     "//chrome/common/pref_names.h",
++    "//components/adblock/core/common/adblock_prefs.cc",
+     "//components/autofill/core/common/autofill_prefs.h",
+     "//components/bookmarks/common/bookmark_pref_names.h",
+     "//components/commerce/core/pref_names.h",
+diff --git a/chrome/browser/prefs/chrome_pref_service_factory.cc b/chrome/browser/prefs/chrome_pref_service_factory.cc
+index 3c4ee9442dc..35eeab2d5f1 100644
+--- a/chrome/browser/prefs/chrome_pref_service_factory.cc
++++ b/chrome/browser/prefs/chrome_pref_service_factory.cc
+@@ -1,6 +1,10 @@
+ // Copyright 2012 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
++//
++// This source code is a part of eyeo Chromium SDK.
++// Use of this source code is governed by the GPLv3 that can be found in the
++// components/adblock/LICENSE file.
+ 
+ #include "chrome/browser/prefs/chrome_pref_service_factory.h"
+ 
+@@ -42,6 +46,7 @@
+ #include "chrome/common/pref_names.h"
+ #include "chrome/grit/branded_strings.h"
+ #include "chrome/grit/browser_resources.h"
++#include "components/adblock/core/common/adblock_prefs.h"
+ #include "components/component_updater/pref_names.h"
+ #include "components/policy/core/browser/configuration_policy_pref_store.h"
+ #include "components/pref_registry/pref_registry_syncable.h"
+@@ -196,6 +201,12 @@ const auto kTrackedPrefs = std::to_array<prefs::TrackedPreferenceMetadata>({
+      EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
+      ValueType::IMPERSONAL},
+ #endif
++    {100, adblock::common::prefs::kSubscriptionSignatures,
++     EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::SPLIT,
++     ValueType::IMPERSONAL},
++    {101, adblock::common::prefs::kLastUsedSchemaVersion,
++     EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
++     ValueType::IMPERSONAL}
+ 
+     // See note at top, new items added here also need to be added to
+     // histograms.xml's TrackedPreference enum.
+diff --git a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+index c3c4d89fd2c..550df9671ca 100644
+--- a/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
++++ b/chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.cc
+@@ -1,6 +1,10 @@
+ // Copyright 2013 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
++//
++// This source code is a part of eyeo Chromium SDK.
++// Use of this source code is governed by the GPLv3 that can be found in the
++// components/adblock/LICENSE file.
+ 
+ #include "chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.h"
+ 
+@@ -299,6 +303,15 @@
+ #include "chrome/browser/webid/federated_identity_permission_context_factory.h"
+ #include "chrome/common/buildflags.h"
+ #include "chrome/common/chrome_features.h"
++#include "components/adblock/content/browser/factories/adblock_request_throttle_factory.h"
++#include "components/adblock/content/browser/factories/adblock_telemetry_service_factory.h"
++#include "components/adblock/content/browser/factories/content_security_policy_injector_factory.h"
++#include "components/adblock/content/browser/factories/element_hider_factory.h"
++#include "components/adblock/content/browser/factories/resource_classification_runner_factory.h"
++#include "components/adblock/content/browser/factories/session_stats_factory.h"
++#include "components/adblock/content/browser/factories/sitekey_storage_factory.h"
++#include "components/adblock/content/browser/factories/subscription_persistent_metadata_factory.h"
++#include "components/adblock/content/browser/factories/subscription_service_factory.h"
+ #include "components/autofill/content/browser/autofill_log_router_factory.h"
+ #include "components/breadcrumbs/core/breadcrumbs_status.h"
+ #include "components/captive_portal/core/buildflags.h"
+@@ -1036,6 +1049,15 @@ void ChromeBrowserMainExtraPartsProfiles::
+   FederatedIdentityApiPermissionContextFactory::GetInstance();
+   FederatedIdentityAutoReauthnPermissionContextFactory::GetInstance();
+   FederatedIdentityPermissionContextFactory::GetInstance();
++  adblock::AdblockTelemetryServiceFactory::GetInstance();
++  adblock::AdblockRequestThrottleFactory::GetInstance();
++  adblock::ContentSecurityPolicyInjectorFactory::GetInstance();
++  adblock::ElementHiderFactory::GetInstance();
++  adblock::ResourceClassificationRunnerFactory::GetInstance();
++  adblock::SessionStatsFactory::GetInstance();
++  adblock::SitekeyStorageFactory::GetInstance();
++  adblock::SubscriptionPersistentMetadataFactory::GetInstance();
++  adblock::SubscriptionServiceFactory::GetInstance();
+ #if BUILDFLAG(IS_ANDROID)
+   feed::FeedServiceFactory::GetInstance();
+ #endif
+diff --git a/chrome/browser/resources/BUILD.gn b/chrome/browser/resources/BUILD.gn
+index b0e80f7a4d8..22ead749dc2 100644
+--- a/chrome/browser/resources/BUILD.gn
++++ b/chrome/browser/resources/BUILD.gn
+@@ -1,6 +1,9 @@
+ # Copyright 2014 The Chromium Authors
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
++#
++# This source code is a part of eyeo Chromium SDK.
++# Use of this source code is governed by the GPLv3 that can be found in the components/adblock/LICENSE file.
+ 
+ import("//build/config/chrome_build.gni")
+ import("//chrome/browser/buildflags.gni")
+@@ -437,6 +440,7 @@ group("dev_ui_resources") {
+     "subresource_filter:resources",
+     "suggest_internals:resources",
+     "usb_internals:resources",
++    "//components/adblock/content/resources/adblock_internals:resources",
+     "//components/actor/core/internals/resources",
+     "//components/autofill/core/browser/autofill_and_password_manager_internals:resources",
+     "//components/commerce/core/internals/resources",
+@@ -530,6 +534,7 @@ repack("dev_ui_paks") {
+     "$root_gen_dir/chrome/subresource_filter_internals_resources.pak",
+     "$root_gen_dir/chrome/suggest_internals_resources.pak",
+     "$root_gen_dir/chrome/usb_internals_resources.pak",
++    "$root_gen_dir/components/adblock_internals_resources.pak",
+     "$root_gen_dir/components/actor_internals_resources.pak",
+     "$root_gen_dir/components/autofill_and_password_manager_internals_resources.pak",
+     "$root_gen_dir/components/commerce_internals_resources.pak",
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index a1b3ac5a156..d7183a19244 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1,6 +1,9 @@
+ # Copyright 2014 The Chromium Authors
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
++#
++# This source code is a part of eyeo Chromium SDK.
++# Use of this source code is governed by the GPLv3 that can be found in the components/adblock/LICENSE file.
+ 
+ import("//build/config/buildflags_paint_preview.gni")
+ import("//build/config/chrome_build.gni")
+diff --git a/chrome/browser/ui/prefs/pref_watcher.cc b/chrome/browser/ui/prefs/pref_watcher.cc
+index 6f0d75db4a5..3de4c7e6a04 100644
+--- a/chrome/browser/ui/prefs/pref_watcher.cc
++++ b/chrome/browser/ui/prefs/pref_watcher.cc
+@@ -1,6 +1,10 @@
+ // Copyright 2018 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
++//
++// This source code is a part of eyeo Chromium SDK.
++// Use of this source code is governed by the GPLv3 that can be found in the
++// components/adblock/LICENSE file.
+ 
+ #include "chrome/browser/ui/prefs/pref_watcher.h"
+ 
+@@ -19,6 +23,7 @@
+ #include "chrome/browser/renderer_preferences_util.h"
+ #include "chrome/browser/ui/prefs/prefs_tab_helper.h"
+ #include "chrome/common/pref_names.h"
++#include "components/adblock/core/common/adblock_prefs.h"
+ #include "components/autofill/core/common/autofill_prefs.h"
+ #include "components/keyed_service/core/keyed_service.h"
+ #include "components/language/core/browser/pref_names.h"
+@@ -92,6 +97,14 @@ const char* const kWebPrefsToObserve[] = {
+ #endif
+     prefs::kPageColorsBlockList,
+     prefs::kXSLTDeprecationBannerSuppressed,
++
++    adblock::common::prefs::kAdblockAllowedDomainsLegacy,
++    adblock::common::prefs::kAdblockCustomFiltersLegacy,
++    adblock::common::prefs::kAdblockCustomSubscriptionsLegacy,
++    adblock::common::prefs::kAdblockSubscriptionsLegacy,
++    adblock::common::prefs::kEnableAcceptableAdsLegacy,
++    adblock::common::prefs::kEnableAdblockLegacy,
++
+ };
+ 
+ }  // namespace
+diff --git a/chrome/browser/ui/tab_helpers.cc b/chrome/browser/ui/tab_helpers.cc
+index 9725e8f2f97..4c3b87ffb59 100644
+--- a/chrome/browser/ui/tab_helpers.cc
++++ b/chrome/browser/ui/tab_helpers.cc
+@@ -1,6 +1,10 @@
+ // Copyright 2014 The Chromium Authors
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
++//
++// This source code is a part of eyeo Chromium SDK.
++// Use of this source code is governed by the GPLv3 that can be found in the
++// components/adblock/LICENSE file.
+ 
+ #include "chrome/browser/ui/tab_helpers.h"
+ 
+@@ -30,6 +34,8 @@
+ #include "chrome/common/buildflags.h"
+ #include "chrome/common/chrome_features.h"
+ #include "chrome/common/chrome_switches.h"
++#include "components/adblock/content/browser/adblock_webcontents_observer.h"
++#include "components/adblock/content/browser/factories/embedding_utils.h"
+ #include "components/dom_distiller/core/dom_distiller_features.h"
+ #include "components/enterprise/buildflags/buildflags.h"
+ #include "components/infobars/content/content_infobar_manager.h"
+@@ -101,6 +107,12 @@ void TabHelpers::AttachTabHelpers(WebContents* web_contents,
+       Profile::FromBrowserContext(web_contents->GetBrowserContext());
+ 
+   // --- Section 1: Common tab helpers ---
++
++  auto* original_profile = profile->GetOriginalProfile();
++  adblock::EnsureBackgroundServicesStarted(original_profile);
++  adblock::RegisterAdblockWebContentObserver<
++      adblock::AdblockWebContentObserver>(web_contents, original_profile);
++
+   // AutofillClientProvider initializes ContentAutofillClient for web_contents,
+   // which is gated by enable_browser_autofill.
+   if (enable_browser_autofill) {
+diff --git a/chrome/chrome_paks.gni b/chrome/chrome_paks.gni
+index 1ecc282a881..378a50efcb0 100644
+--- a/chrome/chrome_paks.gni
++++ b/chrome/chrome_paks.gni
+@@ -1,6 +1,9 @@
+ # Copyright 2016 The Chromium Authors
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
++#
++# This source code is a part of eyeo Chromium SDK.
++# Use of this source code is governed by the GPLv3 that can be found in the components/adblock/LICENSE file.
+ 
+ import("//ash/ambient/resources/resources.gni")
+ import("//build/config/chrome_build.gni")
+@@ -130,6 +133,7 @@ template("chrome_extra_paks") {
+       "$root_gen_dir/chrome/glic_experimental_opt_in_resources.pak",
+       "$root_gen_dir/chrome/glic_resources.pak",
+       "$root_gen_dir/chrome/saved_tab_groups_unsupported_resources.pak",
++      "$root_gen_dir/components/adblock/core/resources/adblock_resources.pak",
+       "$root_gen_dir/components/autofill/core/browser/geo/autofill_address_rewriter_resources.pak",
+       "$root_gen_dir/components/autofill/core/browser/geo/autofill_alternative_state_name_map_resources.pak",
+       "$root_gen_dir/components/chrome_urls_resources.pak",
+@@ -177,6 +181,7 @@ template("chrome_extra_paks") {
+       "//chrome/browser/glic/resources:browser_resources",
+       "//chrome/browser/resources",
+       "//chrome/common:resources",
++      "//components/adblock/core/resources:adblock_resources",
+       "//components/resources",
+       "//content:content_resources",
+       "//content/browser/resources",
+diff --git a/chrome/common/BUILD.gn b/chrome/common/BUILD.gn
+index cb68f1cb0c2..90ee1e0fe4c 100644
+--- a/chrome/common/BUILD.gn
++++ b/chrome/common/BUILD.gn
+@@ -1,6 +1,9 @@
+ # Copyright 2014 The Chromium Authors
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
++#
++# This source code is a part of eyeo Chromium SDK.
++# Use of this source code is governed by the GPLv3 that can be found in the components/adblock/LICENSE file.
+ 
+ import("//build/buildflag_header.gni")
+ import("//build/config/chrome_build.gni")

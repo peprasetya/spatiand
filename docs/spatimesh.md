@@ -8,7 +8,7 @@ and at its end what has been built of it.
 
 | Platform | Engine | Where it comes from |
 |---|---|---|
-| Linux, the Deck | **Chromium** with Cromite's patches and ours (`third_party/chromium`) | `~/spatiand-chromium`, packaged on its own |
+| Linux, the Deck | **Chromium** with Spatiand's patches, Cromite's among them (`third_party/chromium`, "The monthly update" below) | `~/spatiand-chromium`, packaged on its own |
 | Android (Beam Pro) | **Chromium, the Deck's**, built for Android's libc (2026-11-08; "SpatiMesh for Android" below) | in the APK, `libspatimesh_chromium.so` and its resources |
 | Mac | **Chromium, being ported** (`CHROMIUM_TARGET=mac`, docs/mac-plan.md); none until then | -- |
 
@@ -311,6 +311,60 @@ Settings has no Default browser page: the room decides what opens links. Adblock
 security, where it shows without scrolling the menu. Cromite's firewall (`services/firewall/tools/rules.xml`)
 lets only listed downloads out; the spell-check dictionary is listed now, so it fetches from Google's
 `redirector.gvt1.com` once per language (patch 0015).
+
+## The monthly update (from 2026-11-14)
+
+**SpatiMesh is on Chromium 157.0.8103.78 on all three systems, and its patches are Spatiand's own**
+(the owner, 2026-11-13: Cromite had stopped at 153 on 2026-09-15, and he would not wait for it;
+meanwhile 157 mended a hole in use against people, CVE-2026-125350). What was taken over from
+Cromite, what was left, and how the patches are kept: `third_party/chromium/patches/README.md`.
+Every month the version moves to the newest stable Chromium, the same one on the Deck, the Beam Pro
+and the Mac.
+
+**Which version:** Linux's stable, on the day (chromiumdash.appspot.com, channel Stable). Termux's
+changes for Android's libc (`android-libc/termux`) must be for the same major version: if Termux is
+a version behind, the update waits for it or carries those 70 itself.
+
+**The steps**, each on all three before the next is called done:
+
+1. *The tree.* `gclient` syncs the trees that are there to the new tag (the patches are commits in
+   the tree and in four of its dependencies; set those aside, sync, put them back). A fresh fetch
+   is `build.sh <work> fetch`: about an hour and 30 GB a tree. The Mac's checkout leaves out the
+   Linux-only sources (libwayland, wayland-protocols, libdrm, minigbm, libsync, lss, fontconfig,
+   cros_system_api): copied from the Linux tree of the same version.
+2. *The patches carried*, in a worktree (`third_party/chromium/rebase/`): `drive.sh`, then the
+   conflicts by hand, every one written down; then **`audit.py`**: no patch may have lost a file
+   without a line that says why. The Mac's port (`mac/wip`) the same way with `applyeach.py`, and
+   `mac/gn-ui.py` run again over the new build files. Android's (`android-libc`) with `patch`, in
+   order.
+3. *Built* on Linux first, past every error (`-k 0`), each fix to the patch's intent and written
+   down; then Android and the Mac with Linux's fixes already in. A fix in shared code goes to all
+   three trees.
+4. *Compared with the version in use*, in each system's test room, never on the owner's data: the
+   Deck's (`tools/chromium-test`), the Mac's (`tools/spatimesh-mac-test`), the Beam Pro's without
+   an install (its notes in `android-libc/README.md`). At least: starting with a clean log, pages,
+   every codec, the privacy values, ad blocking, every Settings page (they are where carried hunks
+   go quietly wrong), the shared folder's profiles and bookmarks, passwords against the stand-in
+   service. A failed check does not stop an official build: read the log for `Check failed`.
+5. *Written back:* each fix given to the patch that owns its file (`attribute.py`, autosquash),
+   the patch files made again from the tree, and **applied to a clean checkout to see that they
+   give the same tree**. `CHROMIUM_VERSION` in `build.sh`; this page.
+6. *Installed* on the three, the version before kept beside it until the owner has used the new
+   one.
+
+**The first carry, 153 to 157 (2026-11-13/14):** 310 patches carried, 305 files written (five had
+only been changes in dependencies or were mended upstream). Found on the way and mended: the
+settings sync set the default search engine from inside the search service's own notification,
+which 157 checks at every start; **every Settings page on the Mac ended its tab**, on 153 as well,
+for two strings Cromite's "clear data on exit" defines for Windows and Linux only and its page
+names everywhere (very likely the owner's Settings fault, which the Deck never showed, since there
+they exist); the build's generated flag lists, stale after a patch added to them. In the test rooms
+157 gave what 153 gives on the Deck, the Mac and (headless) the Beam Pro. Not seen by anyone in the
+glasses yet. Left as they are, for the owner: the ad blocker's lists still come from Cromite's
+pages; Chromium 157 reads a kind of HDR metadata track (ITU-T T.35) through an FFmpeg newer than
+Spatiand's 9.0.2, so that track is skipped; 157's on-device model switch is one with its
+server-side one, so Cromite's line that turned the first off is gone with the feature it named;
+HEVC goes to VA-API on the Deck on both versions, though this page says it never does.
 
 ## Three kinds of process
 

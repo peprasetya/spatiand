@@ -1,25 +1,25 @@
-From 5ac0f67ad69e22c1e3c76fc3abe323db935f5866 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Spatiand build <claude@prasetya.id>
 Date: Fri, 30 Oct 2026 22:25:27 +0700
-Subject: [PATCH] Spatiand: a profile lock set, changed and locked from the
- profile menu, and opened by a finger; nothing of Google in Settings
+Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
+ the profile menu, and opened by a finger; nothing of Google in Settings
 
 ---
  chrome/app/settings_strings.grdp              |   2 +-
  chrome/browser/BUILD.gn                       |   1 +
- .../settings/people_page/people_page.html     |  90 +-----
+ .../settings/people_page/people_page.html.ts  |  89 +-----
  .../browser/spatiand/profile_lock_dialog.cc   | 282 ++++++++++++++++--
  chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
  chrome/browser/spatiand/profiles_sync.cc      | 136 ++++++++-
  chrome/browser/spatiand/profiles_sync.h       |  22 ++
  .../ui/views/profiles/profile_menu_view.cc    |  30 ++
- 8 files changed, 471 insertions(+), 110 deletions(-)
+ 8 files changed, 470 insertions(+), 110 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
-index fa76986f98..99832bec12 100644
+index a803c69e262..acb5857c524 100644
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -3607,7 +3607,7 @@ Please note that it only applies to the states of California (under CCPA and CPR
+@@ -3650,7 +3650,7 @@ Please note that it only applies to the states of California (under CCPA and CPR
  
      <!-- Sync / People Page -->
      <message name="IDS_SETTINGS_PEOPLE" desc="Name of the settings page which manages the user's relationship to Google.">
@@ -29,10 +29,10 @@ index fa76986f98..99832bec12 100644
      <message name="IDS_SETTINGS_CHANGE_PICTURE_PROFILE_PHOTO" desc="The text on the Google profile photo of the user.">
        Google Profile photo
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 4ad6593b83..593573cbd2 100644
+index 0a379630b4e..4aa5d41e98a 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -1243,6 +1243,7 @@ source_set("core") {
+@@ -1414,6 +1414,7 @@ source_set("core") {
      "//components/site_engagement/core/mojom:mojo_bindings",
      "//components/site_isolation",
      "//components/skills:features",
@@ -40,123 +40,131 @@ index 4ad6593b83..593573cbd2 100644
      "//components/spellcheck:buildflags",
      "//components/spellcheck/browser",
      "//components/spellcheck/common",
-diff --git a/chrome/browser/resources/settings/people_page/people_page.html b/chrome/browser/resources/settings/people_page/people_page.html
-index b76edfc2ac..a5d36ca00d 100644
---- a/chrome/browser/resources/settings/people_page/people_page.html
-+++ b/chrome/browser/resources/settings/people_page/people_page.html
-@@ -73,44 +73,6 @@
-     <settings-section page-title="$i18n{peoplePageTitle}">
+diff --git a/chrome/browser/resources/settings/people_page/people_page.html.ts b/chrome/browser/resources/settings/people_page/people_page.html.ts
+index b3303085acf..40179b1d958 100644
+--- a/chrome/browser/resources/settings/people_page/people_page.html.ts
++++ b/chrome/browser/resources/settings/people_page/people_page.html.ts
+@@ -4,8 +4,6 @@
+ 
+ import {html} from '//resources/lit/v3_0/lit.rollup.js';
+ 
+-import {ChromeSigninAccessPoint} from '/shared/settings/people_page/sync_browser_proxy.js';
+-
+ import type {SettingsPeoplePageElement} from './people_page.js';
+ 
+ export function getHtml(this: SettingsPeoplePageElement) {
+@@ -13,42 +11,6 @@ export function getHtml(this: SettingsPeoplePageElement) {
+ <settings-section page-title="$i18n{peoplePageTitle}">
        <div>
  
 -<if expr="not is_chromeos">
--        <template is="dom-if" if="[[shouldShowSyncAccountControl_(
--            syncStatus.syncSystemEnabled, syncStatus.signedInStatus)]]" restamp>
+-        ${this.shouldShowSyncAccountControl_() ? html`
 -          <settings-sync-account-control
--              sync-status="[[syncStatus]]"
+-              .syncStatus="${this.syncStatus!}"
 -              promo-label-with-account="$i18n{peopleSignInPrompt}"
 -              promo-label-with-no-account="$i18n{peopleSignInPrompt}"
 -              promo-secondary-label-with-account=
 -                  "$i18n{peopleSignInPromptSecondaryWithAccount}"
 -              promo-secondary-label-with-no-account=
 -                  "$i18n{peopleSignInPromptSecondaryWithNoAccount}"
--              access-point="[[accessPointEnum_.SETTINGS]]">
+-              .accessPoint="${ChromeSigninAccessPoint.SETTINGS}">
 -          </settings-sync-account-control>
--        </template>
+-        ` : ''}
 -
--        <template is="dom-if" if="[[shouldLinkToProfileRow_(
--            syncStatus.syncSystemEnabled, signinAllowed_,
--            syncStatus.signedInState)]]" restamp>
+-        ${this.shouldLinkToProfileRow_() ? html`
 -          <div id="profile-row" class="cr-row first two-line"
--              actionable$="[[isProfileActionable_]]"
--              on-click="onProfileClick_">
--            <template is="dom-if" if="[[syncStatus]]">
+-              ?actionable="${this.isProfileActionable_}"
+-              @click="${this.onProfileClick_}">
+-            ${this.syncStatus ? html`
 -              <div id="profile-icon"
--                  style="background-image: [[getIconImageSet_(
--                      profileIconUrl_)]]">
+-                  style="background-image: ${this.getIconImageSet_(
+-                      this.profileIconUrl_)}">
 -              </div>
 -              <div class="flex cr-row-gap cr-padded-text text-elide">
--                <span id="profile-name">[[profileName_]]</span>
+-                <span id="profile-name">${this.profileName_}</span>
 -              </div>
 -              <cr-icon-button class="subpage-arrow"
 -                  aria-label="$i18n{editPerson}"
 -                  aria-describedby="profile-name"
 -                  aria-roledescription="$i18n{subpageArrowRoleDescription}">
 -              </cr-icon-button>
--            </template>
+-            ` : ''}
 -          </div>
--        </template>
+-        ` : ''}
 -</if>
- 
+-
  <if expr="is_chromeos">
-         <template is="dom-if" if="[[!shouldLinkToAccountSettingsPage_(
-@@ -139,60 +101,18 @@
-         </template>
+         ${!this.shouldLinkToAccountSettingsPage_() ? html`
+           <div id="profile-row" class="cr-row first two-line"
+@@ -76,62 +38,19 @@ export function getHtml(this: SettingsPeoplePageElement) {
+         ` : ''}
  </if>
  
 -        <!-- Shared Elements -->
 -        <cr-link-row id="account-subpage-row" class="cr-row first"
--            on-click="onAccountClick_"
--            label="[[primaryAccountName_]]"
--            sub-label="[[getAccountRowSubtitle_(primaryAccountEmail_, syncStatus)]]"
+-            @click="${this.onAccountClick_}"
+-            .label="${this.primaryAccountName_}"
+-            .subLabel="${this.getAccountRowSubtitle_()}"
 -            role-description="$i18n{subpageArrowRoleDescription}"
 -            button-aria-description="$i18n{accountPageTitle}"
--            hidden="[[!shouldLinkToAccountSettingsPage_(
--              syncStatus.signedInState)]]">
+-            ?hidden="${!this.shouldLinkToAccountSettingsPage_()}">
 -          <div id="profile-icon"
--              style="background-image: [[getIconImageSet_(
--                  primaryAccountIconUrl_)]]">
+-              style="background-image: ${this.getIconImageSet_(
+-                  this.primaryAccountIconUrl_)}">
 -          </div>
 -        </cr-link-row>
 -
 -        <cr-link-row id="sync-setup"
 -            label="$i18n{syncAndNonPersonalizedServices}"
--            sub-label="[[getSyncAndNonPersonalizedServicesSubtext_(syncStatus)]]"
--            on-click="onSyncClick_"
+-            .subLabel="${this.getSyncAndNonPersonalizedServicesSubtext_()}"
+-            @click="${this.onSyncClick_}"
 -            role-description="$i18n{subpageArrowRoleDescription}"
--            hidden="[[shouldHideSyncSetupLinkRow_(syncStatus)]]">
+-            ?hidden="${this.shouldHideSyncSetupLinkRow_()}">
 -        </cr-link-row>
--
+ 
 -        <cr-link-row id="google-services"
 -            label="$i18n{googleServicesPageTitle}"
--            on-click="onGoogleServicesClick_"
+-            @click="${this.onGoogleServicesClick_}"
 -            role-description="$i18n{subpageArrowRoleDescription}"
--            hidden="[[!shouldHideSyncSetupLinkRow_(syncStatus)]]">
+-            ?hidden="${!this.shouldHideSyncSetupLinkRow_()}">
 -        </cr-link-row>
-+
-+
  
  <if expr="not is_chromeos">
--        <template is="dom-if" if="[[signinAllowed_]]">
+-        ${this.signinAllowed_ ? html`
 -          <cr-link-row id="manage-google-account"
 -              label="$i18n{manageGoogleAccount}"
--              hidden="[[!shouldShowGoogleAccount_]]"
--              on-click="openGoogleAccount_" external></cr-link-row>
+-              ?hidden="${!this.shouldShowGoogleAccount_}"
+-              @click="${this.onGoogleAccountClick_}" external>
+-          </cr-link-row>
 -
 -          <cr-link-row id="edit-profile"
 -              label="$i18n{profileNameAndPicture}"
--              on-click="onProfileClick_" ></cr-link-row>
--        </template>
+-              @click="${this.onProfileClick_}">
+-          </cr-link-row>
+-        ` : ''}
 +        <cr-link-row id="edit-profile" class="first"
 +            label="$i18n{profileNameAndPicture}"
-+            on-click="onProfileClick_"></cr-link-row>
++            @click="${this.onProfileClick_}">
++        </cr-link-row>
  
          <cr-link-row id="importDataDialogTrigger"
              label="$i18n{importTitle}"
-             on-click="onImportDataClick_"></cr-link-row>
+             @click="${this.onImportDataClick_}">
+         </cr-link-row>
  
--        <template is="dom-if" if="[[isDasherlessProfile_]]">
+-        ${this.isDasherlessProfile_ ? html`
 -          <div id="sync-not-allowed" class="cr-row continuation">
 -            <cr-icon id="info-icon" icon="cr:info"></cr-icon>
 -            <div id="sync-not-allowed-text" class="flex cr-padded-text">
 -              $i18n{syncUnavailableForNonGoogleAccount}
 -            </div>
 -          </div>
--        </template>
+-        ` : ''}
  </if>
  
        </div>
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
-index 2acc69b61a..160c2f0dcc 100644
+index 2acc69b61af..160c2f0dccf 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.cc
 +++ b/chrome/browser/spatiand/profile_lock_dialog.cc
 @@ -3,6 +3,7 @@
@@ -531,7 +539,7 @@ index 2acc69b61a..160c2f0dcc 100644
        ->Show();
  }
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.h b/chrome/browser/spatiand/profile_lock_dialog.h
-index 2350d3f843..3c8938fd50 100644
+index 2350d3f8434..3c8938fd503 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.h
 +++ b/chrome/browser/spatiand/profile_lock_dialog.h
 @@ -11,14 +11,28 @@
@@ -566,7 +574,7 @@ index 2350d3f843..3c8938fd50 100644
  
  #endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
 diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
-index b90c819ccb..443e40ab5a 100644
+index b90c819ccb0..443e40ab5ac 100644
 --- a/chrome/browser/spatiand/profiles_sync.cc
 +++ b/chrome/browser/spatiand/profiles_sync.cc
 @@ -25,6 +25,9 @@
@@ -747,7 +755,7 @@ index b90c819ccb..443e40ab5a 100644
    }
    // Not opened: its waiting windows go, never having been seen.
 diff --git a/chrome/browser/spatiand/profiles_sync.h b/chrome/browser/spatiand/profiles_sync.h
-index 464c9166ca..9c79c611de 100644
+index 464c9166cab..9c79c611de5 100644
 --- a/chrome/browser/spatiand/profiles_sync.h
 +++ b/chrome/browser/spatiand/profiles_sync.h
 @@ -25,6 +25,10 @@
@@ -801,7 +809,7 @@ index 464c9166ca..9c79c611de 100644
  
    base::ScopedObservation<ProfileAttributesStorage, ProfileAttributesStorage::Observer>
 diff --git a/chrome/browser/ui/views/profiles/profile_menu_view.cc b/chrome/browser/ui/views/profiles/profile_menu_view.cc
-index 1a49d286b6..176f91baee 100644
+index d30e925c6b8..b7c81171812 100644
 --- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
 +++ b/chrome/browser/ui/views/profiles/profile_menu_view.cc
 @@ -4,6 +4,8 @@
@@ -813,7 +821,7 @@ index 1a49d286b6..176f91baee 100644
  #include <algorithm>
  #include <optional>
  #include <string>
-@@ -1266,6 +1268,20 @@ void ProfileMenuView::BuildFeatureButtons() {
+@@ -1226,6 +1228,20 @@ void ProfileMenuView::BuildFeatureButtons() {
    BuildAutofillSettingsButton();
    MaybeBuildManageGoogleAccountButton();
    BuildCustomizeProfileButton();
@@ -831,10 +839,10 @@ index 1a49d286b6..176f91baee 100644
 +            base::Unretained(this), path),
 +        vector_icons::kLockIcon);
 +  }
-   (syncer::IsReplaceSyncPromosWithSignInPromosEnabled() &&
-    (!identity_manager ||
-     !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync)))
-@@ -1425,4 +1441,18 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
+   (!identity_manager ||
+    !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync))
+       ? MaybeBuildChromeAccountSettingsButton()
+@@ -1381,4 +1397,18 @@ void ProfileMenuView::BuildProfileManagementFeatureButtons() {
        l10n_util::GetStringUTF16(IDS_PROFILE_MENU_MANAGE_PROFILES),
        base::BindRepeating(&ProfileMenuView::OnManageProfilesButtonClicked,
                            base::Unretained(this)));
@@ -853,6 +861,3 @@ index 1a49d286b6..176f91baee 100644
 +            base::Unretained(this)));
 +  }
  }
--- 
-2.53.0
-

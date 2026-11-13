@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Zoraver Kang <Zoraver@users.noreply.github.com>
+Date: Sat, 15 Jan 2022 13:34:33 -0500
+Subject: [PATCH 106/310] disable appending variations header
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:disable-appending-variations-header.patch
+---
+ components/variations/net/variations_http_headers.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/components/variations/net/variations_http_headers.cc b/components/variations/net/variations_http_headers.cc
+index c20f10baac2..2317607bed9 100644
+--- a/components/variations/net/variations_http_headers.cc
++++ b/components/variations/net/variations_http_headers.cc
+@@ -132,7 +132,7 @@ bool ShouldAppendVariationsHeader(const GURL& url, InIncognito incognito) {
+   //         exactly www.googleadservices.com or
+   //         international TLD domains *.google.<TLD> or *.youtube.<TLD>.
+   // 2. Only transmit for non-Incognito profiles.
+-  return incognito == InIncognito::kNo &&
++  return ((false)) && incognito == InIncognito::kNo &&
+          GetUrlValidationResult(url) == URLValidationResult::kShouldAppend;
+ }
+ 

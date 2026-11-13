@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 5 Nov 2023 18:05:19 +0000
+Subject: [PATCH 205/310] Disable Service and Shared workers on 3P iframe
+
+Disabled by default due https://bugs.chromium.org/p/chromium/issues/detail?id=1147281
+Workers can be reenabled per top-site-url using "Allow 3P Cookies"
+("Block 3P Cookies" in ui to off) in site settings
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Disable-Service-and-Shared-workers-on-3P-iframe.patch
+---
+ .../embedder_support/content_settings_utils.cc | 18 +++++++++++++++---
+ 1 file changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/components/embedder_support/content_settings_utils.cc b/components/embedder_support/content_settings_utils.cc
+index 28a394216b7..9e713edfa4c 100644
+--- a/components/embedder_support/content_settings_utils.cc
++++ b/components/embedder_support/content_settings_utils.cc
+@@ -36,7 +36,9 @@ bool AllowWorkerStorageAccess(
+           ? storage_key.origin()
+           : url::Origin::Create(storage_key.top_level_site().GetURL());
+ 
+-  bool allow = cookie_settings->IsAnyStorageAccessAllowed(
++  // Cromite: full cookie access only; no partitioned-storage or
++  // --test-third-party-cookie-phaseout fallback for workers.
++  bool allow = cookie_settings->IsFullCookieAccessAllowed(
+       url, storage_key.ToNetSiteForCookies(), top_frame_origin,
+       net::CookieSettingOverrides(), storage_key.ToCookiePartitionKey());
+ 
+@@ -74,10 +76,15 @@ content::AllowServiceWorkerResult AllowServiceWorker(
+   // Check if cookies/storage are allowed.
+   // TODO(crbug.com/40247160): Consider whether the following check should
+   // also consider the third-party cookie user bypass override.
+-  bool allow_cookies = cookie_settings->IsAnyStorageAccessAllowed(
++  bool allow_cookies = cookie_settings->IsFullCookieAccessAllowed(
+       scope, site_for_cookies, top_frame_origin, net::CookieSettingOverrides(),
+       storage_key.ToCookiePartitionKey());
+ 
++  if (!allow_cookies && (!top_frame_origin.has_value() ||
++                         !top_frame_origin->IsSameOriginWith(scope))) {
++    return content::AllowServiceWorkerResult::No();
++  }
++
+   return content::AllowServiceWorkerResult::FromPolicy(!allow_javascript,
+                                                        !allow_cookies);
+ }
+@@ -92,10 +99,15 @@ bool AllowSharedWorker(
+     int render_process_id,
+     int render_frame_id,
+     const content_settings::CookieSettings* cookie_settings) {
+-  bool allow = cookie_settings->IsAnyStorageAccessAllowed(
++  bool allow = cookie_settings->IsFullCookieAccessAllowed(
+       worker_url, site_for_cookies, top_frame_origin,
+       net::CookieSettingOverrides(), storage_key.ToCookiePartitionKey());
+ 
++  if (!allow && (!top_frame_origin.has_value() ||
++                 !top_frame_origin->IsSameOriginWith(worker_url))) {
++    return false;
++  }
++
+   content_settings::PageSpecificContentSettings::SharedWorkerAccessed(
+       render_process_id, render_frame_id, worker_url, name, storage_key,
+       same_site_cookies, !allow);

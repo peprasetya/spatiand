@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 2 Sep 2022 07:44:58 +0000
+Subject: [PATCH 132/310] Override Navigator Language
+
+Uses the first of the accept-languages as the system language for blink
+and fix the selection in the UI for the browser language
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Override-Navigator-Language.patch
+---
+ content/browser/renderer_host/render_process_host_impl.cc | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 7089a3e315d..200e0ab673c 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -77,6 +77,7 @@
+ #include "components/input/features.h"
+ #include "components/input/utils.h"
+ #include "components/metrics/histogram_controller.h"
++#include "components/language/core/browser/language_prefs.h"
+ #include "components/metrics/single_sample_metrics.h"
+ #include "components/services/storage/privileged/mojom/indexed_db_control.mojom.h"
+ #include "components/services/storage/public/cpp/buckets/bucket_id.h"
+@@ -3839,8 +3840,11 @@ void RenderProcessHostImpl::AppendRendererCommandLine(
+   PropagateBrowserCommandLineToRenderer(browser_command_line, command_line);
+ 
+   // Pass on the browser locale.
+-  const std::string locale =
++  std::string locale =
+       GetContentClient()->browser()->GetApplicationLocale();
++  const std::string accept_langs = GetContentClient()->browser()->GetAcceptLangs(browser_context_);
++  if (!accept_langs.empty())
++    locale = language::GetFirstLanguage(accept_langs);
+   command_line->AppendSwitchASCII(switches::kLang, locale);
+ 
+   // A non-empty RendererCmdPrefix implies that Zygote is disabled.

@@ -8,7 +8,7 @@ the changes that build needs and the Deck's does not, applied after ours, with `
 `CHROMIUM_TARGET=android`.
 
 **`termux/`** is termux-packages' `x11-packages/chromium-host-tools/cr-patches` at commit 47d0a63
-(2026-11-08), made for Chromium 157, as they are: Termux builds the same thing, Chromium's Linux
+(2026-11-08), made for Chromium 157, as they are (since SpatiMesh itself is on 157, 2026-11-14, `7007` too: 157's `ValueCounter` needs it): Termux builds the same thing, Chromium's Linux
 code with `--target=aarch64-linux-android24`. Their macro, `__TERMUX__`, is kept, so that a newer set
 can be taken without editing it; here it means built for Android's libc. Licensed as Chromium is
 (termux-packages' LICENSE.md: a package's patches carry the package's licence).
@@ -24,7 +24,6 @@ Not taken, and why:
 | 1022, 2026 HEVC in the bundled FFmpeg | SpatiMesh decodes with Spatiand's FFmpeg (patch 0003) |
 | 2020 dav1d's configuration | dav1d is not built (the owner's choice: AV1 on the GPU only) |
 | 2025 OpenXR without `secure_getenv` | Cromite builds no OpenXR |
-| 7007 extensions' `ValueCounter` | 153 has no `distinct_count` yet |
 
 Of those taken, 48 apply to 153 as they are and 22 with fuzz. **Worth knowing about two of them:**
 1001/1004 turn Chromium's sandbox off (Android lets no program make namespaces; a sandbox of
@@ -66,3 +65,4 @@ libnss). With them the Deck's code for certificates and D-Bus is built as it is.
 | 0023 | No D-Bus: connecting to the system or session bus fails at once, and calls without a bus are not logged (libdbus looked for a bus under the path it was built in). |
 | 0024 | Frames sent to the room at once, each frame's fence (`EGL_ANDROID_native_fence_sync`) sent just before down the socket its buffer came through, which the room keeps and its GPU waits on (`android/eglshim`, `explicit_sync.rs`): looked at on the GPU main thread, the fence waited behind tile raster. Chromium's Wayland host knows only `wp_linux_drm_syncobj_v1` for fences, which needs DRM. |
 | 0025 | Bluetooth through the Spatiand app: the adapter on Android's libc is Android's Bluetooth LE, reached through `android/src/id/prasetya/spatiand/BluetoothBridge.java` (an abstract socket, `spatiand-bluetooth`, one JSON object a line), where Linux's is BlueZ on D-Bus (`device/bluetooth/spatiand`). Scanning, GATT connections, services, characteristics, descriptors, notifications: what Web Bluetooth asks for. |
+| 0026 | What Chromium 157 changed under the patches above: `gfx::FrameData` is moved, not copied (the frames to the room, 0021 and 0024), and ANGLE's `DeriveCreateInfoPNext` takes the intended format before the actual one (0021's sibling). |

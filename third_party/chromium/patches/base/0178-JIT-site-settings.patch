@@ -1,0 +1,194 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: fgei <fgei@gmail.com>
+Date: Sat, 29 Jan 2022 15:22:45 +0000
+Subject: [PATCH 178/310] JIT site settings
+
+Adds a content setting to manage Javascript JIT, disabled by default.
+Since the interface of the content settings foresees an eTLD origin
+it requires the activation of SitePerProcess and StrictOriginIsolation
+to make sure that the instantiated RenderProcess can have JIT correctly set.
+Without those features, the RenderProcess would be shared between all eTLD+1.
+
+note: needs SitePerProcess and StrictOriginIsolation flags enabled
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+Require: Content-settings-infrastructure.patch
+FILE:JIT-site-settings.patch
+---
+ .../javascript_jit.grdp                       | 21 +++++++++++++++++++
+ .../javascript_jit.inc                        | 12 +++++++++++
+ .../core/browser/content_settings_registry.cc |  2 +-
+ .../renderer_host/navigation_request.cc       |  8 ++++++-
+ .../renderer_host/render_process_host_impl.cc |  3 +++
+ content/browser/site_info.cc                  |  7 +++++++
+ content/browser/url_info.cc                   |  6 ++++++
+ content/browser/url_info.h                    |  3 +++
+ 8 files changed, 60 insertions(+), 2 deletions(-)
+ create mode 100644 components/browser_ui/strings/bromite_content_settings/javascript_jit.grdp
+ create mode 100644 components/content_settings/core/browser/bromite_content_settings/javascript_jit.inc
+
+diff --git a/components/browser_ui/strings/bromite_content_settings/javascript_jit.grdp b/components/browser_ui/strings/bromite_content_settings/javascript_jit.grdp
+new file mode 100644
+index 00000000000..2c39f79ef91
+--- /dev/null
++++ b/components/browser_ui/strings/bromite_content_settings/javascript_jit.grdp
+@@ -0,0 +1,21 @@
++<?xml version="1.0" encoding="utf-8"?>
++<grit-part>
++  <message name="IDS_JAVASCRIPT_JIT_PERMISSION_TITLE" desc="Title of the permission to run javascript [CHAR_LIMIT=32]" formatter_data="android_java">
++    JavaScript JIT
++  </message>
++  <message name="IDS_SETTINGS_SITE_SETTINGS_JAVASCRIPT_JIT_DESCRIPTION_CROMITE" desc="Description of the Javascript JIT content setting." formatter_data="android_java">
++    Enable the JIT compiler and WebAssembly support in V8
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_JAVASCRIPT_JIT_ENABLED" desc="Summary text explaining that sites are allowed to compile JavaScript in JIT mode." formatter_data="android_java">
++    Allow JIT and WebAssembly
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_CATEGORY_JAVASCRIPT_JIT_DISABLED" desc="Summary text explaining that sites are running JavaScript in JITless mode." formatter_data="android_java">
++    Block JIT and WebAssembly
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_ADD_SITE_DESCRIPTION_JAVASCRIPT_JIT_ALLOW" desc="The description for the allow Javascript JIT for website dialog." formatter_data="android_java">
++    Allow sites to use just-in-time compilation; more performant but a constant source of security vulnerabilities.
++  </message>
++  <message name="IDS_WEBSITE_SETTINGS_ADD_SITE_DESCRIPTION_JAVASCRIPT_JIT_BLOCK" desc="The description for the block Javascript JIT for website dialog." formatter_data="android_java">
++    Block sites from using just-in-time compilation, using only interpreted JavaScript; less performant but more secure against security vulnerabilities.
++  </message>
++</grit-part>
+diff --git a/components/content_settings/core/browser/bromite_content_settings/javascript_jit.inc b/components/content_settings/core/browser/bromite_content_settings/javascript_jit.inc
+new file mode 100644
+index 00000000000..23333c500ff
+--- /dev/null
++++ b/components/content_settings/core/browser/bromite_content_settings/javascript_jit.inc
+@@ -0,0 +1,12 @@
++  content_settings::WebsiteSettingsRegistry::GetInstance()
++    ->GetMutable(ContentSettingsType::JAVASCRIPT_JIT)
++    ->set_show_into_info_page()
++    .set_desktop_ui()
++    .set_is_renderer_content_setting()
++    .set_title_ui(IDS_JAVASCRIPT_JIT_PERMISSION_TITLE)
++    .set_description_ui(IDS_SETTINGS_SITE_SETTINGS_JAVASCRIPT_JIT_DESCRIPTION_CROMITE)
++    .set_allowed_ui(IDS_WEBSITE_SETTINGS_CATEGORY_JAVASCRIPT_JIT_ENABLED)
++    .set_blocked_ui(IDS_WEBSITE_SETTINGS_CATEGORY_JAVASCRIPT_JIT_DISABLED)
++    .set_allowed_exceptions_ui(IDS_WEBSITE_SETTINGS_ADD_SITE_DESCRIPTION_JAVASCRIPT_JIT_ALLOW)
++    .set_blocked_exceptions_ui(IDS_WEBSITE_SETTINGS_ADD_SITE_DESCRIPTION_JAVASCRIPT_JIT_BLOCK)
++    .set_mid_sentence_ui(IDS_JAVASCRIPT_JIT_PERMISSION_TITLE);
+diff --git a/components/content_settings/core/browser/content_settings_registry.cc b/components/content_settings/core/browser/content_settings_registry.cc
+index e822af4b1d2..94175212f88 100644
+--- a/components/content_settings/core/browser/content_settings_registry.cc
++++ b/components/content_settings/core/browser/content_settings_registry.cc
+@@ -559,7 +559,7 @@ void ContentSettingsRegistry::Init() {
+            PermissionSettingsInfo::EXCEPTIONS_ON_SECURE_ORIGINS_ONLY);
+ 
+   Register(ContentSettingsType::JAVASCRIPT_JIT, "javascript-jit",
+-           CONTENT_SETTING_ALLOW, WebsiteSettingsInfo::UNSYNCABLE,
++           CONTENT_SETTING_BLOCK, WebsiteSettingsInfo::UNSYNCABLE,
+            /*allowlisted_primary_schemes=*/{},
+            /*valid_settings=*/{CONTENT_SETTING_ALLOW, CONTENT_SETTING_BLOCK},
+            WebsiteSettingsInfo::TOP_ORIGIN_ONLY_SCOPE,
+diff --git a/content/browser/renderer_host/navigation_request.cc b/content/browser/renderer_host/navigation_request.cc
+index b7f06ce38c6..fdd3bc8f72f 100644
+--- a/content/browser/renderer_host/navigation_request.cc
++++ b/content/browser/renderer_host/navigation_request.cc
+@@ -4721,11 +4721,17 @@ UrlInfo NavigationRequest::GetUrlInfo() {
+   // Compute the WebExposedIsolationInfo that will be bundled into UrlInfo.
+   auto web_exposed_isolation_info = ComputeWebExposedIsolationInfo();
+ 
++  url::Origin top_origin = frame_tree_node_
++      ->current_frame_host()
++      ->GetMainFrame()
++      ->GetLastCommittedOrigin();
++
+   UrlInfoInit url_info_init(GetURL());
+   url_info_init.WithOACHeaderRequest(oac_header_request)
+       .WithCOOPSiteIsolation(ShouldRequestSiteIsolationForCOOP())
+       .WithWebExposedIsolationInfo(web_exposed_isolation_info)
+-      .WithEmbedderIsolationInfo(embedder_isolation_info_);
++      .WithEmbedderIsolationInfo(embedder_isolation_info_)
++      .WithTopOrigin(top_origin);
+ 
+   if (base::FeatureList::IsEnabled(features::kExcludeAdsFromOriginIsolation)) {
+     // When excluding ads from origin isolation, an ad navigation is treated as
+diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
+index 048e8a41686..c545e964e2b 100644
+--- a/content/browser/renderer_host/render_process_host_impl.cc
++++ b/content/browser/renderer_host/render_process_host_impl.cc
+@@ -3857,6 +3857,9 @@ void RenderProcessHostImpl::AppendRendererCommandLine(
+   if (IsJitDisabled()) {
+     AppendToCommaSeparatedSwitch(
+         command_line, blink::switches::kJavaScriptFlags, "--jitless");
++    // disable jit but enable webassembly
++    // command_line->AppendSwitchASCII(blink::switches::kJavaScriptFlags,
++    //                                 "--no-maglev,--no-turbofan");
+   } else if (AreV8OptimizationsDisabled()) {
+     AppendToCommaSeparatedSwitch(command_line,
+                                  blink::switches::kJavaScriptFlags,
+diff --git a/content/browser/site_info.cc b/content/browser/site_info.cc
+index c74fd505701..d8aa05d792d 100644
+--- a/content/browser/site_info.cc
++++ b/content/browser/site_info.cc
+@@ -350,6 +350,13 @@ SiteInfo SiteInfo::Create(const IsolationContext& isolation_context,
+   is_jitless =
+       is_jitless || GetContentClient()->browser()->IsJitDisabledForSite(
+                         browser_context, agent_cluster_url_or_default);
++  if (!url_info.embedder_isolation_info.is_pdf() && url_info.top_origin.has_value()) {
++    GURL top_origin = url_info.top_origin->GetURL();
++    if (!GetContentClient()->browser()->IsJitDisabledForSite(
++            browser_context, top_origin)) {
++      is_jitless = false;
++    }
++  }
+   are_v8_optimizations_disabled = CheckShouldDisableV8Optimization(
+       browser_context, isolation_context.browsing_instance_id(),
+       url_info.process_selection_user_data, agent_cluster_url_or_default);
+diff --git a/content/browser/url_info.cc b/content/browser/url_info.cc
+index 4cbf5e41510..6ca88b00abc 100644
+--- a/content/browser/url_info.cc
++++ b/content/browser/url_info.cc
+@@ -28,6 +28,7 @@ UrlInfo::UrlInfo(const UrlInfoInit& init)
+       is_prefetch_with_cross_site_contamination(
+           init.is_prefetch_with_cross_site_contamination_),
+       origin(init.origin_),
++      top_origin(init.top_origin_),
+       is_sandboxed(init.is_sandboxed_),
+       unique_sandbox_id(init.unique_sandbox_id_),
+       storage_partition_config(init.storage_partition_config_),
+@@ -158,6 +159,11 @@ UrlInfoInit& UrlInfoInit::WithOrigin(const url::Origin& origin) {
+   return *this;
+ }
+ 
++UrlInfoInit& UrlInfoInit::WithTopOrigin(const url::Origin& origin) {
++  top_origin_ = origin;
++  return *this;
++}
++
+ UrlInfoInit& UrlInfoInit::WithSandbox(bool is_sandboxed) {
+   is_sandboxed_ = is_sandboxed;
+   return *this;
+diff --git a/content/browser/url_info.h b/content/browser/url_info.h
+index fbb53c374f3..558a722b62b 100644
+--- a/content/browser/url_info.h
++++ b/content/browser/url_info.h
+@@ -128,6 +128,7 @@ struct CONTENT_EXPORT UrlInfo {
+   // and origin checks that require a UrlInfo.  Investigate whether there's a
+   // cleaner way to organize these checks.  See https://crbug.com/1320402.
+   std::optional<url::Origin> origin;
++  std::optional<url::Origin> top_origin;
+ 
+   // If url is being loaded in a frame that is in a origin-restricted sandboxed,
+   // then this flag will be true.
+@@ -208,6 +209,7 @@ class CONTENT_EXPORT UrlInfoInit {
+   UrlInfoInit& WithCOOPSiteIsolation(bool requests_coop_isolation);
+   UrlInfoInit& WithCrossSitePrefetchContamination(bool contaminated);
+   UrlInfoInit& WithOrigin(const url::Origin& origin);
++  UrlInfoInit& WithTopOrigin(const url::Origin& origin);
+   UrlInfoInit& WithSandbox(bool is_sandboxed);
+   UrlInfoInit& WithUniqueSandboxId(int unique_sandbox_id);
+   UrlInfoInit& WithStoragePartitionConfig(
+@@ -234,6 +236,7 @@ class CONTENT_EXPORT UrlInfoInit {
+   bool requests_coop_isolation_ = false;
+   bool is_prefetch_with_cross_site_contamination_ = false;
+   std::optional<url::Origin> origin_;
++  std::optional<url::Origin> top_origin_;
+   bool is_sandboxed_ = false;
+   int64_t unique_sandbox_id_ = UrlInfo::kInvalidUniqueSandboxId;
+   std::optional<StoragePartitionConfig> storage_partition_config_;

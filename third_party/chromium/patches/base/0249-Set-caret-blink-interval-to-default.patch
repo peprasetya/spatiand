@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 10 Sep 2025 07:51:21 +0000
+Subject: [PATCH 249/310] Set caret blink interval to default
+
+Disable the use of the system setting for the caret blink interval
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Set-caret-blink-interval-to-default.patch
+---
+ third_party/blink/renderer/core/exported/web_view_impl.cc | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/third_party/blink/renderer/core/exported/web_view_impl.cc b/third_party/blink/renderer/core/exported/web_view_impl.cc
+index a9577f95f77..383c154674e 100644
+--- a/third_party/blink/renderer/core/exported/web_view_impl.cc
++++ b/third_party/blink/renderer/core/exported/web_view_impl.cc
+@@ -3828,9 +3828,7 @@ void WebViewImpl::UpdateRendererPreferences(
+   UpdateFontRenderingFromRendererPrefs();
+ 
+   blink::SetCaretBlinkInterval(
+-      renderer_preferences_.caret_blink_interval.has_value()
+-          ? renderer_preferences_.caret_blink_interval.value()
+-          : base::Milliseconds(
++          base::Milliseconds(
+                 mojom::blink::kDefaultCaretBlinkIntervalInMilliseconds));
+ 
+ #if defined(USE_AURA)

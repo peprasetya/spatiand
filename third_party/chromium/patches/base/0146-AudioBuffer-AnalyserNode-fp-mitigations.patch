@@ -1,0 +1,223 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: csagan5 <32685696+csagan5@users.noreply.github.com>
+Date: Sun, 25 Mar 2018 21:49:37 +0200
+Subject: [PATCH 146/310] AudioBuffer, AnalyserNode: fp mitigations
+
+Truncate base latency precision to two digits
+
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:AudioBuffer-AnalyserNode-fp-mitigations.patch
+---
+ .../AudioBuffer-AnalyserNode-fp-mitigations.inc    |  8 ++++++++
+ .../AudioBuffer-AnalyserNode-fp-mitigations.inc    |  3 +++
+ .../AudioBuffer-AnalyserNode-fp-mitigations.inc    |  1 +
+ .../renderer/modules/webaudio/audio_buffer.cc      | 14 ++++++++++++++
+ .../blink/renderer/modules/webaudio/audio_buffer.h |  2 ++
+ .../renderer/modules/webaudio/audio_context.cc     |  4 +++-
+ .../modules/webaudio/base_audio_context.cc         | 13 +++++++++++++
+ .../renderer/modules/webaudio/base_audio_context.h |  2 ++
+ .../modules/webaudio/offline_audio_context.cc      |  1 +
+ .../renderer/modules/webaudio/realtime_analyser.cc | 13 ++++++++++---
+ 10 files changed, 57 insertions(+), 4 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc
+ create mode 100644 cromite_flags/third_party/blink/common/features_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc
+ create mode 100644 cromite_flags/third_party/blink/common/features_h/AudioBuffer-AnalyserNode-fp-mitigations.inc
+
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc b/cromite_flags/chrome/browser/about_flags_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc
+new file mode 100644
+index 00000000000..b855c7e5c38
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc
+@@ -0,0 +1,8 @@
++#ifdef FLAG_SECTION
++
++    {"fingerprinting-audio-context-data-noise",
++     "Enable Audio Context fingerprint deception",
++     "Scale the output values of rendered data with a randomly selected factor.", kOsAll,
++     FEATURE_VALUE_TYPE(blink::features::kAudioContextShuffleEnabled)},
++
++#endif
+diff --git a/cromite_flags/third_party/blink/common/features_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc b/cromite_flags/third_party/blink/common/features_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc
+new file mode 100644
+index 00000000000..91234517647
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_cc/AudioBuffer-AnalyserNode-fp-mitigations.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kAudioContextShuffleEnabled,
++                "AudioContextShuffleEnabled",
++                base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/cromite_flags/third_party/blink/common/features_h/AudioBuffer-AnalyserNode-fp-mitigations.inc b/cromite_flags/third_party/blink/common/features_h/AudioBuffer-AnalyserNode-fp-mitigations.inc
+new file mode 100644
+index 00000000000..2b29f589507
+--- /dev/null
++++ b/cromite_flags/third_party/blink/common/features_h/AudioBuffer-AnalyserNode-fp-mitigations.inc
+@@ -0,0 +1 @@
++BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kAudioContextShuffleEnabled);
+diff --git a/third_party/blink/renderer/modules/webaudio/audio_buffer.cc b/third_party/blink/renderer/modules/webaudio/audio_buffer.cc
+index 7a899b0d8cf..8a17d3c9767 100644
+--- a/third_party/blink/renderer/modules/webaudio/audio_buffer.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_buffer.cc
+@@ -202,6 +202,20 @@ AudioBuffer::AudioBuffer(AudioBus* bus)
+   }
+ }
+ 
++void AudioBuffer::ShuffleAudioData() {
++  for (unsigned i = 0; i < channels_.size(); ++i) {
++    if (NotShared<DOMFloat32Array> array = getChannelData(i)) {
++      size_t len = array->length();
++      if (len > 0) {
++        base::span<float> destination = array->AsSpan();
++        for (unsigned j = 0; j < len; ++j) {
++          destination[j] = BaseAudioContext::ShuffleAudioData(destination[j], j);
++        }
++      }
++    }
++  }
++}
++
+ NotShared<DOMFloat32Array> AudioBuffer::getChannelData(
+     unsigned channel_index,
+     ExceptionState& exception_state) {
+diff --git a/third_party/blink/renderer/modules/webaudio/audio_buffer.h b/third_party/blink/renderer/modules/webaudio/audio_buffer.h
+index 0dd11f830ee..d12aa9f97bf 100644
+--- a/third_party/blink/renderer/modules/webaudio/audio_buffer.h
++++ b/third_party/blink/renderer/modules/webaudio/audio_buffer.h
+@@ -116,6 +116,8 @@ class MODULES_EXPORT AudioBuffer final : public ScriptWrappable {
+ 
+   std::unique_ptr<SharedAudioBuffer> CreateSharedAudioBuffer();
+ 
++  void ShuffleAudioData();
++
+  private:
+   bool CreatedSuccessfully(unsigned desired_number_of_channels) const;
+ 
+diff --git a/third_party/blink/renderer/modules/webaudio/audio_context.cc b/third_party/blink/renderer/modules/webaudio/audio_context.cc
+index 1b7598ba436..c82e484c0b4 100644
+--- a/third_party/blink/renderer/modules/webaudio/audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_context.cc
+@@ -1307,7 +1307,9 @@ double AudioContext::baseLatency() const {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(main_thread_sequence_checker_);
+   DCHECK(destinationNode());
+ 
+-  return base_latency_;
++  // Remove precision past two decimal digits.
++  int latency = base_latency_ * 100;
++  return static_cast<double>(latency) / 100;
+ }
+ 
+ double AudioContext::outputLatency() const {
+diff --git a/third_party/blink/renderer/modules/webaudio/base_audio_context.cc b/third_party/blink/renderer/modules/webaudio/base_audio_context.cc
+index c6b7e3f5998..57b68346b3f 100644
+--- a/third_party/blink/renderer/modules/webaudio/base_audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/base_audio_context.cc
+@@ -26,8 +26,10 @@
+ #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
+ 
+ #include "base/metrics/histogram_functions.h"
++#include "base/rand_util.h"
+ #include "build/build_config.h"
+ #include "media/base/audio_bus.h"
++#include "third_party/blink/public/common/features.h"
+ #include "third_party/blink/public/mojom/devtools/console_message.mojom-blink.h"
+ #include "third_party/blink/public/mojom/frame/lifecycle.mojom-shared.h"
+ #include "third_party/blink/public/platform/platform.h"
+@@ -790,6 +792,17 @@ LocalDOMWindow* BaseAudioContext::GetWindow() const {
+   return To<LocalDOMWindow>(GetExecutionContext());
+ }
+ 
++/*static*/
++float BaseAudioContext::ShuffleAudioData(float data, unsigned index) {
++  if (base::FeatureList::IsEnabled(features::kAudioContextShuffleEnabled)) {
++    float rnd = 1.0f +
++                (base::RandDouble() / 10000.0) *
++                  (base::RandIntInclusive(0,10) > 5 ? 1.f : -1.f);
++    return data * rnd;
++  }
++  return data;
++}
++
+ void BaseAudioContext::NotifySourceNodeStartedProcessing(AudioNode* node) {
+   DCHECK(IsMainThread());
+   DeferredTaskHandler::GraphAutoLocker locker(GetDeferredTaskHandler());
+diff --git a/third_party/blink/renderer/modules/webaudio/base_audio_context.h b/third_party/blink/renderer/modules/webaudio/base_audio_context.h
+index 6e7fba41239..ec89018d04f 100644
+--- a/third_party/blink/renderer/modules/webaudio/base_audio_context.h
++++ b/third_party/blink/renderer/modules/webaudio/base_audio_context.h
+@@ -325,6 +325,8 @@ class MODULES_EXPORT BaseAudioContext
+   // if the execution context does not exist.
+   bool CheckExecutionContextAndThrowIfNecessary(ExceptionState&);
+ 
++  static float ShuffleAudioData(float data, unsigned index);
++
+   wtf_size_t PendingPromiseResolverCountForTesting() const {
+     return pending_promise_resolvers_.size();
+   }
+diff --git a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
+index 7ae88d3b2d7..cde1f7b6e17 100644
+--- a/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
++++ b/third_party/blink/renderer/modules/webaudio/offline_audio_context.cc
+@@ -638,6 +638,7 @@ void OfflineAudioContext::FireCompletionEvent(AudioBuffer* rendered_buffer) {
+     if (!rendered_buffer) {
+       return;
+     }
++    rendered_buffer->ShuffleAudioData();
+ 
+     // Call the offline rendering completion event listener.
+     DispatchEvent(*OfflineAudioCompletionEvent::Create(rendered_buffer));
+diff --git a/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc b/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
+index 3a6e46a39f4..70b0740b975 100644
+--- a/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
++++ b/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
+@@ -33,6 +33,7 @@
+ 
+ #include "base/compiler_specific.h"
+ #include "media/base/audio_bus.h"
++#include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
+ #include "third_party/blink/renderer/platform/audio/audio_bus.h"
+ #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
+ #include "third_party/blink/renderer/platform/audio/vector_math.h"
+@@ -128,7 +129,8 @@ void RealtimeAnalyser::GetFloatFrequencyData(DOMFloat32Array* destination_array,
+     for (unsigned i = 0; i < len; ++i) {
+       const float linear_value = magnitude_buffer_[i];
+       const double db_mag = audio_utilities::LinearToDecibels(linear_value);
+-      destination[i] = static_cast<float>(db_mag);
++      auto v = static_cast<float>(db_mag);
++      destination[i] = BaseAudioContext::ShuffleAudioData(v, i);
+     }
+   }
+ }
+@@ -164,9 +166,11 @@ void RealtimeAnalyser::GetByteFrequencyData(DOMUint8Array* destination_array,
+ 
+       // The range m_minDecibels to m_maxDecibels will be scaled to byte values
+       // from 0 to UCHAR_MAX.
+-      const double scaled_value =
++      double scaled_value =
+           UCHAR_MAX * (db_mag - min_decibels) * range_scale_factor;
+ 
++      scaled_value = BaseAudioContext::ShuffleAudioData(scaled_value, i);
++
+       // Clip to valid range.
+       destination[i] =
+           static_cast<unsigned char>(ClampTo(scaled_value, 0, UCHAR_MAX));
+@@ -195,6 +199,7 @@ void RealtimeAnalyser::GetFloatTimeDomainData(
+           input_buffer_[(i + write_index - fft_size + kInputBufferSize) %
+                         kInputBufferSize];
+ 
++      value = BaseAudioContext::ShuffleAudioData(value, i);
+       destination[i] = value;
+     }
+   }
+@@ -216,10 +221,12 @@ void RealtimeAnalyser::GetByteTimeDomainData(DOMUint8Array* destination_array) {
+     base::span<unsigned char> destination = destination_array->AsSpan();
+     for (unsigned i = 0; i < len; ++i) {
+       // Buffer access is protected due to modulo operation.
+-      const float value =
++      float value =
+           input_buffer_[(i + write_index - fft_size + kInputBufferSize) %
+                         kInputBufferSize];
+ 
++      value = BaseAudioContext::ShuffleAudioData(value, i);
++
+       // Scale from nominal -1 -> +1 to unsigned byte.
+       const double scaled_value = 128 * (value + 1);
+ 

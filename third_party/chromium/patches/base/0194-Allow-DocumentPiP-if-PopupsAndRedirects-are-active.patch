@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Mon, 7 Aug 2023 11:02:18 +0000
+Subject: [PATCH 194/310] Allow DocumentPiP if PopupsAndRedirects are active
+
+Allow documentPiP api use only with content setting popup allowed
+and disables the possibility of verifying the activation of PIP
+in the device with document.pictureInPictureEnabled
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Allow-DocumentPiP-if-PopupsAndRedirects-are-active.patch
+---
+ .../picture_in_picture_controller_impl.cc                  | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc b/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc
+index 235575b37bc..2f433295977 100644
+--- a/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc
++++ b/third_party/blink/renderer/modules/document_picture_in_picture/picture_in_picture_controller_impl.cc
+@@ -31,6 +31,7 @@
+ #include "third_party/blink/renderer/core/layout/layout_video.h"
+ #include "third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture.h"
+ #include "third_party/blink/renderer/modules/document_picture_in_picture/document_picture_in_picture_event.h"
++#include "third_party/blink/renderer/core/loader/document_loader.h"
+ #include "third_party/blink/renderer/modules/picture_in_picture/picture_in_picture_event.h"
+ #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+ #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+@@ -435,6 +436,12 @@ void PictureInPictureControllerImpl::CreateDocumentPictureInPictureWindow(
+     return;
+   }
+ 
++  if (!opener.GetFrame()->Loader().GetDocumentLoader()->GetContentSettings()->allow_popup) {
++    resolver->RejectWithDOMException(DOMExceptionCode::kNotAllowedError,
++                                     "Document PiP requires user popup permission");
++    return;
++  }
++
+   WebPictureInPictureWindowOptions web_options;
+   web_options.width = options->width();
+   web_options.height = options->height();

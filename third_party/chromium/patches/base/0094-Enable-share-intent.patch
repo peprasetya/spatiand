@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Sun, 3 Oct 2021 16:18:24 +0000
+Subject: [PATCH 094/310] Enable share intent
+
+This patch allows to activate the management of android.intent.action.SEND
+with new flag "shared-intent-ui" default active.
+
+See also: https://github.com/bromite/bromite/issues/1062
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Enable-share-intent.patch
+---
+ chrome/browser/flags/android/chrome_feature_list.cc  |  1 +
+ .../browser/about_flags_cc/Enable-share-intent.inc   | 12 ++++++++++++
+ .../chrome_feature_list_cc/Enable-share-intent.inc   |  3 +++
+ .../chrome_feature_list_h/Enable-share-intent.inc    |  1 +
+ 4 files changed, 17 insertions(+)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Enable-share-intent.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Enable-share-intent.inc
+ create mode 100644 cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Enable-share-intent.inc
+
+diff --git a/chrome/browser/flags/android/chrome_feature_list.cc b/chrome/browser/flags/android/chrome_feature_list.cc
+index 69088884a9c..d969e455a0e 100644
+--- a/chrome/browser/flags/android/chrome_feature_list.cc
++++ b/chrome/browser/flags/android/chrome_feature_list.cc
+@@ -511,6 +511,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
+     &kSettingsInTabUrlNav,
+     &kSettingsSearchCollapsibleSearchBox,
+     &kShareCustomActionsInCCT,
++    &kSharedIntentUI,
+     &kShortCircuitUnfocusAnimation,
+     &kShowTabListAnimations,
+     &kSidePanelTopHairlineRefactorAndroid,
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Enable-share-intent.inc b/cromite_flags/chrome/browser/about_flags_cc/Enable-share-intent.inc
+new file mode 100644
+index 00000000000..d044b1127c3
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Enable-share-intent.inc
+@@ -0,0 +1,12 @@
++#if BUILDFLAG(IS_ANDROID)
++
++#ifdef FLAG_SECTION
++
++    {"share-intent-ui",
++     "Enable share feature",
++     "Enables share feature", kOsAndroid,
++     FEATURE_VALUE_TYPE(chrome::android::kSharedIntentUI)},
++
++#endif
++
++#endif
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Enable-share-intent.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Enable-share-intent.inc
+new file mode 100644
+index 00000000000..fa6a606485b
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_cc/Enable-share-intent.inc
+@@ -0,0 +1,3 @@
++CROMITE_FEATURE(kSharedIntentUI,
++                "SharedIntentUI",
++                base::FEATURE_ENABLED_BY_DEFAULT);
+diff --git a/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Enable-share-intent.inc b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Enable-share-intent.inc
+new file mode 100644
+index 00000000000..0aa138d14c5
+--- /dev/null
++++ b/cromite_flags/chrome/browser/flags/android/chrome_feature_list_h/Enable-share-intent.inc
+@@ -0,0 +1 @@
++BASE_DECLARE_FEATURE(kSharedIntentUI);

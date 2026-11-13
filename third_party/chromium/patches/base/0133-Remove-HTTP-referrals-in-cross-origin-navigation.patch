@@ -1,0 +1,348 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Wed, 21 Sep 2022 12:28:17 +0000
+Subject: [PATCH 133/310] Remove HTTP referrals in cross origin navigation
+
+The patch removes the referrals if the navigation is cross-origin and occurs in the top frame.
+The value is not removed across iframes because the referrals are statically defined
+by the HTML and the Javascript of the page, and therefore they do not tell anything about the
+user. Also, some services may not work, such as video iframes.
+A preference is also introduced to completely removes referrals management, for advanced users.
+
+Original License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+License: GPL-3.0-only - https://spdx.org/licenses/GPL-3.0-only.html
+FILE:Remove-HTTP-referrals-in-cross-origin-navigation.patch
+---
+ .../api/settings_private/prefs_util.cc        |  5 +++
+ .../net/system_network_context_manager.cc     |  4 ++
+ chrome/browser/renderer_preferences_util.cc   |  1 +
+ .../settings/privacy_page/privacy_page.html   | 14 +++++-
+ .../settings/privacy_page/privacy_page.ts     | 45 +++++++++++--------
+ chrome/browser/ui/prefs/pref_watcher.cc       |  2 +
+ chrome/browser/ui/prefs/prefs_tab_helper.cc   |  2 +
+ .../settings_localized_strings_provider.cc    |  4 ++
+ chrome/common/pref_names.h                    |  3 ++
+ ...-referrals-in-cross-origin-navigation.grdp | 18 ++++++++
+ .../content/internal/context_menu_download.cc | 10 +++++
+ .../renderer_host/navigation_request.cc       |  9 ++++
+ .../network/public/cpp/resource_request.h     |  2 +-
+ .../renderer_preferences.h                    |  1 +
+ 14 files changed, 98 insertions(+), 22 deletions(-)
+ create mode 100644 components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp
+
+diff --git a/chrome/browser/extensions/api/settings_private/prefs_util.cc b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+index 2304eb1c542..804504dd813 100644
+--- a/chrome/browser/extensions/api/settings_private/prefs_util.cc
++++ b/chrome/browser/extensions/api/settings_private/prefs_util.cc
+@@ -319,6 +319,11 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
+   (*s_allowlist)[::prefs::kExpireDaysThreshold] =
+       settings_api::PrefType::kNumber;
+ 
++  (*s_allowlist)[::prefs::kEnableReferrers] =
++      settings_api::PrefType::kBoolean;
++  (*s_allowlist)[::prefs::kReferrersPolicy] =
++      settings_api::PrefType::kNumber;
++
+   // Appearance settings.
+   (*s_allowlist)[::prefs::kCtrlTabMru] = settings_api::PrefType::kBoolean;
+   (*s_allowlist)[::prefs::kCurrentThemeID] = settings_api::PrefType::kString;
+diff --git a/chrome/browser/net/system_network_context_manager.cc b/chrome/browser/net/system_network_context_manager.cc
+index df8469f8639..ad24272e000 100644
+--- a/chrome/browser/net/system_network_context_manager.cc
++++ b/chrome/browser/net/system_network_context_manager.cc
+@@ -693,6 +693,9 @@ SystemNetworkContextManager::SystemNetworkContextManager(
+       base::BindRepeating(&SystemNetworkContextManager::UpdateReferrersEnabled,
+                           base::Unretained(this)));
+ 
++  local_state_->SetDefaultPrefValue(
++      prefs::kReferrersPolicy, base::Value(2));
++
+   pref_change_registrar_.Add(
+       prefs::kExplicitlyAllowedNetworkPorts,
+       base::BindRepeating(
+@@ -776,6 +779,7 @@ void SystemNetworkContextManager::RegisterPrefs(PrefRegistrySimple* registry) {
+   // the system NetworkContext, and the per-profile pref values are used for
+   // the profile NetworkContexts.
+   registry->RegisterBooleanPref(prefs::kEnableReferrers, true);
++  registry->RegisterIntegerPref(prefs::kReferrersPolicy, 2);
+ 
+   registry->RegisterBooleanPref(prefs::kQuickCheckEnabled, true);
+ 
+diff --git a/chrome/browser/renderer_preferences_util.cc b/chrome/browser/renderer_preferences_util.cc
+index 680a3df2d51..29afa0a564a 100644
+--- a/chrome/browser/renderer_preferences_util.cc
++++ b/chrome/browser/renderer_preferences_util.cc
+@@ -153,6 +153,7 @@ void UpdateFromSystemSettings(blink::RendererPreferences* prefs,
+   prefs->caret_blink_interval =
+       ui::NativeTheme::GetInstanceForNativeUi()->caret_blink_interval();
+   prefs->enable_referrers = pref_service->GetBoolean(prefs::kEnableReferrers);
++  prefs->referrers_policy = pref_service->GetInteger(prefs::kReferrersPolicy);
+   prefs->enable_do_not_track =
+       pref_service->GetBoolean(prefs::kEnableDoNotTrack);
+   // TODO(crbug.com/40745270): Clean up kGlobalPrivacyControlForce &
+diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.html b/chrome/browser/resources/settings/privacy_page/privacy_page.html
+index fb69dc0a9c6..cce403896c6 100644
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
+@@ -47,8 +47,18 @@
+         $i18n{expireHistory}
+       </div>
+       <settings-dropdown-menu id="expireDaysThreshold" label="$i18n{expireHistory}"
+-          pref="{{prefs.history.expire_days_threshold}}"
+-          menu-options="[[historyExpireDaysThresholdOptions_]]">
++          pref-key="history.expire_days_threshold"
++          .menuOptions="${this.historyExpireDaysThresholdOptions_}">
++      </settings-dropdown-menu>
++    </div>
++    <div class="cr-row">
++      <div class="flex cr-padded-text" aria-hidden="true">
++        $i18n{referersPolicyTitle}
++      </div>
++      <settings-dropdown-menu id="referersPolicy" label="$i18n{referersPolicyTitle}"
++          pref-key="referrers_policy"
++          .menuOptions="${this.referersPolicyOptions_}"
++          @settings-control-change="${this.onReferersPolicyChanged_}">
+       </settings-dropdown-menu>
+     </div>
+     <cr-toast id="deleteBrowsingDataToast" duration="5000">
+diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.ts b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+index 41b621d9173..076541eddec 100644
+--- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
++++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
+@@ -16,6 +16,7 @@ import '../privacy_icons.html.js';
+ import '../settings_page/settings_section.js';
+ import './privacy_guide/privacy_guide_dialog.js';
+ 
++import {PrefService} from '/shared/settings/prefs2/pref_service.js';
+ import {PrefServiceObserverMixinLit} from '/shared/settings/prefs2/pref_service_observer_mixin_lit.js';
+ import {getCss as getCrHiddenStyleCss} from 'chrome://resources/cr_elements/cr_hidden_style_lit.css.js';
+ import type {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
+@@ -25,9 +26,9 @@ import {I18nMixinLit} from 'chrome://resources/cr_elements/i18n_mixin_lit.js';
+ import {assert, assertNotReached} from 'chrome://resources/js/assert.js';
+ import {focusWithoutInk} from 'chrome://resources/js/focus_without_ink.js';
+ import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
+-import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+ 
+ import {loadTimeData} from '../i18n_setup.js';
++import type {DropdownMenuOptionList, SettingsDropdownMenuElement} from '../controls/settings_dropdown_menu.js';
+ import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
+ import {MetricsBrowserProxyImpl, PrivacyGuideInteractions} from '../metrics_browser_proxy.js';
+ import {routes} from '../route.js';
+@@ -75,26 +76,11 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
+ 
+   static override get properties() {
+     return {
+-      historyExpireDaysThresholdOptions_: {
+-        readOnly: true,
+-        type: Array,
+-        value() {
+-          return [
+-            {value: 0, name: loadTimeData.getString('noHistory')},
+-            {value: 1, name: "1 " + loadTimeData.getString('dayHistory')},
+-            {value: 7, name: "7 " + loadTimeData.getString('daysHistory')},
+-            {value: 15, name: "15 " + loadTimeData.getString('daysHistory')},
+-            {value: 30, name: "30 " + loadTimeData.getString('daysHistory')},
+-            {value: 60, name: "60 " + loadTimeData.getString('daysHistory')},
+-            {value: 90, name: "90 " + loadTimeData.getString('daysHistory')},
+-            {value: 0xFFFF, name: loadTimeData.getString('foreverHistory')},
+-          ];
+-        },
+-      },
+-
++      historyExpireDaysThresholdOptions_: {type: Array},
+       showClearBrowsingDataDialog_: {type: Boolean},
+       showPrivacyGuideDialog_: {type: Boolean},
+ 
++      referersPolicyOptions_: {type: Array},
+       // The label of the confirmation toast that is displayed after deletion
+       // from 'Delete Browsing data' is completed.
+       dbdDeletionConfirmationToastLabel_: {type: String},
+@@ -105,7 +91,22 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
+     };
+   }
+ 
+-  declare private historyExpireDaysThresholdOptions_: object[];
++  protected accessor historyExpireDaysThresholdOptions_:
++      DropdownMenuOptionList = [
++        {value: 0, name: loadTimeData.getString('noHistory')},
++        {value: 1, name: '1 ' + loadTimeData.getString('dayHistory')},
++        {value: 7, name: '7 ' + loadTimeData.getString('daysHistory')},
++        {value: 15, name: '15 ' + loadTimeData.getString('daysHistory')},
++        {value: 30, name: '30 ' + loadTimeData.getString('daysHistory')},
++        {value: 60, name: '60 ' + loadTimeData.getString('daysHistory')},
++        {value: 90, name: '90 ' + loadTimeData.getString('daysHistory')},
++        {value: 0xFFFF, name: loadTimeData.getString('foreverHistory')},
++      ];
++  protected accessor referersPolicyOptions_: DropdownMenuOptionList = [
++    {value: 2, name: loadTimeData.getString('noCrossOriginTopFramePolicy')},
++    {value: 1, name: loadTimeData.getString('standardRefererPolicy')},
++    {value: 0, name: loadTimeData.getString('disableRefererPolicy')},
++  ];
+   protected accessor showClearBrowsingDataDialog_: boolean = false;
+   protected accessor showPrivacyGuideDialog_: boolean = false;
+   protected accessor dbdDeletionConfirmationToastLabel_: string = '';
+@@ -146,6 +147,12 @@ export class SettingsPrivacyPageElement extends SettingsPrivacyPageElementBase {
+     Router.getInstance().navigateTo(routes.COOKIES);
+   }
+ 
++  protected onReferersPolicyChanged_(e: Event) {
++    const policy =
++        Number((e.target as SettingsDropdownMenuElement).getSelectedValue());
++    PrefService.getInstance().setPrefValue('enable_referrers', policy !== 0);
++  }
++
+   protected onCbdDialogClose_() {
+     Router.getInstance().navigateTo(routes.CLEAR_BROWSER_DATA.parent!);
+ 
+diff --git a/chrome/browser/ui/prefs/pref_watcher.cc b/chrome/browser/ui/prefs/pref_watcher.cc
+index 1974afa754a..3bed2a37ab3 100644
+--- a/chrome/browser/ui/prefs/pref_watcher.cc
++++ b/chrome/browser/ui/prefs/pref_watcher.cc
+@@ -139,6 +139,8 @@ PrefWatcher::PrefWatcher(Profile* profile) : profile_(profile) {
+                                      renderer_callback);
+   profile_pref_change_registrar_.Add(prefs::kEnableReferrers,
+                                      renderer_callback);
++  profile_pref_change_registrar_.Add(prefs::kReferrersPolicy,
++                                     renderer_callback);
+   profile_pref_change_registrar_.Add(prefs::kEnableEncryptedMedia,
+                                      renderer_callback);
+   profile_pref_change_registrar_.Add(prefs::kWebRTCIPHandlingPolicy,
+diff --git a/chrome/browser/ui/prefs/prefs_tab_helper.cc b/chrome/browser/ui/prefs/prefs_tab_helper.cc
+index 66eede68f09..5421cb6e7b4 100644
+--- a/chrome/browser/ui/prefs/prefs_tab_helper.cc
++++ b/chrome/browser/ui/prefs/prefs_tab_helper.cc
+@@ -388,6 +388,8 @@ void PrefsTabHelper::RegisterProfilePrefs(
+   registry->RegisterBooleanPref(
+       prefs::kEnableReferrers,
+       !base::FeatureList::IsEnabled(features::kNoReferrers));
++  registry->RegisterIntegerPref(
++      prefs::kReferrersPolicy, 2); // NoCrossOriginReferer
+   registry->RegisterBooleanPref(prefs::kEnableEncryptedMedia, true);
+   registry->RegisterBooleanPref(prefs::kScrollToTextFragmentEnabled, false);
+ #if BUILDFLAG(IS_ANDROID)
+diff --git a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+index a0b236d0459..5764c33b632 100644
+--- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
++++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
+@@ -2712,6 +2712,10 @@ void AddPrivacyStrings(content::WebUIDataSource* html_source,
+       {"dayHistory", IDS_SETTINGS_DAY_HISTORY_DESCRIPTION},
+       {"daysHistory", IDS_SETTINGS_DAYS_HISTORY_DESCRIPTION},
+       {"foreverHistory", IDS_SETTINGS_FOREVER_HISTORY_DESCRIPTION},
++      {"referersPolicyTitle", IDS_REFERERS_POLICY_TITLE},
++      {"standardRefererPolicy", IDS_STANDARD_REFERER_POLICY_TITLE},
++      {"noCrossOriginTopFramePolicy", IDS_NO_CROSS_ORIGIN_TOP_FRAME_POLICY_TITLE},
++      {"disableRefererPolicy", IDS_DISABLE_REFERER_POLICY_TITLE},
+ #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+       {"safeBrowsingStandardDescProxy",
+        IDS_SETTINGS_SAFEBROWSING_STANDARD_DESC_PROXY},
+diff --git a/chrome/common/pref_names.h b/chrome/common/pref_names.h
+index 5fa8d8b23bd..fde03e39d46 100644
+--- a/chrome/common/pref_names.h
++++ b/chrome/common/pref_names.h
+@@ -910,6 +910,9 @@ inline constexpr char kEnableDoNotTrack[] = "enable_do_not_track";
+ inline constexpr char kEnableEncryptedMedia[] =
+     "webkit.webprefs.encrypted_media_enabled";
+ 
++// Set referrer policy.
++inline constexpr char kReferrersPolicy[] = "referrers_policy";
++
+ // Boolean that specifies whether to import the form data for autofill from the
+ // default browser on first run.
+ inline constexpr char kImportAutofillFormData[] = "import_autofill_form_data";
+diff --git a/components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp b/components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp
+new file mode 100644
+index 00000000000..379e4f09d81
+--- /dev/null
++++ b/components/cromite_components_strings_grd/Remove-HTTP-referrals-in-cross-origin-navigation.grdp
+@@ -0,0 +1,18 @@
++<?xml version="1.0" encoding="utf-8"?>
++<grit-part>
++  <message name="IDS_REFERERS_POLICY_TITLE" desc="Title for 'Enable referers' preference">
++    HTTP Referer header policy
++  </message>
++  <message name="IDS_REFERERS_POLICY_SUMMARY" desc="Summary for a section in Settings that controls referer policy.">
++    Allow to change default HTTP Referer header policy
++  </message>
++  <message name="IDS_STANDARD_REFERER_POLICY_TITLE" desc="Title for 'standard referer' preference">
++    Standard HTTP Referrer header policy
++  </message>
++  <message name="IDS_NO_CROSS_ORIGIN_TOP_FRAME_POLICY_TITLE" desc="Title for 'standard referer' preference">
++    Disable if cross-origin and user begins navigation (default)
++  </message>
++  <message name="IDS_DISABLE_REFERER_POLICY_TITLE" desc="Title for 'disable referer' preference">
++    Disable all referrers
++  </message>
++</grit-part>
+diff --git a/components/download/content/internal/context_menu_download.cc b/components/download/content/internal/context_menu_download.cc
+index 55f56605e57..6cb1a5fce06 100644
+--- a/components/download/content/internal/context_menu_download.cc
++++ b/components/download/content/internal/context_menu_download.cc
+@@ -14,6 +14,8 @@
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/common/referrer.h"
+ #include "net/traffic_annotation/network_traffic_annotation.h"
++#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
++#include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
+ 
+ namespace download {
+ 
+@@ -33,6 +35,14 @@ void CreateContextMenuDownload(const GURL& url,
+   content::Referrer referrer = content::Referrer::SanitizeForRequest(
+       url,
+       content::Referrer(referring_url.GetAsReferrer(), params.referrer_policy));
++  blink::RendererPreferences* render_prefs = web_contents->GetMutableRendererPrefs();
++  if (render_prefs->enable_referrers && render_prefs->referrers_policy == 2 &&
++        !net::registry_controlled_domains::SameDomainOrHost(
++          referring_url, url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
++    referrer = content::Referrer::SanitizeForRequest(
++      url,
++      content::Referrer(params.page_url.GetAsReferrer(), params.referrer_policy));
++  }
+   dl_params->set_referrer(referrer.url);
+   dl_params->set_referrer_policy(
+       content::Referrer::ReferrerPolicyForUrlRequest(referrer.policy));
+diff --git a/content/browser/renderer_host/navigation_request.cc b/content/browser/renderer_host/navigation_request.cc
+index dbf2dad75a4..b7f06ce38c6 100644
+--- a/content/browser/renderer_host/navigation_request.cc
++++ b/content/browser/renderer_host/navigation_request.cc
+@@ -425,6 +425,15 @@ void AddAdditionalRequestHeaders(
+         blink::mojom::Referrer(GURL(), network::mojom::ReferrerPolicy::kNever);
+   }
+ 
++  if (render_prefs.enable_referrers && render_prefs.referrers_policy == 2 &&
++        !net::registry_controlled_domains::SameDomainOrHost(
++          referrer->url, url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES) &&
++        frame_tree_node->IsOutermostMainFrame()) {
++    // remove referrer if the navigation is done on the top frame
++    *referrer =
++        blink::mojom::Referrer(GURL(), network::mojom::ReferrerPolicy::kNever);
++  }
++
+   // Next, set the HTTP Origin if needed.
+   std::optional<std::string> existing_origin =
+       headers->GetHeader(net::HttpRequestHeaders::kOrigin);
+diff --git a/services/network/public/cpp/resource_request.h b/services/network/public/cpp/resource_request.h
+index 684b6e2f5bc..8c31c71be49 100644
+--- a/services/network/public/cpp/resource_request.h
++++ b/services/network/public/cpp/resource_request.h
+@@ -215,7 +215,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_BASE) ResourceRequest {
+   std::vector<GURL> navigation_redirect_chain;
+ 
+   GURL referrer;
+-  net::ReferrerPolicy referrer_policy = net::ReferrerPolicy::NEVER_CLEAR;
++  net::ReferrerPolicy referrer_policy = net::ReferrerPolicy::REDUCE_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN;
+   net::HttpRequestHeaders headers;
+   net::HttpRequestHeaders cors_exempt_headers;
+   int load_flags = 0;
+diff --git a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
+index 0fdf8029f82..b7bad104b62 100644
+--- a/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
++++ b/third_party/blink/public/common/renderer_preferences/renderer_preferences.h
+@@ -51,6 +51,7 @@ struct BLINK_COMMON_EXPORT RendererPreferences {
+   std::optional<base::TimeDelta> caret_blink_interval;
+   bool use_custom_colors{true};
+   bool enable_referrers{true};
++  uint32_t referrers_policy{2};
+   bool allow_cross_origin_auth_prompt{false};
+   bool enable_do_not_track{false};
+   bool enable_encrypted_media{true};

@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: uazo <uazo@users.noreply.github.com>
+Date: Fri, 17 Feb 2023 16:23:20 +0000
+Subject: [PATCH 153/310] Improve the browser sandbox
+
+by enabling network service sandbox and CIG in windows and
+using the new flags on android
+
+License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
+FILE:Improve-the-browser-sandbox.patch
+---
+ chrome/browser/net/system_network_context_manager.cc |  2 +-
+ .../about_flags_cc/Improve-the-browser-sandbox.inc   | 12 ++++++++++++
+ .../features_cc/Improve-the-browser-sandbox.inc      |  1 +
+ .../Improve-the-browser-sandbox.inc                  |  1 +
+ sandbox/policy/features.cc                           | 10 +++++++++-
+ 5 files changed, 24 insertions(+), 2 deletions(-)
+ create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Improve-the-browser-sandbox.inc
+ create mode 100644 cromite_flags/content/common/features_cc/Improve-the-browser-sandbox.inc
+ create mode 100644 cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc
+
+diff --git a/chrome/browser/net/system_network_context_manager.cc b/chrome/browser/net/system_network_context_manager.cc
+index ad24272e000..c846d615c0f 100644
+--- a/chrome/browser/net/system_network_context_manager.cc
++++ b/chrome/browser/net/system_network_context_manager.cc
+@@ -376,7 +376,7 @@ namespace features {
+ // this feature is disabled any failed launches in the current browser session
+ // will still result in sandbox being disabled for the lifetime of the running
+ // browser.
+-BASE_FEATURE(kPersistFailedLaunchState, base::FEATURE_ENABLED_BY_DEFAULT);
++BASE_FEATURE(kPersistFailedLaunchState, base::FEATURE_DISABLED_BY_DEFAULT);
+ }  // namespace features
+ 
+ class SystemNetworkContextManager::NetworkProcessLaunchWatcher
+diff --git a/cromite_flags/chrome/browser/about_flags_cc/Improve-the-browser-sandbox.inc b/cromite_flags/chrome/browser/about_flags_cc/Improve-the-browser-sandbox.inc
+new file mode 100644
+index 00000000000..c3013cf6565
+--- /dev/null
++++ b/cromite_flags/chrome/browser/about_flags_cc/Improve-the-browser-sandbox.inc
+@@ -0,0 +1,12 @@
++#ifdef FLAG_SECTION
++
++#if BUILDFLAG(IS_ANDROID)
++
++    {"android-gpu-sandbox",
++     "Enable Gpu Sandbox",
++     "Enables the experimental Android GPU sandbox using Landlock", kOsAndroid,
++     FEATURE_VALUE_TYPE(sandbox::policy::features::kAndroidGpuSandbox)},
++
++#endif
++
++#endif // ifdef FLAG_SECTION
+diff --git a/cromite_flags/content/common/features_cc/Improve-the-browser-sandbox.inc b/cromite_flags/content/common/features_cc/Improve-the-browser-sandbox.inc
+new file mode 100644
+index 00000000000..4bd8276f349
+--- /dev/null
++++ b/cromite_flags/content/common/features_cc/Improve-the-browser-sandbox.inc
+@@ -0,0 +1 @@
++// empty file
+diff --git a/cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc b/cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc
+new file mode 100644
+index 00000000000..d11c69f812a
+--- /dev/null
++++ b/cromite_flags/content/public/common/content_features_cc/Improve-the-browser-sandbox.inc
+@@ -0,0 +1 @@
++// intentionally empty
+diff --git a/sandbox/policy/features.cc b/sandbox/policy/features.cc
+index b9383231c3f..0d733f30628 100644
+--- a/sandbox/policy/features.cc
++++ b/sandbox/policy/features.cc
+@@ -129,7 +129,7 @@ BASE_FEATURE(kHigherRendererMemoryLimit, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ #if BUILDFLAG(IS_ANDROID)
+ // Enables the experimental Android GPU sandbox using Landlock.
+-BASE_FEATURE(kAndroidGpuSandbox, base::FEATURE_DISABLED_BY_DEFAULT);
++CROMITE_FEATURE(kAndroidGpuSandbox, "AndroidGpuSandbox", base::FEATURE_DISABLED_BY_DEFAULT);
+ // Enables the renderer on Android to use a separate seccomp policy.
+ BASE_FEATURE(kUseRendererProcessPolicy, base::FEATURE_ENABLED_BY_DEFAULT);
+ // When enabled, this features restricts a set of syscalls in
+@@ -184,4 +184,12 @@ bool IsNetworkSandboxEnabled() {
+ #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_FUCHSIA)
+ }
+ 
++#if BUILDFLAG(IS_ANDROID)
++SET_CROMITE_FEATURE_ENABLED(kUseRendererProcessPolicy);
++SET_CROMITE_FEATURE_ENABLED(kRestrictRendererPoliciesInBaseline);
++#endif
++#if BUILDFLAG(IS_WIN)
++SET_CROMITE_FEATURE_ENABLED(kNetworkServiceSandbox);
++SET_CROMITE_FEATURE_ENABLED(kNetworkServiceCodeIntegrity);
++#endif
+ }  // namespace sandbox::policy::features
