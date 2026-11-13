@@ -703,6 +703,22 @@ impl XdgShellHandler for Host {
             .filter(|t| t.window.toplevel().is_some_and(|s| s == &surface))
             .map(|t| t.id)
             .collect();
+        // Out of the space too, as an X11 window is in `forget_x11`. Nothing else ever took
+        // one out, so every window an application had closed stayed in it for as long as the
+        // host ran -- a service, for weeks -- still holding its surface's state, and gone
+        // over again at every change of focus.
+        for window in self
+            .windows
+            .iter()
+            .filter(|t| gone.contains(&t.id))
+            .map(|t| t.window.clone())
+            .collect::<Vec<_>>()
+        {
+            self.space.unmap_elem(&window);
+        }
+        // And the menus that closed with it, or before it: the popup manager keeps each until
+        // it is asked to let the dead ones go, and this is the only place that asks.
+        self.popups.cleanup();
         self.windows.retain(|t| !gone.contains(&t.id));
         for id in gone {
             log::info!("window {} closed", id.0);
