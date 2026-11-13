@@ -285,11 +285,148 @@ pub extern "C" fn sp_scroll_over_client() -> bool {
     OVER_CLIENT.load(Ordering::Relaxed)
 }
 
+/// **Command is the applications' Control** (the owner, 2026-11-12: "I use to press cmd and
+/// click to open link in new tab", "in mac we used to use cmd-c and v, also x for cut"). The
+/// session's applications are Linux's, whose shortcuts are Control's; a Mac's hand goes to
+/// Command. So while the keys are a client's -- one of Spatiand's own applications, SpatiMesh,
+/// a host's window -- either Command key is told as a Control key (the right one, so the real
+/// left Control is its own key still, and Control itself stays Control: a terminal's Ctrl-C).
+/// While the keys are a window of this Mac's own, Command is Command: that window is a Mac
+/// application's. The keys changing hands with Command held changes what is held with them.
+struct Command {
+    /// Each Command key (left, right) while it is down: whether it was told as Control.
+    held: [Option<bool>; 2],
+    /// Whether the keys are a window of this Mac's own.
+    on_mac: bool,
+}
+
+static COMMAND: std::sync::Mutex<Command> = std::sync::Mutex::new(Command { held: [None, None], on_mac: false });
+
+const SUPER: [u32; 2] = [125, 126];
+const RIGHT_CONTROL: u32 = 97;
+
+impl Command {
+    fn as_control(&self) -> usize {
+        self.held.iter().filter(|h| **h == Some(true)).count()
+    }
+
+    /// A key's press or release, as what the session is to be told (nothing, or keys).
+    fn key(&mut self, code: u32, pressed: bool) -> Vec<(u32, bool)> {
+        let Some(which) = SUPER.iter().position(|c| *c == code) else { return vec![(code, pressed)] };
+        if pressed {
+            if self.held[which].is_some() {
+                return Vec::new();
+            }
+            let control = !self.on_mac;
+            let first = self.as_control() == 0;
+            self.held[which] = Some(control);
+            match (control, first) {
+                (false, _) => vec![(code, true)],
+                (true, true) => vec![(RIGHT_CONTROL, true)],
+                (true, false) => Vec::new(),
+            }
+        } else {
+            match self.held[which].take() {
+                None => Vec::new(),
+                Some(false) => vec![(code, false)],
+                Some(true) if self.as_control() == 0 => vec![(RIGHT_CONTROL, false)],
+                Some(true) => Vec::new(),
+            }
+        }
+    }
+
+    /// The keys are a window of this Mac's own now, or no longer: what is held is told anew.
+    fn keys_on_mac(&mut self, on_mac: bool) -> Vec<(u32, bool)> {
+        if self.on_mac == on_mac {
+            return Vec::new();
+        }
+        self.on_mac = on_mac;
+        let mut out = Vec::new();
+        let was_control = self.as_control() > 0;
+        for which in 0..2 {
+            if let Some(control) = self.held[which] {
+                if control == on_mac {
+                    self.held[which] = Some(!on_mac);
+                    if on_mac {
+                        out.push((SUPER[which], true));
+                    } else {
+                        out.push((SUPER[which], false));
+                    }
+                }
+            }
+        }
+        let is_control = self.as_control() > 0;
+        if was_control && !is_control {
+            out.insert(0, (RIGHT_CONTROL, false));
+        } else if !was_control && is_control {
+            out.push((RIGHT_CONTROL, true));
+        }
+        out
+    }
+}
+
+/// Said once a frame by the loop: whether the keys are a window of this Mac's own.
+pub fn keys_on_mac(on_mac: bool) {
+    let keys = COMMAND.lock().unwrap().keys_on_mac(on_mac);
+    if !keys.is_empty() {
+        let mut input = controller::input().lock().unwrap();
+        input.keys.extend(keys.into_iter().map(|(code, pressed)| Typed::Key { code, pressed }));
+    }
+}
+
 /// A key of the Mac's keyboard, by its virtual key code.
 #[no_mangle]
 pub extern "C" fn sp_key(mac_code: u16, pressed: bool) {
     if let Some(code) = super::keycodes::evdev_of(mac_code) {
-        controller::input().lock().unwrap().keys.push(Typed::Key { code, pressed });
+        let keys = COMMAND.lock().unwrap().key(code, pressed);
+        let mut input = controller::input().lock().unwrap();
+        input.keys.extend(keys.into_iter().map(|(code, pressed)| Typed::Key { code, pressed }));
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    fn fresh() -> Command {
+        Command { held: [None, None], on_mac: false }
+    }
+
+    #[test]
+    fn command_is_control_for_a_client_and_control_stays_control() {
+        let mut c = fresh();
+        assert_eq!(c.key(125, true), vec![(97, true)]);
+        assert_eq!(c.key(46, true), vec![(46, true)]);
+        assert_eq!(c.key(46, false), vec![(46, false)]);
+        assert_eq!(c.key(125, false), vec![(97, false)]);
+        assert_eq!(c.key(29, true), vec![(29, true)]);
+        assert_eq!(c.key(29, false), vec![(29, false)]);
+    }
+
+    #[test]
+    fn both_commands_are_one_control_let_go_with_the_last() {
+        let mut c = fresh();
+        assert_eq!(c.key(125, true), vec![(97, true)]);
+        assert_eq!(c.key(126, true), vec![]);
+        assert_eq!(c.key(125, false), vec![]);
+        assert_eq!(c.key(126, false), vec![(97, false)]);
+    }
+
+    #[test]
+    fn command_is_command_for_a_window_of_the_macs() {
+        let mut c = fresh();
+        assert_eq!(c.keys_on_mac(true), vec![]);
+        assert_eq!(c.key(125, true), vec![(125, true)]);
+        assert_eq!(c.key(125, false), vec![(125, false)]);
+    }
+
+    #[test]
+    fn the_keys_changing_hands_change_what_is_held() {
+        let mut c = fresh();
+        assert_eq!(c.key(125, true), vec![(97, true)]);
+        assert_eq!(c.keys_on_mac(true), vec![(97, false), (125, true)]);
+        assert_eq!(c.keys_on_mac(false), vec![(125, false), (97, true)]);
+        assert_eq!(c.key(125, false), vec![(97, false)]);
     }
 }
 

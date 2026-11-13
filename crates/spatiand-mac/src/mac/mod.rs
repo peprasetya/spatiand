@@ -355,6 +355,11 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
     let prefix = format!("remote.{}.", local::HOST);
     let mut on_show = std::collections::HashSet::new();
     let all: Vec<smithay::desktop::Window> = state.space.elements().cloned().collect();
+    // Whether the keys are a window of this Mac's own: there Command is Command (`ffi::keys_on_mac`).
+    let keys_on_mac = all.iter().any(|w| {
+        state.layout.is_focused(w) && !state.layout.is_hidden(w) && state.app_id_of(w).is_some_and(|a| a.starts_with(&prefix))
+    });
+    ffi::keys_on_mac(keys_on_mac);
     for window in all {
         if !state.app_id_of(&window).is_some_and(|a| a.starts_with(&prefix)) {
             continue;

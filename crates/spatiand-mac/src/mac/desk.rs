@@ -516,6 +516,12 @@ pub extern "C" fn sp_desk_scroll(id: u32, dx: f64, dy: f64, wheel: bool) {
 #[no_mangle]
 pub extern "C" fn sp_desk_key(id: u32, mac_code: u16, pressed: bool) {
     if let Some(code) = super::keycodes::evdev_of(mac_code) {
+        // Command is the applications' Control here too (see `ffi::sp_key`): every window of
+        // 2D mode is a client's. The right Control for either, so the real left Control is its own key.
+        let code = match code {
+            125 | 126 => 97,
+            other => other,
+        };
         queue(Input::Key(id, code, pressed));
     }
 }
