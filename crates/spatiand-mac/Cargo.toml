@@ -3,7 +3,7 @@ name = "spatiand-mac"
 description = "Spatiand on the Mac: the Deck's compositor on the glasses, drawn through ANGLE"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.89"
 license = "MIT"
 
 # A workspace of its own, for one reason: the compositor is built on Smithay, which has a

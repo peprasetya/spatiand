@@ -1,0 +1,8 @@
+# The Rust every machine builds Spatiand with: deepmagpie, the Deck (its rustup, from the holo
+# container), littleotter and CI. rustup reads this from anywhere in the tree (crates/spatiand-mac
+# too) and fetches the toolchain on first use. Moved to each new stable, monthly. The Beam Pro's
+# target comes with it; a Mac's own is its host's. `rust-version` in Cargo.toml is the oldest
+# Rust that still builds it (what the dependencies ask), not this.
+[toolchain]
+channel = "1.100.0"
+targets = ["aarch64-linux-android"]

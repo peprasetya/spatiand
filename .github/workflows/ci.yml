@@ -8,7 +8,7 @@
 # None of this runs on glasses or a device: it says the code compiles and its tests pass, not that
 # it works. What a Deck, a Beam Pro and a pair of glasses do is still looked at by hand.
 #
-# `spatiand-host` is not built here: it links FFmpeg 8, which Ubuntu does not have; it is built on
+# `spatiand-host` is not built here: it links FFmpeg 9 with VA-API, which Ubuntu does not have; it is built on
 # deepmagpie (docs/remote.md). The media crates bind the FFmpeg Spatiand ships (third_party/ffmpeg),
 # which Ubuntu has not got either: the linux job builds it once (tools/ci-deps.sh ffmpeg) and keeps it. The Mac's ANGLE comes from
 # an installed Electron app and is not in the repository, so the Mac job builds the app but does
