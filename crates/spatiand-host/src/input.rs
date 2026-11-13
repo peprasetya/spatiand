@@ -104,7 +104,7 @@ pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
             if let Some(keyboard) = host.seat.get_keyboard() {
                 keyboard.input::<(), _>(
                     host,
-                    smithay::input::keyboard::Keycode::from(code + 8),
+                    smithay::input::keyboard::Keycode::from(code.wrapping_add(8)),
                     KeyState::Released,
                     SERIAL_COUNTER.next_serial(),
                     time_ms,
@@ -350,7 +350,7 @@ pub fn apply(host: &mut Host, window: WindowId, input: Input, time_ms: u32) {
                 // eight above them for reasons inherited from X11 (its own libinput backend
                 // adds the same 8). Subtracting instead shifted every key two rows of the
                 // table down: P arrived as 8.
-                smithay::input::keyboard::Keycode::from(code + 8),
+                smithay::input::keyboard::Keycode::from(code.wrapping_add(8)),
                 if pressed {
                     KeyState::Pressed
                 } else {

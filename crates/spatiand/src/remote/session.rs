@@ -262,6 +262,8 @@ pub fn run(
             client.close_all();
             if let Ok(mut v) = view.lock() {
                 v.quiet = false;
+                // A host gone mid-rumble never says stop, and the motors run until told.
+                v.rumble = Some((0, 0));
             }
             let reason = match ended {
                 Ended::Stopped => break,

@@ -168,7 +168,9 @@ impl Client {
         let shm: wl_shm::WlShm = globals
             .bind(&handle, 1..=2, ())
             .map_err(|e| format!("no wl_shm: {e}"))?;
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=4, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=5, ()).ok();
+        // To 5 and not 4: `set_frame_pose` is the protocol's fifth version, and bound at 4 it
+        // was never sent -- a remote world's picture stood unturned however the head moved.
         if xr.is_none() {
             log::warn!("remote: the compositor offers no spatiand_xr_v1; remote worlds stay windows");
         }
@@ -957,7 +959,14 @@ fn placeholder_memory(bytes: usize, token: u32) -> Result<std::fs::File, String>
 
 /// A file in memory to share with the compositor.
 fn tempfile() -> Result<std::fs::File, String> {
-    let path = std::env::temp_dir().join(format!("spatiand-remote-{}", std::process::id()));
+    // One name each: two hosts' threads making one at the same moment were given the same
+    // file, and one window then carried the other's.
+    static MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "spatiand-remote-{}-{}",
+        std::process::id(),
+        MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

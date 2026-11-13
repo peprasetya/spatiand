@@ -561,7 +561,7 @@ async fn heard(mut stream: quinn::RecvStream, callbacks: Callbacks) {
 }
 
 async fn listen_control(mut stream: quinn::RecvStream, rest: Vec<u8>, callbacks: Callbacks) {
-    const LARGEST: usize = 1 << 20;
+    const LARGEST: usize = spatiand_stream::link::MAX_CONTROL;
     let mut held = rest;
     let mut buffer = vec![0u8; 16 * 1024];
     loop {
