@@ -329,13 +329,21 @@ impl Board {
     }
 
     /// A host went away. What it was holding goes with it.
+    ///
+    /// Asked every frame for every host that is not connected, and a host that is asleep or
+    /// only connects when used is "not connected" for as long as the session lasts. So this
+    /// must change nothing unless `host` is the one holding the clipboard: the pastes waiting
+    /// are waiting on the owner, and ending them because some *other* machine is off ended
+    /// every picture pasted from a host while any second host was configured and not up.
     pub fn host_left(&mut self, host: &str) {
         if self.owner.as_ref() == Some(&Owner::Host(host.to_string())) {
             self.owner = None;
             self.held = None;
             self.announced = None;
+            // Nobody is left to answer them. Closing the pipes ends the pastes empty at once
+            // rather than after `PATIENCE`.
+            self.waiting.clear();
         }
-        self.waiting.clear();
     }
 
     /// Once a turn: collect what the reader threads finished, start announcing any copy made
@@ -655,6 +663,26 @@ mod tests {
         board.host_left("workshop");
         assert!(board.held.is_none());
         assert!(board.owner.is_none());
+    }
+
+    #[test]
+    fn a_paste_waiting_on_one_host_outlives_another_host_being_away() {
+        // `exchange` reports every host that is not connected, every frame. A sleeping host
+        // must not end a paste the live one is about to answer.
+        let (read, write) = std::io::pipe().expect("a pipe");
+        let mut board = from_a_host("hello");
+        board.paste_from_a_host("image/png".into(), OwnedFd::from(write));
+        board.host_left("elsewhere");
+        assert_eq!(board.waiting.len(), 1, "another host being away ended the paste");
+        board.arrived("image/png", b"\x89PNG".to_vec());
+        assert_eq!(pasted(read), b"\x89PNG");
+
+        // The owner itself going is another matter: nothing will answer, so the pipe closes.
+        let (read, write) = std::io::pipe().expect("a pipe");
+        board.paste_from_a_host("image/png".into(), OwnedFd::from(write));
+        board.host_left("workshop");
+        assert!(board.waiting.is_empty());
+        assert!(pasted(read).is_empty(), "the pipe should close, not hang");
     }
 
     #[test]
