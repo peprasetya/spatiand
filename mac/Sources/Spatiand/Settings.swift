@@ -85,6 +85,20 @@ enum Settings {
         set { defaults.set(newValue, forKey: "notifications") }
     }
 
+    /// Whether two fingers pressed hard on the trackpad are a deep click, as a Force click is
+    /// with one, three, four or five (macOS gives two fingers none; the pad taps to confirm it).
+    /// Off until the owner has felt it.
+    static var deepClickTwoFingers: Bool {
+        get { defaults.object(forKey: "deepClickTwoFingers") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "deepClickTwoFingers") }
+    }
+
+    /// How hard, as macOS's pressure from 0 to 1: an ordinary click is about 0.1 at most.
+    static var deepClickTwoFingersPressure: Double {
+        get { defaults.object(forKey: "deepClickTwoFingersPressure") as? Double ?? 0.6 }
+        set { defaults.set(newValue, forKey: "deepClickTwoFingersPressure") }
+    }
+
     static var hotkeys: Bool {
         defaults.object(forKey: "hotkeys") as? Bool ?? true
     }

@@ -575,6 +575,11 @@ final class RoomTap {
         if on, tap == nil, !install() { return }
         holding = on
         buttons = 0
+        // A press going on ends with the room's hold of the pad.
+        clickDown = 0
+        pressureStage = 0
+        pressureNow = 0
+        reportPress()
         SystemGestures.swipesOff(on)
         // The Mac's own pointer stays where it is while the room has the mouse: what moves is the
         // room's. Its travel still arrives in every event.
@@ -713,10 +718,12 @@ final class RoomTap {
         case .leftMouseUp where systemPressed:
             systemPressed = false
             return nil
-        case .leftMouseDown: buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
-        case .leftMouseUp: buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)
-        case .rightMouseDown: buttons |= 2; sp_pointer(0, 0, buttons, 0, 0)
-        case .rightMouseUp: buttons &= ~2; sp_pointer(0, 0, buttons, 0, 0)
+        // The press is told before its button, so the room knows which press made the click in
+        // the frame that hears of the click (a layout may have that press instead of the click).
+        case .leftMouseDown: clickDown |= 1; reportPress(); buttons |= 1; sp_pointer(0, 0, buttons, 0, 0)
+        case .leftMouseUp: clickDown &= ~1; reportPress(); buttons &= ~1; sp_pointer(0, 0, buttons, 0, 0)
+        case .rightMouseDown: clickDown |= 2; reportPress(); buttons |= 2; sp_pointer(0, 0, buttons, 0, 0)
+        case .rightMouseUp: clickDown &= ~2; reportPress(); buttons &= ~2; sp_pointer(0, 0, buttons, 0, 0)
         case .otherMouseDown: buttons |= 4; sp_pointer(0, 0, buttons, 0, 0)
         case .otherMouseUp: buttons &= ~4; sp_pointer(0, 0, buttons, 0, 0)
         case .scrollWheel:
@@ -758,18 +765,19 @@ final class RoomTap {
                 let touches = gesture.allTouches()
                 if !touches.isEmpty, touches.allSatisfy({ $0.type == .direct }) { return pass }
             }
-            // **How hard the pad is pressed**, written down for now and nothing more: a Magic
-            // Trackpad has a click and a deeper one (the owner, 2026-11-14: with one, three, four
-            // or five fingers, not with two), which he would give actions of his own. What macOS
-            // says of it, and with how many fingers on the pad, is what this finds out.
+            // **How hard the pad is pressed**: a Magic Trackpad clicks, and pressed on, clicks
+            // deeper (stage 2; never with two fingers, whose pressure alone says it). The press,
+            // by its fingers and depth, is the room's to give to a layout (`reportPress`).
             if gesture.type == .pressure {
                 let stage = gesture.stage
                 pressureMost = max(pressureMost, gesture.pressure)
                 if stage != pressureStage {
-                    gestureNote(String(format: "pressure: stage %ld to %ld, pressure %.2f (most in the stage left: %.2f), %ld fingers on the pad", pressureStage, stage, gesture.pressure, pressureMost, lastCount))
-                    pressureStage = stage
+                    gestureLog("pressure: stage %ld to %ld, pressure %.2f (most in the stage left: %.2f), %ld fingers on the pad", pressureStage, stage, gesture.pressure, pressureMost, lastCount)
                     pressureMost = 0
                 }
+                pressureStage = stage
+                pressureNow = gesture.pressure
+                reportPress()
             }
             if gesture.type == .gesture {
                 warpLock.lock(); touchedAt = Self.uptime; warpLock.unlock()
@@ -789,6 +797,42 @@ final class RoomTap {
     private var gestureSeen = 0
     private var pressureStage = 0
     private var pressureMost: Float = 0
+    private var pressureNow: Float = 0
+    /// The buttons macOS has pressed for a click of its own (1 primary, 2 secondary): not the
+    /// three-finger drag's, which `buttons` has too, and is no click.
+    private var clickDown: Int32 = 0
+    /// The fingers of the press going on, counted as it began (0: none), and the pressure at
+    /// which two fingers make a deep click for it (0: never), read from the settings then.
+    private var pressFingers = 0
+    private var pressTwoDeep: Float = 0
+
+    /// **The trackpad's press, by its fingers and how deep, told to the room** (`sp_pad_press`),
+    /// which gives it to the application's layout where that binds it and to the pointer
+    /// otherwise, as ever. A press begins at whichever comes first of macOS's click and its
+    /// pressure's first stage, and ends when both are over; its fingers are those on the pad as
+    /// it began, a finger landing or lifting meanwhile notwithstanding. A mouse's click, with no
+    /// finger on a pad, is no press. A two-finger deep click is read from the pressure, only with
+    /// its setting on, and confirmed with a tap of the pad since macOS gives it none.
+    private func reportPress() {
+        let down = clickDown != 0 || pressureStage > 0
+        if !down {
+            if pressFingers != 0 {
+                pressFingers = 0
+                _ = sp_pad_press(0, 0, 0, 0)
+            }
+            return
+        }
+        if pressFingers == 0 {
+            guard lastCount > 0 else { return }
+            pressFingers = min(lastCount, 5)
+            pressTwoDeep = Settings.deepClickTwoFingers ? Float(Settings.deepClickTwoFingersPressure) : 0
+        }
+        if sp_pad_press(Int32(pressFingers), Int32(max(pressureStage, 1)), pressureNow, pressTwoDeep) {
+            DispatchQueue.main.async {
+                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            }
+        }
+    }
 
     // **Palm rejection.** A touch is not a finger when it lands on the pad's edge (the sides, and
     // the far edge by the keyboard, where a palm or a thumb rests), or just after a key was

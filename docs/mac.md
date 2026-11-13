@@ -129,6 +129,11 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
 * Pinching on a title bar moves the window nearer or further; three fingers drag; four fingers
   swipe up for the launcher, down to back out, and tap to recentre. Two fingers, or a wheel,
   move through an open menu.
+* A click and a deep (Force) click, with one to five fingers, can each be bound per application
+  in the room's *Controller layout* → *Trackpad clicks* -- a keyboard shortcut, a mouse button,
+  a room command; unbound they are the clicks they always were. A two-finger deep click, which
+  macOS does not make, is read from the pressure with a tap of the pad, behind its own setting
+  (off). `docs/input-mapper.md` section 8.
 * *Sound devices* in the settings chooses the output and the microphone; *Record a video* films
   the glasses' view (macOS 15) to `~/Movies/Spatiand`.
 * The view is held steady against the wearer's pulse (`spatiand_track::Steady`,

@@ -80,6 +80,12 @@ void sp_pointer_held(bool held);
 void sp_pointer_speed(float speed);
 // Two fingers spreading (above 1) or closing, since the last call.
 void sp_pinch(float scale);
+// The trackpad's press, as it is now: the fingers on the pad as it began (0 for a mouse's
+// click, which is no press), the stage macOS says (0 none -- the press has ended, 1 clicked,
+// 2 the deep click) and its pressure (0..1). two_finger_deep is the pressure at which two
+// fingers make a deep click, 0 for never (the setting). Returns true when the pad should tap
+// under the fingers now: as a two-finger deep click begins, which macOS does not confirm.
+bool sp_pad_press(int32_t fingers, int32_t stage, float pressure, float two_finger_deep);
 // The fingers have lifted from a scroll made with sp_pointer's wheel: the client under the pointer
 // is told so (wl_pointer.axis_stop) and carries the page on itself. sp_scroll_over_client says
 // whether there is such a client under the pointer (else the room's own things, which do not).

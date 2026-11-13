@@ -26,6 +26,8 @@ struct SettingsView: View {
     @AppStorage("gamepads", store: Defaults.store) private var gamepads = true
     @AppStorage("notifications", store: Defaults.store) private var notifications = true
     @AppStorage("soundPlacement", store: Defaults.store) private var soundPlacement = true
+    @AppStorage("deepClickTwoFingers", store: Defaults.store) private var deepClickTwoFingers = false
+    @AppStorage("deepClickTwoFingersPressure", store: Defaults.store) private var deepClickTwoFingersPressure = 0.6
     @StateObject private var local = SettingsLocal()
     let hotkeyStatus: () -> String
 
@@ -83,6 +85,14 @@ struct SettingsView: View {
                 LabeledContent("Three fingers", value: "Drag, as a held button")
                 LabeledContent("Four fingers up / down", value: "Launcher / back")
                 LabeledContent("Four-finger tap", value: "Recentre")
+                note("A click and a deep click with one to five fingers can each be given an action of its own -- a keyboard shortcut, a mouse button, closing the window -- for each application: in the glasses, Settings \u{2192} Controller layout \u{2192} Trackpad clicks. Unassigned, a click does what it always did.")
+                Toggle("Deep click with two fingers (the pad taps to confirm)", isOn: $deepClickTwoFingers)
+                if deepClickTwoFingers {
+                    Slider(value: $deepClickTwoFingersPressure, in: 0.3...0.95, step: 0.05) {
+                        Text("How hard")
+                    } minimumValueLabel: { Text("Lighter") } maximumValueLabel: { Text("Harder") }
+                    note("macOS gives two fingers no deep click of its own, so it is read from how hard they press. An ordinary click is well below the lightest.")
+                }
                 let system = SystemGestures.enabled()
                 if !system.isEmpty {
                     note("macOS is also using these on the trackpad: " + system.joined(separator: "; ") + ". They happen on the Mac as well, so turn them off if they get in the way.", colour: .orange)
@@ -93,7 +103,7 @@ struct SettingsView: View {
             }
             Section("Game controllers") {
                 Toggle("Work as they do on the Deck", isOn: $gamepads)
-                note("By cable or Bluetooth. A pad\u{2019}s touchpad moves the pointer and its press clicks; the PS button opens the menu. To use a Deck\u{2019}s layouts, copy ~/.config/spatiand/layouts from it to the same place on this Mac.")
+                note("By cable or Bluetooth. A pad\u{2019}s touchpad moves the pointer and its press clicks; the PS button opens the menu. Layouts saved now are kept in ~/.config/spatiand/apps/layouts, which a paired Deck shares; to use an older one of a Deck\u{2019}s, copy it from its ~/.config/spatiand/layouts to the same place on this Mac.")
             }
         }
         .formStyle(.grouped)

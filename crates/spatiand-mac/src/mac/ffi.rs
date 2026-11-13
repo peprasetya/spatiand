@@ -258,6 +258,32 @@ pub extern "C" fn sp_pointer_speed(speed: f32) {
     controller::set_speed(speed);
 }
 
+/// The trackpad's press, as it is now: the fingers on the pad as it began (0 for a mouse's
+/// click, which is no press), the stage macOS says (0 none -- the press has ended, 1 clicked, 2
+/// the deep click) and its pressure (0..1). `two_finger_deep` is the pressure at which two
+/// fingers make a deep click, 0 for never. Returns whether the pad should tap under the fingers
+/// now: as a two-finger deep click begins, which macOS does not confirm itself.
+///
+/// What it means is decided in the core (`spatiand_input::PressReader`), the same for any pad;
+/// the room reads it as `ControllerState::pad_press`, and a layout binds it.
+#[no_mangle]
+pub extern "C" fn sp_pad_press(fingers: i32, stage: i32, pressure: f32, two_finger_deep: f32) -> bool {
+    let mut input = controller::input().lock().unwrap();
+    let two = (two_finger_deep > 0.0).then_some(two_finger_deep);
+    let (press, tap) = input.press_reader.update(
+        fingers.clamp(0, 255) as u8,
+        stage.clamp(0, 2) as u8,
+        if pressure.is_finite() { pressure } else { 0.0 },
+        two,
+    );
+    input.presses_known = true;
+    if input.press_now != press {
+        input.press_now = press;
+        input.presses.push(press);
+    }
+    tap
+}
+
 /// Two fingers spreading (above 1) or closing, since the last call.
 #[no_mangle]
 pub extern "C" fn sp_pinch(scale: f32) {

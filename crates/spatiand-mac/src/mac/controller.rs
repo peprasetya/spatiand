@@ -17,7 +17,7 @@
 use std::sync::{Mutex, OnceLock};
 
 use glam::DQuat;
-use spatiand_input::{Buttons, Control, ControllerState, Pad};
+use spatiand_input::{Buttons, Control, ControllerState, Pad, PadPress, PressReader};
 
 /// What the app says the Mac's devices did. Read by the compositor once a frame.
 #[derive(Default)]
@@ -38,6 +38,13 @@ pub struct MacInput {
     pub reaim: bool,
     /// Whether the room has the Mac's pointer at all. Without it there is no laser.
     pub held: bool,
+    /// The trackpad's press as it changed, in order, since the last frame (`sp_pad_press`).
+    pub presses: Vec<Option<PadPress>>,
+    /// The press as it last was, and what reads it from what macOS says.
+    pub press_now: Option<PadPress>,
+    pub press_reader: PressReader,
+    /// A trackpad here has said its presses.
+    pub presses_known: bool,
 }
 
 pub fn input() -> &'static Mutex<MacInput> {
@@ -53,6 +60,28 @@ pub enum Typed {
     /// A character with no key behind it. Typed as the key that makes it on a US layout, or into
     /// the shell as itself when the shell is asking for text.
     Char(char),
+}
+
+/// The press this frame shows, and the press as it is now, from the press last frame and how it
+/// changed since. **A press that came and went between two frames is still shown for one**, as
+/// the buttons are (a click is a press this frame and a release the next): what it reached --
+/// its fingers, and deep if it went deep at any moment -- is this frame's, and what it is now is
+/// the next frame's.
+fn this_frame(before: Option<PadPress>, changes: &[Option<PadPress>]) -> (Option<PadPress>, Option<PadPress>) {
+    let latest = changes.last().copied().unwrap_or(before);
+    let mut shown = before;
+    for change in changes {
+        shown = match (shown, *change) {
+            (Some(s), Some(c)) if s.fingers == c.fingers => Some(PadPress { fingers: c.fingers, deep: s.deep || c.deep }),
+            (_, Some(c)) => Some(c),
+            (s, None) => s,
+        };
+    }
+    // Nothing new reached: the press as it is now.
+    if changes.is_empty() || shown == before && latest.is_none() {
+        return (latest, latest);
+    }
+    (shown, latest)
 }
 
 /// The pointer's travel in pad units a point. The pad is two across and so is the view: at
@@ -86,6 +115,8 @@ pub struct Controller {
     pinch: f32,
     wheel: (f32, f32),
     keys: Vec<Typed>,
+    /// The trackpad's press as of the last frame.
+    press: Option<PadPress>,
 }
 
 impl Default for Controller {
@@ -108,6 +139,7 @@ impl Controller {
             pinch: 1.0,
             wheel: (0.0, 0.0),
             keys: Vec::new(),
+            press: None,
         }
     }
 
@@ -115,7 +147,7 @@ impl Controller {
     pub fn poll(&mut self, _head: DQuat) {
         self.pressed.clear();
         self.released.clear();
-        let (travel, mouse_buttons, controls, keys, reaim, pointer_held) = {
+        let (travel, mouse_buttons, controls, keys, reaim, pointer_held, presses, presses_known) = {
             let mut input = input().lock().unwrap();
             let wheel = std::mem::take(&mut input.wheel);
             self.wheel.0 += wheel.0;
@@ -128,8 +160,12 @@ impl Controller {
                 std::mem::take(&mut input.keys),
                 std::mem::take(&mut input.reaim),
                 input.held,
+                std::mem::take(&mut input.presses),
+                input.presses_known,
             )
         };
+        let (press, latest) = this_frame(self.press, &presses);
+        self.press = latest;
         self.keys.extend(keys);
 
         // Buttons pressed and released between two frames are still pressed this frame.
@@ -198,6 +234,8 @@ impl Controller {
             buttons,
             left_pad,
             right_pad,
+            pad_press: if pointer_held { press } else { None },
+            reports_pad_presses: presses_known,
             ..ControllerState::default()
         };
     }
@@ -257,5 +295,29 @@ impl Controller {
     /// Put the pointer in the middle of the view, as recentring does for the room.
     pub fn reaim(&mut self) {
         self.recentre = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn p(fingers: u8, deep: bool) -> Option<PadPress> {
+        Some(PadPress { fingers, deep })
+    }
+
+    #[test]
+    fn a_press_between_two_frames_is_shown_for_one() {
+        // Down and up before the frame: shown down, and up at the next.
+        assert_eq!(this_frame(None, &[p(1, false), None]), (p(1, false), None));
+        assert_eq!(this_frame(None, &[]), (None, None));
+        // A deep click in and out within a frame: deep this frame, not the next.
+        assert_eq!(this_frame(p(1, false), &[p(1, true), p(1, false)]), (p(1, true), p(1, false)));
+        assert_eq!(this_frame(p(1, false), &[p(1, true), None]), (p(1, true), None));
+        // An ordinary release is at once.
+        assert_eq!(this_frame(p(2, false), &[None]), (None, None));
+        assert_eq!(this_frame(p(2, true), &[p(2, false), None]), (None, None));
+        // Nothing changed: as it was.
+        assert_eq!(this_frame(p(3, false), &[]), (p(3, false), p(3, false)));
     }
 }
