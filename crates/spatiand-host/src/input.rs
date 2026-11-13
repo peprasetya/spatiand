@@ -38,9 +38,25 @@ pub fn release_everything(host: &mut Host, time_ms: u32) {
         }
         pointer.frame(host);
     }
-    // Keyboard focus going away is what tells a client its keys are no longer held; XWayland
-    // turns it into the release an X11 client is waiting for.
     if let Some(keyboard) = host.seat.get_keyboard() {
+        // **Every key still down is let go of, on the keyboard itself.** Taking the focus
+        // away tells the client that had it that nothing is held, but the keyboard goes on
+        // counting the key as down, and says so to whichever window is focused next: the
+        // session that comes back finds Control or Shift held in the first window it types
+        // in, with no release ever coming, since the press was the old connection's. Released
+        // while the window still has the focus, so it hears each one as a release.
+        for key in keyboard.pressed_keys() {
+            keyboard.input::<(), _>(
+                host,
+                key,
+                KeyState::Released,
+                SERIAL_COUNTER.next_serial(),
+                time_ms,
+                |_, _, _| FilterResult::Forward,
+            );
+        }
+        // Keyboard focus going away is what tells a client its keys are no longer held; XWayland
+        // turns it into the release an X11 client is waiting for.
         keyboard.set_focus(host, None, SERIAL_COUNTER.next_serial());
     }
 }
