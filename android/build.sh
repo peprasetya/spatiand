@@ -10,8 +10,9 @@ set -eu
 cd "$(dirname "$0")"
 # The SDK where Android Studio puts it: ~/Library/Android/sdk on a Mac, ~/Android/Sdk on Linux.
 SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
-BT=$SDK/build-tools/36.0.0
-JAR=$SDK/platforms/android-34/android.jar
+BT=$SDK/build-tools/37.0.0
+# Compiled against the newest Android's API; the app still targets 34 (AndroidManifest.xml).
+JAR=$SDK/platforms/android-37.2/android.jar
 NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
 HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)

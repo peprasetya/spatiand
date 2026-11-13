@@ -18,10 +18,10 @@ SUDO=""
 export DEBIAN_FRONTEND=noninteractive
 
 # Versions the Android build is written for: android/build.sh.
-BUILD_TOOLS=36.0.0
-PLATFORM=android-34
+BUILD_TOOLS=37.0.0
+PLATFORM=android-37.2
 NDK=28.2.13676358
-CMDLINE_TOOLS=11076708
+CMDLINE_TOOLS=16111833
 
 apt_update_once() { [ -n "${UPDATED:-}" ] || { $SUDO apt-get update -qq; UPDATED=1; }; }
 

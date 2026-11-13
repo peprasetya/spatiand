@@ -89,7 +89,7 @@ jobs:
           android/libs/fetch.sh
           out=$(mktemp -d)
           javac --release 17 -Xlint:-options -Xlint:-deprecation \
-            -classpath "$ANDROID_HOME/platforms/android-34/android.jar:$(ls android/libs/*.jar | tr '\n' ':')" \
+            -classpath "$ANDROID_HOME/platforms/android-37.2/android.jar:$(ls android/libs/*.jar | tr '\n' ':')" \
             -d "$out/app" $(find android/src -name '*.java')
       - name: The APK
         # android/build.sh was written on a Mac; this is its first run anywhere else, so it
