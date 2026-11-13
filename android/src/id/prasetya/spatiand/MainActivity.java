@@ -281,16 +281,42 @@ public class MainActivity extends Activity implements SensorEventListener {
         phoneMotor.vibrate(effect);
     }
 
-    /** A thread that waits on the session for buzzes: a key's is felt as the key goes down. */
-    void startBuzzer() {
+    static boolean buzzerStarted;
+
+    /**
+     * A thread that waits on the session for buzzes: a key's is felt as the key goes down. One
+     * for the process, buzzing through whichever activity there is: one for each activity made
+     * shared the buzzes with those of the activities before it.
+     */
+    static synchronized void startBuzzer() {
+        if (buzzerStarted) return;
+        buzzerStarted = true;
         Thread t = new Thread(() -> {
             while (true) {
                 int feel = Native.nextBuzz();
-                if (feel >= 0) buzz(feel);
+                MainActivity now = running;
+                if (feel >= 0 && now != null) now.buzz(feel);
             }
         }, "spatiand-buzz");
         t.setDaemon(true);
         t.start();
+    }
+
+    /**
+     * A change the manifest says is the activity's own to take, which is all of them: a keyboard
+     * or a pad coming or going, the dark theme, the font's size, the language. Nothing here is
+     * made from any of them but the two texts' size, so the activity stays -- and with it the
+     * glasses' window and their USB, which being made again let go of and took back: the
+     * glasses went black and back to 2D whenever a Bluetooth keyboard or pad connected or slept.
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration config) {
+        super.onConfigurationChanged(config);
+        Log.i(TAG, "configuration changed: " + config);
+        if (status != null) status.setTextSize(12);
+        if (reminder != null) reminder.setTextSize(18);
+        // A keyboard's trackpad or a pad's touchpad that came with it is captured.
+        capturePadTouchpad();
     }
 
     RoundButton keys;
@@ -913,6 +939,12 @@ public class MainActivity extends Activity implements SensorEventListener {
         ui.removeCallbacks(refresh);
         ui.removeCallbacks(rumbler);
         getSystemService(InputManager.class).unregisterInputDeviceListener(padsListener);
+        // Each pad's gyro stops reporting to an activity that is gone.
+        for (Map.Entry<Integer, SensorEventListener> pad : padGyros.entrySet()) {
+            InputDevice d = InputDevice.getDevice(pad.getKey());
+            if (d != null && pad.getValue() != null) d.getSensorManager().unregisterListener(pad.getValue());
+        }
+        padGyros.clear();
         getSystemService(DisplayManager.class).unregisterDisplayListener(displays);
         unregisterReceiver(usbPermission);
         unregisterReceiver(usbAttached);

@@ -74,14 +74,17 @@ final class BluetoothBridge {
     private static BluetoothBridge running;
 
     private final Context context;
-    private final WeakReference<Activity> activity;
+    private volatile WeakReference<Activity> activity;
     private final Handler handler;
     private final BluetoothManager manager;
     private Client client;
 
-    /** Started once, by the app. */
+    /** Started once, by the app; an activity made later is the one Android's question is asked through. */
     static synchronized void start(Activity activity) {
-        if (running != null) return;
+        if (running != null) {
+            running.activity = new WeakReference<>(activity);
+            return;
+        }
         running = new BluetoothBridge(activity);
     }
 

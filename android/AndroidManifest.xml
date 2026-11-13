@@ -46,14 +46,17 @@
         android:debuggable="true">
         <!-- The phone's screen: the controller and the status. The glasses are a Presentation
              this activity puts on their display. Opened by plugging the glasses in, once it is
-             the app chosen for them. -->
+             the app chosen for them.
+             Every change of configuration is its own to take (onConfigurationChanged): made
+             again for one, it lets go of the glasses and takes them back, and a keyboard or a
+             pad connecting (keyboard, navigation) or the dark theme's hour (uiMode) is one. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density">
+            android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|density|screenSize|smallestScreenSize|layoutDirection|colorMode|fontWeightAdjustment|grammaticalGender">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
