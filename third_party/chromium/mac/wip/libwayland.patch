@@ -1,6 +1,6 @@
 diff -ru a/src/connection.c b/src/connection.c
---- a/src/connection.c	2026-11-13 08:22:13.174646401 +0700
-+++ b/src/connection.c	2026-11-13 08:22:13.432785795 +0700
+--- a/src/connection.c	2026-11-13 08:27:51.299728389 +0700
++++ b/src/connection.c	2026-11-13 08:27:51.553169223 +0700
 @@ -39,6 +39,11 @@
  #include <unistd.h>
  #include <sys/types.h>
@@ -14,8 +14,8 @@ diff -ru a/src/connection.c b/src/connection.c
  #include <ffi.h>
  
 diff -ru a/src/wayland-client.c b/src/wayland-client.c
---- a/src/wayland-client.c	2026-11-13 08:22:13.462099322 +0700
-+++ b/src/wayland-client.c	2026-11-13 08:22:13.733778125 +0700
+--- a/src/wayland-client.c	2026-11-13 08:27:51.580671402 +0700
++++ b/src/wayland-client.c	2026-11-13 08:27:51.847161731 +0700
 @@ -2056,7 +2056,16 @@
  			timespec_sub_saturate(&result, &deadline, &now);
  			remaining_timeout = &result;
@@ -34,8 +34,8 @@ diff -ru a/src/wayland-client.c b/src/wayland-client.c
  
  	return ret;
 diff -ru a/src/wayland-os.c b/src/wayland-os.c
---- a/src/wayland-os.c	2026-11-13 08:22:12.888912241 +0700
-+++ b/src/wayland-os.c	2026-11-13 08:22:13.145793108 +0700
+--- a/src/wayland-os.c	2026-11-13 08:27:51.022896394 +0700
++++ b/src/wayland-os.c	2026-11-13 08:27:51.272176385 +0700
 @@ -33,7 +33,9 @@
  #include <fcntl.h>
  #include <errno.h>

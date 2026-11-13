@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000031 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Fri, 13 Nov 2026 08:40:00 +0700
+Subject: [PATCH] Spatiand: an unpacked extension too large to share stays
+ where it was loaded
+
+ExtensionSync notes an extension as shared when it asks for its copy; the copy
+of a folder too large is refused and no record written, and three seconds
+later the extension, known and not in the list, was uninstalled as removed on
+another machine. One loaded from a folder of this machine's own is not taken
+out for not being in the list.
+---
+ chrome/browser/spatiand/extension_sync.cc | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/chrome/browser/spatiand/extension_sync.cc b/chrome/browser/spatiand/extension_sync.cc
+index b5f0aa3..483e83b 100644
+--- a/chrome/browser/spatiand/extension_sync.cc
++++ b/chrome/browser/spatiand/extension_sync.cc
+@@ -232,6 +232,14 @@ void ExtensionSync::Reconcile(Records records) {
+     if (!Syncs(extension.get()) || records.contains(extension->id())) {
+       continue;
+     }
++    if (known_.contains(extension->id()) && FromFolder(extension.get()) &&
++        extension->path().DirName() != files_dir_) {
++      // Loaded here from a folder of this machine's own, and noted as shared when its copy was
++      // asked for: the copy is refused when the folder is too large to share, and no record is
++      // written then. Not being in the list is no word from another machine about such a one
++      // (it was taken out three seconds after it was loaded).
++      continue;
++    }
+     if (known_.contains(extension->id())) {
+       // It was in the list, and is gone from it: removed on another machine.
+       known_.erase(extension->id());
+-- 
+2.53.0
+

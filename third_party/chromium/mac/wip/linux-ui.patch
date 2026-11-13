@@ -1818,8 +1818,27 @@ index 0000000000..aece21b817
 +}
 +
 +}  // namespace shell_integration_linux
+diff --git a/chrome/browser/spatiand/extension_sync.cc b/chrome/browser/spatiand/extension_sync.cc
+index b5f0aa3d4f..483e83b2eb 100644
+--- a/chrome/browser/spatiand/extension_sync.cc
++++ b/chrome/browser/spatiand/extension_sync.cc
+@@ -232,6 +232,14 @@ void ExtensionSync::Reconcile(Records records) {
+     if (!Syncs(extension.get()) || records.contains(extension->id())) {
+       continue;
+     }
++    if (known_.contains(extension->id()) && FromFolder(extension.get()) &&
++        extension->path().DirName() != files_dir_) {
++      // Loaded here from a folder of this machine's own, and noted as shared when its copy was
++      // asked for: the copy is refused when the folder is too large to share, and no record is
++      // written then. Not being in the list is no word from another machine about such a one
++      // (it was taken out three seconds after it was loaded).
++      continue;
++    }
+     if (known_.contains(extension->id())) {
+       // It was in the list, and is gone from it: removed on another machine.
+       known_.erase(extension->id());
 diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
-index 34c3fe9431..8d13080019 100644
+index 34c3fe9431..b8859896e1 100644
 --- a/chrome/browser/spatiand/history_sync.cc
 +++ b/chrome/browser/spatiand/history_sync.cc
 @@ -19,6 +19,10 @@
@@ -1857,7 +1876,15 @@ index 34c3fe9431..8d13080019 100644
        visits.push_back(std::move(visit));
      }
    }
-@@ -110,6 +124,105 @@ bool Hides(const HistorySync::Forgotten& forgotten, const HistorySync::Visit& vi
+@@ -98,6 +112,7 @@ std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file
+     }
+     entry.from = item.GetDict().FindDouble("from").value_or(0);
+     entry.until = item.GetDict().FindDouble("until").value_or(0);
++    entry.at = item.GetDict().FindDouble("at").value_or(0);
+     forgotten.push_back(std::move(entry));
+   }
+   return forgotten;
+@@ -110,6 +125,105 @@ bool Hides(const HistorySync::Forgotten& forgotten, const HistorySync::Visit& vi
  
  }  // namespace
  
@@ -1963,7 +1990,72 @@ index 34c3fe9431..8d13080019 100644
  HistorySync::News::News() = default;
  HistorySync::News::News(News&&) = default;
  HistorySync::News& HistorySync::News::operator=(News&&) = default;
-@@ -284,9 +397,17 @@ HistorySync::HistorySync(Profile* profile,
+@@ -151,6 +265,10 @@ class HistorySync::Files {
+     for (Visit& visit : visits) {
+       const std::string month = MonthOf(visit.at);
+       if (month != month_) {
++        // The month before, with what this batch added to it, before its list is let go.
++        if (!month_.empty()) {
++          WriteJson(FileOf(month_), base::Value(VisitsToList(visits_)));
++        }
+         month_ = month;
+         visits_ = VisitsFromFile(FileOf(month_));
+       }
+@@ -172,9 +290,14 @@ class HistorySync::Files {
+   void Forget(Forgotten forgotten) {
+     const base::FilePath list_file = dir_.Append("forgotten-" + machine_ + ".json");
+     std::vector<Forgotten> mine = ForgottenFromFile(list_file);
+-    if (!forgotten.url && forgotten.from == 0) {
+-      mine.clear();  // Everything makes every earlier entry needless.
++    // The list only grows: the other machines go on from how many entries they have read, and
++    // one that had read more than a shortened list holds would never hear of what came after
++    // (it was emptied when all history was cleared, and that clearing reached no machine that
++    // had read an entry before).
++    if (forgotten.at == 0) {
++      forgotten.at = static_cast<double>(NowMs());
+     }
++    forgotten.until = std::min(forgotten.until, forgotten.at);
+     mine.push_back(forgotten);
+     base::ListValue list;
+     for (const Forgotten& entry : mine) {
+@@ -184,6 +307,9 @@ class HistorySync::Files {
+       }
+       dict.Set("from", entry.from);
+       dict.Set("until", entry.until);
++      if (entry.at > 0) {
++        dict.Set("at", entry.at);
++      }
+       list.Append(std::move(dict));
+     }
+     WriteJson(list_file, base::Value(std::move(list)));
+@@ -210,7 +336,25 @@ class HistorySync::Files {
+       }
+       int& done = read_[name];
+       if (name.starts_with("forgotten-")) {
+-        std::vector<Forgotten> forgotten = ForgottenFromFile(dir_.Append(name + ".json"));
++        const base::FilePath file = dir_.Append(name + ".json");
++        std::vector<Forgotten> forgotten = ForgottenFromFile(file);
++        // An entry hides nothing visited after it was written. A build of before 2026-11-13
++        // wrote "the last hour" as from then until the end of time (Chromium gives the end of a
++        // cleared range so), and reading it took out every later visit here too, from history
++        // and from this machine's shared files. Such an entry says not when it was written: no
++        // later than its file was last, then.
++        base::File::Info info;
++        const double written = base::GetFileInfo(file, &info) && !info.last_modified.is_null()
++                                   ? MsOfTime(info.last_modified)
++                                   : static_cast<double>(NowMs());
++        for (Forgotten& entry : forgotten) {
++          entry.until = std::min(entry.until, entry.at > 0 ? entry.at : written);
++        }
++        // A list shorter than what was read of it was begun again by its machine (an older
++        // build, clearing all history): all of it is news.
++        if (static_cast<size_t>(done) > forgotten.size()) {
++          done = 0;
++        }
+         for (size_t i = static_cast<size_t>(done) < forgotten.size() ? done : forgotten.size();
+              i < forgotten.size(); ++i) {
+           RemoveFromOwnFiles(forgotten[i]);
+@@ -284,9 +428,17 @@ HistorySync::HistorySync(Profile* profile,
                           const std::string& id,
                           scoped_refptr<base::SequencedTaskRunner> files)
      : history_(HistoryServiceFactory::GetForProfile(profile, ServiceAccessType::EXPLICIT_ACCESS)),
@@ -1981,7 +2073,7 @@ index 34c3fe9431..8d13080019 100644
      Poll();
    }
  }
-@@ -341,6 +462,20 @@ void HistorySync::OnNews(News news) {
+@@ -341,6 +493,20 @@ void HistorySync::OnNews(News news) {
        rows.push_back(std::move(row));
      }
      history_->AddPagesWithDetails(rows, history::SOURCE_BROWSED);
@@ -2002,7 +2094,7 @@ index 34c3fe9431..8d13080019 100644
    }
    for (const Forgotten& forgotten : news.forgotten) {
      std::set<GURL> urls;
-@@ -360,6 +495,24 @@ void HistorySync::OnNews(News news) {
+@@ -360,6 +526,24 @@ void HistorySync::OnNews(News news) {
    }
  }
  
@@ -2027,7 +2119,7 @@ index 34c3fe9431..8d13080019 100644
  void HistorySync::SaveSoon() {
    if (!save_timer_.IsRunning()) {
      save_timer_.Start(FROM_HERE, kSaveAfter, base::BindOnce(
-@@ -383,8 +536,28 @@ void HistorySync::OnURLVisited(history::HistoryService* history_service,
+@@ -383,8 +567,28 @@ void HistorySync::OnURLVisited(history::HistoryService* history_service,
    visit.title = row.title();
    visit.at = MsOfTime(visited_url_info.visit_row.visit_time);
    last_ = visit;
@@ -2058,8 +2150,18 @@ index 34c3fe9431..8d13080019 100644
  }
  
  void HistorySync::OnURLsModified(history::HistoryService* history_service,
+@@ -420,7 +624,8 @@ void HistorySync::OnHistoryDeletions(history::HistoryService* history_service,
+   if (range.IsValid() && !deletion_info.restrict_urls().has_value()) {
+     Forgotten forgotten;
+     forgotten.from = range.begin().is_null() ? 0 : MsOfTime(range.begin());
+-    forgotten.until = range.end().is_null() ? now : MsOfTime(range.end());
++    // Chromium gives "the last hour" as from then until the end of time: until now, here.
++    forgotten.until = range.end().is_null() ? now : std::min(now, MsOfTime(range.end()));
+     files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
+     return;
+   }
 diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
-index 825ff9cb2c..9d76dcccfb 100644
+index 825ff9cb2c..149077114d 100644
 --- a/chrome/browser/spatiand/history_sync.h
 +++ b/chrome/browser/spatiand/history_sync.h
 @@ -19,6 +19,7 @@
@@ -2070,7 +2172,7 @@ index 825ff9cb2c..9d76dcccfb 100644
  
  class Profile;
  
-@@ -44,6 +45,17 @@ class HistorySync : public history::HistoryServiceObserver {
+@@ -44,11 +45,25 @@ class HistorySync : public history::HistoryServiceObserver {
      std::u16string title;
      std::string url;
      double at = 0;
@@ -2088,7 +2190,15 @@ index 825ff9cb2c..9d76dcccfb 100644
    };
    struct Forgotten {
      std::optional<std::string> url;
-@@ -66,6 +78,10 @@ class HistorySync : public history::HistoryServiceObserver {
+     double from = 0;
+     double until = 0;
++    // When it was written ("at" in the file; none in entries of before 2026-11-13). Nothing
++    // visited after an entry was written is hidden by it.
++    double at = 0;
+   };
+   struct News {
+     News();
+@@ -66,6 +81,10 @@ class HistorySync : public history::HistoryServiceObserver {
   private:
    void OnNews(News news);
    void SaveSoon();
@@ -2099,7 +2209,7 @@ index 825ff9cb2c..9d76dcccfb 100644
  
    // history::HistoryServiceObserver:
    void OnURLVisited(history::HistoryService* history_service,
-@@ -76,6 +92,8 @@ class HistorySync : public history::HistoryServiceObserver {
+@@ -76,6 +95,8 @@ class HistorySync : public history::HistoryServiceObserver {
                            const history::DeletionInfo& deletion_info) override;
  
    const raw_ptr<history::HistoryService> history_;

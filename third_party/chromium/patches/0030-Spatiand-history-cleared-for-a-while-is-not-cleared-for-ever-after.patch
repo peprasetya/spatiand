@@ -1,0 +1,126 @@
+From 0000000000000000000000000000000000000030 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Fri, 13 Nov 2026 08:40:00 +0700
+Subject: [PATCH] Spatiand: history cleared for a while is not cleared for
+ ever after, on any machine
+
+"Clear browsing data: the last hour" reaches HistorySync as a range from then
+until the end of time, and was shared so: every machine reading it took out
+all its own later visits, from its history and its shared files, and a machine
+joining applied every such entry ever written. An entry is written as until
+now, says when it was written ("at"), and hides nothing later than that when
+read; an entry of an older build, with no "at", nothing later than its file
+was last written. The list of what a machine took out only grows now: emptied
+at "clear all history", it never told the clearing to a machine that had read
+an entry of it before; and a list found shorter than what was read of it (an
+older build's) is read from its start. A batch of visits across the turn of a
+month no longer loses the old month's.
+---
+ chrome/browser/spatiand/history_sync.cc | 40 +++++++++++++++++++++---
+ chrome/browser/spatiand/history_sync.h  |  3 ++
+ 2 files changed, 39 insertions(+), 4 deletions(-)
+
+diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
+index 8d13080..b885989 100644
+--- a/chrome/browser/spatiand/history_sync.cc
++++ b/chrome/browser/spatiand/history_sync.cc
+@@ -112,6 +112,7 @@ std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file
+     }
+     entry.from = item.GetDict().FindDouble("from").value_or(0);
+     entry.until = item.GetDict().FindDouble("until").value_or(0);
++    entry.at = item.GetDict().FindDouble("at").value_or(0);
+     forgotten.push_back(std::move(entry));
+   }
+   return forgotten;
+@@ -264,6 +265,10 @@ class HistorySync::Files {
+     for (Visit& visit : visits) {
+       const std::string month = MonthOf(visit.at);
+       if (month != month_) {
++        // The month before, with what this batch added to it, before its list is let go.
++        if (!month_.empty()) {
++          WriteJson(FileOf(month_), base::Value(VisitsToList(visits_)));
++        }
+         month_ = month;
+         visits_ = VisitsFromFile(FileOf(month_));
+       }
+@@ -285,9 +290,14 @@ class HistorySync::Files {
+   void Forget(Forgotten forgotten) {
+     const base::FilePath list_file = dir_.Append("forgotten-" + machine_ + ".json");
+     std::vector<Forgotten> mine = ForgottenFromFile(list_file);
+-    if (!forgotten.url && forgotten.from == 0) {
+-      mine.clear();  // Everything makes every earlier entry needless.
++    // The list only grows: the other machines go on from how many entries they have read, and
++    // one that had read more than a shortened list holds would never hear of what came after
++    // (it was emptied when all history was cleared, and that clearing reached no machine that
++    // had read an entry before).
++    if (forgotten.at == 0) {
++      forgotten.at = static_cast<double>(NowMs());
+     }
++    forgotten.until = std::min(forgotten.until, forgotten.at);
+     mine.push_back(forgotten);
+     base::ListValue list;
+     for (const Forgotten& entry : mine) {
+@@ -297,6 +307,9 @@ class HistorySync::Files {
+       }
+       dict.Set("from", entry.from);
+       dict.Set("until", entry.until);
++      if (entry.at > 0) {
++        dict.Set("at", entry.at);
++      }
+       list.Append(std::move(dict));
+     }
+     WriteJson(list_file, base::Value(std::move(list)));
+@@ -323,7 +336,25 @@ class HistorySync::Files {
+       }
+       int& done = read_[name];
+       if (name.starts_with("forgotten-")) {
+-        std::vector<Forgotten> forgotten = ForgottenFromFile(dir_.Append(name + ".json"));
++        const base::FilePath file = dir_.Append(name + ".json");
++        std::vector<Forgotten> forgotten = ForgottenFromFile(file);
++        // An entry hides nothing visited after it was written. A build of before 2026-11-13
++        // wrote "the last hour" as from then until the end of time (Chromium gives the end of a
++        // cleared range so), and reading it took out every later visit here too, from history
++        // and from this machine's shared files. Such an entry says not when it was written: no
++        // later than its file was last, then.
++        base::File::Info info;
++        const double written = base::GetFileInfo(file, &info) && !info.last_modified.is_null()
++                                   ? MsOfTime(info.last_modified)
++                                   : static_cast<double>(NowMs());
++        for (Forgotten& entry : forgotten) {
++          entry.until = std::min(entry.until, entry.at > 0 ? entry.at : written);
++        }
++        // A list shorter than what was read of it was begun again by its machine (an older
++        // build, clearing all history): all of it is news.
++        if (static_cast<size_t>(done) > forgotten.size()) {
++          done = 0;
++        }
+         for (size_t i = static_cast<size_t>(done) < forgotten.size() ? done : forgotten.size();
+              i < forgotten.size(); ++i) {
+           RemoveFromOwnFiles(forgotten[i]);
+@@ -593,7 +624,8 @@ void HistorySync::OnHistoryDeletions(history::HistoryService* history_service,
+   if (range.IsValid() && !deletion_info.restrict_urls().has_value()) {
+     Forgotten forgotten;
+     forgotten.from = range.begin().is_null() ? 0 : MsOfTime(range.begin());
+-    forgotten.until = range.end().is_null() ? now : MsOfTime(range.end());
++    // Chromium gives "the last hour" as from then until the end of time: until now, here.
++    forgotten.until = range.end().is_null() ? now : std::min(now, MsOfTime(range.end()));
+     files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
+     return;
+   }
+diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
+index 9d76dcc..1490771 100644
+--- a/chrome/browser/spatiand/history_sync.h
++++ b/chrome/browser/spatiand/history_sync.h
+@@ -61,6 +61,9 @@ class HistorySync : public history::HistoryServiceObserver {
+     std::optional<std::string> url;
+     double from = 0;
+     double until = 0;
++    // When it was written ("at" in the file; none in entries of before 2026-11-13). Nothing
++    // visited after an entry was written is hidden by it.
++    double at = 0;
+   };
+   struct News {
+     News();
+-- 
+2.53.0
+

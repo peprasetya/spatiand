@@ -3,13 +3,29 @@
 
     visited.py seed            before sk.sh (a fresh /tmp/smtest/profile)
     visited.py read shot.png   says which of the page's three blocks are red (visited)
+    visited.py forget          before go.sh: another machine's visits at 90 and 30 minutes ago, and its
+                               "cleared the last two hours" written an hour ago as an older build
+                               wrote it (until the end of time): the later visit must stay
+                               (sqlite3 profile/Default/History "select url from urls")
 
 ?a has no page with it (as every visit shared before 2026-11-12), ?b was followed on a page of
 127.0.0.1. So at localhost a is visited and b is not; at 127.0.0.1 b is and a is not; c never.
 """
 import json, os, struct, sys, time, zlib
 
-if sys.argv[1] == "seed":
+if sys.argv[1] == "forget":
+    d = "/tmp/smtest/apps/apps/spatimesh/profiles/default/history"
+    os.makedirs(d, exist_ok=True)
+    now = time.time() * 1000
+    name = "othermachine0002-" + time.strftime("%Y-%m", time.gmtime())
+    json.dump([{"url": "http://localhost:18765/done.html?before-the-clearing", "title": "before", "at": now - 90 * 60000},
+               {"url": "http://localhost:18765/done.html?after-the-clearing", "title": "after", "at": now - 30 * 60000}],
+              open(f"{d}/{name}.json", "w"))
+    f = f"{d}/forgotten-othermachine0002.json"
+    json.dump([{"from": now - 120 * 60000, "until": 9.2e18}], open(f, "w"))
+    os.utime(f, (time.time() - 3600, time.time() - 3600))
+    print("seeded a clearing with no end")
+elif sys.argv[1] == "seed":
     d = "/tmp/smtest/apps/apps/spatimesh/profiles/default/history"
     os.makedirs(d, exist_ok=True)
     now = time.time() * 1000

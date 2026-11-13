@@ -312,3 +312,26 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
   (`ax_virtual_view.cc`). Not notified now. Rig: `popup.html`.
 - **Not yet**: the browser's own shortcuts and the address bar's Cut/Copy/Paste are still Command's
   (`EF_PLATFORM_ACCELERATOR`, `ui/events/event_constants.h`: a rebuild of nearly everything).
+- **Shared history** (shared patches 0030, 0031; in the Mac tree too): a clearing of "the last
+  hour" no longer clears every later visit on every machine; rig `visited.py forget`.
+
+## For the rebase: the Mac's shortcuts as the Deck's (the owner, 11-13: not before)
+
+The Mac room sends Command to its clients as Ctrl, and pages already get the Deck's keys and are
+told they are on Linux. What is left follows `EF_PLATFORM_ACCELERATOR`, which is Command on Apple;
+changing it rebuilds nearly everything, so it is done when the tree is rebuilt anyway:
+
+1. `ui/events/event_constants.h:53`: `EF_PLATFORM_ACCELERATOR = EF_CONTROL_DOWN` for
+   `IS_MAC_LINUX_UI`. The browser's shortcuts (new tab, close, find, reload), their labels in every
+   menu (now ⌘ in the app menu and ^ in the page's), and the address bar's cut, copy, paste, select
+   all and undo (`ui/views/controls/textfield/textfield.cc:1658-1674` and its `IS_MAC` blocks at
+   98, 209, 254, 1212, 1252, 2111 on: the Mac's text bindings, to become the Linux UI's) follow.
+2. A click with Ctrl held: every place that reads Ctrl+click as a context click or Command+click
+   as "new tab" under `IS_MAC`/`IS_APPLE` (`ui/base/window_open_disposition_utils.cc`,
+   `ui/events/event.cc` and `event_utils`, `content/browser/renderer_host/input`, Blink's
+   `third_party/blink/renderer/core/input` and `events/navigation_policy.cc`) takes the Linux
+   reading: Ctrl+click opens a new tab.
+3. The accelerator table itself (`chrome/browser/ui/accelerator_table.cc`, `IS_MAC` entries) and
+   `ui/base/accelerators/accelerator.cc`'s Mac labels (lines 24-465) to the Linux ones.
+4. Then test with `edit.html`, the address bar, Ctrl+T/W/L/R/F, Ctrl+click on a link, and a page
+   that takes Ctrl+F for itself.
