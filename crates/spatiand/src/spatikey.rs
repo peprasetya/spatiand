@@ -21,8 +21,16 @@ const APP_ID: &str = "id.prasetya.spatiand.spatikey";
 /// A card says a Mac is being asked for this long at most, unless the service takes it away.
 const CARD: Duration = Duration::from_secs(120);
 
+/// How long the service waits for the room to type what it asked.
+const ROOM_WAIT: Duration = Duration::from_secs(10);
+/// How long after the asking the room still starts typing: short of `ROOM_WAIT`, with time for
+/// the typing itself, so that what the service gave up on -- and SpatiKey has said was not typed
+/// -- is not typed after all when frames come again.
+const TYPE_WITHIN: Duration = Duration::from_secs(8);
+
 struct TypeAsked {
     window: u64,
+    at: Instant,
     steps: Vec<Step>,
     answer: mpsc::Sender<Result<(), String>>,
 }
@@ -41,8 +49,8 @@ impl Room for TheRoom {
 
     fn type_into(&self, window: u64, steps: &[Step]) -> Result<(), String> {
         let (answer, answered) = mpsc::channel();
-        ASKED.lock().unwrap().push(TypeAsked { window, steps: steps.to_vec(), answer });
-        answered.recv_timeout(Duration::from_secs(10)).map_err(|_| "the room did not get to it".to_string())?
+        ASKED.lock().unwrap().push(TypeAsked { window, at: Instant::now(), steps: steps.to_vec(), answer });
+        answered.recv_timeout(ROOM_WAIT).map_err(|_| "the room did not get to it".to_string())?
     }
 
     fn notice(&self, text: &str) {
@@ -174,6 +182,13 @@ pub fn serve(state: &mut Spatiand, time_ms: u32) {
     }
     let asked = std::mem::take(&mut *ASKED.lock().unwrap());
     for a in asked {
+        // Asked too long ago (no frames meanwhile: the display asleep, the session elsewhere):
+        // the wearer has been told it failed, or is about to be, and is no longer looking at
+        // that window to see a password arrive in it.
+        if !in_time(a.at.elapsed()) {
+            let _ = a.answer.send(Err("the room did not get to it".into()));
+            continue;
+        }
         #[cfg(target_os = "macos")]
         {
             // A Mac's own window: typed by macOS, as the characters themselves, any layout; the
@@ -187,6 +202,11 @@ pub fn serve(state: &mut Spatiand, time_ms: u32) {
         let done = type_into(state, a.window, &a.steps, time_ms);
         let _ = a.answer.send(done);
     }
+}
+
+/// Is something asked `waited` ago still to be typed?
+fn in_time(waited: Duration) -> bool {
+    waited < TYPE_WITHIN
 }
 
 /// Type into one window, all of it or nothing: every character is looked up on the room's
@@ -229,5 +249,20 @@ fn describe(c: char) -> String {
         "a letter with an accent, or of another alphabet".into()
     } else {
         format!("U+{:04X}", c as u32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the room starts typing, it starts before the service stops waiting for it.
+    #[test]
+    fn what_was_given_up_on_is_not_typed() {
+        assert!(in_time(Duration::ZERO));
+        assert!(in_time(Duration::from_secs(7)));
+        assert!(!in_time(TYPE_WITHIN));
+        assert!(!in_time(ROOM_WAIT));
+        assert!(TYPE_WITHIN < ROOM_WAIT);
     }
 }
