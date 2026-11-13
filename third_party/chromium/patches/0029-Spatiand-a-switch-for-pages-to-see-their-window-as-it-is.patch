@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000029 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Thu, 12 Nov 2026 22:30:00 +0700
+Subject: [PATCH] Spatiand: a switch for pages to see their window as it is
+
+--enable-features=SpatiandPageSeesItsWindow turns Cromite's viewport
+protection off for every page (it cannot be turned off by its own feature:
+its site setting's default keeps it on). Off unless asked for: with it a page
+reads its real window and screen sizes, pixel ratio and coordinates.
+---
+ third_party/blink/renderer/core/page/page.cc | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/third_party/blink/renderer/core/page/page.cc b/third_party/blink/renderer/core/page/page.cc
+index 81e8475..44afba9 100644
+--- a/third_party/blink/renderer/core/page/page.cc
++++ b/third_party/blink/renderer/core/page/page.cc
+@@ -117,6 +117,16 @@
+ 
+ namespace blink {
+ 
++// Spatiand: with this on, a page is given its window as it is (its real
++// inner and outer size, the screen the room reports, the real pixel ratio and
++// unscaled coordinates) instead of Cromite's viewport protection, which lays
++// every page out for a view scaled by a random factor of up to 1.5 per cent
++// either way, a screen made equal to that view and a rounded pixel ratio.
++// Off unless asked for (--enable-features=SpatiandPageSeesItsWindow): what it
++// gives up is that protection against telling browsers apart by window and
++// screen size and by exact coordinates.
++BASE_FEATURE(kSpatiandPageSeesItsWindow, base::FEATURE_DISABLED_BY_DEFAULT);
++
+ namespace {
+ // This seems like a reasonable upper bound, and otherwise mutually
+ // recursive frameset pages can quickly bring the program to its knees
+@@ -1311,6 +1321,10 @@ void Page::CalculateEmulatedScreenSetting(LocalFrame* frame, bool force) {
+         || disable_screen_emulated_) {
+     isEnabled = false;
+   }
++  if (base::FeatureList::IsEnabled(kSpatiandPageSeesItsWindow)) {
++    isEnabled = false;
++    force = false;
++  }
+   if (GetChromeClient().GetWebView()->AutoResizeMode()) {
+     isEnabled = false;
+     force = false;
+-- 
+2.53.0
+

@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000027 Mon Sep 17 00:00:00 2001
+From: Spatiand-build <claude@prasetya.id>
+Date: Thu, 12 Nov 2026 22:30:00 +0700
+Subject: [PATCH] Spatiand: a drag that ended before it began does not end
+ every later one
+
+WebContentsViewAura::StartDragging notes a drag as begun
+(drag_security_info_.OnDragInitiated) and then gives it up if the button is
+already up, or the pointer outside the view: it told the renderer
+(SystemDragEnded) but not the security info, which held the drag as begun for
+good. Every later drag of that tab then returned at the top of the function
+without a word to the renderer, which waits in its drag and takes no press:
+the page was dead to clicks (not to scrolling) until loaded again, and again
+at the next press that moved. A link clicked with the pointer moving, as a
+head moves it in the room, is such a drag. Now the security info is told; the
+early return tells the renderer too; and a drag that ended with nothing taken
+does not wait for an exit of this view that may not come (0026's case from
+its other side).
+---
+ .../browser/web_contents/web_contents_view_aura.cc       | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/content/browser/web_contents/web_contents_view_aura.cc b/content/browser/web_contents/web_contents_view_aura.cc
+index 4f45307..f36dc4f 100644
+--- a/content/browser/web_contents/web_contents_view_aura.cc
++++ b/content/browser/web_contents/web_contents_view_aura.cc
+@@ -1228,6 +1228,10 @@ void WebContentsViewAura::StartDragging(
+       static_cast<RenderWidgetHostImpl*>(source_rfh.GetRenderWidgetHost());
+   // Disallow reentrant drag which could be an attempt to exploit drag state.
+   if (drag_security_info_.did_initiate()) {
++    // Spatiand: the renderer waits to hear that the drag it asked for is over
++    // and takes no press until it does: told so here too, where it was left
++    // waiting (the page then heard no click until it was loaded again).
++    web_contents_->SystemDragEnded(source_rwh);
+     return;
+   }
+   if (!aura::client::GetDragDropClient(root_window)) {
+@@ -1297,6 +1301,11 @@ void WebContentsViewAura::StartDragging(
+          !env->is_touch_down()) ||
+         (event_info.source == ui::mojom::DragEventSource::kMouse &&
+          !env->IsMouseButtonDown())) {
++      // Spatiand: this drag is over before it began (the button came up while
++      // the page was asking: a link clicked with the pointer moving, as a
++      // head moves it). Said to the security info too, or it held the drag as
++      // begun for good and every later drag of the page was dropped above.
++      drag_security_info_.OnDragEnded();
+       web_contents_->SystemDragEnded(source_rwh);
+       return;
+     }
+@@ -1311,6 +1320,7 @@ void WebContentsViewAura::StartDragging(
+     // visible.
+     if (!content_native_view->GetBoundsInScreen().Contains(trusted_location) ||
+         !content_native_view->IsVisible()) {
++      drag_security_info_.OnDragEnded();  // Spatiand: as above.
+       web_contents_->SystemDragEnded(source_rwh);
+       return;
+     }
+@@ -1339,6 +1349,12 @@ void WebContentsViewAura::StartDragging(
+   // If drag is still in progress that means we haven't received drop targeting
+   // callback yet. So we have to make sure to delay calling EndDrag until drop
+   // is done.
++  // Spatiand: a drag that ended with nothing taken has no drop of its own to
++  // wait for: its end is said now even if this view still holds a drag as
++  // being over it (an exit that did not come), instead of never.
++  if (drag_in_progress_ && result_op == DragOperation::kNone) {
++    OnDragExited();
++  }
+   if (!drag_in_progress_) {
+     EndDrag(std::move(source_rwh_weak_ptr), result_op);
+   } else {
+-- 
+2.53.0
+
