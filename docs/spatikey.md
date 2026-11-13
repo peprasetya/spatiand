@@ -292,7 +292,10 @@ SpatiKey's entry page has "Type into <window>": the window that had the focus be
 own. The room types it with the seat keyboard, as dictation does, but strictly: a character the
 room's keyboard cannot type stops the whole thing before a key is sent (dictation would quietly
 drop it), and nothing is typed unless the focus is still on that window. Mac windows are typed as
-Unicode key events by the Swift half, so any character and any keyboard layout work.
+Unicode key events by the Swift half, so any character and any keyboard layout work; there the
+room names the window itself (not only its application), the Swift half brings it forward and
+asks Accessibility whether the frontmost application's focused window is that one, before the
+first piece and before each one after, and types nothing more when it is not.
 
 ## The Mac's half
 

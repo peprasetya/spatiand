@@ -84,9 +84,9 @@ pub enum Asked {
     /// Say what the application with bundle id `text` shows in its focused window, through
     /// Accessibility, answering with `sp_described(id, json)`.
     Describe = 36,
-    /// SpatiKey: type into an application of this Mac, as the characters themselves. `text` is
-    /// `{"bundle": ..., "steps": [{"text": ...} | {"key": "tab" | "enter"}]}`; answered with
-    /// `sp_typed(id, error)`, a null error for done.
+    /// SpatiKey: type into a window of this Mac, as the characters themselves. `text` is
+    /// `{"window": its number, "steps": [{"text": ...} | {"key": "tab" | "enter"}]}`; answered
+    /// with `sp_typed(id, error)`, a null error for done.
     TypeText = 37,
     /// Force an application of this Mac to quit. `text` is its bundle id.
     ForceQuit = 38,

@@ -193,9 +193,17 @@ pub fn serve(state: &mut Spatiand, time_ms: u32) {
         {
             // A Mac's own window: typed by macOS, as the characters themselves, any layout; the
             // answer comes from the app's side when it is done, without holding this frame.
+            // Into that window and no other of its application's: the room's keyboard is given
+            // to it first, as below, and the app's side is told which of the Mac's windows it
+            // is, to bring it forward and see that the Mac's keys are its own before any go.
             let app = state.app_id_of_id(a.window as usize).unwrap_or_default();
             if crate::mac::is_mac_window(&app) {
-                crate::mac::type_steps(&app, &a.steps, a.answer);
+                match give_keyboard(state, a.window) {
+                    Ok(target) => crate::mac::type_steps(&target, &a.steps, a.answer),
+                    Err(why) => {
+                        let _ = a.answer.send(Err(why));
+                    }
+                }
                 continue;
             }
         }
@@ -214,8 +222,9 @@ fn in_time(waited: Duration) -> bool {
 /// window. (Dictation, typing what someone said, leaves out what it cannot type; a password with a
 /// letter left out is worse than none.)
 fn type_into(state: &mut Spatiand, window: u64, steps: &[Step], time_ms: u32) -> Result<(), String> {
-    let target = state.space.elements().find(|w| state.layout.id_of(w) == Some(window as usize)).cloned();
-    let Some(target) = target else { return Err("that window has gone".into()) };
+    if !state.space.elements().any(|w| state.layout.id_of(w) == Some(window as usize)) {
+        return Err("that window has gone".into());
+    }
     let mut strokes = Vec::new();
     for step in steps {
         match step {
@@ -237,14 +246,22 @@ fn type_into(state: &mut Spatiand, window: u64, steps: &[Step], time_ms: u32) ->
     if state.seat.get_keyboard().is_some_and(|keyboard| keyboard.modifier_state().caps_lock) {
         return Err("Caps Lock is on: turn it off and try again".into());
     }
-    state.focus_window(&target);
-    if state.layout.focused_id() != Some(window as usize) {
-        return Err("the keyboard could not be given to that window".into());
-    }
+    give_keyboard(state, window)?;
     for (code, shift) in strokes {
         crate::assist::stroke(state, code, shift, time_ms);
     }
     Ok(())
+}
+
+/// The room's keyboard given to one window, which is handed back; or why nothing may be typed.
+fn give_keyboard(state: &mut Spatiand, window: u64) -> Result<smithay::desktop::Window, String> {
+    let target = state.space.elements().find(|w| state.layout.id_of(w) == Some(window as usize)).cloned();
+    let Some(target) = target else { return Err("that window has gone".into()) };
+    state.focus_window(&target);
+    if state.layout.focused_id() != Some(window as usize) {
+        return Err("the keyboard could not be given to that window".into());
+    }
+    Ok(target)
 }
 
 /// A character named without showing it, for a message about a password.

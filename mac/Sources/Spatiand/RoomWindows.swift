@@ -752,6 +752,19 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         }
     }
 
+    /// SpatiKey is about to type into this window (`SpatiKeyTyping`): it is brought forward as
+    /// for a press in it, whether or not its screen is in the room, and what it is on the Mac is
+    /// handed back for the typing to check against. Nil for one that has gone, and for a screen,
+    /// which is no one window. Waits for this queue, so not to be called from it.
+    func bringForTyping(_ id: UInt32) -> MacWindowInfo? {
+        queue.sync { () -> MacWindowInfo? in
+            guard let info = entries[id]?.info, info.display == nil else { return nil }
+            if raiseDue == id { raiseDue = nil }
+            raise(id)
+            return info
+        }
+    }
+
     /// The window on top at this point of the Mac's screen, and whose it is.
     /// Among ordinary windows and whatever `pid` has up: the system's own see-through sheets
     /// (the one notifications come down on covers the whole screen) are over everything, always.

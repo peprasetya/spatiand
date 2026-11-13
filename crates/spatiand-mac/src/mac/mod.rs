@@ -438,14 +438,22 @@ pub fn force_quit(app_id: &str) {
     }
 }
 
-/// Type into one of this Mac's applications (`app_id` its room id) as the characters
+/// Type into one of this Mac's windows (`window` the room's window of it) as the characters
 /// themselves: macOS is given each piece of text as Unicode, so neither the keyboard layout nor
-/// a Shift the room added on its own can change what arrives. The answer comes on `answer` when
-/// the app's side has done it.
-pub fn type_steps(app_id: &str, steps: &[spatikey_core::hooks::Step], answer: std::sync::mpsc::Sender<Result<(), String>>) {
+/// a Shift the room added on its own can change what arrives. The app's side is told which of
+/// the Mac's windows is meant, by the number it announced it with, and types only while that
+/// window has the Mac's keys: an application's other window never gets them. The answer comes on
+/// `answer` when the app's side has done it.
+pub fn type_steps(
+    window: &smithay::desktop::Window,
+    steps: &[spatikey_core::hooks::Step],
+    answer: std::sync::mpsc::Sender<Result<(), String>>,
+) {
+    use smithay::reexports::wayland_server::Resource;
+    use smithay::wayland::seat::WaylandFocus;
     use spatikey_core::hooks::Step;
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-    let Some(bundle) = app_id.strip_prefix(&format!("remote.{}.", local::HOST)) else {
+    let Some(id) = window.wl_surface().and_then(|s| local::id_of(s.id().protocol_id())) else {
         let _ = answer.send(Err("not one of this Mac's windows".into()));
         return;
     };
@@ -466,7 +474,7 @@ pub fn type_steps(app_id: &str, steps: &[spatikey_core::hooks::Step], answer: st
         }
         waiting.push((n, answer));
     }
-    let text = zeroize::Zeroizing::new(serde_json::json!({ "bundle": bundle, "steps": steps }).to_string());
+    let text = zeroize::Zeroizing::new(serde_json::json!({ "window": id, "steps": steps }).to_string());
     ffi::call_text(ffi::Asked::TypeText, n, 0.0, 0.0, 0.0, &text);
 }
 
