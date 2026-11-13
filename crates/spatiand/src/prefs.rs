@@ -188,7 +188,9 @@ impl Prefs {
             }
             Err(e) => {
                 // Kept, not replaced. Overwriting a file we could not read is how a typo in it
-                // turns into silently losing every setting in it.
+                // turns into silently losing every setting in it. The session goes on with the
+                // defaults, and the first thing it saves would do exactly that, so `write`
+                // moves such a file aside before putting its own in its place.
                 log::warn!("could not parse {} ({e}); using defaults", path.display());
                 Self::default()
             }
@@ -210,7 +212,39 @@ impl Prefs {
         }
         let text = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(&path, text)
+        // A file this build cannot read is somebody's settings with a typo in them -- every
+        // paired host and its fingerprint among them -- and this session started from the
+        // defaults because of it. It is kept beside the new one, for the typo to be mended.
+        if std::fs::read_to_string(&path).is_ok_and(|old| toml::from_str::<Self>(&old).is_err()) {
+            let aside = path.with_extension("toml.broken");
+            match std::fs::rename(&path, &aside) {
+                Ok(()) => log::warn!(
+                    "{} could not be read; kept as {}",
+                    path.display(),
+                    aside.display()
+                ),
+                Err(e) => {
+                    log::warn!("could not keep the unreadable {}: {e}", path.display());
+                    return Err(e);
+                }
+            }
+        }
+        // Written beside and moved over, never written in place: a session killed, or the
+        // power lost, part of the way through leaves the old file whole rather than an empty
+        // or half one -- and an empty one reads as "no hosts paired". The applications read
+        // this file every second for the look, and see the old or the new, never a part.
+        let beside = path.with_extension("toml.tmp");
+        let written = (|| {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&beside)?;
+            file.write_all(text.as_bytes())?;
+            file.sync_all()?;
+            std::fs::rename(&beside, &path)
+        })();
+        if written.is_err() {
+            let _ = std::fs::remove_file(&beside);
+        }
+        written
     }
 }
 
@@ -283,6 +317,34 @@ mod tests {
                 .contains("not toml"),
             "loading destroyed the file it could not read"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_file_is_set_aside_by_the_first_save_not_lost_to_it() {
+        // The session that could not read the file holds the defaults; the first control the
+        // wearer touches saves them. The pairings in the old file must outlive that.
+        let _lock = crate::prefs::tests::LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("aside");
+        std::fs::create_dir_all(&dir.join("spatiand")).unwrap();
+        std::fs::write(path(), "[[remote]]\nhost = \"workshop:47600\nfingerprint = = =").unwrap();
+        let mut prefs = Prefs::load();
+        prefs.keyboard_click = !prefs.keyboard_click;
+        prefs.save();
+        assert_eq!(Prefs::load(), prefs, "the change was not saved");
+        assert!(
+            std::fs::read_to_string(path().with_extension("toml.broken"))
+                .unwrap()
+                .contains("workshop:47600"),
+            "saving destroyed the file that could not be read"
+        );
+        // And a readable one is replaced whole, with nothing left beside it.
+        prefs.keyboard_click = !prefs.keyboard_click;
+        prefs.save();
+        assert_eq!(Prefs::load(), prefs);
+        assert!(!path().with_extension("toml.tmp").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
