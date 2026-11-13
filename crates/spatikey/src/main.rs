@@ -53,6 +53,9 @@ const TITLE: &str = "SpatiKey";
 const SAID_FOR: Duration = Duration::from_secs(6);
 /// How often a device looks again whether its Mac is on this network, while it is locked.
 const LOOK_FOR_MAC: Duration = Duration::from_secs(15);
+/// How often, at most, the service is told that an open SpatiKey is being used: well inside the
+/// shortest time it may be set to stay open.
+const KEEP_OPEN: Duration = Duration::from_secs(5);
 
 /// Something to wake the window's loop with from the asking thread: a byte down a pipe it watches.
 fn pipe() -> (std::fs::File, std::fs::File) {
@@ -105,6 +108,8 @@ struct SpatiKey {
     /// shuts itself, rather than leave its list on show until the service's own clock runs out
     /// -- which a code being kept fresh on an entry's page would never let it do.
     used: Instant,
+    /// When the service was last told that this window is in use (`keep_open`).
+    kept: Instant,
     /// When the paired Macs were last looked for, for the locked screen's line on a device.
     looked: Instant,
 }
@@ -557,6 +562,20 @@ impl SpatiKey {
         self.trouble = Some(ui::meaning(&refusal, &self.mac, self.on_mac()));
     }
 
+    /// Tell the service that this window is in use. The service closes a session by its own
+    /// clock, from the last thing asked in it; typing in the editor, reading an entry or
+    /// scrolling the list asks it nothing, so without this a long entry written past the idle
+    /// time would be refused when saved, and lost with the screen that held it. Asked only when
+    /// something was done here since the last asking, and no more often than `KEEP_OPEN`: an
+    /// untouched window still runs out, there as here. The settings are what is asked for --
+    /// they are small, and nothing of the vault's.
+    fn keep_open(&mut self, session: &str) {
+        if self.used > self.kept && self.kept.elapsed() >= KEEP_OPEN {
+            self.kept = Instant::now();
+            self.ask(Asked::Settings, Request::Settings { session: session.to_string(), set: None });
+        }
+    }
+
     /// What happens with time alone: an unused SpatiKey shutting, a code running out, a device
     /// looking again for its Mac.
     fn tick(&mut self) {
@@ -569,6 +588,7 @@ impl SpatiKey {
                 self.said = Some((format!("SpatiKey shut after {unused} unused."), Instant::now() + Duration::from_secs(600)));
                 return;
             }
+            self.keep_open(&session);
             let mut code = None;
             if let Screen::Entry(page) = &mut self.screen {
                 if page.wants_code() {
@@ -717,6 +737,7 @@ fn main() {
             said: None,
             fingers_changed: false,
             used: Instant::now(),
+            kept: Instant::now(),
             looked: Instant::now(),
         };
         key.run()
