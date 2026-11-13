@@ -1,5 +1,6 @@
-//! Which site a page is, by the Public Suffix List (data/public_suffix_list.dat, the copy in
-//! libpsl 0.23.3, MPL-2.0).
+//! Which site a page is, by the Public Suffix List (data/public_suffix_list.dat, MPL-2.0, as
+//! https://publicsuffix.org/list/public_suffix_list.dat gave it: its VERSION line says when;
+//! refreshed by fetching that file again).
 //!
 //! Hosts are compared as browsers write them in origins: a domain in lowercase punycode, an
 //! IPv4 address in dotted decimal, an IPv6 address compressed and in lowercase. The list itself
