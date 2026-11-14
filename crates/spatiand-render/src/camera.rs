@@ -155,14 +155,16 @@ pub fn eye_for(side: EyeSide, orientation: DQuat, head_position: DVec3, cfg: &St
 fn view_matrix(position: DVec3, orientation: DQuat) -> Mat4 {
     let forward = orientation * DVec3::X;
     let up = orientation * DVec3::Z;
-    let m = DMat4::look_to_rh(position, forward, up);
+    // glam's camera module: since glam 0.30 it takes the direction as given, where 0.29's
+    // `look_to_rh` normalised it, so it is normalised here.
+    let m: DMat4 = glam::dcamera::rh::view::look_to_mat4(position, forward.normalize(), up);
     m.as_mat4()
 }
 
 fn projection_matrix(cfg: &StereoConfig) -> Mat4 {
     // Symmetric perspective. The Air's optics are centred, so there is no per-eye frustum
     // shear of the kind a wide-FOV VR headset needs.
-    Mat4::perspective_rh_gl(
+    glam::camera::rh::proj::opengl::perspective(
         (cfg.v_fov_deg() as f32).to_radians(),
         cfg.aspect() as f32,
         cfg.near_m,
@@ -413,13 +415,14 @@ mod pinned {
 
     #[test]
     fn glams_own_camera_matrices_are_as_they_were() {
-        // As SpatiLoupe's model view and the avatar's picture call them.
+        // As SpatiLoupe's model view and the avatar's picture call them (`look_to_rh` and
+        // `perspective_rh_gl` until glam 0.34).
         #[rustfmt::skip]
-        close("look_to_rh", &Mat4::look_to_rh(glam::Vec3::new(0.5, 0.2, 3.0), -glam::Vec3::Z, glam::Vec3::Y).to_cols_array(), &[
+        close("look_to_rh", &glam::camera::rh::view::look_to_mat4(glam::Vec3::new(0.5, 0.2, 3.0), -glam::Vec3::Z, glam::Vec3::Y).to_cols_array(), &[
             1.0, 0.0, 0.0, 0.0,  0.0, 1.0, 0.0, 0.0,  0.0, 0.0, 1.0, 0.0,  -0.5, -0.2, -3.0, 1.0,
         ]);
         #[rustfmt::skip]
-        close("perspective_rh_gl", &Mat4::perspective_rh_gl(0.7, 16.0 / 9.0, 0.05, 100.0).to_cols_array(), &[
+        close("perspective_rh_gl", &glam::camera::rh::proj::opengl::perspective(0.7, 16.0 / 9.0, 0.05, 100.0).to_cols_array(), &[
             1.5409756, 0.0, 0.0, 0.0,  0.0, 2.7395122, 0.0, 0.0,  0.0, 0.0, -1.0010005, -1.0,  0.0, 0.0, -0.10005003, 0.0,
         ]);
     }

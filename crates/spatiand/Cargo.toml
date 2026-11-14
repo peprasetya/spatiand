@@ -50,9 +50,9 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # Real application icons. KDE ships 19,978 SVGs against 176 PNGs, so without an SVG
 # rasteriser the launcher has almost no icons on it. resvg is pure Rust and pulls in usvg and
 # tiny-skia; that is the whole cost.
-resvg = "0.45"
-usvg = "0.45"
-tiny-skia = "0.11"
+resvg = "0.50"
+usvg = "0.50"
+tiny-skia = "0.12"
 
 [dependencies.smithay]
 version = "0.7"

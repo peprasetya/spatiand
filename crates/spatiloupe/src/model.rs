@@ -679,7 +679,7 @@ impl Renderer {
         let target = right * orbit.pan.0 + up * orbit.pan.1;
         let middle_eye = target + back * distance;
         let at = middle_eye + right * offset;
-        let view = Mat4::look_to_rh(at, -back, up);
+        let view = glam::camera::rh::view::look_to_mat4(at, -back.normalize(), up);
         let near = (distance - 2.0).max(distance * 0.05);
         let far = distance + 4.0;
         // Off-axis: the window's edges stay where they are and each eye looks through it.
@@ -847,7 +847,7 @@ mod tests {
             let near = 1.0;
             let scale = near / distance;
             let p = frustum((-half_w - eye) * scale, (half_w - eye) * scale, -0.5 * scale, 0.5 * scale, near, 10.0);
-            let view = Mat4::look_to_rh(Vec3::new(eye, 0.0, distance), -Vec3::Z, Vec3::Y);
+            let view = glam::camera::rh::view::look_to_mat4(Vec3::new(eye, 0.0, distance), -Vec3::Z, Vec3::Y);
             let edge = p * view * Vec4::new(half_w, 0.0, 0.0, 1.0);
             assert!((edge.x / edge.w - 1.0).abs() < 1e-5, "{}", edge.x / edge.w);
         }

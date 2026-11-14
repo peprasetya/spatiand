@@ -998,7 +998,7 @@ mod tests {
 
     #[test]
     fn a_figure_in_front_is_cropped_square_and_one_behind_is_not() {
-        let vp = Mat4::perspective_rh_gl(0.7, 16.0 / 9.0, 0.05, 100.0);
+        let vp = glam::camera::rh::proj::opengl::perspective(0.7, 16.0 / 9.0, 0.05, 100.0);
         let rect = crop_of(&vp, Vec3::new(0.0, 0.0, -1.3), 0.17).unwrap();
         assert!(rect[0] < 0.0 && rect[1] > 0.0);
         assert!(crop_of(&vp, Vec3::new(0.0, 0.0, 1.3), 0.17).is_none());

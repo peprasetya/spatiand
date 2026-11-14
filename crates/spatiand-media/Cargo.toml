@@ -20,7 +20,7 @@ sound = []
 
 [dependencies]
 log.workspace = true
-glam = "0.29"
+glam = "0.34"
 libc = "0.2"
 spatiand-app = { path = "../spatiand-app", optional = true }
 # The same binding, pinned the same way, as `spatiand-video`: the FFmpeg Spatiand ships
