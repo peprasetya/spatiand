@@ -1,0 +1,175 @@
+name = "Gamepad"
+description = "For games with controller support. Every control does what its gamepad twin does."
+
+[[sets]]
+name = "Default"
+
+[[sets.controls.buttons.a.activators]]
+
+[sets.controls.buttons.a.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.a.activators.actions]]
+type = "pad"
+button = "a"
+
+[[sets.controls.buttons.b.activators]]
+
+[sets.controls.buttons.b.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.b.activators.actions]]
+type = "pad"
+button = "b"
+
+[[sets.controls.buttons.x.activators]]
+
+[sets.controls.buttons.x.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.x.activators.actions]]
+type = "pad"
+button = "x"
+
+[[sets.controls.buttons.y.activators]]
+
+[sets.controls.buttons.y.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.y.activators.actions]]
+type = "pad"
+button = "y"
+
+[[sets.controls.buttons.dpad_up.activators]]
+
+[sets.controls.buttons.dpad_up.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_up.activators.actions]]
+type = "pad"
+button = "dpad_up"
+
+[[sets.controls.buttons.dpad_down.activators]]
+
+[sets.controls.buttons.dpad_down.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_down.activators.actions]]
+type = "pad"
+button = "dpad_down"
+
+[[sets.controls.buttons.dpad_left.activators]]
+
+[sets.controls.buttons.dpad_left.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_left.activators.actions]]
+type = "pad"
+button = "dpad_left"
+
+[[sets.controls.buttons.dpad_right.activators]]
+
+[sets.controls.buttons.dpad_right.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_right.activators.actions]]
+type = "pad"
+button = "dpad_right"
+
+[[sets.controls.buttons.l1.activators]]
+
+[sets.controls.buttons.l1.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.l1.activators.actions]]
+type = "pad"
+button = "left_bumper"
+
+[[sets.controls.buttons.r1.activators]]
+
+[sets.controls.buttons.r1.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.r1.activators.actions]]
+type = "pad"
+button = "right_bumper"
+
+[[sets.controls.buttons.menu.activators]]
+
+[sets.controls.buttons.menu.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.menu.activators.actions]]
+type = "pad"
+button = "start"
+
+[[sets.controls.buttons.view.activators]]
+
+[sets.controls.buttons.view.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.view.activators.actions]]
+type = "pad"
+button = "back"
+
+[[sets.controls.buttons.l_stick.activators]]
+
+[sets.controls.buttons.l_stick.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.l_stick.activators.actions]]
+type = "pad"
+button = "left_stick"
+
+[[sets.controls.buttons.r_stick.activators]]
+
+[sets.controls.buttons.r_stick.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.r_stick.activators.actions]]
+type = "pad"
+button = "right_stick"
+
+[sets.controls.groups.left_stick]
+mode = "joystick"
+output = "left"
+sensitivity = 1.0
+deadzone = 0.08
+outer = 0.95
+curve = "linear"
+invert_x = false
+invert_y = false
+
+[sets.controls.groups.right_stick]
+mode = "joystick"
+output = "right"
+sensitivity = 1.0
+deadzone = 0.08
+outer = 0.95
+curve = "linear"
+invert_x = false
+invert_y = false
+
+[sets.controls.groups.left_trigger]
+mode = "trigger"
+output = "left"
+soft_threshold = 0.5
+deadzone = 0.0
+
+[sets.controls.groups.left_trigger.soft]
+activators = []
+
+[sets.controls.groups.left_trigger.full]
+activators = []
+
+[sets.controls.groups.right_trigger]
+mode = "trigger"
+output = "right"
+soft_threshold = 0.5
+deadzone = 0.0
+
+[sets.controls.groups.right_trigger.soft]
+activators = []
+
+[sets.controls.groups.right_trigger.full]
+activators = []

@@ -1,0 +1,7 @@
+version = 2
+yaw_axis = 2
+yaw_sign = 1.0
+pitch_axis = 1
+pitch_sign = 1.0
+roll_axis = 0
+roll_sign = -1.0

@@ -383,3 +383,64 @@ impl Prefs {
         }
     }
 }
+
+/// The file as other builds of Spatiand read and write it.
+#[cfg(test)]
+mod toml_files {
+    use super::*;
+
+    /// `testdata/{name}` holds what the toml crate wrote of this before it moved to 1.x. The
+    /// machines are updated at different moments and share these files, so what this build
+    /// writes must be what the build before it wrote, byte for byte, and read back the same.
+    fn written_as_before(name: &str, text: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name);
+        let before = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(text, before, "{name} is not written as it was");
+    }
+
+    fn chosen() -> Prefs {
+        Prefs {
+            keyboard_click: false,
+            spatial_audio: false,
+            audio_directness_centred: 0.4,
+            audio_directness_off_axis: 0.15,
+            remote_microphone: false,
+            pip_corner: spatiand_render::pip::Corner::TopLeft,
+            pip_size: spatiand_render::pip::Size::Large,
+            look: "dark".into(),
+            pointer_hold_degrees: Some(1.5),
+            pointer_hold_mouse_degrees: Some(0.25),
+            remotes: vec![
+                RemoteHost {
+                    host: "workshop:47600".into(),
+                    fingerprint: "3F:0A:9C:E1:44:7B:D2:10".into(),
+                    launch: vec!["firestorm".into(), "secondlife".into()],
+                    on_demand: false,
+                },
+                RemoteHost {
+                    host: "littleotter.tail0a1b2.ts.net:47600".into(),
+                    fingerprint: "\"quoted\" and \\ back".into(),
+                    launch: Vec::new(),
+                    on_demand: true,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn prefs_are_written_and_read_as_before() {
+        for (name, prefs) in [("prefs-default.toml", Prefs::default()), ("prefs-chosen.toml", chosen())] {
+            let text = toml::to_string_pretty(&prefs).unwrap();
+            written_as_before(name, &text);
+            assert_eq!(toml::from_str::<Prefs>(&text).unwrap(), prefs, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_look_is_where_the_applications_read_it() {
+        // `spatiand_app` reads `look` from this file line by line, without a TOML parser.
+        let text = toml::to_string_pretty(&chosen()).unwrap();
+        assert!(text.lines().any(|l| l == "look = \"dark\""), "{text}");
+    }
+}

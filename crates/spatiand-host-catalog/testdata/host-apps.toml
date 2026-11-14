@@ -1,0 +1,24 @@
+[[app]]
+id = "chrome"
+name = "Chrome"
+icon = "google-chrome"
+exec = "/usr/bin/google-chrome"
+args = []
+env = []
+kind = "window"
+eyes = "mono"
+audio = "auto"
+pad = "xbox"
+detach = "run"
+
+[[app]]
+id = "term"
+name = "Terminal"
+exec = "konsole"
+args = []
+env = []
+kind = "window"
+eyes = "mono"
+audio = "auto"
+pad = "xbox"
+detach = "run"

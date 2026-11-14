@@ -1,0 +1,51 @@
+name = "Browser"
+description = 'Hand written, with "quotes" and a tab:	.'
+
+[[sets]]
+name = "Default"
+
+[[sets.controls.buttons.a.activators]]
+
+[sets.controls.buttons.a.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.a.activators.actions]]
+type = "pad"
+button = "a"
+
+[[sets.controls.buttons.pad_click1.activators]]
+
+[sets.controls.buttons.pad_click1.activators.when]
+kind = "release_press"
+
+[[sets.controls.buttons.pad_click1.activators.actions]]
+type = "mouse"
+button = "left"
+
+[[sets.controls.buttons.pad_deep_click1.activators]]
+
+[sets.controls.buttons.pad_deep_click1.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.pad_deep_click1.activators.actions]]
+type = "shell"
+command = "close_window"
+
+[[sets.controls.buttons.pad_deep_click3.activators]]
+
+[sets.controls.buttons.pad_deep_click3.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.pad_deep_click3.activators.actions]]
+type = "shortcut"
+keys = "ctrl+shift+t"
+
+[sets.controls.groups.left_stick]
+mode = "joystick"
+output = "left"
+sensitivity = 1.0
+deadzone = 0.08
+outer = 0.95
+curve = "linear"
+invert_x = false
+invert_y = false

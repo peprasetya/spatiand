@@ -1,0 +1,24 @@
+device = "XREAL Air"
+axes = "yaw +Z  pitch +X  roll +Y  det +1"
+gyro_bias = [
+    0.0012345678901234,
+    -0.57,
+    0.000000001,
+]
+
+[magnetometer]
+order = [
+    1,
+    0,
+    2,
+]
+signs = [
+    1.0,
+    -1.0,
+    1.0,
+]
+offset = [
+    0.17,
+    -0.13,
+    0.12,
+]

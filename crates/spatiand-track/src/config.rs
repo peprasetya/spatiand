@@ -247,3 +247,45 @@ mod tests {
         );
     }
 }
+
+/// `axes.toml` and `sensors.toml` as other builds read and write them.
+#[cfg(test)]
+mod toml_files {
+    use super::*;
+
+    /// `testdata/{name}` holds what the toml crate wrote of this before it moved to 1.x. The
+    /// machines are updated at different moments and share these files, so what this build
+    /// writes must be what the build before it wrote, byte for byte, and read back the same.
+    fn written_as_before(name: &str, text: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name);
+        let before = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(text, before, "{name} is not written as it was");
+    }
+
+    #[test]
+    fn axis_maps_are_written_and_read_as_before() {
+        for (name, map) in [("axes-xreal-air.toml", AxisMap::XREAL_AIR), ("axes-identity.toml", AxisMap::IDENTITY)] {
+            let text = toml::to_string_pretty(&map).unwrap();
+            written_as_before(name, &text);
+            assert_eq!(toml::from_str::<AxisMap>(&text).unwrap(), map, "{name}");
+        }
+    }
+
+    #[test]
+    fn sensor_memory_is_written_and_read_as_before() {
+        let dir = std::env::temp_dir().join(format!("spatiand-sensors-toml-{}", std::process::id()));
+        let path = dir.join("sensors.toml");
+        let remembered = Remembered {
+            gyro_bias: Some(glam::DVec3::new(0.0012345678901234, -0.57, 1e-9)),
+            hard_iron: Some(crate::HardIron {
+                axes: [(1, 1.0), (0, -1.0), (2, 1.0)],
+                offset: glam::DVec3::new(0.17, -0.13, 0.12),
+            }),
+        };
+        save_sensors_to(&path, "XREAL Air", &AxisMap::XREAL_AIR, &remembered).unwrap();
+        written_as_before("sensors.toml", &std::fs::read_to_string(&path).unwrap());
+        assert_eq!(load_sensors_from(&path, "XREAL Air", &AxisMap::XREAL_AIR), remembered);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

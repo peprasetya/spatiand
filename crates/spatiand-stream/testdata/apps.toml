@@ -1,0 +1,39 @@
+[[app]]
+id = "firestorm"
+name = "Firestorm"
+exec = "/opt/firestorm/firestorm"
+args = []
+env = []
+kind = "window"
+eyes = "mono"
+audio = "auto"
+pad = "xbox"
+detach = "run"
+
+[[app]]
+id = "secondlife"
+name = "Second Life"
+icon = "secondlife"
+exec = "/opt/sl/sl"
+args = [
+    "--login",
+    'a "quoted" word',
+]
+env = [
+    [
+    "LANG",
+    "C",
+],
+    [
+    "PATH",
+    "/a:/b",
+],
+]
+workdir = "/home/me/Second Life"
+kind = "vr"
+eyes = "side_by_side"
+audio = "surround71"
+pad = "ndof8"
+
+[app.detach.throttle]
+fps = 5

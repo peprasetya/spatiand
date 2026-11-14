@@ -1,0 +1,146 @@
+name = "Spatial desktop"
+description = "Spatiand's own controls: the triggers click the pointer and the buttons type."
+
+[[sets]]
+name = "Default"
+
+[[sets.controls.buttons.a.activators]]
+
+[sets.controls.buttons.a.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.a.activators.actions]]
+type = "key"
+code = 28
+
+[[sets.controls.buttons.b.activators]]
+
+[sets.controls.buttons.b.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.b.activators.actions]]
+type = "key"
+code = 1
+
+[[sets.controls.buttons.x.activators]]
+
+[sets.controls.buttons.x.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.x.activators.actions]]
+type = "key"
+code = 14
+
+[[sets.controls.buttons.y.activators]]
+
+[sets.controls.buttons.y.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.y.activators.actions]]
+type = "key"
+code = 15
+
+[[sets.controls.buttons.dpad_up.activators]]
+
+[sets.controls.buttons.dpad_up.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_up.activators.actions]]
+type = "key"
+code = 103
+
+[[sets.controls.buttons.dpad_down.activators]]
+
+[sets.controls.buttons.dpad_down.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_down.activators.actions]]
+type = "key"
+code = 108
+
+[[sets.controls.buttons.dpad_left.activators]]
+
+[sets.controls.buttons.dpad_left.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_left.activators.actions]]
+type = "key"
+code = 105
+
+[[sets.controls.buttons.dpad_right.activators]]
+
+[sets.controls.buttons.dpad_right.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_right.activators.actions]]
+type = "key"
+code = 106
+
+[sets.controls.groups.left_stick]
+mode = "dpad"
+deadzone = 0.5
+eight_way = false
+
+[[sets.controls.groups.left_stick.up.activators]]
+
+[sets.controls.groups.left_stick.up.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.up.activators.actions]]
+type = "key"
+code = 103
+
+[[sets.controls.groups.left_stick.down.activators]]
+
+[sets.controls.groups.left_stick.down.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.down.activators.actions]]
+type = "key"
+code = 108
+
+[[sets.controls.groups.left_stick.left.activators]]
+
+[sets.controls.groups.left_stick.left.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.left.activators.actions]]
+type = "key"
+code = 105
+
+[[sets.controls.groups.left_stick.right.activators]]
+
+[sets.controls.groups.left_stick.right.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.right.activators.actions]]
+type = "key"
+code = 106
+
+[sets.controls.groups.right_stick]
+mode = "scroll_wheel"
+degrees_per_notch = 30.0
+
+[[sets.controls.groups.right_stick.clockwise.activators]]
+
+[sets.controls.groups.right_stick.clockwise.activators.when]
+kind = "press"
+
+[[sets.controls.groups.right_stick.clockwise.activators.actions]]
+type = "wheel"
+direction = "down"
+
+[[sets.controls.groups.right_stick.counter_clockwise.activators]]
+
+[sets.controls.groups.right_stick.counter_clockwise.activators.when]
+kind = "press"
+
+[[sets.controls.groups.right_stick.counter_clockwise.activators.actions]]
+type = "wheel"
+direction = "up"
+
+[sets.controls.groups.left_trigger]
+mode = "pointer_click"
+
+[sets.controls.groups.right_trigger]
+mode = "pointer_click"

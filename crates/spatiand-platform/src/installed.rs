@@ -421,3 +421,33 @@ mod tests {
         assert!(!is_package(Path::new("a.tar.gz")));
     }
 }
+
+/// `spatiand-app.toml` as an application's package carries it.
+#[cfg(test)]
+mod toml_files {
+    use super::*;
+
+    #[test]
+    fn the_documented_manifest_reads() {
+        // The example at the top of this file, as a package would carry it.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/spatiand-app.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let manifest: Manifest = toml::from_str(&text).unwrap();
+        assert_eq!(
+            manifest,
+            Manifest {
+                id: "spatiquake".into(),
+                name: "SpatiQuake".into(),
+                exec: "spatiquake.sh".into(),
+                args: Vec::new(),
+                icon: Some("spatiquake.png".into()),
+                categories: vec!["Game".into()],
+                kind: Kind::Vr,
+                version: Some("0.1.0".into()),
+            }
+        );
+        let minimal: Manifest = toml::from_str("id = \"a\"\nname = \"A\"\nexec = \"a\"\n").unwrap();
+        assert_eq!((minimal.kind, minimal.icon, minimal.args.len()), (Kind::Window, None, 0));
+        assert!(toml::from_str::<Manifest>("id = \"a\"\nname = \"A\"\nexec = \"a\"\nnope = 1\n").is_err());
+    }
+}

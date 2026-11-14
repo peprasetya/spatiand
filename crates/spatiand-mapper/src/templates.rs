@@ -257,3 +257,60 @@ mod tests {
         assert_eq!(names.len(), all().len());
     }
 }
+
+/// The layouts as other builds, and the other machines sharing them, read and write them.
+#[cfg(test)]
+mod toml_files {
+    use super::*;
+
+    /// `testdata/{name}` holds what the toml crate wrote of this before it moved to 1.x. The
+    /// machines are updated at different moments and share these files, so what this build
+    /// writes must be what the build before it wrote, byte for byte, and read back the same.
+    fn written_as_before(name: &str, text: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name);
+        let before = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(text, before, "{name} is not written as it was");
+    }
+
+    #[test]
+    fn every_template_is_written_and_read_as_before() {
+        for layout in all() {
+            let stem: String = layout
+                .name
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+                .collect();
+            let text = toml::to_string_pretty(&layout).unwrap();
+            written_as_before(&format!("layout-{stem}.toml"), &text);
+            assert_eq!(toml::from_str::<Layout>(&text).unwrap(), layout, "{}", layout.name);
+        }
+    }
+
+    #[test]
+    fn a_hand_written_layout_is_written_and_read_as_before() {
+        // Presses, shortcuts, shell commands and a mode with every default: what a person, or
+        // the editor, puts in a layout beyond the templates.
+        let text = r#"
+            name = "Browser"
+            description = "Hand written, with \"quotes\" and a tab:\t."
+            [[sets]]
+            name = "Default"
+            [sets.controls.buttons.pad_deep_click3]
+            activators = [{ actions = [{ type = "shortcut", keys = "ctrl+shift+t" }] }]
+            [sets.controls.buttons.pad_click1]
+            activators = [{ when = { kind = "release_press" }, actions = [{ type = "mouse", button = "left" }] }]
+            [sets.controls.buttons.pad_deep_click1]
+            activators = [{ actions = [{ type = "shell", command = "close_window" }] }]
+            [sets.controls.groups.left_stick]
+            mode = "joystick"
+            output = "left"
+            [sets.controls.buttons.a]
+            activators = [{ actions = [{ type = "pad", button = "a" }] }]
+        "#;
+        let layout: Layout = toml::from_str(text).expect("parses");
+        let again = toml::to_string_pretty(&layout).unwrap();
+        written_as_before("layout-hand-written.toml", &again);
+        assert_eq!(toml::from_str::<Layout>(&again).unwrap(), layout);
+    }
+}

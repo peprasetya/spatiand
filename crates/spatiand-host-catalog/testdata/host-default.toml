@@ -1,0 +1,5 @@
+max_kbit = 25000
+max_fps = 72
+idle_fps = 0
+idle_after_ms = 250
+port = 47600

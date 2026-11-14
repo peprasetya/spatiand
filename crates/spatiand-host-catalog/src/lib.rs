@@ -223,3 +223,61 @@ mod tests {
         assert_eq!(load_settings(&path).unwrap(), s);
     }
 }
+
+/// `apps.toml` and `host.toml` as other builds of the host and its settings app read and write
+/// them, through the functions the host uses.
+#[cfg(test)]
+mod toml_files {
+    use super::*;
+
+    /// `testdata/{name}` holds what the toml crate wrote of this before it moved to 1.x. The
+    /// machines are updated at different moments and share these files, so what this build
+    /// writes must be what the build before it wrote, byte for byte, and read back the same.
+    fn written_as_before(name: &str, text: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name);
+        let before = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(text, before, "{name} is not written as it was");
+    }
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("spatiand-catalog-toml-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn host_settings_are_written_and_read_as_before() {
+        let dir = temp("settings");
+        for (name, settings) in [
+            ("host-default.toml", Settings::default()),
+            (
+                "host-chosen.toml",
+                Settings { max_kbit: 60_000, max_fps: 90, idle_fps: 2, idle_after_ms: 1000, port: 47601 },
+            ),
+        ] {
+            let path = dir.join(name);
+            save_settings(&path, &settings).unwrap();
+            written_as_before(name, &std::fs::read_to_string(&path).unwrap());
+            assert_eq!(load_settings(&path).unwrap(), settings);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_saved_catalogue_is_written_and_read_as_before() {
+        let dir = temp("apps");
+        let path = dir.join("apps.toml");
+        let mut chrome = App::new("chrome", "Chrome", "/usr/bin/google-chrome");
+        chrome.icon = Some("google-chrome".into());
+        chrome.icon_png = Some(vec![1, 2, 3]);
+        let catalog = Catalog { apps: vec![chrome, App::new("term", "Terminal", "konsole")] };
+        save_catalog(&path, &catalog).unwrap();
+        written_as_before("host-apps.toml", &std::fs::read_to_string(&path).unwrap());
+        let back = load_catalog(&path).unwrap();
+        assert_eq!(back.apps.len(), 2);
+        assert_eq!(back.apps[0].icon.as_deref(), Some("google-chrome"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

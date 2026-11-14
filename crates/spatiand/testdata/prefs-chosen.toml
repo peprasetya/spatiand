@@ -1,0 +1,25 @@
+keyboard_click = false
+spatial_audio = false
+audio_directness_centred = 0.4000000059604645
+audio_directness_off_axis = 0.15000000596046448
+remote_microphone = false
+pip_corner = "top-left"
+pip_size = "large"
+look = "dark"
+pointer_hold_degrees = 1.5
+pointer_hold_mouse_degrees = 0.25
+
+[[remote]]
+host = "workshop:47600"
+fingerprint = "3F:0A:9C:E1:44:7B:D2:10"
+launch = [
+    "firestorm",
+    "secondlife",
+]
+on_demand = false
+
+[[remote]]
+host = "littleotter.tail0a1b2.ts.net:47600"
+fingerprint = '"quoted" and \ back'
+launch = []
+on_demand = true

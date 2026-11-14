@@ -1,0 +1,248 @@
+name = "Keyboard and mouse"
+description = "For games without controller support: WASD on the left stick, the mouse on the right."
+
+[[sets]]
+name = "Default"
+
+[[sets.controls.buttons.a.activators]]
+
+[sets.controls.buttons.a.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.a.activators.actions]]
+type = "key"
+code = 57
+
+[[sets.controls.buttons.b.activators]]
+
+[sets.controls.buttons.b.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.b.activators.actions]]
+type = "key"
+code = 46
+
+[[sets.controls.buttons.x.activators]]
+
+[sets.controls.buttons.x.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.x.activators.actions]]
+type = "key"
+code = 19
+
+[[sets.controls.buttons.y.activators]]
+
+[sets.controls.buttons.y.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.y.activators.actions]]
+type = "key"
+code = 33
+
+[[sets.controls.buttons.dpad_up.activators]]
+
+[sets.controls.buttons.dpad_up.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_up.activators.actions]]
+type = "key"
+code = 2
+
+[[sets.controls.buttons.dpad_down.activators]]
+
+[sets.controls.buttons.dpad_down.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_down.activators.actions]]
+type = "key"
+code = 4
+
+[[sets.controls.buttons.dpad_left.activators]]
+
+[sets.controls.buttons.dpad_left.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_left.activators.actions]]
+type = "key"
+code = 5
+
+[[sets.controls.buttons.dpad_right.activators]]
+
+[sets.controls.buttons.dpad_right.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.dpad_right.activators.actions]]
+type = "key"
+code = 3
+
+[[sets.controls.buttons.l1.activators]]
+
+[sets.controls.buttons.l1.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.l1.activators.actions]]
+type = "key"
+code = 16
+
+[[sets.controls.buttons.r1.activators]]
+
+[sets.controls.buttons.r1.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.r1.activators.actions]]
+type = "key"
+code = 18
+
+[[sets.controls.buttons.l4.activators]]
+
+[sets.controls.buttons.l4.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.l4.activators.actions]]
+type = "key"
+code = 42
+
+[[sets.controls.buttons.r4.activators]]
+
+[sets.controls.buttons.r4.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.r4.activators.actions]]
+type = "key"
+code = 29
+
+[[sets.controls.buttons.l5.activators]]
+
+[sets.controls.buttons.l5.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.l5.activators.actions]]
+type = "key"
+code = 44
+
+[[sets.controls.buttons.r5.activators]]
+
+[sets.controls.buttons.r5.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.r5.activators.actions]]
+type = "key"
+code = 47
+
+[[sets.controls.buttons.menu.activators]]
+
+[sets.controls.buttons.menu.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.menu.activators.actions]]
+type = "key"
+code = 1
+
+[[sets.controls.buttons.view.activators]]
+
+[sets.controls.buttons.view.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.view.activators.actions]]
+type = "key"
+code = 15
+
+[[sets.controls.buttons.l_stick.activators]]
+
+[sets.controls.buttons.l_stick.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.l_stick.activators.actions]]
+type = "key"
+code = 42
+
+[[sets.controls.buttons.r_stick.activators]]
+
+[sets.controls.buttons.r_stick.activators.when]
+kind = "press"
+
+[[sets.controls.buttons.r_stick.activators.actions]]
+type = "mouse"
+button = "middle"
+
+[sets.controls.groups.left_stick]
+mode = "dpad"
+deadzone = 0.3
+eight_way = true
+
+[[sets.controls.groups.left_stick.up.activators]]
+
+[sets.controls.groups.left_stick.up.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.up.activators.actions]]
+type = "key"
+code = 17
+
+[[sets.controls.groups.left_stick.down.activators]]
+
+[sets.controls.groups.left_stick.down.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.down.activators.actions]]
+type = "key"
+code = 31
+
+[[sets.controls.groups.left_stick.left.activators]]
+
+[sets.controls.groups.left_stick.left.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.left.activators.actions]]
+type = "key"
+code = 30
+
+[[sets.controls.groups.left_stick.right.activators]]
+
+[sets.controls.groups.left_stick.right.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_stick.right.activators.actions]]
+type = "key"
+code = 32
+
+[sets.controls.groups.right_stick]
+mode = "mouse"
+sensitivity = 1.0
+invert_x = false
+invert_y = false
+
+[sets.controls.groups.left_trigger]
+mode = "trigger"
+soft_threshold = 0.4
+deadzone = 0.0
+
+[[sets.controls.groups.left_trigger.soft.activators]]
+
+[sets.controls.groups.left_trigger.soft.activators.when]
+kind = "press"
+
+[[sets.controls.groups.left_trigger.soft.activators.actions]]
+type = "mouse"
+button = "right"
+
+[sets.controls.groups.left_trigger.full]
+activators = []
+
+[sets.controls.groups.right_trigger]
+mode = "trigger"
+soft_threshold = 0.4
+deadzone = 0.0
+
+[[sets.controls.groups.right_trigger.soft.activators]]
+
+[sets.controls.groups.right_trigger.soft.activators.when]
+kind = "press"
+
+[[sets.controls.groups.right_trigger.soft.activators.actions]]
+type = "mouse"
+button = "left"
+
+[sets.controls.groups.right_trigger.full]
+activators = []

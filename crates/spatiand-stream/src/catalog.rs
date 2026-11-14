@@ -271,3 +271,43 @@ mod tests {
         assert_eq!(catalog.duplicate_ids(), vec!["same".to_string()]);
     }
 }
+
+/// `apps.toml` as other builds of the host and its settings app read and write it.
+#[cfg(test)]
+mod toml_files {
+    use super::*;
+
+    /// `testdata/{name}` holds what the toml crate wrote of this before it moved to 1.x. The
+    /// machines are updated at different moments and share these files, so what this build
+    /// writes must be what the build before it wrote, byte for byte, and read back the same.
+    fn written_as_before(name: &str, text: &str) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name);
+        let before = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        assert_eq!(text, before, "{name} is not written as it was");
+    }
+
+    #[test]
+    fn a_catalogue_is_written_and_read_as_before() {
+        let catalog = Catalog {
+            apps: vec![
+                App::new("firestorm", "Firestorm", "/opt/firestorm/firestorm"),
+                App {
+                    icon: Some("secondlife".into()),
+                    kind: AppKind::Vr,
+                    eyes: Eyes::SideBySide,
+                    audio: AudioMode::Surround71,
+                    pad: PadProfile::Ndof8,
+                    detach: Detach::Throttle { fps: 5 },
+                    args: vec!["--login".into(), "a \"quoted\" word".into()],
+                    env: vec![("LANG".into(), "C".into()), ("PATH".into(), "/a:/b".into())],
+                    workdir: Some("/home/me/Second Life".into()),
+                    ..App::new("secondlife", "Second Life", "/opt/sl/sl")
+                },
+            ],
+        };
+        let text = toml::to_string_pretty(&catalog).unwrap();
+        written_as_before("apps.toml", &text);
+        assert_eq!(toml::from_str::<Catalog>(&text).unwrap(), catalog);
+    }
+}

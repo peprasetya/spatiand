@@ -1,0 +1,8 @@
+id = "spatiquake"              # the folder's name; lowercase letters, digits, '.', '-', '_'
+name = "SpatiQuake"            # what the launcher shows
+exec = "spatiquake.sh"         # the program, relative to the folder
+args = []                      # given to it, before anything else
+icon = "spatiquake.png"        # relative to the folder; a PNG or an SVG
+categories = ["Game"]          # freedesktop categories, as a desktop entry has them
+kind = "vr"                    # "window" (the default) or "vr": it becomes the room
+version = "0.1.0"              # shown when it is offered for installing
