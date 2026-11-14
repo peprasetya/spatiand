@@ -10,10 +10,10 @@ Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
  .../settings/people_page/people_page.html.ts  |  89 +-----
  .../browser/spatiand/profile_lock_dialog.cc   | 282 ++++++++++++++++--
  chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
- chrome/browser/spatiand/profiles_sync.cc      | 136 ++++++++-
- chrome/browser/spatiand/profiles_sync.h       |  22 ++
+ chrome/browser/spatiand/profiles_sync.cc      | 148 ++++++++-
+ chrome/browser/spatiand/profiles_sync.h       |  28 ++
  .../ui/views/profiles/profile_menu_view.cc    |  30 ++
- 8 files changed, 470 insertions(+), 110 deletions(-)
+ 8 files changed, 487 insertions(+), 111 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
 index a803c69e26..acb5857c52 100644
@@ -574,7 +574,7 @@ index 2350d3f843..3c8938fd50 100644
  
  #endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
 diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
-index b90c819ccb..443e40ab5a 100644
+index b90c819ccb..7992892cef 100644
 --- a/chrome/browser/spatiand/profiles_sync.cc
 +++ b/chrome/browser/spatiand/profiles_sync.cc
 @@ -25,6 +25,9 @@
@@ -616,7 +616,33 @@ index b90c819ccb..443e40ab5a 100644
  void WriteFirstRecord(const std::string& name, SkColor colour) {
    base::DictValue dict;
    dict.Set("name", name);
-@@ -535,29 +560,134 @@ bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
+@@ -214,7 +239,7 @@ ProfilesSync::ProfilesSync()
+     OnRead(ReadRecords());
+   }
+   storage_observation_.Observe(&manager->GetProfileAttributesStorage());
+-  manager->AddObserver(this);
++  manager_observation_.Observe(manager);
+   browsers_observation_.Observe(GlobalBrowserCollection::GetInstance());
+   // Opens the last profile used, as SpatiMesh does, rather than asking whose each time; the
+   // picker's own checkbox still turns that on.
+@@ -517,6 +542,16 @@ void ProfilesSync::OnProfileNameChanged(const base::FilePath& profile_path,
+   }
+ }
+ 
++void ProfilesSync::OnProfileManagerDestroying() {
++  timer_.Stop();
++  weak_factory_.InvalidateWeakPtrs();
++  waiting_.clear();
++  hushed_.clear();
++  manager_observation_.Reset();
++  storage_observation_.Reset();
++  browsers_observation_.Reset();
++}
++
+ void ProfilesSync::OnProfileAdded(Profile* profile) {
+   // A profile's colour is its theme once it is open.
+   if (!profile->IsRegularProfile()) {
+@@ -535,29 +570,134 @@ bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
    if (it == records_.end() || it->second.lock_hash.empty() || unlocked_.contains(id)) {
      return false;
    }
@@ -755,10 +781,18 @@ index b90c819ccb..443e40ab5a 100644
    }
    // Not opened: its waiting windows go, never having been seen.
 diff --git a/chrome/browser/spatiand/profiles_sync.h b/chrome/browser/spatiand/profiles_sync.h
-index 464c9166ca..9c79c611de 100644
+index 464c9166ca..6648eba40a 100644
 --- a/chrome/browser/spatiand/profiles_sync.h
 +++ b/chrome/browser/spatiand/profiles_sync.h
-@@ -25,6 +25,10 @@
+@@ -17,6 +17,7 @@
+ #include "base/timer/timer.h"
+ #include "chrome/browser/profiles/profile_attributes_storage.h"
+ #include "chrome/browser/profiles/profile_attributes_storage_observer.h"
++#include "chrome/browser/profiles/profile_manager.h"
+ #include "chrome/browser/profiles/profile_manager_observer.h"
+ #include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
+ #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+@@ -25,6 +26,10 @@
  class Profile;
  class ThemeService;
  
@@ -769,7 +803,7 @@ index 464c9166ca..9c79c611de 100644
  namespace spatiand {
  
  // A profile as `apps/spatimesh/profiles/<id>/profile.json` has it.
-@@ -75,6 +79,15 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+@@ -75,6 +80,15 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
    // opens it for the next, until the last of them closes.
    bool DeferShow(Profile* profile, base::OnceClosure show);
  
@@ -785,7 +819,7 @@ index 464c9166ca..9c79c611de 100644
   private:
    ProfilesSync();
    ~ProfilesSync() override;
-@@ -93,6 +106,11 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+@@ -93,6 +107,11 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
  
    void AskToUnlock(const std::string& id, const std::u16string& name, const ProfileRecord& record);
    void Unlocked(const std::string& id, bool opened);
@@ -797,7 +831,18 @@ index 464c9166ca..9c79c611de 100644
  
    // ProfileAttributesStorage::Observer:
    void OnProfileAdded(const base::FilePath& profile_path) override;
-@@ -122,6 +140,10 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+@@ -103,6 +122,10 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+ 
+   // ProfileManagerObserver:
+   void OnProfileAdded(Profile* profile) override;
++  // The profiles are going: let go of them, of their names and of the windows, which are all
++  // taken away before this is (it is never deleted). Without it every exit ended in a trap:
++  // the manager's list of those watching it was not empty, and two pointers were left dangling.
++  void OnProfileManagerDestroying() override;
+ 
+   // BrowserCollectionObserver:
+   void OnBrowserClosed(BrowserWindowInterface* browser) override;
+@@ -122,10 +145,15 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
    std::set<std::string> removing_;
  
    std::set<std::string> unlocked_;
@@ -808,6 +853,11 @@ index 464c9166ca..9c79c611de 100644
    std::map<std::string, std::vector<base::OnceClosure>> waiting_;
  
    base::ScopedObservation<ProfileAttributesStorage, ProfileAttributesStorage::Observer>
+       storage_observation_{this};
++  base::ScopedObservation<ProfileManager, ProfileManagerObserver> manager_observation_{this};
+   base::ScopedObservation<GlobalBrowserCollection, BrowserCollectionObserver> browsers_observation_{
+       this};
+   base::WeakPtrFactory<ProfilesSync> weak_factory_{this};
 diff --git a/chrome/browser/ui/views/profiles/profile_menu_view.cc b/chrome/browser/ui/views/profiles/profile_menu_view.cc
 index d30e925c6b..b7c8117181 100644
 --- a/chrome/browser/ui/views/profiles/profile_menu_view.cc
