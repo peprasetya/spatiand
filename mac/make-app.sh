@@ -54,10 +54,18 @@ if [ -f "$app/Contents/MacOS/spatikey" ] && [ -f ../target/release/spatikey-host
   OWN="$OWN spatikey-host"
 fi
 # The storage service the applications reach remotes through: Go, with rclone linked in.
+# Go where these machines keep it, for a build started from a shell that has not read a profile.
+for d in "$HOME/Developer/go/bin" "$HOME/.local/go/bin" /usr/local/go/bin; do
+    [ -x "$d/go" ] && PATH="$d:$PATH"
+done
 if command -v go >/dev/null && ../storage/build.sh mac "$app/Contents/MacOS/spatiand-storage"; then
   OWN="$OWN spatiand-storage"
+elif [ -n "${SPATIAND_WITHOUT_STORAGE:-}" ]; then
+  echo "warning: built without the storage service, as asked; remotes will not be reachable"
 else
-  echo "warning: the storage service did not build (is Go installed?); remotes will not be reachable"
+  # An app without it looks whole and reaches no remote (2026-11-14: one was installed so).
+  echo "the storage service did not build (is Go on the PATH?); SPATIAND_WITHOUT_STORAGE=1 builds without it" >&2
+  exit 1
 fi
 # PDFium, which SpatiLoupe draws PDFs with, beside the programs that load it.
 case "$(uname -m)" in arm64) pdfium=mac-arm64 ;; *) pdfium=mac-x64 ;; esac

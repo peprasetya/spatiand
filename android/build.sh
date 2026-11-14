@@ -50,10 +50,19 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
 ../tools/fetch-pdfium.sh android-arm64
 STORAGE=$(pwd)/$OUT-storage
 mkdir -p "$STORAGE"
+# Go where these machines keep it, for a build started from a shell that has not read a profile.
+for d in "$HOME/Developer/go/bin" "$HOME/.local/go/bin" /usr/local/go/bin; do
+    [ -x "$d/go" ] && PATH="$d:$PATH"
+done
 if command -v go >/dev/null; then
     ../storage/build.sh android "$STORAGE/libspatiand-storage.so"
+elif [ -n "${SPATIAND_WITHOUT_STORAGE:-}" ]; then
+    rm -f "$STORAGE/libspatiand-storage.so"
+    echo "warning: built without the storage service, as asked (no remotes)"
 else
-    echo "warning: no Go here; the APK is made without the storage service (no remotes)"
+    # Without Go the APK took whatever an earlier build had left there, or nothing.
+    echo "no Go on the PATH for the storage service; SPATIAND_WITHOUT_STORAGE=1 builds without it" >&2
+    exit 1
 fi
 
 # The measured head for spatial sound: libmysofa and its dataset. See mysofa/build.sh.
