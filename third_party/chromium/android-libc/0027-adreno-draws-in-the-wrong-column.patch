@@ -1,0 +1,247 @@
+Qualcomm's Vulkan driver before 512.616 (the Beam Pro's Adreno 710 has 512.615) draws a render pass
+of several draws wrongly when its first draw does not reach every one of the columns the driver
+splits the pass into: later draws in such a column land at the first column's place, or over what
+the memory held. Pages showed other tiles' content in the row under their header (2026-11-14, on
+Chromium 153 and 157 alike). ANGLE draws over the whole render area before a pass's second draw,
+blended so as to change nothing, for that driver alone (drawWholeRenderAreaBeforeSecondDraw).
+Measured headless: pages equal to software raster's; 5 to 9 per cent of the frame rate.
+
+diff --git a/third_party/angle/include/platform/autogen/FeaturesVk_autogen.h b/third_party/angle/include/platform/autogen/FeaturesVk_autogen.h
+index cb86b66..ad0b055 100644
+--- a/third_party/angle/include/platform/autogen/FeaturesVk_autogen.h
++++ b/third_party/angle/include/platform/autogen/FeaturesVk_autogen.h
+@@ -518,6 +518,12 @@ struct FeaturesVk : FeatureSetBase
+         &members,
+     };
+ 
++    FeatureInfo drawWholeRenderAreaBeforeSecondDraw = {
++        "drawWholeRenderAreaBeforeSecondDraw",
++        FeatureCategory::VulkanWorkarounds,
++        &members,
++    };
++
+     FeatureInfo emulatedPrerotation90 = {
+         "emulatedPrerotation90",
+         FeatureCategory::VulkanFeatures,
+diff --git a/third_party/angle/include/platform/vk_features.json b/third_party/angle/include/platform/vk_features.json
+index 6462947..78fd1bc 100644
+--- a/third_party/angle/include/platform/vk_features.json
++++ b/third_party/angle/include/platform/vk_features.json
+@@ -666,6 +666,15 @@
+             ],
+             "issue": "https://issuetracker.google.com/166809097"
+         },
++        {
++            "name": "draw_whole_render_area_before_second_draw",
++            "category": "Workarounds",
++            "description": [
++                "On some hardware, in a binned render pass whose first draw does not reach every bin, ",
++                "later draws in the bins it misses are rasterized at the first bin's position. Before ",
++                "the second draw of a render pass, draw over the whole render area leaving it unchanged"
++            ]
++        },
+         {
+             "name": "emulated_prerotation_90",
+             "category": "Features",
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.cpp
+index ea5958d..20f2a6b 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.cpp
+@@ -1649,6 +1649,13 @@ angle::Result ContextVk::setupDraw(const gl::Context *context,
+                                    const void *indices,
+                                    DirtyBits dirtyBitMask)
+ {
++    if (getFeatures().drawWholeRenderAreaBeforeSecondDraw.enabled)
++    {
++        // Before the dirty bits are handled: the extra draw binds its own pipeline and state, and
++        // dirties everything this draw needs set again.
++        ANGLE_TRY(drawWholeRenderAreaBeforeSecondDraw());
++    }
++
+     // Set any dirty bits that depend on draw call parameters or other objects.
+     if (mode != mCurrentDrawMode)
+     {
+@@ -7886,6 +7893,13 @@ angle::Result ContextVk::startRenderPass(gl::Rectangle renderArea,
+     FramebufferVk *drawFramebufferVk = getDrawFramebuffer();
+     ASSERT(drawFramebufferVk == vk::GetImpl(mState.getDrawFramebuffer()));
+ 
++    if (getFeatures().drawWholeRenderAreaBeforeSecondDraw.enabled)
++    {
++        // The draw over the render area must reach the area the render pass ends with, so the
++        // render pass is never grown.
++        renderArea = drawFramebufferVk->getRotatedCompleteRenderArea(this);
++    }
++
+     ANGLE_TRY(drawFramebufferVk->startNewRenderPass(this, renderArea, &mRenderPassCommandBuffer,
+                                                     renderPassDescChangedOut));
+ 
+@@ -7928,6 +7942,53 @@ angle::Result ContextVk::startRenderPass(gl::Rectangle renderArea,
+     return angle::Result::Continue;
+ }
+ 
++angle::Result ContextVk::drawWholeRenderAreaBeforeSecondDraw()
++{
++    // Only for a draw that goes on in the render pass already open on this framebuffer, when that
++    // render pass holds exactly one draw so far.
++    FramebufferVk *framebufferVk = getDrawFramebuffer();
++    if (!hasActiveRenderPass() || mGraphicsDirtyBits[DIRTY_BIT_RENDER_PASS] ||
++        !hasStartedRenderPassWithQueueSerial(framebufferVk->getLastRenderPassQueueSerial()) ||
++        mRenderPassCommands->getRenderPassWriteCommandCount() != 1 ||
++        mState.isTransformFeedbackActiveUnpaused())
++    {
++        return angle::Result::Continue;
++    }
++
++    // A colour attachment that can be blended: the draw writes it with blending that keeps the
++    // destination (src * 0 + dst * 1), so it is a real draw over every bin and changes nothing.
++    // A draw that writes nothing is dropped by the driver and does not help.
++    const gl::FramebufferState &fbState = framebufferVk->getState();
++    for (size_t colorIndexGL :
++         fbState.getColorAttachmentsMask() & fbState.getEnabledDrawBuffers())
++    {
++        RenderTargetVk *renderTarget = framebufferVk->getColorDrawRenderTarget(colorIndexGL);
++        if (renderTarget == nullptr || renderTarget->isYuvResolve() ||
++            renderTarget->getLayerCount() != 1)
++        {
++            continue;
++        }
++        const angle::Format &format = renderTarget->getImageForRenderPass().getActualFormat();
++        if (format.isInt() ||
++            !mRenderer->hasImageFormatFeatureBits(format.id,
++                                                  VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT))
++        {
++            continue;
++        }
++
++        UtilsVk::ClearFramebufferParameters params;
++        params.clearArea              = mRenderPassCommands->getRenderArea();
++        params.clearColor             = true;
++        params.colorMaskFlags         = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
++                                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
++        params.colorAttachmentIndexGL = static_cast<uint32_t>(colorIndexGL);
++        params.colorFormat            = &format;
++        params.preserveContents       = true;
++        return mUtils.clearFramebuffer(this, framebufferVk, params);
++    }
++    return angle::Result::Continue;
++}
++
+ angle::Result ContextVk::startNextSubpass()
+ {
+     ASSERT(hasActiveRenderPass());
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.h b/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.h
+index 0692d7b..e8afd83 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.h
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/ContextVk.h
+@@ -731,6 +731,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
+     angle::Result startRenderPass(gl::Rectangle renderArea,
+                                   vk::RenderPassCommandBuffer **commandBufferOut,
+                                   bool *renderPassDescChangedOut);
++    // drawWholeRenderAreaBeforeSecondDraw: a draw over the whole render area that leaves the
++    // framebuffer as it is, before the second draw of a render pass.
++    angle::Result drawWholeRenderAreaBeforeSecondDraw();
+     angle::Result startNextSubpass();
+     angle::Result flushCommandsAndEndRenderPass(RenderPassClosureReason reason);
+     angle::Result flushCommandsAndEndRenderPassWithoutSubmit(RenderPassClosureReason reason);
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/FramebufferVk.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/FramebufferVk.cpp
+index 6af6a6d..6f0ad18 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/FramebufferVk.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/FramebufferVk.cpp
+@@ -4119,7 +4119,8 @@ angle::Result FramebufferVk::startNewRenderPass(ContextVk *contextVk,
+ 
+ gl::Rectangle FramebufferVk::getRenderArea(ContextVk *contextVk) const
+ {
+-    if (hasDeferredClears())
++    if (hasDeferredClears() ||
++        contextVk->getFeatures().drawWholeRenderAreaBeforeSecondDraw.enabled)
+     {
+         return getRotatedCompleteRenderArea(contextVk);
+     }
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.cpp
+index 948a6b5..15e746a 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.cpp
+@@ -2817,6 +2817,12 @@ angle::Result UtilsVk::clearFramebuffer(ContextVk *contextVk,
+                               contextVk->pipelineProtectedAccess());
+     pipelineDesc.setColorWriteMasks(0, gl::DrawBufferMask(), gl::DrawBufferMask());
+     pipelineDesc.setSingleColorWriteMask(params.colorAttachmentIndexGL, params.colorMaskFlags);
++    if (params.preserveContents)
++    {
++        ASSERT(params.clearColor && !params.clearDepth && !params.clearStencil);
++        pipelineDesc.setSingleBlend(params.colorAttachmentIndexGL, true, VK_BLEND_OP_ADD,
++                                    VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE);
++    }
+     pipelineDesc.setRasterizationSamples(framebuffer->getSamples());
+     pipelineDesc.setRenderPassDesc(contextVk->getStartedRenderPassCommands().getRenderPassDesc());
+     // Clears can be done on a currently open render pass, so make sure the correct subpass index is
+@@ -5276,7 +5282,8 @@ UtilsVk::ClearFramebufferParameters::ClearFramebufferParameters()
+       colorAttachmentIndexGL(0),
+       colorFormat(nullptr),
+       colorClearValue{},
+-      depthStencilClearValue{}
++      depthStencilClearValue{},
++      preserveContents(false)
+ {}
+ 
+ // LineLoopHelper implementation.
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.h b/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.h
+index 0eceed5..e9b5dd7 100644
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.h
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/UtilsVk.h
+@@ -113,6 +113,10 @@ class UtilsVk : angle::NonCopyable
+ 
+         VkClearColorValue colorClearValue;
+         VkClearDepthStencilValue depthStencilClearValue;
++
++        // Blend so that the colour attachment keeps its contents (src * 0 + dst * 1): a draw over
++        // the area that changes nothing (drawWholeRenderAreaBeforeSecondDraw).
++        bool preserveContents;
+     };
+ 
+     struct ClearTextureParameters
+diff --git a/third_party/angle/util/autogen/angle_features_autogen.cpp b/third_party/angle/util/autogen/angle_features_autogen.cpp
+index bd0a23f..7c30d9c 100644
+--- a/third_party/angle/util/autogen/angle_features_autogen.cpp
++++ b/third_party/angle/util/autogen/angle_features_autogen.cpp
+@@ -133,6 +133,7 @@ constexpr PackedEnumMap<Feature, const char *> kFeatureNames = {{
+     {Feature::DontUseLoopsToInitializeVariables, "dontUseLoopsToInitializeVariables"},
+     {Feature::DoubleClearForRobustInit, "doubleClearForRobustInit"},
+     {Feature::DoubleDepthBiasConstantFactor, "doubleDepthBiasConstantFactor"},
++    {Feature::DrawWholeRenderAreaBeforeSecondDraw, "drawWholeRenderAreaBeforeSecondDraw"},
+     {Feature::DropDepthStencilClearOnInvalidate, "dropDepthStencilClearOnInvalidate"},
+     {Feature::DumpShaderSource, "dumpShaderSource"},
+     {Feature::DumpTranslatedShaders, "dumpTranslatedShaders"},
+diff --git a/third_party/angle/util/autogen/angle_features_autogen.h b/third_party/angle/util/autogen/angle_features_autogen.h
+index 6d6b17a..a3bf98a 100644
+--- a/third_party/angle/util/autogen/angle_features_autogen.h
++++ b/third_party/angle/util/autogen/angle_features_autogen.h
+@@ -133,6 +133,7 @@ enum class Feature
+     DontUseLoopsToInitializeVariables,
+     DoubleClearForRobustInit,
+     DoubleDepthBiasConstantFactor,
++    DrawWholeRenderAreaBeforeSecondDraw,
+     DropDepthStencilClearOnInvalidate,
+     DumpShaderSource,
+     DumpTranslatedShaders,
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/vk_renderer.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/vk_renderer.cpp
+@@ -6194,6 +6194,19 @@
+         &mFeatures, preferDrawClearOverVkCmdClearAttachments,
+         isQualcommProprietary && driverVersion < angle::VersionTriple(512, 762, 12));
+ 
++    // On Qualcomm's driver 512.615 (Adreno 710, Android 12), in a binned render pass whose first
++    // draw does not reach every bin, later draws in the bins it misses can be rasterized where
++    // they would fall in the first bin: a 1280-wide attachment (three bins of 448) shows its left
++    // 448 pixels repeated across it, or what the bin held before.  Seen in Chromium's tile raster
++    // (Skia's first draw in a render pass is often a small layer composited back).  A draw over
++    // the whole render area that writes (blended to leave it unchanged) right after the first
++    // draw avoids it; one that writes nothing (no colour writes, or a sample mask of zero) does
++    // not, nor does setting all state again.  Render passes of a single draw were never affected.
++    // The versions in which the driver is fixed are not known; only the one seen is covered.
++    ANGLE_FEATURE_CONDITION(&mFeatures, drawWholeRenderAreaBeforeSecondDraw,
++                            isQualcommProprietary &&
++                                driverVersion < angle::VersionTriple(512, 616, 0));
++
+     // R32F imageAtomicExchange emulation is done if shaderImageFloat32Atomics feature is not
+     // supported.
+     ANGLE_FEATURE_CONDITION(&mFeatures, emulateR32fImageAtomicExchange,
