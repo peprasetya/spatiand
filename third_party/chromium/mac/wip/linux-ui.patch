@@ -1678,6 +1678,28 @@ index 9ce84f26e1..b24dff090d 100644
    spatiand::ProfileServiceFactory::GetInstance();
  #endif
  #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+diff --git a/chrome/browser/profiles/profile_manager.cc b/chrome/browser/profiles/profile_manager.cc
+index a507972..c4315c6 100644
+--- a/chrome/browser/profiles/profile_manager.cc
++++ b/chrome/browser/profiles/profile_manager.cc
+@@ -108,7 +108,7 @@
+ #include "google_apis/gaia/gaia_auth_util.h"
+ #include "ui/base/l10n/l10n_util.h"
+ 
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)  // Spatiand's, on every platform
+ #include "chrome/browser/spatiand/profiles_sync.h"
+ #endif
+ 
+@@ -189,7 +189,7 @@ namespace {
+ // recorded as last used or last open (the owner, 2026-11-14); a start asks for its PIN again
+ // anyway. ProfilesSync::ForgetLockedAsLastUsed clears what was recorded before.
+ bool HasSpatiandLock(const base::FilePath& profile_path) {
+-#if BUILDFLAG(IS_LINUX)
++#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC_LINUX_UI)
+   const spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get();
+   return profiles && profiles->HasLock(profile_path);
+ #else
 diff --git a/chrome/browser/renderer_context_menu/BUILD.gn b/chrome/browser/renderer_context_menu/BUILD.gn
 index 5d98e7f583..7e438923c5 100644
 --- a/chrome/browser/renderer_context_menu/BUILD.gn
