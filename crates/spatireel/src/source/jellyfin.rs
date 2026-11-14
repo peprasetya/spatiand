@@ -48,7 +48,7 @@ pub struct Server {
 const RESUME: &str = "\u{1}resume";
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(8)).timeout_read(Duration::from_secs(25)).build()
+    super::agent(Duration::from_secs(8), Duration::from_secs(25))
 }
 
 /// An address as typed, made whole: a scheme if it has none, the usual port if it has none
@@ -88,9 +88,9 @@ fn prefix(flavour: Flavour) -> &'static str {
 
 fn failure(what: &str, error: ureq::Error) -> String {
     match error {
-        ureq::Error::Status(401, _) => "the server did not accept that name and password".to_string(),
-        ureq::Error::Status(code, _) => format!("{what}: the server answered {code}"),
-        ureq::Error::Transport(e) => format!("{what}: {e}"),
+        ureq::Error::StatusCode(401) => "the server did not accept that name and password".to_string(),
+        ureq::Error::StatusCode(code) => format!("{what}: the server answered {code}"),
+        e => format!("{what}: {}", super::words(&e)),
     }
 }
 
@@ -102,12 +102,15 @@ pub fn sign_in(flavour: Flavour, typed_address: &str, user: &str, password: &str
     let reply: Value = agent()
         .post(&url)
         // Both names for the same header: Emby reads the second, Jellyfin either.
-        .set("Authorization", &said)
-        .set("X-Emby-Authorization", &said)
+        .header("Authorization", &said)
+        .header("X-Emby-Authorization", &said)
         .send_json(json!({ "Username": user, "Pw": password }))
         .map_err(|e| failure("could not sign in", e))?
-        .into_json()
-        .map_err(|e| format!("the server's answer could not be read: {e}"))?;
+        .into_body()
+        .into_with_config()
+        .limit(super::JSON_LIMIT)
+        .read_json()
+        .map_err(|e| format!("the server's answer could not be read: {}", super::words(&e)))?;
     let token = reply["AccessToken"].as_str().ok_or("the server gave no token")?.to_string();
     let user_id = reply["User"]["Id"].as_str().ok_or("the server did not say who was signed in")?.to_string();
     let name = reply["User"]["Name"].as_str().unwrap_or(user).to_string();
@@ -181,27 +184,38 @@ impl Server {
         format!("{}{}{path}", self.account.address, prefix(self.account.flavour))
     }
 
-    fn request(&self, method: &str, path: &str) -> ureq::Request {
+    /// A request with who is asking said on it, in every name the two servers read.
+    fn signed<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
         let said = identity(&self.account.device, Some(&self.account.token));
-        self.agent
-            .request(method, &self.url(path))
-            .set("Authorization", &said)
-            .set("X-Emby-Authorization", &said)
-            .set("X-Emby-Token", &self.account.token)
+        request
+            .header("Authorization", &said)
+            .header("X-Emby-Authorization", &said)
+            .header("X-Emby-Token", &self.account.token)
+    }
+
+    fn get(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+        self.signed(self.agent.get(&self.url(path)))
+    }
+
+    fn post(&self, path: &str) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+        self.signed(self.agent.post(&self.url(path)))
     }
 
     fn items(&self, path: &str) -> Result<Vec<Item>, String> {
         let reply: Value = self
-            .request("GET", path)
+            .get(path)
             .call()
             .map_err(|e| failure("could not read the library", e))?
-            .into_json()
-            .map_err(|e| format!("the server's answer could not be read: {e}"))?;
+            .into_body()
+            .into_with_config()
+            .limit(super::JSON_LIMIT)
+            .read_json()
+            .map_err(|e| format!("the server's answer could not be read: {}", super::words(&e)))?;
         Ok(reply["Items"].as_array().map(|items| items.iter().filter_map(item).collect()).unwrap_or_default())
     }
 
     fn told(&self, path: &str, body: Value) {
-        if let Err(e) = self.request("POST", path).send_json(body) {
+        if let Err(e) = self.post(path).send_json(body) {
             log::warn!("{}: the place in a film was not kept: {}", self.label(), failure(path, e));
         }
     }
@@ -238,9 +252,9 @@ impl Source for Server {
     }
 
     fn picture(&self, item: &Item) -> Option<Picture> {
-        let reply = self.request("GET", &format!("/Items/{}/Images/Primary?maxWidth=480&quality=85", item.key)).call().ok()?;
+        let reply = self.get(&format!("/Items/{}/Images/Primary?maxWidth=480&quality=85", item.key)).call().ok()?;
         let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut std::io::Read::take(reply.into_reader(), 8 * 1024 * 1024), &mut bytes).ok()?;
+        std::io::Read::read_to_end(&mut std::io::Read::take(reply.into_body().into_reader(), 8 * 1024 * 1024), &mut bytes).ok()?;
         Some(Picture::Encoded(bytes))
     }
 
@@ -318,5 +332,82 @@ mod tests {
         assert_eq!((half.stereo, half.packing), (StereoLayout::SideBySide, Packing::Half));
         assert_eq!(layout_of("FullTopAndBottom").unwrap().stereo, StereoLayout::OverUnder);
         assert!(layout_of("MVC").is_none());
+    }
+
+    use crate::source::test_server::{hops, reply, serve};
+
+    fn account(address: &str) -> Account {
+        Account { flavour: Flavour::Jellyfin, address: address.into(), user: "u".into(), user_id: "U1".into(), token: "T0K".into(), device: "d".into() }
+    }
+
+    #[test]
+    fn signing_in_says_a_wrong_password_and_keeps_the_token() {
+        let (address, seen) = serve(|request| {
+            // The JSON read loosely: ureq 3 writes it with spaces and lines, ureq 2 without.
+            if request.split_once("\r\n\r\n").is_some_and(|(_, body)| serde_json::from_str::<Value>(body).is_ok_and(|v| v["Pw"] == "right")) {
+                reply("200 OK", &[("Content-Type", "application/json")], br#"{"AccessToken":"T0K","User":{"Id":"U1","Name":"Ann"}}"#)
+            } else {
+                reply("401 Unauthorized", &[], b"")
+            }
+        });
+        assert_eq!(sign_in(Flavour::Jellyfin, &address, "ann", "wrong", "d").unwrap_err(), "the server did not accept that name and password");
+        let account = sign_in(Flavour::Jellyfin, &address, "ann", "right", "d").unwrap();
+        assert_eq!((account.token.as_str(), account.user_id.as_str(), account.user.as_str()), ("T0K", "U1", "Ann"));
+        let asked = seen.lock().unwrap()[1].clone();
+        assert!(asked.starts_with("POST /Users/AuthenticateByName "), "{asked}");
+        // A header's name in either case: ureq 3 writes it in small letters, ureq 2 as given.
+        assert!(asked.to_ascii_lowercase().contains("x-emby-authorization: mediabrowser client=\"spatireel\""), "{asked}");
+    }
+
+    /// A library's listing past ureq's own 10 MB limit for text is read whole, as it was when
+    /// JSON had no limit at all.
+    #[test]
+    fn a_listing_larger_than_ten_megabytes_is_read() {
+        let mut body = String::from(r#"{"Items":["#);
+        for n in 0..40_000 {
+            if n > 0 {
+                body.push(',');
+            }
+            body.push_str(&format!(r#"{{"Id":"{n}","Type":"Movie","Name":"Film {n} {}"}}"#, "x".repeat(300)));
+        }
+        body.push_str("]}");
+        assert!(body.len() > 12 * 1024 * 1024);
+        let (address, seen) = serve(move |_| reply("200 OK", &[("Content-Type", "application/json")], body.as_bytes()));
+        let server = Server::new(account(&address));
+        let items = server.list(Some(&Item { key: "F".into(), folder: true, ..Item::default() })).unwrap();
+        assert_eq!(items.len(), 40_000);
+        assert_eq!(items[39_999].key, "39999");
+        assert!(seen.lock().unwrap()[0].to_ascii_lowercase().contains("x-emby-token: t0k"));
+    }
+
+    #[test]
+    fn a_status_is_said_with_its_number() {
+        let (address, _) = serve(|_| reply("500 Internal Server Error", &[], b"oops"));
+        let server = Server::new(account(&address));
+        assert_eq!(server.list(Some(&Item { key: "F".into(), ..Item::default() })).unwrap_err(), "could not read the library: the server answered 500");
+    }
+
+    /// Four redirects are followed and the fifth is not, as ureq 2's default had it.
+    #[test]
+    fn four_redirects_are_followed_and_not_five() {
+        let address = hops();
+        assert!(agent().get(&format!("{address}/hop/4")).call().is_ok());
+        assert!(agent().get(&format!("{address}/hop/5")).call().is_err());
+    }
+
+    /// Nothing at all from the server for 25 seconds is given up on. Not run by default:
+    /// `cargo test -p spatireel silent -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_silent_server_is_given_up_after_25_seconds() {
+        let (address, _) = serve(|_| {
+            std::thread::sleep(std::time::Duration::from_secs(40));
+            Vec::new()
+        });
+        let started = std::time::Instant::now();
+        let said = Server::new(account(&address)).list(Some(&Item { key: "F".into(), ..Item::default() })).unwrap_err();
+        let took = started.elapsed();
+        println!("{took:?}: {said}");
+        assert!(took >= std::time::Duration::from_secs(24) && took < std::time::Duration::from_secs(35), "{took:?}");
     }
 }

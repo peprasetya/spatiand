@@ -38,13 +38,21 @@ impl Message {
 impl Hemera {
     /// `base` is the server's address, `http://deepmagpie:12434`; a trailing slash is fine.
     pub fn new(base: &str) -> Hemera {
-        let agent = ureq::AgentBuilder::new()
+        let agent = ureq::Agent::config_builder()
             // Not reachable in this long is not reachable: away from home without Tailscale.
-            .timeout_connect(Duration::from_secs(3))
+            .timeout_connect(Some(Duration::from_secs(3)))
             // Connections kept for the next request: over Wi-Fi each new one costs a round trip,
             // and a turn of the assistant's asks for a few at once.
             .max_idle_connections_per_host(4)
-            .build();
+            // hemera's refusals say why in their body (`failure`), which ureq 3 drops from the
+            // error it makes of a 4xx or 5xx; so those are answers, read by `answered`.
+            .http_status_as_error(false)
+            // As ureq 2 did, which ureq 3 does not by itself: no proxy from the environment,
+            // and four redirects followed and an error at the fifth (ureq 3: ten).
+            .proxy(None)
+            .max_redirects(4)
+            .build()
+            .into();
         Hemera { base: base.trim_end_matches('/').to_string(), agent }
     }
 
@@ -127,19 +135,14 @@ impl Hemera {
 
     /// A GET of hemera's, as JSON.
     pub fn get_json(&self, path: &str) -> Result<Value, String> {
-        let reply = self.agent.get(&format!("{}{path}", self.base)).timeout(Duration::from_secs(5)).call().map_err(|e| failure(e, &self.base))?;
-        reply.into_json().map_err(|e| format!("hemera's answer was not readable: {e}"))
+        let reply = answered(within(self.agent.get(&format!("{}{path}", self.base)), Duration::from_secs(5)).call(), &self.base)?;
+        json_of(reply).map_err(|e| format!("hemera's answer was not readable: {e}"))
     }
 
     /// hemera's models of one kind (`text`, `transcription`, `speech`), by name.
     pub fn models(&self, kind: &str) -> Result<Vec<String>, String> {
-        let reply = self
-            .agent
-            .get(&format!("{}/v1/models", self.base))
-            .timeout(Duration::from_secs(5))
-            .call()
-            .map_err(|e| failure(e, &self.base))?;
-        let list: Value = reply.into_json().map_err(|e| format!("hemera's list of models was not readable: {e}"))?;
+        let reply = answered(within(self.agent.get(&format!("{}/v1/models", self.base)), Duration::from_secs(5)).call(), &self.base)?;
+        let list: Value = json_of(reply).map_err(|e| format!("hemera's list of models was not readable: {e}"))?;
         Ok(list
             .get("data")
             .and_then(Value::as_array)
@@ -158,37 +161,48 @@ impl Hemera {
     /// A request whose answer is read as it comes (server-sent events): the body, to be read
     /// line by line. Dropping it stops the answer.
     pub fn post_stream(&self, path: &str, request: &Value, timeout: Duration) -> Result<Box<dyn std::io::Read + Send + Sync>, String> {
-        let reply = self
-            .agent
-            .post(&format!("{}{path}", self.base))
-            .set("Content-Type", "application/json")
-            .set("Accept", "text/event-stream")
-            .timeout(timeout)
-            .send_string(&request.to_string())
-            .map_err(|e| failure(e, &self.base))?;
-        Ok(reply.into_reader())
+        let asked = self.agent.post(&format!("{}{path}", self.base)).header("Content-Type", "application/json").header("Accept", "text/event-stream");
+        let reply = answered(within(asked, timeout).send(request.to_string()), &self.base)?;
+        // No limit on what is read, as ureq 2's `into_reader` had none: speech is as long as it is.
+        Ok(Box::new(reply.into_body().into_reader()))
     }
 
     fn post(&self, path: &str, content_type: &str, body: &[u8], timeout: Duration) -> Result<Value, String> {
-        let reply = self
-            .agent
-            .post(&format!("{}{path}", self.base))
-            .set("Content-Type", content_type)
-            .timeout(timeout)
-            .send_bytes(body)
-            .map_err(|e| failure(e, &self.base))?;
-        reply.into_json::<Value>().map_err(|e| format!("hemera's answer was not readable: {e}"))
+        let request = self.agent.post(&format!("{}{path}", self.base)).header("Content-Type", content_type);
+        let reply = answered(within(request, timeout).send(body), &self.base)?;
+        json_of(reply).map_err(|e| format!("hemera's answer was not readable: {e}"))
     }
 }
 
-/// What went wrong, in words fit to show: hemera's own message when it gave one.
-fn failure(error: ureq::Error, base: &str) -> String {
-    match error {
-        ureq::Error::Status(code, reply) => {
-            let said = reply.into_json::<Value>().ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string));
-            said.unwrap_or_else(|| format!("hemera answered {code}"))
+/// The request given `timeout` for all of it, from connecting to the answer's last byte: what
+/// ureq 2's `Request::timeout` was.
+fn within<B>(request: ureq::RequestBuilder<B>, timeout: Duration) -> ureq::RequestBuilder<B> {
+    request.config().timeout_global(Some(timeout)).build()
+}
+
+/// The most of a JSON answer of hemera's that is read. ureq 2 read JSON with no limit; ureq 3
+/// stops at 10 MB unless told, and hemera's answers carry speech as base64 (a minute of it is
+/// some 4 MB), so the limit is set far past anything it sends.
+const JSON_LIMIT: u64 = 1024 * 1024 * 1024;
+
+fn json_of(reply: ureq::http::Response<ureq::Body>) -> Result<Value, ureq::Error> {
+    reply.into_body().into_with_config().limit(JSON_LIMIT).read_json()
+}
+
+/// The answer, or what went wrong in words fit to show: hemera's own message when it gave one.
+/// A 4xx or 5xx is an error here, as ureq 2 made it, with its body read for the message.
+fn answered(reply: Result<ureq::http::Response<ureq::Body>, ureq::Error>, base: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
+    match reply {
+        Ok(reply) if reply.status().as_u16() >= 400 => {
+            let code = reply.status().as_u16();
+            let said = json_of(reply).ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string));
+            Err(said.unwrap_or_else(|| format!("hemera answered {code}")))
         }
-        ureq::Error::Transport(t) => format!("hemera at {base} could not be reached ({t})"),
+        Ok(reply) => Ok(reply),
+        // A socket's own error without the "io: " ureq 3 puts in front of it.
+        Err(ureq::Error::Io(e)) => Err(format!("hemera at {base} could not be reached ({e})")),
+        Err(ureq::Error::Timeout(t)) => Err(format!("hemera at {base} could not be reached (no answer in time: {t})")),
+        Err(e) => Err(format!("hemera at {base} could not be reached ({e})")),
     }
 }
 

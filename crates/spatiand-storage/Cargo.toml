@@ -13,6 +13,6 @@ description = "How a Spatiand application reaches the storage service: rclone's 
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 base64 = "0.23"
 libc = "0.2"

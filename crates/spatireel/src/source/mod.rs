@@ -13,9 +13,50 @@ pub mod dlna;
 pub mod jellyfin;
 pub mod local;
 pub mod vibrefy;
+#[cfg(test)]
+mod test_server;
+
+use std::time::Duration;
 
 use spatiand_media::still::Still;
 use spatiand_media::VideoLayout;
+
+/// The connection a server source asks over: given up on when the server does not take it in
+/// `connect`, or goes `read` without sending anything (each read of the socket, never the whole
+/// answer).
+///
+/// Set out in full, because ureq 3's defaults are not ureq 2's: no proxy from the environment
+/// (ureq 2 never read one), and four redirects followed and an error at the fifth, which is what
+/// ureq 2's default `redirects(5)` did (it counted the answer that is not a redirect among the
+/// five); ureq 3 left to itself follows ten.
+fn agent(connect: Duration, read: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(connect))
+        .timeout_per_read(Some(read))
+        .max_redirects(4)
+        .proxy(None)
+        .build()
+        .into()
+}
+
+/// The most of a server's JSON answer that is read. ureq 2 read JSON with no limit; ureq 3
+/// stops at 10 MB unless told. A big library's listing is a few megabytes, so this is far past
+/// anything real while still not letting a broken server fill memory.
+const JSON_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// The most of a text answer (DLNA's XML) that is read: 10 MB, as ureq 2's `into_string` and
+/// ureq 3's `read_to_string` both stop at.
+const TEXT_LIMIT: u64 = 10 * 1024 * 1024;
+
+/// ureq's error in words fit to show: a socket's own error without the "io: " ureq 3 puts in
+/// front of it.
+fn words(error: &ureq::Error) -> String {
+    match error {
+        ureq::Error::Io(e) => e.to_string(),
+        ureq::Error::Timeout(_) => format!("no answer in time ({error})"),
+        other => other.to_string(),
+    }
+}
 
 /// One thing in a source: a folder of things, or a film.
 #[derive(Debug, Clone, PartialEq, Default)]

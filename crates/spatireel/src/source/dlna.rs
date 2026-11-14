@@ -23,7 +23,7 @@ pub struct Server {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(4)).timeout_read(Duration::from_secs(15)).build()
+    super::agent(Duration::from_secs(4), Duration::from_secs(15))
 }
 
 const DIRECTORY: &str = "urn:schemas-upnp-org:service:ContentDirectory:1";
@@ -60,7 +60,7 @@ pub fn discover(wait: Duration) -> Vec<Found> {
 
 /// What a server says of itself at `location`: its name, and where its directory is.
 fn describe(agent: &ureq::Agent, location: &str) -> Option<Found> {
-    let text = agent.get(location).call().ok()?.into_string().ok()?;
+    let text = agent.get(location).call().ok()?.into_body().into_with_config().limit(super::TEXT_LIMIT).read_to_string().ok()?;
     described(&text, location)
 }
 
@@ -151,12 +151,18 @@ impl Source for Server {
         let answer = self
             .agent
             .post(&self.found.control)
-            .set("Content-Type", "text/xml; charset=\"utf-8\"")
-            .set("SOAPACTION", &format!("\"{DIRECTORY}#Browse\""))
-            .send_string(&body)
-            .map_err(|e| format!("{} did not answer: {e}", self.found.name))?
-            .into_string()
-            .map_err(|e| format!("{}'s answer could not be read: {e}", self.found.name))?;
+            // Named as written: ureq 3 sends a header's name in small letters unless told,
+            // and a DLNA server is as often a television's firmware as anything that reads
+            // names as HTTP says, without regard to case. ureq 2 sent them as written.
+            .header_raw("Content-Type", b"text/xml; charset=\"utf-8\"")
+            .header_raw("SOAPACTION", format!("\"{DIRECTORY}#Browse\"").as_bytes())
+            .send(&body)
+            .map_err(|e| format!("{} did not answer: {}", self.found.name, super::words(&e)))?
+            .into_body()
+            .into_with_config()
+            .limit(super::TEXT_LIMIT)
+            .read_to_string()
+            .map_err(|e| format!("{}'s answer could not be read: {}", self.found.name, super::words(&e)))?;
         browsed(&answer)
     }
 
@@ -164,7 +170,7 @@ impl Source for Server {
         let art = item.key.split_once('\u{1}')?.1;
         let reply = self.agent.get(art).call().ok()?;
         let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut std::io::Read::take(reply.into_reader(), 8 * 1024 * 1024), &mut bytes).ok()?;
+        std::io::Read::read_to_end(&mut std::io::Read::take(reply.into_body().into_reader(), 8 * 1024 * 1024), &mut bytes).ok()?;
         Some(Picture::Encoded(bytes))
     }
 
@@ -214,5 +220,46 @@ mod tests {
         assert_eq!(items[1].detail.as_deref(), Some("3D"));
         let server = Server::new(Found { name: "x".into(), control: "http://h/ctl".into() });
         assert_eq!(server.play(&items[1]).unwrap().url, "http://h/MediaItems/1.mkv");
+    }
+
+    use crate::source::test_server::{hops, reply, serve};
+
+    /// A server described, browsed over SOAP, and a refusal said as one.
+    #[test]
+    fn a_server_on_the_network_is_described_and_browsed() {
+        let (address, seen) = serve(|request| {
+            if request.starts_with("GET /rootDesc.xml") {
+                let text = r#"<?xml version="1.0"?><root xmlns="urn:schemas-upnp-org:device-1-0"><device><friendlyName>Attic NAS</friendlyName><serviceList>
+                    <service><serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType><controlURL>/ctl/ContentDir</controlURL></service>
+                    </serviceList></device></root>"#;
+                reply("200 OK", &[("Content-Type", "text/xml")], text.as_bytes())
+            } else if request.contains("<ObjectID>0</ObjectID>") {
+                let didl = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/"><container id="64" parentID="0"><dc:title>Films</dc:title></container></DIDL-Lite>"#;
+                let answer = format!("<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:BrowseResponse xmlns:u=\"{DIRECTORY}\"><Result>{}</Result></u:BrowseResponse></s:Body></s:Envelope>", escape(didl));
+                reply("200 OK", &[("Content-Type", "text/xml")], answer.as_bytes())
+            } else {
+                reply("500 Internal Server Error", &[("Content-Type", "text/xml")], b"<s:Envelope><s:Body><s:Fault/></s:Body></s:Envelope>")
+            }
+        });
+        let found = describe(&agent(), &format!("{address}/rootDesc.xml")).unwrap();
+        assert_eq!(found, Found { name: "Attic NAS".into(), control: format!("{address}/ctl/ContentDir") });
+        let server = Server::new(found);
+        let top = server.list(None).unwrap();
+        assert_eq!((top.len(), top[0].key.as_str()), (1, "c64"));
+        let asked = seen.lock().unwrap()[1].clone();
+        assert!(asked.starts_with("POST /ctl/ContentDir "), "{asked}");
+        // Its name as written, for a server that reads names with their case.
+        assert!(asked.contains(&format!("SOAPACTION: \"{DIRECTORY}#Browse\"")), "{asked}");
+        assert!(asked.contains("Content-Type: text/xml; charset=\"utf-8\""), "{asked}");
+        let refused = server.list(Some(&top[0])).unwrap_err();
+        assert!(refused.starts_with("Attic NAS did not answer: "), "{refused}");
+        assert!(refused.contains("500"), "{refused}");
+    }
+
+    #[test]
+    fn four_redirects_are_followed_and_not_five() {
+        let address = hops();
+        assert!(agent().get(&format!("{address}/hop/4")).call().is_ok());
+        assert!(agent().get(&format!("{address}/hop/5")).call().is_err());
     }
 }

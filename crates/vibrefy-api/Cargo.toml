@@ -12,7 +12,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 thiserror = { workspace = true }
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 # The PIN's hash. Its default features bring password-hash's PHC strings and its salts from
 # the system's randomness (getrandom).
 argon2 = "0.6"

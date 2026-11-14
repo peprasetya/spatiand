@@ -18,6 +18,7 @@
 //! asking `/files` - which is a question the JSON surface answers properly, with a 401.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -52,7 +53,7 @@ pub enum ApiError {
     Unreachable {
         url: String,
         #[source]
-        source: Box<ureq::Transport>,
+        source: Box<ureq::Error>,
     },
     #[error("HTTP {status} for {command}")]
     Http { status: u16, command: String },
@@ -71,9 +72,7 @@ fn again<T>(mut send: impl FnMut() -> std::result::Result<T, ureq::Error>) -> st
     let mut tries = 0;
     loop {
         match send() {
-            Err(ureq::Error::Transport(t))
-                if tries < 3 && matches!(t.kind(), ureq::ErrorKind::ConnectionFailed | ureq::ErrorKind::Dns) =>
-            {
+            Err(e) if tries < 3 && no_connection(&e) => {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(300 * tries));
             }
@@ -82,21 +81,52 @@ fn again<T>(mut send: impl FnMut() -> std::result::Result<T, ureq::Error>) -> st
     }
 }
 
-/// What went wrong, without the address the transport puts in front of it: the message already
-/// names the address, and saying it twice made a line too long to read on one line.
-fn reason(transport: &ureq::Transport) -> String {
-    let all = transport.to_string();
-    match transport.url() {
-        Some(url) => all
-            .strip_prefix(&format!("{url}: "))
-            .or_else(|| all.strip_prefix(&format!("{}: ", url.as_str().trim_end_matches('/'))))
-            .unwrap_or(&all)
-            .to_string(),
-        None => all,
+/// Whether no connection was made at all: the name did not resolve, or no address of it took
+/// the connection -- what ureq 2 called `Dns` and `ConnectionFailed`, the failures [`again`]
+/// retries. ureq 3 passes the socket's own error on for a connect that failed, and its own
+/// `Timeout::Connect` for one that took too long.
+fn no_connection(error: &ureq::Error) -> bool {
+    use std::io::ErrorKind;
+    match error {
+        ureq::Error::HostNotFound
+        | ureq::Error::ConnectionFailed
+        | ureq::Error::Timeout(ureq::Timeout::Connect | ureq::Timeout::Resolve) => true,
+        ureq::Error::Io(e) => {
+            matches!(
+                e.kind(),
+                ErrorKind::ConnectionRefused
+                    | ErrorKind::HostUnreachable
+                    | ErrorKind::NetworkUnreachable
+                    | ErrorKind::NetworkDown
+                    | ErrorKind::AddrNotAvailable
+            )
+            // A name that does not resolve comes back from the standard library's lookup as an
+            // error of no kind a program can name, known only by its words (the standard
+            // library's own, the same on Linux, Android and the Mac). A workaround: ureq 2
+            // said `Dns` for it itself; the proper way is ureq saying `HostNotFound` for every
+            // failed lookup, which it does today only for a name that has no address.
+            || e.to_string().starts_with("failed to lookup address information")
+        }
+        _ => false,
+    }
+}
+
+/// What went wrong, in words fit to put after the address. ureq 3 puts "io: " before a
+/// socket's error, which says nothing to whoever reads it; ureq 2 put the address before it,
+/// which the message already names.
+fn reason(error: &ureq::Error) -> String {
+    match error {
+        ureq::Error::Io(e) => e.to_string(),
+        ureq::Error::Timeout(_) => format!("no answer in time ({error})"),
+        other => other.to_string(),
     }
 }
 
 pub type Result<T> = std::result::Result<T, ApiError>;
+
+/// The most of a text answer that is read: ureq 2's `into_string` stopped at 10 MB, and so
+/// does ureq 3's `read_to_string`; said here so that it is not left to either.
+const TEXT_LIMIT: u64 = 10 * 1024 * 1024;
 
 /// The one thing about this client that reaches the server's user interface: `PairBean`
 /// reads the agent to name the device on the approval screen, and special-cases these
@@ -123,15 +153,22 @@ impl VibrefyClient {
         Self {
             base_url,
             host,
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(10))
-                .timeout_read(Duration::from_secs(30))
+            agent: ureq::Agent::config_builder()
+                .timeout_connect(Some(Duration::from_secs(10)))
+                // Each read of the socket, not the whole answer: ureq 2's `timeout_read`.
+                .timeout_per_read(Some(Duration::from_secs(30)))
                 // Redirects are refused rather than followed. `ureq` would re-send our
                 // headers to wherever it landed, and a deployment that bounces to an
                 // identity provider would be handed this deployment's session cookie.
                 // The JSON surface has no legitimate redirect anyway - it answers 401.
-                .redirects(0)
-                .build(),
+                // With none to follow, ureq 3 hands back the 3xx itself (never
+                // `TooManyRedirects`), as ureq 2's `redirects(0)` did.
+                .max_redirects(0)
+                // ureq 3 would take a proxy from the environment (`ALL_PROXY`, `HTTPS_PROXY`),
+                // which ureq 2 never did: the server is asked directly, as it always was.
+                .proxy(None)
+                .build()
+                .into(),
             jar: Mutex::new(CookieJar::new()),
             session_id: Mutex::new(None),
         }
@@ -203,45 +240,54 @@ impl VibrefyClient {
     /// JSON answer to anything carrying it, because that parameter means the browser's XML.
     fn post_json(&self, command: &str, form: &[(&str, &str)]) -> Result<Value> {
         let url = format!("{}{}", self.base_url, command.trim_start_matches('/'));
-        let mut request = self
-            .agent
-            .post(&url)
-            .set("Accept", "application/json")
-            // Vibrefy derives the OpenID redirect URI from Referer and assumes it is there.
-            .set("Referer", &self.base_url)
-            .set("User-Agent", USER_AGENT);
-        if let Some(cookie) = self.jar.lock().unwrap().header_for(&self.host) {
-            request = request.set("Cookie", &cookie);
-        }
+        let cookie = self.jar.lock().unwrap().header_for(&self.host);
+        let send = || {
+            let mut request = self
+                .agent
+                .post(&url)
+                .header("Accept", "application/json")
+                // Vibrefy derives the OpenID redirect URI from Referer and assumes it is there.
+                .header("Referer", &self.base_url)
+                .header("User-Agent", USER_AGENT);
+            if let Some(cookie) = &cookie {
+                request = request.header("Cookie", cookie);
+            }
+            request.send_form(form.iter().copied())
+        };
 
-        let response = match again(|| request.clone().send_form(form)) {
+        let mut response = match again(send) {
             Ok(response) => response,
-            Err(ureq::Error::Status(401, _)) => return Err(ApiError::NotAuthenticated),
-            Err(ureq::Error::Status(status, _)) => {
+            Err(ureq::Error::StatusCode(401)) => return Err(ApiError::NotAuthenticated),
+            Err(ureq::Error::StatusCode(status)) => {
                 return Err(ApiError::Http {
                     status,
                     command: command.to_string(),
                 })
             }
-            Err(ureq::Error::Transport(transport)) => {
+            Err(e) => {
                 return Err(ApiError::Unreachable {
                     url,
-                    source: Box::new(transport),
+                    source: Box::new(e),
                 })
             }
         };
 
         self.absorb_cookies(&response);
         let body = response
-            .into_string()
+            .body_mut()
+            .with_config()
+            .limit(TEXT_LIMIT)
+            .read_to_string()
             .map_err(|_| ApiError::Unreadable(command.to_string()))?;
         serde_json::from_str(body.trim()).map_err(|_| ApiError::Unreadable(command.to_string()))
     }
 
-    fn absorb_cookies(&self, response: &ureq::Response) {
+    fn absorb_cookies(&self, response: &ureq::http::Response<ureq::Body>) {
         let headers: Vec<String> = response
-            .all("set-cookie")
-            .into_iter()
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
             .map(str::to_string)
             .collect();
         if !headers.is_empty() {
@@ -369,21 +415,25 @@ impl VibrefyClient {
     /// subtitles and the sibling list. Whether the session is really over is a question
     /// for the JSON surface, which answers it with a 401 and cannot be mistaken.
     fn get_json_array(&self, url: &str) -> Result<Option<Vec<Value>>> {
-        let request = self
-            .agent
-            .get(url)
-            .set("Referer", &self.base_url)
-            .set("User-Agent", USER_AGENT);
-        let response = again(|| request.clone().call());
+        let response = again(|| {
+            self.agent
+                .get(url)
+                .header("Referer", &self.base_url)
+                .header("User-Agent", USER_AGENT)
+                .call()
+        });
         let body = match response {
-            Ok(response) => response
-                .into_string()
+            Ok(mut response) => response
+                .body_mut()
+                .with_config()
+                .limit(TEXT_LIMIT)
+                .read_to_string()
                 .map_err(|_| ApiError::Unreadable(url.to_string()))?,
-            Err(ureq::Error::Status(_, _)) => return Ok(None),
-            Err(ureq::Error::Transport(transport)) => {
+            Err(ureq::Error::StatusCode(_)) => return Ok(None),
+            Err(e) => {
                 return Err(ApiError::Unreachable {
                     url: url.to_string(),
-                    source: Box::new(transport),
+                    source: Box::new(e),
                 })
             }
         };
@@ -401,30 +451,43 @@ impl VibrefyClient {
     /// image fetch on a dead session falls through to the welcome command and comes back
     /// **200 with `text/html`**. The content type is therefore the check, not the status.
     pub fn image(&self, url: &str) -> Result<Option<Vec<u8>>> {
-        let mut request = self
-            .agent
-            .get(url)
-            .set("Accept", "image/jpeg,image/*")
-            .set("Referer", &self.base_url)
-            .set("User-Agent", USER_AGENT);
-        if let Some(cookie) = self.jar.lock().unwrap().header_for(&self.host) {
-            request = request.set("Cookie", &cookie);
-        }
-        let response = match again(|| request.clone().call()) {
+        let cookie = self.jar.lock().unwrap().header_for(&self.host);
+        let send = || {
+            let mut request = self
+                .agent
+                .get(url)
+                .header("Accept", "image/jpeg,image/*")
+                .header("Referer", &self.base_url)
+                .header("User-Agent", USER_AGENT);
+            if let Some(cookie) = &cookie {
+                request = request.header("Cookie", cookie);
+            }
+            request.call()
+        };
+        let response = match again(send) {
             Ok(response) => response,
-            Err(ureq::Error::Status(_, _)) => return Ok(None),
-            Err(ureq::Error::Transport(transport)) => {
+            Err(ureq::Error::StatusCode(_)) => return Ok(None),
+            Err(e) => {
                 return Err(ApiError::Unreachable {
                     url: url.to_string(),
-                    source: Box::new(transport),
+                    source: Box::new(e),
                 })
             }
         };
-        if !response.content_type().starts_with("image/") {
+        // As ureq 2's `content_type()` read it: the header up to its parameters, and
+        // `text/plain` when there is none.
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map_or("text/plain", |value| value.split(';').next().unwrap_or_default().trim());
+        if !content_type.starts_with("image/") {
             return Err(ApiError::NotAuthenticated);
         }
         let mut bytes = Vec::new();
+        // No limit, as ureq 2's `into_reader` had none.
         response
+            .into_body()
             .into_reader()
             .read_to_end(&mut bytes)
             .map_err(|_| ApiError::Unreadable(url.to_string()))?;

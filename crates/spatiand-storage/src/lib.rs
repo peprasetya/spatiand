@@ -143,7 +143,7 @@ impl Storage {
     }
 
     fn ping(&self) -> bool {
-        ureq::get(&format!("{}/ping", self.base())).set("Authorization", &self.auth()).timeout(Duration::from_millis(800)).call().is_ok()
+        within(agent().get(&format!("{}/ping", self.base())).header("Authorization", &self.auth()), Duration::from_millis(800)).call().is_ok()
     }
 
     /// The service, started if it is not running. Errs only when it cannot be started.
@@ -202,14 +202,16 @@ impl Storage {
 
     /// The same, waiting as long as `timeout` -- signing in through a browser is minutes.
     pub fn rc_waiting(&self, method: &str, input: Value, timeout: Duration) -> Result<Value, String> {
-        let answer = ureq::post(&format!("{}/rc/{method}", self.base())).set("Authorization", &self.auth()).timeout(timeout).send_json(input);
+        // A refusal's body says why, so a 4xx or 5xx is an answer to read here, not ureq's error.
+        let request = agent().post(&format!("{}/rc/{method}", self.base())).header("Authorization", &self.auth());
+        let answer = within(request, timeout).config().http_status_as_error(false).build().send_json(input);
         match answer {
-            Ok(response) => response.into_json::<Value>().map_err(|e| e.to_string()),
-            Err(ureq::Error::Status(_, response)) => {
-                let body: Value = response.into_json().unwrap_or(Value::Null);
+            Ok(response) if response.status().as_u16() >= 400 => {
+                let body: Value = json_of(response).unwrap_or(Value::Null);
                 Err(body.get("error").and_then(|e| e.as_str()).unwrap_or("the storage service refused").to_string())
             }
-            Err(e) => Err(e.to_string()),
+            Ok(response) => json_of(response).map_err(|e| words(&e)),
+            Err(e) => Err(words(&e)),
         }
     }
 
@@ -244,16 +246,57 @@ impl Storage {
     /// A remote file, whole, into memory: no more than `limit` bytes of it.
     pub fn read(&self, remote: &str, path: &str, limit: u64) -> Result<Vec<u8>, String> {
         let url = format!("{}/dav/{}/{}", self.base(), percent(remote), percent(path.trim_start_matches('/')));
-        let response = ureq::get(&url).set("Authorization", &self.auth()).timeout(Duration::from_secs(120)).call().map_err(|e| e.to_string())?;
+        let response = within(agent().get(&url).header("Authorization", &self.auth()), Duration::from_secs(120)).call().map_err(|e| words(&e))?;
         let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut std::io::Read::take(response.into_reader(), limit), &mut bytes).map_err(|e| e.to_string())?;
+        // ureq's reader has no limit of its own (as in ureq 2): the caller's is the one.
+        std::io::Read::read_to_end(&mut std::io::Read::take(response.into_body().into_reader(), limit), &mut bytes).map_err(|e| e.to_string())?;
         Ok(bytes)
     }
 
     /// Copy the user's own rclone remotes in. Returns their names.
     pub fn import(&self) -> Result<Vec<String>, String> {
-        let answer: Value = ureq::get(&format!("{}/import", self.base())).set("Authorization", &self.auth()).call().map_err(|e| e.to_string())?.into_json().map_err(|e| e.to_string())?;
+        let response = agent().get(&format!("{}/import", self.base())).header("Authorization", &self.auth()).call().map_err(|e| words(&e))?;
+        let answer: Value = json_of(response).map_err(|e| words(&e))?;
         Ok(answer.get("copied").and_then(|c| c.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default())
+    }
+}
+
+/// How the service is asked, as ureq 2's own `ureq::get` asked it: an agent for the one call,
+/// 30 seconds to connect and no limit on a read (a call is given its whole time by
+/// [`within`]), four redirects followed and an error at the fifth. Two of ureq 3's defaults
+/// would differ: it takes a proxy from the environment, which on a machine with `HTTP_PROXY`
+/// set would send these calls to 127.0.0.1 through it; and it follows ten redirects.
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .max_redirects(4)
+        .proxy(None)
+        .build()
+        .into()
+}
+
+/// The request given `timeout` for all of it, from connecting to the answer's last byte: what
+/// ureq 2's `Request::timeout` was.
+fn within<B>(request: ureq::RequestBuilder<B>, timeout: Duration) -> ureq::RequestBuilder<B> {
+    request.config().timeout_global(Some(timeout)).build()
+}
+
+/// The most of a JSON answer that is read. ureq 2 read JSON with no limit; ureq 3 stops at 10 MB
+/// unless told. A listing of a folder of a hundred thousand files is some tens of megabytes, so
+/// this is past anything real while still not letting a broken answer fill memory.
+const JSON_LIMIT: u64 = 256 * 1024 * 1024;
+
+fn json_of(response: ureq::http::Response<ureq::Body>) -> Result<Value, ureq::Error> {
+    response.into_body().into_with_config().limit(JSON_LIMIT).read_json()
+}
+
+/// ureq's error in words fit to show: a socket's own error without the "io: " ureq 3 puts in
+/// front of it.
+fn words(error: &ureq::Error) -> String {
+    match error {
+        ureq::Error::Io(e) => e.to_string(),
+        ureq::Error::Timeout(_) => format!("no answer in time ({error})"),
+        other => other.to_string(),
     }
 }
 
@@ -311,5 +354,110 @@ mod tests {
         assert!(!place(Some(&ours), stamp(&ours)).outdated_by(&ours));
         assert!(!place(Some(&dir.join("elsewhere")), Some("1-2".into())).outdated_by(&ours));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A stand-in for the service on 127.0.0.1, answering each request with what `answer` makes
+    /// of it (head and body as text), one a connection; and the requests it saw.
+    fn serve(answer: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static) -> (Storage, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let answer = std::sync::Arc::new(answer);
+        let kept = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let (seen, answer) = (kept.clone(), answer.clone());
+                std::thread::spawn(move || {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        if stream.read(&mut byte).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        head.push(byte[0]);
+                    }
+                    let head = String::from_utf8_lossy(&head).to_string();
+                    let length = head
+                        .lines()
+                        .find_map(|line| line.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("content-length")))
+                        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let mut body = vec![0; length];
+                    let _ = stream.read_exact(&mut body);
+                    let request = head + &String::from_utf8_lossy(&body);
+                    seen.lock().unwrap().push(request.clone());
+                    let _ = stream.write_all(&answer(&request));
+                });
+            }
+        });
+        (Storage { port, token: "t0k".into() }, seen)
+    }
+
+    fn reply(status: &str, body: &[u8]) -> Vec<u8> {
+        let mut out = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).into_bytes();
+        out.extend_from_slice(body);
+        out
+    }
+
+    /// The service's answers, its refusals in its own words, and a listing past ureq's own
+    /// 10 MB limit read whole, as it was when JSON had no limit.
+    #[test]
+    fn the_service_is_asked_and_its_refusals_said() {
+        let mut list = String::from(r#"{"list":["#);
+        for n in 0..60_000 {
+            if n > 0 {
+                list.push(',');
+            }
+            list.push_str(&format!(r#"{{"Name":"f{n}","Path":"a/f{n}","Size":{n},"IsDir":false,"MimeType":"{}"}}"#, "x".repeat(150)));
+        }
+        list.push_str("]}");
+        assert!(list.len() > 11 * 1024 * 1024);
+        let (storage, seen) = serve(move |request| {
+            let path = request.split_whitespace().nth(1).unwrap_or("");
+            match path {
+                "/rc/operations/list" if request.contains("\"Drive:\"") => reply("200 OK", list.as_bytes()),
+                "/rc/operations/list" => reply("500 Internal Server Error", br#"{"error":"didn't find section in config file","status":500}"#),
+                "/rc/config/dump" => reply("403 Forbidden", b"no"),
+                "/import" => reply("200 OK", br#"{"copied":["Drive","Box"]}"#),
+                "/ping" => reply("200 OK", b"{}"),
+                _ => reply("404 Not Found", b""),
+            }
+        });
+        let entries = storage.list("Drive", "a").unwrap();
+        assert_eq!(entries.len(), 60_000);
+        assert_eq!(entries[59_999].name, "f59999");
+        assert_eq!(storage.list("Nowhere", "").unwrap_err(), "didn't find section in config file");
+        assert_eq!(storage.remotes().unwrap_err(), "the storage service refused");
+        assert_eq!(storage.import().unwrap(), vec!["Drive".to_string(), "Box".to_string()]);
+        assert!(storage.ping());
+        let asked = seen.lock().unwrap()[0].clone();
+        let auth = format!("authorization: basic {}", base64::engine::general_purpose::STANDARD.encode("spatiand:t0k")).to_ascii_lowercase();
+        assert!(asked.to_ascii_lowercase().contains(&auth), "{asked}");
+    }
+
+    /// A ping is given 0.8 seconds, all told, and a file's reading stops at its limit.
+    #[test]
+    fn a_ping_waits_no_longer_than_it_should_and_a_read_stops_at_its_limit() {
+        let file: Vec<u8> = (0..3_000_000u32).map(|i| (i % 249) as u8).collect();
+        let served = file.clone();
+        let (storage, _) = serve(move |request| {
+            if request.starts_with("GET /ping") {
+                std::thread::sleep(Duration::from_secs(3));
+                return reply("200 OK", b"{}");
+            }
+            let mut out = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", served.len()).into_bytes();
+            out.extend_from_slice(&served);
+            out
+        });
+        let started = Instant::now();
+        assert!(!storage.ping());
+        assert!(started.elapsed() < Duration::from_millis(1500), "{:?}", started.elapsed());
+        assert_eq!(storage.read("Drive", "a.bin", 1_000_000).unwrap(), file[..1_000_000]);
+        assert_eq!(storage.read("Drive", "a.bin", 10_000_000).unwrap(), file);
+        let nobody = Storage { port: std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port(), token: "t".into() };
+        assert!(!nobody.ping());
+        assert!(nobody.import().unwrap_err().contains("Connection refused"));
     }
 }

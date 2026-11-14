@@ -19,7 +19,7 @@ env_logger.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # The same client the Vibrefy crate uses, for Jellyfin, Emby and DLNA.
-ureq = { version = "2", features = ["json"] }
+ureq = { version = "3", features = ["json"] }
 # Posters, as servers send them.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 # What a DLNA server says is XML.

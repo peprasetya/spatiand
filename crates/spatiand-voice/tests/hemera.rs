@@ -23,11 +23,13 @@ fn settings() -> VoiceSettings {
 fn say(text: &str) -> Vec<i16> {
     let body = serde_json::json!({"model": "voxcpm2", "input": text, "response_format": "wav", "voice": "fleurs-id-male"});
     let reply = ureq::post(&format!("{}/v1/audio/speech", settings().hemera))
-        .timeout(Duration::from_secs(120))
+        .config()
+        .timeout_global(Some(Duration::from_secs(120)))
+        .build()
         .send_json(body)
         .expect("hemera's voice");
     let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut reply.into_reader(), &mut bytes).unwrap();
+    std::io::Read::read_to_end(&mut reply.into_body().into_reader(), &mut bytes).unwrap();
     let (pcm, rate) = read_wav(&bytes).expect("a WAV");
     resample(&pcm, rate, RATE)
 }

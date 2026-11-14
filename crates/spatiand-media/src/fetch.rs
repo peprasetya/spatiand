@@ -133,12 +133,24 @@ fn headers(options: &[(String, String)]) -> Option<Vec<(String, String)>> {
     Some(headers)
 }
 
+/// One header of an answer, if it is there and readable as text.
+fn header<'a>(response: &'a ureq::http::Response<ureq::Body>, name: &str) -> Option<&'a str> {
+    response.headers().get(name).and_then(|value| value.to_str().ok())
+}
+
 impl Shared {
     #[allow(clippy::result_large_err)]
-    fn get(&self, from: u64, to: u64) -> Result<ureq::Response, ureq::Error> {
-        let mut request = self.agent.get(&self.ask.url).set("Range", &format!("bytes={from}-{}", to - 1));
-        for (name, value) in &self.ask.headers {
-            request = request.set(name, value);
+    fn get(&self, from: u64, to: u64) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        let range = format!("bytes={from}-{}", to - 1);
+        let headers: Vec<(&str, &str)> =
+            std::iter::once(("Range", range.as_str())).chain(self.ask.headers.iter().map(|(name, value)| (name.as_str(), value.as_str()))).collect();
+        let mut request = self.agent.get(&self.ask.url);
+        // Each header once, the last word on it kept: ureq 2's `set` replaced a header, where
+        // ureq 3's `header` adds another of the same name.
+        for (at, (name, value)) in headers.iter().enumerate() {
+            if !headers[at + 1..].iter().any(|(later, _)| later.eq_ignore_ascii_case(name)) {
+                request = request.header(*name, *value);
+            }
         }
         request.call()
     }
@@ -229,15 +241,16 @@ impl Shared {
     fn run(self: Arc<Shared>, head: u64, from: u64, to: u64, cancel: Arc<AtomicBool>) {
         let stopped = || cancel.load(Ordering::Relaxed) || self.closed.load(Ordering::Relaxed);
         let outcome = self.get(from, to).map_err(|e| e.to_string()).and_then(|response| {
-            if response.status() != 206 {
-                return Err(format!("asked for part of it, the server sent {}", response.status()));
+            if response.status().as_u16() != 206 {
+                return Err(format!("asked for part of it, the server sent {}", response.status().as_u16()));
             }
             // A server that sends some other part than the one asked for is not believed.
-            let begins = response.header("Content-Range").and_then(|range| range.trim_start_matches("bytes").trim().split('-').next()?.parse::<u64>().ok());
+            let begins = header(&response, "Content-Range").and_then(|range| range.trim_start_matches("bytes").trim().split('-').next()?.parse::<u64>().ok());
             if begins != Some(from) {
-                return Err(format!("asked for bytes from {from}, the server sent {:?}", response.header("Content-Range")));
+                return Err(format!("asked for bytes from {from}, the server sent {:?}", header(&response, "Content-Range")));
             }
-            let mut reader = response.into_reader().take(to - from);
+            // Unlimited, as ureq 2's `into_reader` was: the request's own length is the limit.
+            let mut reader = response.into_body().into_reader().take(to - from);
             let mut chunk = vec![0u8; BLOCK as usize];
             let mut at = from;
             let mut wrote = false;
@@ -392,7 +405,18 @@ impl Remote {
             return None;
         }
         let headers = headers(options)?;
-        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout_read(Duration::from_secs(30)).build();
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(10)))
+            // Each read of the socket (ureq 2's `timeout_read`), never the whole answer: a film's
+            // stretch is many megabytes over a slow line.
+            .timeout_per_read(Some(Duration::from_secs(30)))
+            // ureq 2's default `redirects(5)`: four followed, an error at the fifth (ureq 3 left
+            // to itself follows ten).
+            .max_redirects(4)
+            // ureq 3 would take a proxy from the environment, which ureq 2 never did.
+            .proxy(None)
+            .build()
+            .into();
         let shared = Shared {
             ask: Ask { url: url.to_string(), headers },
             size: 0,
@@ -419,9 +443,9 @@ impl Remote {
                 return None;
             }
         };
-        let size = response.header("Content-Range").and_then(|range| range.rsplit_once('/')).and_then(|(_, total)| total.trim().parse::<u64>().ok());
-        let kind = response.header("Content-Type").unwrap_or("").to_ascii_lowercase();
-        let (Some(size), 206) = (size, response.status()) else {
+        let size = header(&response, "Content-Range").and_then(|range| range.rsplit_once('/')).and_then(|(_, total)| total.trim().parse::<u64>().ok());
+        let kind = header(&response, "Content-Type").unwrap_or("").to_ascii_lowercase();
+        let (Some(size), 206) = (size, response.status().as_u16()) else {
             log::info!("{url}: the server does not send it in parts; FFmpeg is to fetch it");
             return None;
         };
@@ -429,7 +453,7 @@ impl Remote {
             return None;
         }
         let mut first = Vec::new();
-        let _ = response.into_reader().take(OPENING_AHEAD.min(size)).read_to_end(&mut first);
+        let _ = response.into_body().into_reader().take(OPENING_AHEAD.min(size)).read_to_end(&mut first);
         let shared = Arc::new(Shared { size, ..shared });
         {
             let mut state = shared.state.lock().unwrap();
@@ -563,5 +587,150 @@ mod tests {
         assert!(headers(&[("reconnect".into(), "1".into())]).is_none());
         let said = headers(&[("headers".into(), "A: 1\r\nB: two\r\n".into())]).unwrap();
         assert_eq!(said, vec![("A".to_string(), "1".to_string()), ("B".to_string(), "two".to_string())]);
+    }
+
+    /// A film server on 127.0.0.1 that answers a `Range` with its part (206) when `parts`, and
+    /// with the whole otherwise; its address, and the requests it saw.
+    fn film_server(film: Arc<Vec<u8>>, parts: bool) -> (String, Arc<Mutex<Vec<String>>>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}/stream/S/Films/a.mkv", listener.local_addr().unwrap());
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let kept = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let (seen, film) = (kept.clone(), film.clone());
+                std::thread::spawn(move || {
+                    let mut head = Vec::new();
+                    let mut byte = [0u8; 1];
+                    while !head.ends_with(b"\r\n\r\n") {
+                        if stream.read(&mut byte).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        head.push(byte[0]);
+                    }
+                    let head = String::from_utf8_lossy(&head).to_string();
+                    seen.lock().unwrap().push(head.clone());
+                    let range = head.lines().find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        let (from, to) = name.eq_ignore_ascii_case("range").then_some(value.trim().strip_prefix("bytes=")?.split_once('-')?)?;
+                        let from: usize = from.parse().ok()?;
+                        let to: usize = to.parse::<usize>().map_or(film.len() - 1, |to| to.min(film.len() - 1));
+                        Some((from, to))
+                    });
+                    let _ = match range.filter(|_| parts) {
+                        Some((from, to)) => stream
+                            .write_all(format!("HTTP/1.1 206 Partial Content\r\nContent-Type: video/x-matroska\r\nContent-Range: bytes {from}-{to}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", film.len(), to + 1 - from).as_bytes())
+                            .and_then(|_| stream.write_all(&film[from..=to])),
+                        None => stream
+                            .write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: video/x-matroska\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", film.len()).as_bytes())
+                            .and_then(|_| stream.write_all(&film)),
+                    };
+                });
+            }
+        });
+        (address, seen)
+    }
+
+    fn read_all(remote: &Remote, at: u64, into: &mut [u8]) {
+        let mut done = 0;
+        while done < into.len() {
+            let got = remote.shared.read(at + done as u64, &mut into[done..]).unwrap();
+            assert!(got > 0, "the film ended at {}", at + done as u64);
+            done += got;
+        }
+    }
+
+    /// A film is fetched in parts: its start on opening, then from wherever reading jumps to,
+    /// each asked for with a `Range` and answered 206 with the part that was asked for.
+    #[test]
+    fn a_film_is_fetched_in_parts_from_wherever_reading_goes() {
+        let film: Arc<Vec<u8>> = Arc::new((0..30_000_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8).collect());
+        let (address, seen) = film_server(film.clone(), true);
+        let options = [("user_agent".to_string(), "SpatiReel/1".to_string()), ("headers".to_string(), "User-Agent: SpatiReel/2\r\nX-Token: k".to_string())];
+        let remote = Remote::open(&address, &options).expect("fetched in parts");
+        assert_eq!(remote.size(), film.len() as u64);
+        let first = seen.lock().unwrap()[0].clone();
+        assert!(first.to_ascii_lowercase().contains(&format!("range: bytes=0-{}", OPENING_AHEAD - 1)), "{first}");
+        // Each header once, the last word on it kept.
+        let agents: Vec<&str> = first.lines().filter(|l| l.to_ascii_lowercase().starts_with("user-agent:")).collect();
+        assert_eq!(agents.len(), 1, "{first}");
+        assert!(agents[0].ends_with("SpatiReel/2"), "{first}");
+        assert!(first.to_ascii_lowercase().contains("x-token: k"), "{first}");
+
+        let mut start = vec![0u8; 300_000];
+        read_all(&remote, 0, &mut start);
+        assert!(start[..] == film[..300_000]);
+        // A seek: from the middle on, past what the opening fetched.
+        let middle = 17_000_123u64;
+        let mut there = vec![0u8; 2_500_000];
+        read_all(&remote, middle, &mut there);
+        assert!(there[..] == film[middle as usize..middle as usize + 2_500_000], "the middle came back changed");
+        let asked: Vec<u64> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|head| head.to_ascii_lowercase().split("range: bytes=").nth(1)?.split('-').next()?.parse().ok())
+            .collect();
+        assert!(asked.iter().any(|&from| from > OPENING_AHEAD && from <= middle), "asked from {asked:?}");
+        // And the end, as a demuxer reads an index there.
+        let mut end = vec![0u8; 1000];
+        read_all(&remote, film.len() as u64 - 1000, &mut end);
+        assert!(end[..] == film[film.len() - 1000..]);
+        remote.close();
+    }
+
+    /// A slow line is waited for however long the film's part takes, so long as something
+    /// comes every 30 seconds; a line silent for longer is given up on. Over a minute, so not
+    /// run by default: `cargo test -p spatiand-media --lib slow -- --ignored`.
+    #[test]
+    #[ignore]
+    fn a_slow_line_is_waited_for_and_a_silent_one_is_not() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = format!("http://{}/a.mkv", listener.local_addr().unwrap());
+        const SIZE: usize = 4 * 1024 * 1024;
+        std::thread::spawn(move || {
+            for (n, stream) in listener.incoming().enumerate() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut head = [0u8; 4096];
+                    let _ = stream.read(&mut head);
+                    let _ = stream.write_all(format!("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-{}/{SIZE}\r\nContent-Length: {OPENING_AHEAD}\r\n\r\n", OPENING_AHEAD - 1).as_bytes());
+                    // The first a piece every 3 seconds, 45 seconds in all; the second half and
+                    // then nothing for 40 seconds.
+                    for piece in 0..16 {
+                        if n == 1 && piece == 8 {
+                            std::thread::sleep(Duration::from_secs(40));
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_secs(if n == 0 { 3 } else { 0 }));
+                        if stream.write_all(&vec![1u8; OPENING_AHEAD as usize / 16]).is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        let started = Instant::now();
+        let remote = Remote::open(&address, &[]).expect("fetched in parts");
+        assert_eq!(remote.shared.state.lock().unwrap().blocks.len() as u64, OPENING_AHEAD / BLOCK, "the slow start was not read whole");
+        println!("slow: {:?}", started.elapsed());
+        assert!(started.elapsed() > Duration::from_secs(40));
+        let started = Instant::now();
+        // Opened with what came before the silence: the rest is asked for again when read.
+        let silent = Remote::open(&address, &[]).expect("opened");
+        println!("silent: {:?}", started.elapsed());
+        assert!(started.elapsed() >= Duration::from_secs(29) && started.elapsed() < Duration::from_secs(39));
+        assert_eq!(silent.shared.state.lock().unwrap().blocks.len() as u64, OPENING_AHEAD / BLOCK / 2);
+    }
+
+    /// A server that answers a `Range` with the whole film is left to FFmpeg.
+    #[test]
+    fn a_server_that_sends_only_the_whole_is_left_to_ffmpeg() {
+        let film: Arc<Vec<u8>> = Arc::new(vec![7u8; 3_000_000]);
+        let (address, _) = film_server(film, false);
+        assert!(Remote::open(&address, &[]).is_none());
     }
 }
