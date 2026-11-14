@@ -5,7 +5,8 @@
 #   android/build.sh install    ...and install it on the device adb is talking to
 #
 # The Rust half is crates/spatiand-android, built with the rustup toolchain in ~/.cargo/bin
-# (Homebrew's rust has no Android targets). Java libraries come from libs/fetch.sh.
+# (Homebrew's rust has no Android targets). Java libraries come from libs/fetch.sh. The NDK for
+# every native piece is named once, in ndk.sh (SPATIAND_NDK to build with another).
 set -eu
 cd "$(dirname "$0")"
 # The SDK where Android Studio puts it: ~/Library/Android/sdk on a Mac, ~/Android/Sdk on Linux.
@@ -13,7 +14,9 @@ SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android
 BT=$SDK/build-tools/37.0.0
 # Compiled against the newest Android's API; the app still targets 34 (AndroidManifest.xml).
 JAR=$SDK/platforms/android-37.2/android.jar
-NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
+# The NDK, named once for every Android build: ndk.sh.
+. ./ndk.sh
+NDK=$SPATIAND_NDK
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
 HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
 OUT=build
@@ -34,10 +37,15 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
 ../third_party/ffmpeg/build.sh android
 FF=$(cd ../third_party/ffmpeg/out/android && pwd)
 [ "$(uname -s)" = Darwin ] && export LIBCLANG_PATH=${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}
+# bindgen's clang (FFmpeg's bindings) is told the API, as cargo-ndk's -P: since r30 the NDK's headers
+# refuse a target without one ("Unversioned target triples are not supported"), and cargo-ndk 4.1.2
+# gives bindgen only the sysroot, in BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android. bindgen reads
+# the name with the target's dashes before that one, so this is cargo-ndk's own plus the API.
+SYSROOT=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot
 PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     FFMPEG_INCLUDE_DIR=$FF/include FFMPEG_LIBS_DIR=$FF/lib FFMPEG_LINK_MODE=dynamic \
-    BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/sysroot" \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
+    env "BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android=--target=aarch64-linux-android34 --sysroot=$SYSROOT -I$SYSROOT/usr/include/aarch64-linux-android" \
     cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatipal -p spatikey -p spatiand-choose
 ../tools/fetch-pdfium.sh android-arm64
 STORAGE=$(pwd)/$OUT-storage

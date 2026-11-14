@@ -33,7 +33,11 @@ then looked up by Android's own resolver -- and, where nameservers are asked for
 **`deps.sh`** builds what Chromium's Linux code takes from the system and Android's libc has not
 got, as termux-packages builds them: NSPR 4.40 and NSS 3.133 (shared), libdbus 1.16.2 (static),
 and libffi 3.4.8 (Wayland's) and SQLite 3.54.1 (NSS's database), shared as libffi.so and
-libsqlite3.so, the names an APK carries. xkbcommon is the compositor's (android/xkbcommon). `deps-patches/` are Termux's for them (packages/libnspr,
+libsqlite3.so, the names an APK carries. They are built with the NDK
+`android/ndk.sh` names (r30), as are the unwinder, the atomics and `llvm-strip` that build.sh takes
+from it; Chromium itself compiles with its own clang and its own NDK's headers and libc++
+(`third_party/android_toolchain`). deps.sh rebuilds all of them when that NDK or a version in it
+changes. xkbcommon is the compositor's (android/xkbcommon). `deps-patches/` are Termux's for them (packages/libnspr,
 libnss). With them the Deck's code for certificates and D-Bus is built as it is.
 
 **Ours**, after Termux's:
@@ -50,7 +54,7 @@ libnss). With them the Deck's code for certificates and D-Bus is built as it is.
 | 0008 | A dummy HID service, Termux's 1019 placed for 153: no HID devices without udev. |
 | 0009 | The Linux notifications bridge depends on `//components/dbus`, whose headers it includes: without GTK and GLib nothing else brings their path to it. |
 | 0010 | Its resources (`.pak`, ICU's data, V8's snapshot, the locales) from `SPATIMESH_ASSETS` when set: in the APK the program is in the library folder, which holds `lib*.so` alone, and the app unpacks the rest into its files (`run-android.sh` sets it). |
-| 0011 | libc++ linked in whole (`-static-libstdc++`), for Android's processor only: the NDK's Chromium builds with is newer than the r28c one the APK carries for Spatiand's other programs (`std::__hash_memory`); the build's own programs link the build machine's libstdc++, which has no static one. |
+| 0011 | libc++ linked in whole (`-static-libstdc++`), for Android's processor only: the APK carries no `libc++_shared.so` (Spatiand's other programs link what little they use of it statically), and the program needs Chromium's NDK's libc++ (LLVM 21, `std::__hash_memory`), which r28c's (LLVM 19) had not got; r30's is LLVM 21 too, so carrying r30's `libc++_shared.so` instead may now work, but that is not tried, and the patch stays until it has been on the phone. The build's own programs link the build machine's libstdc++, which has no static one. |
 | 0012 | Sound and the microphone through Spatiand's room (`media/audio/spatiand`): each stream to `$XDG_RUNTIME_DIR/spatiand-sound` under its tab's window's sink name, the microphone from `spatiand-mic`. Android has no PulseAudio to play into the room's sinks as the Deck does. |
 | 0013 | Chromium's seccomp sandbox without namespaces: Termux's 1001 forces `--no-sandbox`, taken out for `chrome`; the zygote starts without a first layer, which Android lets no app have; bionic's ways allowed as for Chrome on Android (not its baseline, which leaves files to SELinux); the main thread's stack asked before the sandbox (`base/spatiand_main_thread_stack.cc`), as bionic reads `/proc/self/stat` for it on every call. |
 | 0014 | The GPU draws off screen and each frame goes to the room as shared memory (Ozone's readback surface, which upstream uses for software GL): Android's EGL and Vulkan make no Wayland surfaces. Since 0021 only where the room takes no hardware buffers. With `angle_use_custom_libvulkan = false` (build.sh) ANGLE takes Android's Vulkan loader, which reaches the GPU's driver. |

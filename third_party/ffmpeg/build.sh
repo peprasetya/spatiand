@@ -21,6 +21,11 @@ platform=${1:?mac, android or linux}
 out=$here/out/$platform
 src=$here/src
 stamp="ffmpeg $FFMPEG_VERSION openssl $OPENSSL_VERSION"
+# For Android, also the NDK it is built with (android/ndk.sh): another one is a rebuild.
+if [ "$platform" = android ]; then
+    . "$here/../../android/ndk.sh"
+    stamp="$stamp ndk $SPATIAND_NDK_REVISION"
+fi
 if [ -f "$out/.version" ] && [ "$(cat "$out/.version")" = "$stamp" ]; then
     exit 0
 fi
@@ -76,8 +81,7 @@ mac)
         --extra-cflags="$flags" --extra-ldflags="$flags -Wl,-rpath,@loader_path" --extra-libs=-liconv)
     ;;
 android)
-    SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
-    NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
+    NDK=$SPATIAND_NDK
     HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
     TOOLS=$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin
     API=34

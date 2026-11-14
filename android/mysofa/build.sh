@@ -12,10 +12,11 @@ set -eu
 cd "$(dirname "$0")"
 VERSION=1.3.5
 SHA=f29508c335c83d8703f943ffc9ca783ac39aca84e851357f13a55af0f8143137
-SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
-NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
+. ../ndk.sh
+NDK=$SPATIAND_NDK
 
-[ -f out/libmysofa.so ] && [ -f out/default.sofa ] && exit 0
+# Built once, and again with another NDK (ndk.sh).
+[ -f out/libmysofa.so ] && [ -f out/default.sofa ] && [ "$(cat out/.ndk 2>/dev/null)" = "$SPATIAND_NDK_REVISION" ] && exit 0
 
 if [ ! -f cache/libmysofa-$VERSION.tar.gz ]; then
     mkdir -p cache
@@ -34,4 +35,5 @@ cmake --build work/build --target mysofa-shared >/dev/null
 cp -L work/build/src/libmysofa.so out/libmysofa.so
 cp -L work/libmysofa-$VERSION/share/default.sofa out/default.sofa
 rm -rf work
+echo "$SPATIAND_NDK_REVISION" > out/.ndk
 echo "built $(pwd)/out/libmysofa.so and out/default.sofa"

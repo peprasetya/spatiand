@@ -143,7 +143,7 @@ build_android() {
     # whose shared library the APK carries), and the rest from android-libc/deps.sh, below.
     # Everything else it builds itself (fontconfig, libwayland, libdrm).
     xkb=$here/../../android/xkbcommon
-    ANDROID_NDK_HOME=${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c} "$xkb/build.sh"
+    "$xkb/build.sh"
     xkb=$xkb/out
     ndk=$work/chromium/src/third_party/android_toolchain/ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot
     sysroot=$work/sysroot-android
@@ -157,8 +157,9 @@ build_android() {
     printf 'prefix=/usr\nincludedir=${prefix}/include\nlibdir=${prefix}/lib\nName: xkbcommon\nDescription: XKB API common to servers and clients\nVersion: 1.7.0\nCflags: -I${includedir}\nLibs: -L${libdir} -lxkbcommon\n' \
         > "$sysroot/usr/lib/pkgconfig/xkbcommon.pc"
     # The unwinder and atomics Android's compiler brings with it, which Chromium's clang does not: the
-    # NDK's (r28c, the one Spatiand's Android builds use).
-    ndk_full=${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}
+    # NDK's, the one Spatiand's Android builds use (android/ndk.sh).
+    . "$here/../../android/ndk.sh"
+    ndk_full=$SPATIAND_NDK
     cp -a "$ndk_full"/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/aarch64/libunwind.a \
           "$ndk_full"/toolchains/llvm/prebuilt/linux-x86_64/lib/clang/*/lib/linux/aarch64/libatomic.a "$sysroot/usr/lib/"
     # NSS, NSPR, libdbus, libffi and SQLite, made for Android here (android-libc/deps.sh): certificates
@@ -395,11 +396,12 @@ package() {
 package_android() {
     O=$work/chromium/src/out/android; P=$work/package/spatimesh-android
     rm -rf "$P"; mkdir -p "$P"
-    "${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
+    . "$here/../../android/ndk.sh"
+    "$SPATIAND_NDK"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
         --strip-unneeded -o "$P/spatimesh" "$O/chrome"
     cp -a "$O/libminigbm.so" "$P/"
     # Its crash handler, under a name the APK's library folder takes (android-libc/0018).
-    "${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
+    "$SPATIAND_NDK"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
         --strip-unneeded -o "$P/libspatimesh_crashpad.so" "$O/chrome_crashpad_handler"
     for lib in nspr4 plc4 plds4 nss3 nssutil3 smime3 ssl3 softokn3 freebl3 freeblpriv3 nssckbi ffi sqlite3; do
         cp -a "$work/android-deps/lib/lib$lib.so" "$P/"

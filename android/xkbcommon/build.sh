@@ -17,15 +17,17 @@ XKB_VERSION=1.7.0
 XKB_SHA=65782f0a10a4b455af9c6baab7040e2f537520caa2ec2092805cdfd36863b247
 DATA_DEB=xkb-data_2.42-1_all.deb
 DATA_SHA=196ff18533382f64e057ea49df2bb486bd4275a4cc0917361edb560b8756dada
-SDK=${ANDROID_HOME:-$(case "$(uname -s)" in (Darwin) echo "$HOME/Library/Android/sdk" ;; (*) echo "$HOME/Android/Sdk" ;; esac)}
-NDK=${ANDROID_NDK_HOME:-$SDK/ndk/28.2.13676358}
+. ../ndk.sh
+NDK=$SPATIAND_NDK
 API=34
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
 HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
 # A bison new enough for the grammar: Homebrew's on a Mac (macOS's 2.3 is too old), the system's elsewhere.
 BISON=${BISON:-$( [ -x /usr/local/opt/bison/bin/bison ] && echo /usr/local/opt/bison/bin/bison || command -v bison)}
 
-[ -f out/libxkbcommon.a ] && [ -f out/libxkbcommon.so ] && [ -f out/xkb/rules/evdev ] && exit 0
+# Built once, and again with another NDK (ndk.sh).
+[ -f out/libxkbcommon.a ] && [ -f out/libxkbcommon.so ] && [ -f out/xkb/rules/evdev ] &&
+    [ "$(cat out/.ndk 2>/dev/null)" = "$SPATIAND_NDK_REVISION" ] && exit 0
 
 fetch() { # url sha file
     if [ ! -f "cache/$3" ]; then
@@ -99,4 +101,5 @@ mkdir -p out/include && cp -R $SRC/include/xkbcommon out/include/
 mkdir -p work/deb && (cd work/deb && ar x "../../cache/$DATA_DEB" && tar -xf data.tar.xz)
 cp -R work/deb/usr/share/X11/xkb out/xkb
 rm -rf work
+echo "$SPATIAND_NDK_REVISION" > out/.ndk
 echo "built $(pwd)/out/libxkbcommon.a, out/libxkbcommon.so and out/xkb"

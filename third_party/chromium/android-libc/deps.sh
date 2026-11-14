@@ -17,7 +17,7 @@
 #
 #   third_party/chromium/android-libc/deps.sh <out folder>
 #
-# For API 24, as the rest of the build (README.md). Run on Linux with the NDK at SPATIAND_NDK.
+# For API 24, as the rest of the build (README.md). Run on Linux, with the NDK android/ndk.sh names.
 set -e
 
 NSPR_VERSION=4.40
@@ -32,8 +32,15 @@ SQLITE_SHA=926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4f6d64e
 here=$(cd "$(dirname "$0")" && pwd)
 out=$(mkdir -p "$1" && cd "$1" && pwd)
 work=$out/.work
+. "$here/../../../android/ndk.sh"
+NDK=$SPATIAND_NDK
+# Each library is built once; all of them again when the NDK or a version here changes, from
+# nothing (NSS and SQLite build in their own sources): the stamp says what they were built as.
+stamp="ndk $SPATIAND_NDK_REVISION nspr $NSPR_VERSION nss $NSS_VERSION dbus $DBUS_VERSION libffi $LIBFFI_VERSION sqlite $SQLITE_VERSION"
+if [ "$(cat "$out/.stamp" 2>/dev/null)" != "$stamp" ]; then
+    rm -rf "$out/lib" "$out/include" "$work/"*/ "$work"/*.tar.gz
+fi
 mkdir -p "$work" "$out/lib/pkgconfig" "$out/include"
-NDK=${SPATIAND_NDK:-/media/shared/Linux/App/android-ndk-r28c}
 API=24
 T=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
 TARGET=aarch64-linux-android
@@ -179,4 +186,5 @@ INI
     ninja -C "$work/dbus-build" install
     sed -i 's|^prefix=.*|prefix=/usr|' "$out/lib/pkgconfig/dbus-1.pc"
 fi
+echo "$stamp" > "$out/.stamp"
 echo "built in $out: $(ls "$out/lib" | tr '\n' ' ')"

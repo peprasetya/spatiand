@@ -20,7 +20,8 @@ export DEBIAN_FRONTEND=noninteractive
 # Versions the Android build is written for: android/build.sh.
 BUILD_TOOLS=37.0.0
 PLATFORM=android-37.2
-NDK=28.2.13676358
+# The NDK: the one android/ndk.sh names, where every Android build reads it.
+NDK=$(sed -n 's/^SPATIAND_NDK_VERSION=\([^ ]*\).*/\1/p' "$(dirname "$0")/../android/ndk.sh")
 CMDLINE_TOOLS=16111833
 
 apt_update_once() { [ -n "${UPDATED:-}" ] || { $SUDO apt-get update -qq; UPDATED=1; }; }
@@ -69,8 +70,10 @@ android() {
     yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
     "$SDKMANAGER" --sdk_root="$SDK" "platforms;$PLATFORM" "build-tools;$BUILD_TOOLS" "ndk;$NDK" >/dev/null
 
-    # The Android scripts take these from the environment (android/build.sh).
+    # The Android scripts take these from the environment (android/build.sh, android/ndk.sh);
+    # ANDROID_NDK_HOME, the same NDK, for cargo-ndk run on its own (ci.yml).
     ENV_LINES="${ENV_LINES}export ANDROID_HOME=\"$SDK\"
+export SPATIAND_NDK=\"$SDK/ndk/$NDK\"
 export ANDROID_NDK_HOME=\"$SDK/ndk/$NDK\"
 export BISON=\"$(command -v bison)\"
 export PATH=\"\$HOME/.cargo/bin:\$PATH\"
