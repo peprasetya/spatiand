@@ -153,3 +153,55 @@ fn named(sym: xkb::Keysym) -> Key {
         },
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::os::fd::FromRawFd;
+
+    /// A keyboard given a keymap the way the compositor gives one: as text in a file
+    /// descriptor. The machine's own XKB data, for a German layout (a Z where a US Y is, an
+    /// umlaut, AltGr) -- what a client of the Deck's room types with.
+    fn keyboard() -> Option<Keyboard> {
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_names(&context, "evdev", "pc105", "de", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS)?;
+        let text = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+        // SAFETY: a new anonymous file, owned from here on.
+        let fd = unsafe { libc::memfd_create(c"keymap".as_ptr(), 0) };
+        assert!(fd >= 0);
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        file.write_all(text.as_bytes()).unwrap();
+        file.write_all(&[0]).unwrap();
+        let mut keyboard = Keyboard::default();
+        keyboard.keymap(file.into(), text.len() as u32 + 1);
+        Some(keyboard)
+    }
+
+    fn typed(keyboard: &Keyboard, code: u32) -> (Key, Option<String>) {
+        match keyboard.event(code, true, false, WindowId(1)) {
+            Event::Key { key, text, .. } => (key, text),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn keys_mean_what_the_keymap_says() {
+        let Some(mut keyboard) = keyboard() else {
+            eprintln!("no XKB data on this machine; nothing to check");
+            return;
+        };
+        // evdev codes: 21 Y (Z on a German keyboard), 26 [ (Ü), 28 Return, 16 Q (@ with AltGr).
+        assert_eq!(typed(&keyboard, 21), (Key::Char('z'), Some("z".into())));
+        assert_eq!(typed(&keyboard, 26), (Key::Char('ü'), Some("ü".into())));
+        assert_eq!(typed(&keyboard, 28), (Key::Enter, None));
+        // Shift (mod index 0) and AltGr (Mod5, index 7) as the compositor sends them.
+        keyboard.modifiers(1 << 0, 0, 0, 0);
+        assert_eq!(typed(&keyboard, 21), (Key::Char('z'), Some("Z".into())));
+        assert!(keyboard.held_modifiers().shift);
+        keyboard.modifiers(1 << 7, 0, 0, 0);
+        assert_eq!(typed(&keyboard, 16).1.as_deref(), Some("@"));
+        keyboard.modifiers(0, 0, 0, 0);
+        assert!(!keyboard.held_modifiers().shift);
+    }
+}
