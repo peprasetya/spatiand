@@ -22,9 +22,10 @@ set -e
 
 NSPR_VERSION=4.40
 NSS_VERSION=3.133
-DBUS_VERSION=1.16.2
-LIBFFI_VERSION=3.4.8
-LIBFFI_SHA=bc9842a18898bfacb0ed1252c4febcc7e78fa139fd27fdc7a3e30d9d9356119b
+DBUS_VERSION=1.16.4
+DBUS_SHA=d08b05526c2cb7966a5fb79210d6112b1aca3d135f315c1b302e14b4b0297dac
+LIBFFI_VERSION=3.8.0
+LIBFFI_SHA=7da3e2d9a171eb0a038f592ecad3ff2bb2550f3496d87b3b29ad0cf4430c0db4
 SQLITE_VERSION=3540100
 SQLITE_YEAR=2026
 SQLITE_SHA=926ef8d3eab93fbf6e06011901273eec076b25594a4e1cdadd50c987f4f6d64e
@@ -158,7 +159,11 @@ PC
 # --- libdbus ---
 if [ ! -f "$out/lib/libdbus-1.a" ]; then
     [ -x "$work/.venv/bin/meson" ] || { python3 -m venv "$work/.venv" && "$work/.venv/bin/pip" install -q meson; }
-    [ -d "$work/dbus-$DBUS_VERSION" ] || curl -fsSL "https://dbus.freedesktop.org/releases/dbus/dbus-$DBUS_VERSION.tar.xz" | tar -xJ -C "$work"
+    if [ ! -d "$work/dbus-$DBUS_VERSION" ]; then
+        curl -fsSL -o "$work/dbus.tar.xz" "https://dbus.freedesktop.org/releases/dbus/dbus-$DBUS_VERSION.tar.xz"
+        echo "$DBUS_SHA  $work/dbus.tar.xz" | sha256sum -c - >/dev/null || { echo "dbus: checksum mismatch"; exit 1; }
+        tar -xJf "$work/dbus.tar.xz" -C "$work" && rm "$work/dbus.tar.xz"
+    fi
     cat > "$work/android.ini" <<INI
 [binaries]
 c = '$CC'

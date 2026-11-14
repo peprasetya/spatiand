@@ -31,9 +31,11 @@ seccomp alone is still to do), and 1005 gives Chromium no DNS settings of the sy
 then looked up by Android's own resolver -- and, where nameservers are asked for, Google's 8.8.8.8.
 
 **`deps.sh`** builds what Chromium's Linux code takes from the system and Android's libc has not
-got, as termux-packages builds them: NSPR 4.40 and NSS 3.133 (shared), libdbus 1.16.2 (static),
-and libffi 3.4.8 (Wayland's) and SQLite 3.54.1 (NSS's database), shared as libffi.so and
-libsqlite3.so, the names an APK carries. They are built with the NDK
+got, as termux-packages builds them: NSPR 4.40 and NSS 3.133 (shared), libdbus 1.16.4 (static),
+and libffi 3.8.0 (Wayland's) and SQLite 3.54.1 (NSS's database), shared as libffi.so and
+libsqlite3.so, the names an APK carries. libffi keeps its own symbol versions: what Chromium's
+libwayland asks for is `LIBFFI_BASE_8.0`, which 3.8.0 still gives, beside the newer nodes it adds
+(`LIBFFI_BASE_8.1`, `_CALL_PLAN_8.4/8.5`, `_INT128_8.3`). They are built with the NDK
 `android/ndk.sh` names (r30), as are the unwinder, the atomics and `llvm-strip` that build.sh takes
 from it; Chromium itself compiles with its own clang and its own NDK's headers and libc++
 (`third_party/android_toolchain`). deps.sh rebuilds all of them when that NDK or a version in it
