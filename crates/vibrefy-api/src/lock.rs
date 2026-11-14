@@ -22,8 +22,7 @@
 //! the whole space is searchable whatever the hash - but it costs nothing here and means
 //! the stored file never contains anything worth taking.
 
-use argon2::Argon2;
-use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordHasher, PasswordVerifier, Version};
 
 /// What the PIN screen will accept.
 pub const MIN_LENGTH: usize = 4;
@@ -62,18 +61,26 @@ pub fn check_shape(pin: &str) -> Result<(), PinError> {
 /// Hashes a PIN for storage. The salt is fresh every time, so setting the same PIN twice
 /// does not produce the same string on disk.
 pub fn hash(pin: &str) -> Result<String, PinError> {
-    let mut salt = [0u8; 16];
-    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut salt);
-    hash_with_salt(pin, &salt)
+    hash_with_salt(pin, &argon2::password_hash::generate_salt())
+}
+
+/// The Argon2 every PIN is hashed with: Argon2id, version 0x13, 19 MiB, 2 passes, 1 lane, 32
+/// bytes out. Written out rather than `Argon2::default()`: those are argon2 0.5's defaults,
+/// which every stored PIN was made with, and a later version changing its defaults must not
+/// change what a new PIN is hashed with. (Verifying reads the cost from the stored string.)
+fn argon2() -> Argon2<'static> {
+    let params = Params::new(19 * 1024, 2, 1, Some(32)).expect("argon2 0.5's default cost is a cost");
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
 }
 
 /// [`hash`] with the salt given: what is stored, as a PHC string
 /// (`$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>`, both in unpadded base64).
 fn hash_with_salt(pin: &str, salt: &[u8; 16]) -> Result<String, PinError> {
     check_shape(pin)?;
-    let salt = SaltString::encode_b64(salt).expect("16 bytes are a salt");
-    Ok(Argon2::default()
-        .hash_password(pin.as_bytes(), &salt)
+    // The salt is given as bytes and written as unpadded base64, as password-hash 0.5's
+    // `SaltString::encode_b64` wrote it (pinned by `the_stored_form_is_byte_for_byte_what_it_was`).
+    Ok(argon2()
+        .hash_password_with_salt(pin.as_bytes(), salt)
         .expect("Argon2 with a generated salt cannot fail")
         .to_string())
 }
@@ -85,7 +92,7 @@ pub fn verify(stored: &str, pin: &str) -> bool {
     let Ok(parsed) = PasswordHash::new(stored) else {
         return false;
     };
-    Argon2::default()
+    argon2()
         .verify_password(pin.as_bytes(), &parsed)
         .is_ok()
 }

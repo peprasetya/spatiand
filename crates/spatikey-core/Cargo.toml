@@ -14,8 +14,8 @@ log.workspace = true
 # every build through rustls, on the Mac, Linux and Android alike.
 ring = "0.17"
 # The recovery code's key derivation.
-argon2 = { version = "0.5", optional = true }
-base64 = "0.22"
+argon2 = { version = "0.6", default-features = false, features = ["alloc"], optional = true }
+base64 = "0.23"
 # Base32, for TOTP secrets and the recovery code.
 data-encoding = "2"
 # The public suffix list is written in Unicode and hosts arrive in punycode: its rules are

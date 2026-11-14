@@ -23,7 +23,7 @@ quinn = { version = "0.11", default-features = false, features = ["runtime-tokio
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
 serde.workspace = true
 serde_json = "1"
-base64 = "0.22"
+base64 = "0.23"
 log.workspace = true
 # SpatiKey's service, which runs in the app from launch with Touch ID behind it (src/key.rs).
 spatikey-core = { path = "../spatikey-core" }
