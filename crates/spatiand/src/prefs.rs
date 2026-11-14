@@ -389,15 +389,26 @@ impl Prefs {
 mod toml_files {
     use super::*;
 
-    /// `testdata/{name}` holds what this file is written as: what toml 0.8 wrote, but for the
-    /// f32 figures (`testdata/toml-0.8` has 0.8's own; see `a_file_toml_0_8_wrote_reads_the_same`).
-    /// The machines are updated at different moments and share these files, so what this build
-    /// writes must be what the build before it read, and read back the same.
-    fn written_as_before(name: &str, text: &str) {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata").join(name);
-        let before = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        assert_eq!(text, before, "{name} is not written as it was");
+    // `testdata/` holds what this file is written as: what toml 0.8 wrote, but for the f32
+    // figures (`testdata/toml-0.8` has 0.8's own; see `a_file_toml_0_8_wrote_reads_the_same`).
+    // The machines are updated at different moments and share these files, so what this build
+    // writes must be what the build before it read, and read back the same. Included rather
+    // than read from the crate's folder: the Mac's and the Beam Pro's crates compile this file
+    // as their own.
+    const WRITTEN: [(&str, &str); 2] = [
+        ("default", include_str!("../testdata/prefs-default.toml")),
+        ("chosen", include_str!("../testdata/prefs-chosen.toml")),
+    ];
+    const WRITTEN_BY_TOML_0_8: [(&str, &str); 2] = [
+        ("default", include_str!("../testdata/toml-0.8/prefs-default.toml")),
+        ("chosen", include_str!("../testdata/toml-0.8/prefs-chosen.toml")),
+    ];
+
+    fn prefs(name: &str) -> Prefs {
+        match name {
+            "default" => Prefs::default(),
+            _ => chosen(),
+        }
     }
 
     fn chosen() -> Prefs {
@@ -431,10 +442,10 @@ mod toml_files {
 
     #[test]
     fn prefs_are_written_and_read_as_before() {
-        for (name, prefs) in [("prefs-default.toml", Prefs::default()), ("prefs-chosen.toml", chosen())] {
-            let text = toml::to_string_pretty(&prefs).unwrap();
-            written_as_before(name, &text);
-            assert_eq!(toml::from_str::<Prefs>(&text).unwrap(), prefs, "{name}");
+        for (name, before) in WRITTEN {
+            let text = toml::to_string_pretty(&prefs(name)).unwrap();
+            assert_eq!(text, before, "{name} is not written as it was");
+            assert_eq!(toml::from_str::<Prefs>(&text).unwrap(), prefs(name), "{name}");
         }
     }
 
@@ -444,12 +455,8 @@ mod toml_files {
         // written as the shortest decimal that is that f32 -- `0.35` -- where 0.8 wrote the
         // f64 it widens to, `0.3499999940395355`. Either text reads to the same f32 in either
         // version, so a file goes back and forth between builds unchanged in value.
-        for (name, prefs) in [("prefs-default.toml", Prefs::default()), ("prefs-chosen.toml", chosen())] {
-            let old = std::fs::read_to_string(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/toml-0.8").join(name),
-            )
-            .unwrap();
-            assert_eq!(toml::from_str::<Prefs>(&old).unwrap(), prefs, "{name}");
+        for (name, old) in WRITTEN_BY_TOML_0_8 {
+            assert_eq!(toml::from_str::<Prefs>(old).unwrap(), prefs(name), "{name}");
         }
     }
 
