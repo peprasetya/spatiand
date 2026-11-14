@@ -11,10 +11,10 @@ Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
  .../settings/people_page/people_page.html.ts  |  89 +-----
  .../browser/spatiand/profile_lock_dialog.cc   | 282 ++++++++++++++++--
  chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
- chrome/browser/spatiand/profiles_sync.cc      | 216 +++++++++++++-
+ chrome/browser/spatiand/profiles_sync.cc      | 222 +++++++++++++-
  chrome/browser/spatiand/profiles_sync.h       |  32 ++
  .../ui/views/profiles/profile_menu_view.cc    |  30 ++
- 9 files changed, 578 insertions(+), 112 deletions(-)
+ 9 files changed, 584 insertions(+), 112 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
 index a803c69e26..acb5857c52 100644
@@ -627,7 +627,7 @@ index 2350d3f843..3c8938fd50 100644
  
  #endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
 diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
-index b90c819ccb..981c3f5cba 100644
+index b90c819ccb..38b090fa64 100644
 --- a/chrome/browser/spatiand/profiles_sync.cc
 +++ b/chrome/browser/spatiand/profiles_sync.cc
 @@ -7,6 +7,7 @@
@@ -696,7 +696,7 @@ index b90c819ccb..981c3f5cba 100644
    browsers_observation_.Observe(GlobalBrowserCollection::GetInstance());
    // Opens the last profile used, as SpatiMesh does, rather than asking whose each time; the
    // picker's own checkbox still turns that on.
-@@ -225,6 +253,71 @@ ProfilesSync::ProfilesSync()
+@@ -225,6 +253,77 @@ ProfilesSync::ProfilesSync()
  
  ProfilesSync::~ProfilesSync() = default;
  
@@ -759,7 +759,13 @@ index b90c819ccb..981c3f5cba 100644
 +    // Every profile has a lock: a new one, as a first start makes it, made when the start opens
 +    // it (ProfileManager in its own way, so OnProfileAdded shares it as any new profile). The
 +    // next start finds it unlocked and opens it again.
-+    other = manager->GenerateNextProfileDirectoryPath();
++    // The next folder the count gives may be taken (a profile made by a start that named it is
++    // not counted, and the one found there on the Beam Pro was a locked one): the next free one,
++    // as ProfileManager::CreateMultiProfileAsync looks for it.
++    ProfileAttributesStorage& storage = manager->GetProfileAttributesStorage();
++    do {
++      other = manager->GenerateNextProfileDirectoryPath();
++    } while (storage.GetProfileAttributesWithPath(*other));
 +    LOG(WARNING) << "SpatiMesh: every profile has a lock; the start makes " << other->BaseName();
 +  }
 +  local_state->SetFilePath(prefs::kProfileLastUsed, other->BaseName());
@@ -768,7 +774,7 @@ index b90c819ccb..981c3f5cba 100644
  void ProfilesSync::Poll() {
    if (reading_) {
      return;
-@@ -517,6 +610,16 @@ void ProfilesSync::OnProfileNameChanged(const base::FilePath& profile_path,
+@@ -517,6 +616,16 @@ void ProfilesSync::OnProfileNameChanged(const base::FilePath& profile_path,
    }
  }
  
@@ -785,7 +791,7 @@ index b90c819ccb..981c3f5cba 100644
  void ProfilesSync::OnProfileAdded(Profile* profile) {
    // A profile's colour is its theme once it is open.
    if (!profile->IsRegularProfile()) {
-@@ -535,29 +638,134 @@ bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
+@@ -535,29 +644,134 @@ bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
    if (it == records_.end() || it->second.lock_hash.empty() || unlocked_.contains(id)) {
      return false;
    }
