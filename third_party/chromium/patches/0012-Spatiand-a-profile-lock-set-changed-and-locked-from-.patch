@@ -8,13 +8,13 @@ Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
  chrome/app/settings_strings.grdp              |   2 +-
  chrome/browser/BUILD.gn                       |   1 +
  chrome/browser/profiles/profile_manager.cc    |  20 +-
- .../settings/people_page/people_page.html.ts  |  89 +-----
- .../browser/spatiand/profile_lock_dialog.cc   | 282 ++++++++++++++++--
+ .../settings/people_page/people_page.html.ts  |  89 +----
+ .../browser/spatiand/profile_lock_dialog.cc   | 347 ++++++++++++++++--
  chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
- chrome/browser/spatiand/profiles_sync.cc      | 222 +++++++++++++-
+ chrome/browser/spatiand/profiles_sync.cc      | 222 ++++++++++-
  chrome/browser/spatiand/profiles_sync.h       |  32 ++
  .../ui/views/profiles/profile_menu_view.cc    |  30 ++
- 9 files changed, 584 insertions(+), 112 deletions(-)
+ 9 files changed, 644 insertions(+), 117 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
 index a803c69e26..acb5857c52 100644
@@ -217,10 +217,10 @@ index b3303085ac..40179b1d95 100644
  
        </div>
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
-index 2acc69b61a..160c2f0dcc 100644
+index 2acc69b61a..fd20475141 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.cc
 +++ b/chrome/browser/spatiand/profile_lock_dialog.cc
-@@ -3,6 +3,7 @@
+@@ -3,20 +3,28 @@
  
  #include "chrome/browser/spatiand/profile_lock_dialog.h"
  
@@ -228,8 +228,9 @@ index 2acc69b61a..160c2f0dcc 100644
  #include <memory>
  #include <utility>
  
-@@ -10,13 +11,19 @@
+ #include "base/functional/bind.h"
  #include "base/functional/callback.h"
++#include "base/memory/ptr_util.h"
  #include "base/memory/raw_ptr.h"
  #include "base/memory/weak_ptr.h"
 +#include "base/strings/string_util.h"
@@ -248,10 +249,11 @@ index 2acc69b61a..160c2f0dcc 100644
  #include "ui/views/controls/label.h"
  #include "ui/views/controls/textfield/textfield.h"
  #include "ui/views/layout/box_layout.h"
-@@ -31,45 +38,110 @@ namespace {
+@@ -31,45 +39,155 @@ namespace {
  constexpr int kTriesBeforeWaiting = 5;
  constexpr base::TimeDelta kWait = base::Seconds(30);
  
+-class ProfileLockDialog : public views::DialogDelegate {
 +const char kPin[] = "pin";
 +const char kPassword[] = "password";
 +
@@ -286,7 +288,42 @@ index 2acc69b61a..160c2f0dcc 100644
 +  return label;
 +}
 +
- class ProfileLockDialog : public views::DialogDelegate {
++// A dialog in a window of its own, owning that window as it owns itself: both go when the window
++// closes, however it does (its buttons, Escape, the window's close, the browser's exit), the
++// window first. Before its views go, the dialog lets go of its pointers to them.
++//
++// It was the deprecated way before, the widget given the dialog, which then nothing deleted: every
++// PIN window left its field, its line and its fingerprint button pointed at after they were freed,
++// and the browser's exit stopped on those dangling pointers (SIGTRAP).
++class OwnWindowDialog : public views::DialogDelegate {
++ public:
++  ~OwnWindowDialog() override = default;
++
++ protected:
++  // Shows it; `this` is deleted when its window closes.
++  void Open() {
++    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
++    window_ = base::WrapUnique(views::DialogDelegate::CreateDialogWidget(
++        this, /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView()));
++    window_->MakeCloseSynchronous(
++        base::BindOnce(&OwnWindowDialog::Closed, base::Unretained(this)));
++    window_->Show();
++  }
++
++  // The window is closing, its views still there: let go of them, and say what is to be said.
++  virtual void Closing() = 0;
++
++ private:
++  void Closed(views::Widget::ClosedReason) {
++    Closing();
++    window_.reset();
++    delete this;
++  }
++
++  std::unique_ptr<views::Widget> window_;
++};
++
++class ProfileLockDialog : public OwnWindowDialog {
   public:
    ProfileLockDialog(const std::u16string& profile_name,
                      bool is_pin,
@@ -324,7 +361,7 @@ index 2acc69b61a..160c2f0dcc 100644
      SetAcceptCallbackWithClose(
          base::BindRepeating(&ProfileLockDialog::Try, base::Unretained(this)));
      SetCancelCallback(base::BindOnce(&ProfileLockDialog::Finish, base::Unretained(this), false));
-     SetCloseCallback(base::BindOnce(&ProfileLockDialog::Finish, base::Unretained(this), false));
+-    SetCloseCallback(base::BindOnce(&ProfileLockDialog::Finish, base::Unretained(this), false));
      SetInitiallyFocusedView(field_);
 +    // A finger too, on a machine with a SpatiKey to ask: on the Deck, the Mac's.
 +    finger_ = SetExtraView(std::make_unique<views::MdTextButton>(
@@ -336,7 +373,18 @@ index 2acc69b61a..160c2f0dcc 100644
    }
    ~ProfileLockDialog() override = default;
  
++  using OwnWindowDialog::Open;
++
   private:
++  void Closing() override {
++    // However it closes, not given is not opened.
++    Finish(false);
++    weak_factory_.InvalidateWeakPtrs();
++    field_ = nullptr;
++    said_ = nullptr;
++    finger_ = nullptr;
++  }
++
 +  void UsableKnown(bool usable) { finger_->SetVisible(usable); }
 +
 +  void AskFinger() {
@@ -368,7 +416,7 @@ index 2acc69b61a..160c2f0dcc 100644
        said_->SetText(u"Too many wrong tries: wait a moment.");
        return false;
      }
-@@ -90,13 +162,7 @@ class ProfileLockDialog : public views::DialogDelegate {
+@@ -90,13 +208,7 @@ class ProfileLockDialog : public views::DialogDelegate {
      }
      field_->SetText(std::u16string());
      field_->RequestFocus();
@@ -383,7 +431,7 @@ index 2acc69b61a..160c2f0dcc 100644
    }
  
    void Finish(bool opened) {
-@@ -105,26 +171,204 @@ class ProfileLockDialog : public views::DialogDelegate {
+@@ -105,28 +217,215 @@ class ProfileLockDialog : public views::DialogDelegate {
      }
    }
  
@@ -413,7 +461,7 @@ index 2acc69b61a..160c2f0dcc 100644
 +  return lock;
 +}
 +
-+class ProfileLockSettings : public views::DialogDelegate {
++class ProfileLockSettings : public OwnWindowDialog {
 + public:
 +  ProfileLockSettings(const std::u16string& profile_name,
 +                      std::string kind,
@@ -464,7 +512,22 @@ index 2acc69b61a..160c2f0dcc 100644
 +  }
 +  ~ProfileLockSettings() override = default;
 +
++  using OwnWindowDialog::Open;
++
 + private:
++  void Closing() override {
++    weak_factory_.InvalidateWeakPtrs();
++    present_ = nullptr;
++    nothing_ = nullptr;
++    pin_ = nullptr;
++    password_ = nullptr;
++    new_label_ = nullptr;
++    new_ = nullptr;
++    again_label_ = nullptr;
++    again_ = nullptr;
++    said_ = nullptr;
++  }
++
 +  void ChoiceChanged() {
 +    const bool secret = !nothing_->GetChecked();
 +    new_label_->SetEnabled(secret);
@@ -573,12 +636,12 @@ index 2acc69b61a..160c2f0dcc 100644
                             const std::string& hash,
 +                           bool windows_waiting,
                             base::OnceCallback<void(bool)> done) {
-   views::DialogDelegate::CreateDialogWidget(
+-  views::DialogDelegate::CreateDialogWidget(
 -      std::make_unique<ProfileLockDialog>(profile_name, is_pin, salt, hash, std::move(done)),
-+      std::make_unique<ProfileLockDialog>(profile_name, is_pin, salt, hash, windows_waiting,
-+                                          std::move(done)),
-+      /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView())
-+      ->Show();
+-      /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView())
+-      ->Show();
++  (new ProfileLockDialog(profile_name, is_pin, salt, hash, windows_waiting, std::move(done)))
++      ->Open();
 +}
 +
 +void ShowProfileLockSettings(const std::u16string& profile_name,
@@ -586,11 +649,10 @@ index 2acc69b61a..160c2f0dcc 100644
 +                             const std::string& salt,
 +                             const std::string& hash,
 +                             SaveLock save) {
-+  views::DialogDelegate::CreateDialogWidget(
-+      std::make_unique<ProfileLockSettings>(profile_name, kind, salt, hash, std::move(save)),
-       /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView())
-       ->Show();
++  (new ProfileLockSettings(profile_name, kind, salt, hash, std::move(save)))->Open();
  }
+ 
+ }  // namespace spatiand
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.h b/chrome/browser/spatiand/profile_lock_dialog.h
 index 2350d3f843..3c8938fd50 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.h
