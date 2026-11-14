@@ -74,8 +74,9 @@ public class MainActivity extends Activity implements SensorEventListener {
     /** The Beam Pro's orange key, as the framework rebroadcasts it while glasses are on. */
     static final String ORANGE_DOWN = "XREAL.switchMode.down";
     static final String ORANGE_UP = "XREAL.switchMode.up";
-    /** Bumped when the bundled keyboard layouts change, so they are unpacked again. */
-    static final String XKB_VERSION = "xkb-data 2.42-1";
+    /** Bumped when the bundled keyboard layouts change, so they are unpacked again: XKB_DATA in
+     * third_party/xkbcommon/source.sh. */
+    static final String XKB_VERSION = "xkb-data 2.48-1";
 
     final Handler ui = new Handler(Looper.getMainLooper());
     TextView status;

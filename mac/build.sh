@@ -4,7 +4,8 @@
 # installed Electron application; see fetch-angle.sh).
 set -e
 cd "$(dirname "$0")"
-[ -f xkbcommon/out/libxkbcommon.a ] || xkbcommon/build.sh
+# Built once (and again for a new release, third_party/xkbcommon/source.sh): it returns at once.
+xkbcommon/build.sh
 [ -f vendor/angle/libEGL.dylib ] || ./fetch-angle.sh
 (cd ../crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build)
 # The library is a file SwiftPM does not watch: without this it links the old one.

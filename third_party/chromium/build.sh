@@ -154,7 +154,7 @@ build_android() {
     for f in libc++_shared.so libc++_static.a libc++abi.a; do cp -a "$ndk/usr/lib/aarch64-linux-android/$f" "$sysroot/usr/lib/"; done
     cp -a "$xkb/include/xkbcommon" "$sysroot/usr/include/"
     cp -a "$xkb/libxkbcommon.so" "$sysroot/usr/lib/"
-    printf 'prefix=/usr\nincludedir=${prefix}/include\nlibdir=${prefix}/lib\nName: xkbcommon\nDescription: XKB API common to servers and clients\nVersion: 1.7.0\nCflags: -I${includedir}\nLibs: -L${libdir} -lxkbcommon\n' \
+    printf 'prefix=/usr\nincludedir=${prefix}/include\nlibdir=${prefix}/lib\nName: xkbcommon\nDescription: XKB API common to servers and clients\nVersion: %s\nCflags: -I${includedir}\nLibs: -L${libdir} -lxkbcommon\n' "$(cat "$xkb/VERSION")" \
         > "$sysroot/usr/lib/pkgconfig/xkbcommon.pc"
     # The unwinder and atomics Android's compiler brings with it, which Chromium's clang does not: the
     # NDK's, the one Spatiand's Android builds use (android/ndk.sh).

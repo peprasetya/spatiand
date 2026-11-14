@@ -3,7 +3,8 @@
 # The result is ./Spatiand.app. Not notarised, so it is for this Mac, not for handing out.
 set -e
 cd "$(dirname "$0")"
-[ -f xkbcommon/out/libxkbcommon.a ] || xkbcommon/build.sh
+# Built once (and again for a new release, third_party/xkbcommon/source.sh): it returns at once.
+xkbcommon/build.sh
 [ -f vendor/angle/libEGL.dylib ] || ./fetch-angle.sh
 (cd ../crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release)
 rm -f .build/release/Spatiand

@@ -4,102 +4,55 @@
 #
 #   android/xkbcommon/build.sh      -> out/libxkbcommon.a and out/xkb/ (the layouts), and
 #                                      out/libxkbcommon.so with out/include: SpatiMesh's Chromium's
-#                                      (third_party/chromium/build.sh android), which the APK carries
+#                                      (third_party/chromium/build.sh android), which the APK carries;
+#                                      out/VERSION, the library's version, for its pkg-config file
 #
-# Built with the NDK's clang directly rather than meson: it is thirty C files and one grammar,
-# and this way the Mac needs only bison (Homebrew's; macOS's 2.3 is too old for the grammar).
-# The layouts are Debian's xkb-data, taken out of the package, because xkeyboard-config's own
-# release needs a Python build step to produce the rules files. Both are pinned by SHA-256.
-# Run by android/build.sh; everything lands in out/, which is not committed.
+# What is built, its version and its layouts are third_party/xkbcommon/source.sh's, the Mac's
+# too (mac/xkbcommon/build.sh); here only bionic's side of config.h and the NDK's clang, used
+# directly rather than meson. Run by android/build.sh; everything lands in out/, not committed.
 set -eu
 cd "$(dirname "$0")"
-XKB_VERSION=1.7.0
-XKB_SHA=65782f0a10a4b455af9c6baab7040e2f537520caa2ec2092805cdfd36863b247
-DATA_DEB=xkb-data_2.42-1_all.deb
-DATA_SHA=196ff18533382f64e057ea49df2bb486bd4275a4cc0917361edb560b8756dada
+. ../../third_party/xkbcommon/source.sh
 . ../ndk.sh
 NDK=$SPATIAND_NDK
 API=34
 # The NDK's tools are in a folder named for the machine building: a Mac's or Linux's.
 HOST_TAG=$(case "$(uname -s)" in (Darwin) echo darwin-x86_64 ;; (*) echo linux-x86_64 ;; esac)
-# A bison new enough for the grammar: Homebrew's on a Mac (macOS's 2.3 is too old), the system's elsewhere.
-BISON=${BISON:-$( [ -x /usr/local/opt/bison/bin/bison ] && echo /usr/local/opt/bison/bin/bison || command -v bison)}
 
-# Built once, and again with another NDK (ndk.sh).
+# Built once, and again with another NDK (ndk.sh) or another release (source.sh).
 [ -f out/libxkbcommon.a ] && [ -f out/libxkbcommon.so ] && [ -f out/xkb/rules/evdev ] &&
-    [ "$(cat out/.ndk 2>/dev/null)" = "$SPATIAND_NDK_REVISION" ] && exit 0
-
-fetch() { # url sha file
-    if [ ! -f "cache/$3" ]; then
-        mkdir -p cache
-        curl -sSfL -o "cache/$3.part" "$1"
-        mv "cache/$3.part" "cache/$3"
-    fi
-    echo "$2  cache/$3" | shasum -a 256 -c - >/dev/null || { echo "$3: checksum mismatch"; exit 1; }
-}
-fetch "https://xkbcommon.org/download/libxkbcommon-$XKB_VERSION.tar.xz" $XKB_SHA "libxkbcommon-$XKB_VERSION.tar.xz"
-fetch "https://deb.debian.org/debian/pool/main/x/xkeyboard-config/$DATA_DEB" $DATA_SHA $DATA_DEB
+    [ "$(cat out/.ndk 2>/dev/null)" = "$SPATIAND_NDK_REVISION $XKB_VERSION $XKB_DATA" ] && exit 0
 
 rm -rf work out && mkdir -p work out
-tar -C work -xf "cache/libxkbcommon-$XKB_VERSION.tar.xz"
-SRC=work/libxkbcommon-$XKB_VERSION
-
-"$BISON" --defines=work/parser.h -o work/parser.c -p _xkbcommon_ $SRC/src/xkbcomp/parser.y
-
-# What meson would have found out about bionic, and where the layouts live by default. The
-# default is never used: the app points XKB_CONFIG_ROOT at its own copy.
-cat > work/config.h <<'EOF'
+xkb_prepare work
+# What meson would find out about bionic at API 34 (it cannot run what it compiles for the
+# phone, so it leaves out newlocale, as for any C library that is not glibc): no eaccess, no
+# secure_getenv.
+cat >> work/config.h <<'EOF'
 #define _GNU_SOURCE 1
-#define EXIT_INVALID_USAGE 2
-#define LIBXKBCOMMON_VERSION "1.7.0"
-#define LIBXKBCOMMON_TOOL_PATH ""
-#define DFLT_XKB_CONFIG_ROOT "/nonexistent/xkb"
-#define DFLT_XKB_CONFIG_EXTRA_PATH "/nonexistent/xkb-extra"
-#define XLOCALEDIR "/nonexistent/locale"
-#define DEFAULT_XKB_RULES "evdev"
-#define DEFAULT_XKB_MODEL "pc105"
-#define DEFAULT_XKB_LAYOUT "us"
-#define DEFAULT_XKB_VARIANT NULL
-#define DEFAULT_XKB_OPTIONS NULL
-#define HAVE_UNISTD_H 1
-#define HAVE___BUILTIN_EXPECT 1
-#define HAVE_MMAP 1
-#define HAVE_MKOSTEMP 1
-#define HAVE_POSIX_FALLOCATE 1
-#define HAVE_STRNDUP 1
-#define HAVE_ASPRINTF 1
 EOF
 
 CC="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/aarch64-linux-android$API-clang"
 AR="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin/llvm-ar"
-SOURCES="
-src/compose/parser.c src/compose/paths.c src/compose/state.c src/compose/table.c
-src/xkbcomp/action.c src/xkbcomp/ast-build.c src/xkbcomp/compat.c src/xkbcomp/expr.c
-src/xkbcomp/include.c src/xkbcomp/keycodes.c src/xkbcomp/keymap.c src/xkbcomp/keymap-dump.c
-src/xkbcomp/keywords.c src/xkbcomp/rules.c src/xkbcomp/scanner.c src/xkbcomp/symbols.c
-src/xkbcomp/types.c src/xkbcomp/vmod.c src/xkbcomp/xkbcomp.c
-src/atom.c src/context.c src/context-priv.c src/keysym.c src/keysym-utf.c src/keymap.c
-src/keymap-priv.c src/state.c src/text.c src/utf8.c src/utils.c"
 OBJECTS=""
-for s in $SOURCES; do
+mkdir -p work/obj
+for s in $XKB_SOURCES work/parser.c; do
+    case "$s" in work/*) from="$s" ;; *) from="$XKB_SRC/$s" ;; esac
     o=work/obj/$(echo "$s" | tr / _).o
-    mkdir -p work/obj
-    "$CC" -c -O2 -fPIC -std=c11 -fvisibility=default -include work/config.h \
-        -I work -I $SRC -I $SRC/include -I $SRC/src -I $SRC/src/xkbcomp \
-        -w -o "$o" "$SRC/$s"
+    # shellcheck disable=SC2086
+    "$CC" -c $XKB_CFLAGS -o "$o" "$from"
     OBJECTS="$OBJECTS $o"
 done
-"$CC" -c -O2 -fPIC -std=c11 -include work/config.h -I work -I $SRC -I $SRC/include \
-    -I $SRC/src -I $SRC/src/xkbcomp -w -o work/obj/parser.o work/parser.c
-"$AR" rcs out/libxkbcommon.a $OBJECTS work/obj/parser.o
+# shellcheck disable=SC2086
+"$AR" rcs out/libxkbcommon.a $OBJECTS
 # The same, shared, with the symbol versions meson gives it (xkbcommon.map: V_0.5.0 and on), which
-# a program linked against a meson-built one asks for by name.
-"$CC" -shared -Wl,-soname,libxkbcommon.so -Wl,--version-script=$SRC/xkbcommon.map -o out/libxkbcommon.so $OBJECTS work/obj/parser.o
-mkdir -p out/include && cp -R $SRC/include/xkbcommon out/include/
-
-# The layouts: rules, keycodes, types, compat and symbols, as the package installs them.
-mkdir -p work/deb && (cd work/deb && ar x "../../cache/$DATA_DEB" && tar -xf data.tar.xz)
-cp -R work/deb/usr/share/X11/xkb out/xkb
+# a program linked against a meson-built one asks for by name. Its soname stays libxkbcommon.so,
+# as the APK carries it.
+# shellcheck disable=SC2086
+"$CC" -shared -Wl,-soname,libxkbcommon.so -Wl,--version-script=$XKB_SRC/xkbcommon.map -o out/libxkbcommon.so $OBJECTS
+mkdir -p out/include && cp -R "$XKB_SRC/include/xkbcommon" out/include/
+cp -R work/xkb out/xkb
+echo "$XKB_VERSION" > out/VERSION
 rm -rf work
-echo "$SPATIAND_NDK_REVISION" > out/.ndk
-echo "built $(pwd)/out/libxkbcommon.a, out/libxkbcommon.so and out/xkb"
+echo "$SPATIAND_NDK_REVISION $XKB_VERSION $XKB_DATA" > out/.ndk
+echo "built $(pwd)/out/libxkbcommon.a, out/libxkbcommon.so and out/xkb ($XKB_VERSION, xkb-data $XKB_DATA)"

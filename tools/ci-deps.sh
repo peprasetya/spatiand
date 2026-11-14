@@ -6,7 +6,7 @@
 #
 #   tools/ci-deps.sh linux             the Deck's compositor and every crate that builds on Linux
 #   tools/ci-deps.sh ffmpeg            FFmpeg as Spatiand ships it (third_party/ffmpeg), which Ubuntu has not got
-#   tools/ci-deps.sh android           the Beam Pro: Rust target, cargo-ndk, SDK, NDK, bison
+#   tools/ci-deps.sh android           the Beam Pro: Rust target, cargo-ndk, SDK, NDK
 #   tools/ci-deps.sh linux ffmpeg android     all of it
 #
 # Debian/Ubuntu (apt). Needs root, or sudo. The Mac cannot be built from Linux: see ci.yml.
@@ -51,7 +51,7 @@ linux() {
 android() {
     apt_update_once
     $SUDO apt-get install -y -qq --no-install-recommends \
-        build-essential pkg-config clang curl ca-certificates unzip git bison make openjdk-17-jdk-headless
+        build-essential pkg-config clang curl ca-certificates unzip git make openjdk-17-jdk-headless
     rust
     rustup target add aarch64-linux-android
     command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
@@ -75,7 +75,6 @@ android() {
     ENV_LINES="${ENV_LINES}export ANDROID_HOME=\"$SDK\"
 export SPATIAND_NDK=\"$SDK/ndk/$NDK\"
 export ANDROID_NDK_HOME=\"$SDK/ndk/$NDK\"
-export BISON=\"$(command -v bison)\"
 export PATH=\"\$HOME/.cargo/bin:\$PATH\"
 "
     echo "Android: . ~/.spatiand-ci-env first"

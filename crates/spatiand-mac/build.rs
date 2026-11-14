@@ -6,5 +6,7 @@ fn main() {
         println!("cargo:warning=mac/xkbcommon/out/libxkbcommon.a is missing: run mac/xkbcommon/build.sh");
     }
     println!("cargo:rustc-link-search=native={}", out.display());
+    // A new libxkbcommon (third_party/xkbcommon/source.sh) is linked in: not a file cargo watches.
+    println!("cargo:rerun-if-changed={}", out.join("libxkbcommon.a").display());
     println!("cargo:rerun-if-changed=build.rs");
 }

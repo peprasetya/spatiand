@@ -117,9 +117,7 @@ jobs:
         with:
           workspaces: crates/spatiand-mac
       - name: libxkbcommon
-        run: |
-          brew install bison
-          BISON="$(brew --prefix bison)/bin/bison" mac/xkbcommon/build.sh
+        run: mac/xkbcommon/build.sh
       - name: The Rust half
         run: cd crates/spatiand-mac && MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --locked
       - name: The app

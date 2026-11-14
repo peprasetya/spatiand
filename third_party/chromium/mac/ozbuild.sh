@@ -10,7 +10,14 @@ echo "start $(date)"
 # Beam Pro links the compositor's (its headers are kept in the tree: mac/wip).
 X=third_party/spatiand_xkbcommon/lib
 mkdir -p "$X"
-[ -f "$X/libxkbcommon.a" ] || lipo -thin arm64 "$HOME/Developer/Spatiand/mac/xkbcommon/out/libxkbcommon.a" -output "$X/libxkbcommon.a"
+# Copied again when the room's is newer (a new release: third_party/xkbcommon/source.sh), which
+# relinks SpatiMesh with it, and with it the release's headers (save-wip.sh then carries them
+# into mac/wip), which recompiles what includes them.
+xkb_built=$HOME/Developer/Spatiand/mac/xkbcommon/out
+if [ ! "$X/libxkbcommon.a" -nt "$xkb_built/libxkbcommon.a" ]; then
+    lipo -thin arm64 "$xkb_built/libxkbcommon.a" -output "$X/libxkbcommon.a"
+    cp "$xkb_built"/include/xkbcommon/*.h third_party/spatiand_xkbcommon/include/xkbcommon/
+fi
 nice -n 10 python3 ../../depot_tools/siso.py ninja -C out/mac-ozone -k 0 chrome --offline
 # Spatiand's FFmpeg and the OpenSSL it links, in the framework's Libraries, where its rpath looks
 # (mac/0001). The bundle step makes that folder again on every build.
