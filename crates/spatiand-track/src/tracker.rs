@@ -1541,3 +1541,74 @@ mod path_equivalence_tests {
         }
     }
 }
+
+/// The tracker's numbers for one fixed run, held to what they were under glam 0.29: a new glam
+/// (or anything else) that changed a quaternion convention -- the order of a product, which way
+/// a rotation turns, how Euler angles come out -- would move them.
+#[cfg(test)]
+mod pinned {
+    use super::*;
+
+    /// Two seconds still on the Air's map (bias learned, magnetometer anchored), then a turn
+    /// about all three axes at once, with gravity and the field turning against it.
+    fn run() -> HeadTracker {
+        let mut t = HeadTracker::new(AxisMap::XREAL_AIR, TrackerConfig::default());
+        for i in 0..6000u64 {
+            let s = i as f64 / 1000.0;
+            let moving = if s < 2.0 { 0.0 } else { (s - 2.0).min(1.0) };
+            let gyro = DVec3::new(0.64 + 20.0 * moving, -0.86 - 35.0 * moving * (s * 3.0).sin(), -0.73 + 12.0 * moving);
+            let tilt = 0.2 * moving * (s * 2.0).sin();
+            let accel = DVec3::new(tilt.sin(), 0.05 * moving, tilt.cos());
+            let mag = DVec3::new(0.21 * (s * 0.3 * moving).cos(), 0.21 * (s * 0.3 * moving).sin(), -0.21);
+            t.integrate(&ImuSample { timestamp_ns: i * 1_000_000, gyro, accel, mag, temperature_c: None });
+        }
+        t
+    }
+
+    fn close(name: &str, got: &[f64], want: &[f64]) {
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert!((g - w).abs() <= 1e-9, "{name}[{i}] is {g}, was {w}: {got:?}");
+        }
+    }
+
+    #[test]
+    fn a_fixed_run_ends_where_it_did() {
+        let t = run();
+        close("orientation", &t.orientation().to_array(), &[
+            -0.1064402582851056, 0.29161863830160034, 0.38219884017132927, 0.870375256876602,
+        ]);
+        let e = t.euler_degrees();
+        close("euler", &[e.yaw, e.pitch, e.roll], &[48.28389042903334, -36.085934090913454, 2.6686515895165037]);
+        close("predicted", &t.predicted_orientation(0.02, 10.0).to_array(), &[
+            -0.11135029773634474, 0.293034550779638, 0.3850460545958999, 0.8680273031901325,
+        ]);
+        close("bias", &t.gyro_bias().to_array(), &[0.86, 0.64, -0.73]);
+        let mut r = run();
+        r.recenter();
+        close("recentred", &r.recentred_orientation().to_array(), &[
+            0.018818441030953228, 0.0, -0.013715568017026364, 0.9997288379711445,
+        ]);
+    }
+
+    #[test]
+    fn glams_rotations_turn_the_way_they_did() {
+        // Each operation the tracker, the room and the apps lean on, on one rotation that is
+        // neither about one axis nor small.
+        let q = DQuat::from_axis_angle(DVec3::Z, 0.4) * DQuat::from_axis_angle(DVec3::Y, -0.3);
+        close("q * X", &(q * DVec3::X).to_array(), &[0.879923176281257, 0.37202555194225956, 0.2955202066613395]);
+        let (z, y, x) = q.to_euler(glam::EulerRot::ZYX);
+        close("to_euler ZYX", &[z, y, x], &[0.4, -0.3, 0.0]);
+        close("slerp", &q.slerp(DQuat::IDENTITY, 0.3).to_array(), &[
+            0.020892648365978084, -0.10306667015054732, 0.13823811970760833, 0.98479997004876,
+        ]);
+        close("angle_between", &[q.angle_between(DQuat::IDENTITY)], &[0.49879354229904976]);
+        close("DMat3::from_quat", &glam::DMat3::from_quat(q).to_cols_array(), &[
+            0.8799231762812572, 0.37202555194225956, 0.2955202066613395,
+            -0.3894183423086504, 0.9210609940028851, 0.0,
+            -0.2721921352954314, -0.11508098899676866, 0.955336489125606,
+        ]);
+        let arc = glam::Quat::from_rotation_arc(glam::Vec3::X, glam::Vec3::new(0.0, 0.6, 0.8)).to_array();
+        let want = [0.0, -0.56568545, 0.4242641, 0.70710677];
+        assert!(arc.iter().zip(want).all(|(g, w)| (g - w).abs() <= 1e-6), "from_rotation_arc is {arc:?}");
+    }
+}

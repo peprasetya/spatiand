@@ -335,3 +335,92 @@ mod tests {
         );
     }
 }
+
+/// The stereo cameras' numbers, held to what they were under glam 0.29, so that a new glam -- or
+/// anything else -- cannot quietly change a convention (handedness, which way is forward, the
+/// clip range, the matrices' layout) without a test saying so.
+#[cfg(test)]
+mod pinned {
+    use super::*;
+
+    fn head() -> DQuat {
+        // Turned left 30 degrees, looking 15 down and rolled 5: every axis at once.
+        DQuat::from_axis_angle(DVec3::Z, 30f64.to_radians())
+            * DQuat::from_axis_angle(DVec3::Y, 15f64.to_radians())
+            * DQuat::from_axis_angle(DVec3::X, 5f64.to_radians())
+    }
+
+    /// Within a few f32 steps of the value glam 0.29 gave, column by column.
+    fn close(name: &str, got: &[f32], want: &[f32]) {
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            assert!((g - w).abs() <= 1e-6 * w.abs().max(1.0), "{name}[{i}] is {g}, was {w}: {got:?}");
+        }
+    }
+
+    #[test]
+    fn the_eyes_views_are_as_they_were() {
+        let cfg = StereoConfig::default();
+        let level = |side| eye_for(side, DQuat::IDENTITY, DVec3::ZERO, &cfg).view.to_cols_array();
+        #[rustfmt::skip]
+        close("left, level", &level(EyeSide::Left), &[
+            0.0, -0.0, -1.0, 0.0,  -1.0, 0.0, -0.0, 0.0,  0.0, 1.0, -0.0, 0.0,  0.0315, -0.075, 0.1, 1.0,
+        ]);
+        #[rustfmt::skip]
+        close("right, level", &level(EyeSide::Right), &[
+            0.0, -0.0, -1.0, 0.0,  -1.0, 0.0, -0.0, 0.0,  0.0, 1.0, -0.0, 0.0,  -0.0315, -0.075, 0.1, 1.0,
+        ]);
+        let turned = |side| eye_for(side, head(), DVec3::new(0.2, -0.1, 0.05), &cfg);
+        #[rustfmt::skip]
+        close("left, turned", &turned(EyeSide::Left).view.to_cols_array(), &[
+            0.47856194, 0.2668688, -0.8365163, 0.0,
+            -0.8740087, 0.053437993, -0.4829629, 0.0,
+            -0.08418598, 0.9622502, 0.25881904, 0.0,
+            -0.14740396, -0.17114247, 0.20606601, 1.0,
+        ]);
+        #[rustfmt::skip]
+        close("right, turned", &turned(EyeSide::Right).view.to_cols_array(), &[
+            0.47856194, 0.2668688, -0.8365163, 0.0,
+            -0.8740087, 0.053437993, -0.4829629, 0.0,
+            -0.08418598, 0.9622502, 0.25881904, 0.0,
+            -0.21040395, -0.17114247, 0.20606601, 1.0,
+        ]);
+        for (side, want) in [
+            (EyeSide::Left, [0.2885920901003636, -0.02016458520516238, 0.09893871796630244]),
+            (EyeSide::Right, [0.31874149129625684, -0.07522713322448432, 0.09363500104805217]),
+        ] {
+            let got = turned(side).position.to_array();
+            assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-12), "{side:?} eye at {got:?}");
+        }
+    }
+
+    #[test]
+    fn the_projections_are_as_they_were() {
+        let cfg = StereoConfig::default();
+        #[rustfmt::skip]
+        close("projection", &projection_matrix(&cfg).to_cols_array(), &[
+            2.7474773, 0.0, 0.0, 0.0,  0.0, 4.884404, 0.0, 0.0,  0.0, 0.0, -1.0010005, -1.0,  0.0, 0.0, -0.10005003, 0.0,
+        ]);
+        let wide = StereoConfig { h_fov_deg: 52.0, per_eye: (1920, 1200), near_m: 0.1, far_m: 50.0, ..cfg };
+        #[rustfmt::skip]
+        close("projection, wide", &projection_matrix(&wide).to_cols_array(), &[
+            2.0503037, 0.0, 0.0, 0.0,  0.0, 3.280486, 0.0, 0.0,  0.0, 0.0, -1.0040079, -1.0,  0.0, 0.0, -0.2004008, 0.0,
+        ]);
+        // A point ahead, left and below, through a turned head's whole view and projection.
+        let eye = eye_for(EyeSide::Left, head(), DVec3::ZERO, &cfg);
+        let clip = eye.view_projection() * glam::Vec4::new(2.0, 0.3, -0.2, 1.0);
+        close("clip", &clip.to_array(), &[2.0420856, 1.3789597, 1.6714059, 1.7696853]);
+    }
+
+    #[test]
+    fn glams_own_camera_matrices_are_as_they_were() {
+        // As SpatiLoupe's model view and the avatar's picture call them.
+        #[rustfmt::skip]
+        close("look_to_rh", &Mat4::look_to_rh(glam::Vec3::new(0.5, 0.2, 3.0), -glam::Vec3::Z, glam::Vec3::Y).to_cols_array(), &[
+            1.0, 0.0, 0.0, 0.0,  0.0, 1.0, 0.0, 0.0,  0.0, 0.0, 1.0, 0.0,  -0.5, -0.2, -3.0, 1.0,
+        ]);
+        #[rustfmt::skip]
+        close("perspective_rh_gl", &Mat4::perspective_rh_gl(0.7, 16.0 / 9.0, 0.05, 100.0).to_cols_array(), &[
+            1.5409756, 0.0, 0.0, 0.0,  0.0, 2.7395122, 0.0, 0.0,  0.0, 0.0, -1.0010005, -1.0,  0.0, 0.0, -0.10005003, 0.0,
+        ]);
+    }
+}
