@@ -314,6 +314,53 @@ mod tests {
     /// gave them before the RustCrypto upgrade (HMAC-SHA256 from ring, unchanged by it; the
     /// fingerprints themselves are pinned in `transport`). A device on the old build and a
     /// host on the new must still confirm each other.
+    /// Randomness that is not: the same bytes every run, for a transcript to be replayed.
+    struct Fixed(u8);
+
+    impl rand_core::RngCore for Fixed {
+        fn next_u32(&mut self) -> u32 {
+            rand_core::impls::next_u32_via_fill(self)
+        }
+        fn next_u64(&mut self) -> u64 {
+            rand_core::impls::next_u64_via_fill(self)
+        }
+        fn fill_bytes(&mut self, out: &mut [u8]) {
+            for b in out {
+                self.0 = self.0.wrapping_mul(29).wrapping_add(7);
+                *b = self.0;
+            }
+        }
+        fn try_fill_bytes(&mut self, out: &mut [u8]) -> Result<(), rand_core::Error> {
+            self.fill_bytes(out);
+            Ok(())
+        }
+    }
+
+    impl rand_core::CryptoRng for Fixed {}
+
+    /// A pairing transcript recorded from this code before the RustCrypto upgrade (spake2 0.4,
+    /// the fingerprints from sha2 0.10) and replayed: the device's message and the host's for
+    /// fixed randomness, the key, and the confirmations each sends. A device on an older build
+    /// pairs with a host on a newer one only if all of these are still what they were; this is
+    /// what must pass, unchanged, before spake2 itself is moved.
+    #[test]
+    fn a_recorded_pairing_replays_byte_for_byte() {
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let client = Fingerprint::of(&rustls::pki_types::CertificateDer::from(b"device".to_vec()));
+        let host = Fingerprint::of(&rustls::pki_types::CertificateDer::from(b"host".to_vec()));
+        let (a, b) = spake_identities(&client, &host);
+        let code = Password::new(b"482913");
+        let (device, from_device) = Spake2::<Ed25519Group>::start_a_with_rng(&code, &a, &b, Fixed(1));
+        let (host_side, from_host) = Spake2::<Ed25519Group>::start_b_with_rng(&code, &a, &b, Fixed(2));
+        assert_eq!(hex(&from_device), "4126652f6bb2f75cd6b707b1d7aa0918d4c95de368c719a469f86ecb8df263e70a");
+        assert_eq!(hex(&from_host), "42b4169c9e6a95a1a20cd763f80ea0f44dfd9a1745639ea3f52b98bae684f429c8");
+        let key = host_side.finish(&from_device).unwrap();
+        assert_eq!(device.finish(&from_host).unwrap(), key);
+        assert_eq!(hex(&key), "a5a716c6c15f5b3e110406ffd79fa2229781250efe6c234045b91d3a5298d306");
+        assert_eq!(hex(confirmation(&key, HOST_LABEL, &client, &host).as_ref()), "6828f86612ec01587a0c6e4ed766b5b6a02385b2273d0ad22114713ddb218fa7");
+        assert_eq!(hex(confirmation(&key, CLIENT_LABEL, &client, &host).as_ref()), "a41695c872451470aaab4fe85e8c99dbb385ae1b24740470898c7457c864da19");
+    }
+
     #[test]
     fn the_confirmations_are_byte_for_byte_what_they_were() {
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();

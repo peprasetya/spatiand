@@ -4996,6 +4996,7 @@ dependencies = [
  "log",
  "postcard",
  "quinn",
+ "rand_core 0.6.4",
  "rcgen",
  "ring",
  "rustls",
