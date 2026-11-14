@@ -12,6 +12,23 @@ Deck's.
 **This is early.** It runs, it is used, and it is not finished. What follows is
 an honest account of which parts do what.
 
+**Three systems, one core.** The room began on the Steam Deck and is the same
+code on an XREAL Beam Pro (Android) and on a Mac: a port adds only what the
+system itself needs (its windowing, its GPU buffers, its sound), never another
+core. Most of this page still speaks of the Deck, where it is most worn-in;
+[docs/beam-pro.md](docs/beam-pro.md) and [docs/mac.md](docs/mac.md) say where
+the other two stand.
+
+**Its own applications**, each a Wayland client of the room on every system:
+SpatiShelf (files, and remotes through a storage service built on rclone),
+SpatiReel (films), SpatiLoupe (pictures and PDFs), SpatiQuill (text), SpatiPal
+(the assistant), SpatiKey (passwords and passkeys), and **SpatiMesh, the
+browser**: Chromium's Linux browser with Spatiand's patches, the same on the
+Deck, the Beam Pro (built for Android's libc) and the Mac (Chromium's Linux
+user interface on macOS), on the newest stable Chromium, moved forward every
+month. [docs/spatimesh.md](docs/spatimesh.md) has the whole of it;
+`third_party/chromium` is how it is built.
+
 ---
 
 ## What works
@@ -160,11 +177,11 @@ Listed because finding out by hitting them is worse.
   * **Object audio.** Atmos and DTS:X never reach the OS as objects on Linux, so
     what arrives is channels. Real object audio needs a protocol an application
     would have to speak; it does not exist yet.
-  * **The Mac is new, and less worn-in than the Deck.** The room on a Mac and
-    the Mac as a host work, on one Intel MacBook Pro; an Apple Silicon Mac has
-    not been tried, the glasses run at 60 Hz there rather than 72, and
-    [docs/mac.md](docs/mac.md) lists what has only been checked without glasses
-    on.
+  * **The Mac and the Beam Pro are newer, and less worn-in than the Deck.** The
+    room runs on an Apple silicon Mac mini and on the Beam Pro, the glasses at
+    60 Hz on the Mac rather than 72; [docs/mac.md](docs/mac.md) and
+    [docs/beam-pro.md](docs/beam-pro.md) list what has only been checked
+    without glasses on.
   * **Anything but this hardware.** The traits and a null backend exist so that
     other headsets are a table entry rather than a rewrite. Nobody has tried one.
 
@@ -272,7 +289,22 @@ on purpose — it is shown precisely when there is no headset to ask.
 | [docs/xreal-air.md](docs/xreal-air.md) | The glasses' protocol, verified against hardware. Probably the most reusable thing here |
 | [docs/steam-deck-controller.md](docs/steam-deck-controller.md) | The controller's HID reports |
 | [docs/state.md](docs/state.md) | Where the session keeps things |
+| [docs/spatimesh.md](docs/spatimesh.md) | SpatiMesh, the browser: Chromium with Spatiand's patches on all three systems, and the monthly update to the newest Chromium |
+| [docs/spatimesh-mac-port.md](docs/spatimesh-mac-port.md) | Chromium's Linux user interface carried to macOS |
+| [docs/spatikey.md](docs/spatikey.md) | SpatiKey: passwords and passkeys |
+| [docs/ai-integrations.md](docs/ai-integrations.md) | Dictation and the assistant |
+| [docs/mac.md](docs/mac.md) | The room on a Mac, and the Mac as a host |
+| [docs/beam-pro.md](docs/beam-pro.md) | The room on the XREAL Beam Pro |
+| [docs/privacy.md](docs/privacy.md) | What leaves the machine, and what never does |
 
 ## Licence
 
-MIT.
+MIT, for what is Spatiand's own.
+
+What it carries of others keeps their licences, listed in
+[third_party/NOTICES.md](third_party/NOTICES.md). In particular
+`third_party/chromium/patches/base` is the set of patches taken over from the
+Cromite browser, GPL-3.0 (`COPYING` beside them), and
+`third_party/chromium/android-libc/termux` is termux-packages' set for Chromium,
+under Chromium's own licence; SpatiMesh as built from them is distributed under
+the GPL-3.0.

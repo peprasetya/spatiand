@@ -19,3 +19,20 @@ libraries that can be replaced with a build of one's own of the same version. It
 without `--enable-gpl` and without `--enable-nonfree`, and with `--enable-version3` because
 OpenSSL's Apache licence is compatible with LGPL 3, not 2.1. The build refuses to finish if
 FFmpeg ever comes out GPL or non-free.
+
+## SpatiMesh (third_party/chromium)
+
+SpatiMesh is built from Chromium's source (fetched at build time, not kept here) with the patches
+in `third_party/chromium`:
+
+| What | Where | Licence | From |
+|---|---|---|---|
+| **Chromium** | fetched by `third_party/chromium/build.sh` at the pinned version | BSD 3-Clause and the licences of its parts (`chrome://credits` in the built browser) | https://chromium.googlesource.com/chromium/src |
+| **Cromite's patches**, taken over at Chromium 153 and carried by this project since | `third_party/chromium/patches/base`, `patches/sub` | **GPL-3.0** (`patches/base/COPYING`) | https://github.com/uazo/cromite, commit 3724efc; it gathers Bromite's and ungoogled-chromium's among its own |
+| **eyeo's Chromium SDK** (the ad blocker), inside those patches | same | **GPL-3.0** | https://gitlab.com/eyeo/adblockplus/chromium-sdk |
+| **termux-packages' Chromium patches** | `third_party/chromium/android-libc/termux` | Chromium's licence (a package's patches carry the package's licence) | https://github.com/termux/termux-packages, commit 47d0a63 |
+| **Spatiand's own patches** | `third_party/chromium/patches/0*.patch`, `android-libc/0*.patch`, `mac/` | MIT, as the rest of Spatiand; where one changes a GPL file of the above, that file stays GPL-3.0 | this repository |
+
+**SpatiMesh as built is therefore under the GPL-3.0.** Its complete corresponding source is the
+pinned Chromium plus these patches, applied by `third_party/chromium/build.sh`. The ad blocker's
+filter lists are fetched by the running browser from their maintainers and are not part of it.
