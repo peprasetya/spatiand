@@ -13,6 +13,8 @@ description = "SpatiQuill: Spatiand's terminal"
 # else with it.
 [dependencies]
 spatiand-app = { path = "../spatiand-app" }
+# For the machine's fonts as the room finds them (Android has no fontconfig for cosmic-text to ask).
+spatiand-render = { path = "../spatiand-render" }
 log.workspace = true
 env_logger.workspace = true
 libc = "0.2"

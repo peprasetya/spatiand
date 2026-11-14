@@ -107,7 +107,8 @@ unsafe fn compile(g: &glow::Context) -> Result<glow::Program, String> {
 impl Grid {
     pub fn new(gl: &Gl, px: f32) -> Result<Grid, String> {
         let g = gl.api();
-        let fonts = FontSystem::new();
+        // The room's own way of finding the machine's fonts: cosmic-text's finds none on Android.
+        let fonts = spatiand_render::text::font_system();
         let family = {
             let db = fonts.db();
             FACES.iter().find(|face| db.faces().any(|f| f.families.iter().any(|(name, _)| name == *face))).map(|s| s.to_string())

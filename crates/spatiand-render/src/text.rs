@@ -126,9 +126,11 @@ impl TextImage {
     }
 }
 
-/// The machine's fonts.
+/// The machine's fonts. For everything of Spatiand's that sets text with cosmic-text: an
+/// application that asked cosmic-text itself found none on Android and stopped at its first
+/// letter (SpatiQuill on the Beam Pro, "no default font found", 2026-11-14).
 #[cfg(not(target_os = "android"))]
-fn font_system() -> FontSystem {
+pub fn font_system() -> FontSystem {
     FontSystem::new()
 }
 
@@ -140,7 +142,7 @@ fn font_system() -> FontSystem {
 /// in a window's title gone (measured 2026-11-09). `NotoColorEmojiLegacy.ttf` beside it is the
 /// same set as bitmaps (CBDT), which swash draws, in colour, as a Mac's are.
 #[cfg(target_os = "android")]
-fn font_system() -> FontSystem {
+pub fn font_system() -> FontSystem {
     const FONTS: &str = "/system/fonts";
     let mut db = cosmic_text::fontdb::Database::new();
     let bitmaps = std::path::Path::new(FONTS).join("NotoColorEmojiLegacy.ttf").exists();
