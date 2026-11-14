@@ -180,9 +180,9 @@ snapshot backend, pictures going over as dmabufs.
 | `crates/spatiand-storage` | Its Rust client. `remote:path` is a **virtual place** to every application; files stream by URL (FFmpeg) or are read into memory. |
 | `crates/spatishelf` | **Every tab a process** (`spatishelf --tab`): it lists, makes pictures (images, film frames, HEIF; remote pictures read into memory) and copies. Sidebar of places (per platform; `/sdcard` places on Android) and remotes; tiles or a list; several chosen (click with Control/Shift, Space, Control-A); path bar; back, forward, up; type to jump, Control-F to filter; copy, cut, paste (local by itself, anything with a remote through rclone, as a job with a progress bar); rename, new folder, trash (the Mac's, freedesktop's on Linux; remotes and Android delete for good, after asking); a menu on the right button; open with SpatiLoupe, SpatiReel, SpatiQuill (folders) or the platform's own (`open`, `xdg-open`; a remote's file by its WebDAV address). **Add remote**: every kind rclone has, searchable, its main options as a form, then rclone's own questions one at a time (OAuth kinds open the browser and wait). "Other apps": the WebDAV address, name and password, and a button that mounts it in Finder (Mac) or opens it in the file manager (Linux). |
 | `crates/spatiloupe` | Pictures by the `image` crate, and HEIF (a phone's tile grid put together), AVIF and JPEG 2000 by FFmpeg; SVG by resvg; moving GIF, APNG, WebP; EXIF shown; zoom about the pointer, pan, rotate, a strip of the folder's other files, an info pane; controls on glass that fade. **Stereo photographs**: MPO pairs, side by side, crossed, over and under, told by name (`_sbs`, `.jps`...) or by the picture itself (the two halves' detail compared), squeezed pairs recognised by a film's shape; in the room each eye is given its view, flat the left one; the packing can be changed, eyes swapped, depth moved (`,` `.`). **PDF** by PDFium (`tools/fetch-pdfium.sh`, shipped beside the programs): pages down a column drawn at the size shown, search with the results marked, the outline. **glTF/GLB** by its own renderer: metallic-roughness PBR (base colour, metal-rough, normal, occlusion, emission, cut-out and see-through), lit by three lights and a studio sky, a soft shadow, 4x MSAA; in the room drawn for each eye with off-axis frusta; drag to turn, scroll to near. Remote files (`remote:path`) and folders open as local ones do. |
-| `crates/spatiquill` | **Every tab a process** (`spatiquill --tab`) holding a pseudo-terminal and alacritty's emulator (`alacritty_terminal` 0.26), sending its screen to the window; one process holds every window, and a second start opens a window in it. Glyphs from the platform's monospaced face through cosmic-text into one atlas, the whole screen one draw: colour (16, 256, true), bold, italic, underline, emoji, wide CJK. Tabs named by the running program or the folder; dragged along the bar to reorder, **off the window into a window of its own, or onto another SpatiQuill window**. Selection copies (to the Mac's clipboard by `pbcopy`, to Wayland's by `wl-copy` if it is there); paste; scrollback with a marker; mouse to programs that ask for it; a crashed tab offers a new shell and the others go on. |
+| `crates/spatiquill` | **Every tab a process** (`spatiquill --tab`) holding a pseudo-terminal and alacritty's emulator (`alacritty_terminal` 0.26), sending its screen to the window; one process holds every window, and a second start opens a window in it. Glyphs from the platform's monospaced face through cosmic-text into one atlas, the whole screen one draw: colour (16, 256, true), bold, italic, underline, emoji, wide CJK. Tabs named by the running program or the folder; dragged along the bar to reorder, **off the window into a window of its own, or onto another SpatiQuill window**. Copy and paste by keys, through the room's clipboard (see "SpatiQuill's copy and paste" below); scrollback with a marker; mouse to programs that ask for it; a crashed tab offers a new shell and the others go on. |
 | SDK | `App::watch(fd)`: an application woken for its own files. `ui::look` (backdrop, rule, glass, chip) shared by all four. |
-| Snapshot backend | `SPATIAND_STEPS`: clicks, drags (past the window's edge too), clicks through the room's own pointer under a trembling aim (`shaky:u,v,degrees,clicks`), scrolls, keys with modifiers, typed text, waits, `window:<title>` and `dump:<png>` of the window's own picture at any point -- how all of the above was driven. |
+| Snapshot backend | `SPATIAND_STEPS`: clicks, drags (past the window's edge too), clicks through the room's own pointer under a trembling aim (`shaky:u,v,degrees,clicks`), scrolls, keys with modifiers (`rctrl` the right Control, which is how a Mac's Command reaches the clients), typed text, waits, `window:<title>`, `dump:<png>` of the window's own picture at any point, and `clipboard`, which logs what is on the room's clipboard -- how all of the above was driven. |
 | Packaging | **Mac**: `mac/make-app.sh` puts all four, the storage service and PDFium in the bundle. **Deck**: all four build in the `holo` container; PDFium and the storage service are copied beside them. **Beam Pro**: `android/build.sh` builds FFmpeg 7.1 for Android (`android/ffmpeg/`, MediaCodec), the four as `lib<name>.so`, PDFium and the storage service into the APK; the compositor finds them in the APK's library folder and gives them `LD_LIBRARY_PATH`; `android/setup.sh` grants all-files access and switches the phantom-process monitor off. |
 
 **Checked** (Mac, snapshot backend with `SPATIAND_STEPS`, the real compositor and the
@@ -213,8 +213,6 @@ SpatiLoupe with a GLB in both eyes, HEIC and a PDF, SpatiShelf with pictures.
   Native applications through the WebDAV folder (Finder's mount) were not tried.
 
 **Not done yet**
-* Clipboard on the Deck and the Beam Pro beyond `wl-copy` if present: the SDK has no
-  `wl_data_device` yet.
 * SpatiShelf: opening in Android's own applications.
 * SpatiLoupe: Apple's spatial HEIC (two images in one file) shows its first eye only; glTF
   animation and skinning are not played.
@@ -401,3 +399,52 @@ What needs the room and is not there: stereo and the room's sound placement, typ
 window from SpatiKey, SpatiPal's microphone and reading of windows, and the
 settings and device-list sync the room runs (a program reads what was last synced). Only the Deck's
 tree is covered: a release folder does not carry these programs yet.
+
+## 2026-11-14: SpatiQuill's copy and paste
+
+The owner: "use the cmd/ctrl c / v for copy paste, instead of select for auto copy or right click
+for paste." Selecting no longer copies, and the right button no longer pastes. Copies go onto the
+**room's clipboard** through the SDK (`App::copy_text`, `wl_data_device`), as every other Spatiand
+application's do, so a Mac's pasteboard and a host's clipboard have them too; SpatiQuill no longer
+runs `pbcopy`/`wl-copy`/`wl-paste`, and `SPATIQUILL_CLIPBOARD` is gone.
+
+| Keys | Something selected | Nothing selected |
+|---|---|---|
+| Control-C (left Control) | copies, and the selection goes | the interrupt, as ever |
+| Control-V (left Control) | pastes; to a full-screen program (the other screen: vim, nano, less) it is the program's Control-V | the same |
+| Control-Shift-C | copies, the selection stays | nothing |
+| Control-Shift-V | pastes | pastes |
+| Right Control-C (Command-C on a Mac) | copies, the selection stays | nothing: never an interrupt |
+| Right Control-V (Command-V on a Mac) | pastes, even into a full-screen program | pastes |
+
+* **The two Controls**: the Mac's room hands either Command key to its clients as the right Control
+  (evdev 97, `crates/spatiand-mac/src/mac/ffi.rs`), so SpatiQuill tells them apart by that key's
+  press and release (`keys::RIGHT_CONTROL`, `keys::clip`), with nothing of the platform in it. On a
+  Deck's or phone's keyboard the right Control is a Control whose C and V are copy and paste only:
+  its C copies a selection as the left one does, and with nothing selected does nothing -- the
+  left Control-C interrupts. Its other chords (Control-D, -R, tmux's -B) are the program's still.
+  Its other Command-like shortcuts (T, W, N) were not changed: Control-Shift or a logo key still.
+* **A literal Control-V** on the main screen (readline's quoted-insert) is not sent: Control-V
+  pastes there. Readline has quoted-insert on Control-Q too, which reaches it once the terminal's
+  flow control is off (`stty -ixon`); on the other screen Control-V is the program's. A literal
+  Control-C with something selected is a second Control-C (the first copied and cleared it).
+* Pastes are bracketed when the program asked for it (`keys::paste_bytes`; Escapes taken out), and
+  bring the view down to the prompt. Whether something is selected is the tab's to say: Control-C
+  goes to the tab as a key marked `copy_first`, and the tab copies or sends the key. Control, Shift
+  or Command pressed on their own send nothing and no longer clear the selection (pressing Control
+  for Control-C cleared what it was to copy).
+* **The right button** opens a menu over a program that has not asked for the mouse: Copy (when
+  something is selected), Paste, Select all (the history and the screen, to its last written line).
+  A program that asked for the mouse gets the right button, as before. A double click selects a
+  word and copies nothing.
+
+**Checked** on deepmagpie in the snapshot room (`SPATIAND_BACKEND=snapshot`, a scratch home, bash),
+with a raw-mode reader logging every byte the terminal sent and the new `clipboard` step: a drag
+selected and copied nothing; Control-C copied it, sent nothing and cleared it; a second Control-C
+sent 0x03; `sleep 100` was interrupted; Control-V pasted at bash's prompt (bracketed) and into `cat`;
+bracketed paste around the text for a program that asked; on the other screen Control-V sent 0x16
+and right Control-V and Control-Shift-V pasted; right Control-C copied with a selection (kept) and
+sent nothing without one; Control-Shift-C/V; the right button opened the menu and pasted nothing,
+its Copy, Paste and Select all did theirs; a program asking for the mouse got the right button as
+SGR reports. **Not checked**: Command on a real Mac (the room's mapping is unit-tested there, not
+driven here), the Beam Pro.

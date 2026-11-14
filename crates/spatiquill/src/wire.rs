@@ -60,7 +60,9 @@ pub struct Screen {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToTab {
     /// `key` is spatiand_app's key, by number (see `keys.rs`); `code` the evdev code.
-    Key { key: u8, code: u32, text: String, shift: bool, control: bool, alt: bool },
+    /// `copy_first`: if something is selected, the key is not sent; what is selected is
+    /// copied ([`FromTab::Copied`]) and the selection cleared instead (Control-C).
+    Key { key: u8, code: u32, text: String, shift: bool, control: bool, alt: bool, copy_first: bool },
     Paste(String),
     Resize { cols: u16, rows: u16, cell_w: u16, cell_h: u16 },
     /// Move the view up the history by so many lines (down if less than none), or to the
@@ -73,6 +75,8 @@ pub enum ToTab {
     Select(Option<((u16, u16), (u16, u16))>),
     /// Send back what is selected as [`FromTab::Copied`].
     Copy,
+    /// Select everything: the history and the screen.
+    SelectAll,
     Focus(bool),
     Quit,
 }
@@ -140,10 +144,10 @@ impl ToTab {
     pub fn encode(&self) -> Vec<u8> {
         let mut b = Vec::new();
         let tag = match self {
-            ToTab::Key { key, code, text, shift, control, alt } => {
+            ToTab::Key { key, code, text, shift, control, alt, copy_first } => {
                 b.push(*key);
                 put_u32(&mut b, *code);
-                b.push(*shift as u8 | (*control as u8) << 1 | (*alt as u8) << 2);
+                b.push(*shift as u8 | (*control as u8) << 1 | (*alt as u8) << 2 | (*copy_first as u8) << 3);
                 put_str(&mut b, text);
                 b'K'
             }
@@ -177,6 +181,7 @@ impl ToTab {
                 b'X'
             }
             ToTab::Copy => b'C',
+            ToTab::SelectAll => b'A',
             ToTab::Focus(on) => {
                 b.push(*on as u8);
                 b'F'
@@ -193,7 +198,7 @@ impl ToTab {
                 let key = b.u8()?;
                 let code = b.u32()?;
                 let m = b.u8()?;
-                ToTab::Key { key, code, shift: m & 1 != 0, control: m & 2 != 0, alt: m & 4 != 0, text: b.str()? }
+                ToTab::Key { key, code, shift: m & 1 != 0, control: m & 2 != 0, alt: m & 4 != 0, copy_first: m & 8 != 0, text: b.str()? }
             }
             b'P' => ToTab::Paste(b.str()?),
             b'R' => ToTab::Resize { cols: b.u16()?, rows: b.u16()?, cell_w: b.u16()?, cell_h: b.u16()? },
@@ -211,6 +216,7 @@ impl ToTab {
                 }
             }
             b'C' => ToTab::Copy,
+            b'A' => ToTab::SelectAll,
             b'F' => ToTab::Focus(b.u8()? != 0),
             b'Q' => ToTab::Quit,
             _ => return None,
@@ -382,7 +388,14 @@ mod tests {
         assert_eq!(gather.next(), Some(FromTab::Title("vim".into())));
         assert_eq!(gather.next(), None);
 
-        let asked = [ToTab::Key { key: 3, code: 30, text: "é".into(), shift: true, control: false, alt: true }, ToTab::Scroll(-5), ToTab::Select(None), ToTab::Resize { cols: 80, rows: 24, cell_w: 12, cell_h: 26 }];
+        let asked = [
+            ToTab::Key { key: 3, code: 30, text: "é".into(), shift: true, control: false, alt: true, copy_first: false },
+            ToTab::Key { key: 15, code: 46, text: "c".into(), shift: false, control: true, alt: false, copy_first: true },
+            ToTab::Scroll(-5),
+            ToTab::Select(None),
+            ToTab::SelectAll,
+            ToTab::Resize { cols: 80, rows: 24, cell_w: 12, cell_h: 26 },
+        ];
         let bytes: Vec<u8> = asked.iter().flat_map(|m| m.encode()).collect();
         let mut reader = &bytes[..];
         for m in &asked {

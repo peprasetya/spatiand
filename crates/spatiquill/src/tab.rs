@@ -271,25 +271,45 @@ pub fn run() -> io::Result<()> {
         while let Ok(message) = asked.try_recv() {
             dirty = true;
             match message {
-                ToTab::Key { key, code, text, shift, control, alt } => {
+                ToTab::Key { key, code, text, shift, control, alt, copy_first } => {
                     let mut term = reading_term.lock();
+                    // Control-C with something selected: a copy, and the program hears nothing.
+                    // The selection goes, so a second Control-C is the interrupt.
+                    if copy_first {
+                        if let Some(selected) = term.selection_to_string().filter(|s| !s.is_empty()) {
+                            term.selection = None;
+                            drop(term);
+                            if !send(FromTab::Copied(selected)) {
+                                return Ok(());
+                            }
+                            continue;
+                        }
+                    }
                     let app_cursor = term.mode().contains(TermMode::APP_CURSOR);
+                    let bytes = crate::keys::bytes(key, code, &text, shift, control, alt, app_cursor);
+                    // A key that sends nothing -- Control, Shift, Command on their own, on the
+                    // way to a chord -- leaves the selection and the view as they are: pressing
+                    // Control for Control-C cleared what it was to copy.
+                    if bytes.is_empty() {
+                        continue;
+                    }
                     // Typing brings the view back down to where the typing is.
                     if term.grid().display_offset() != 0 {
                         term.scroll_display(Scroll::Bottom);
                     }
                     term.selection = None;
                     drop(term);
-                    notifier.notify(crate::keys::bytes(key, code, &text, shift, control, alt, app_cursor));
+                    notifier.notify(bytes);
                 }
                 ToTab::Paste(text) => {
-                    let bracketed = reading_term.lock().mode().contains(TermMode::BRACKETED_PASTE);
-                    let text = text.replace("\r\n", "\r").replace('\n', "\r");
-                    if bracketed {
-                        notifier.notify(format!("\x1b[200~{}\x1b[201~", text.replace('\x1b', "")).into_bytes());
-                    } else {
-                        notifier.notify(text.into_bytes());
+                    let mut term = reading_term.lock();
+                    let bracketed = term.mode().contains(TermMode::BRACKETED_PASTE);
+                    // A paste is typing: the view comes down to the prompt it goes into.
+                    if term.grid().display_offset() != 0 {
+                        term.scroll_display(Scroll::Bottom);
                     }
+                    drop(term);
+                    notifier.notify(crate::keys::paste_bytes(&text, bracketed));
                 }
                 ToTab::Resize { cols, rows, cell_w, cell_h } => {
                     let size = WindowSize { num_lines: rows.max(1), num_cols: cols.max(2), cell_width: cell_w, cell_height: cell_h };
@@ -333,6 +353,18 @@ pub fn run() -> io::Result<()> {
                     if !send(FromTab::Copied(text)) {
                         return Ok(());
                     }
+                }
+                ToTab::SelectAll => {
+                    let mut term = reading_term.lock();
+                    let (top, mut bottom, last) = (term.topmost_line(), term.bottommost_line(), term.last_column());
+                    // To the last line with something on it, not the empty screen under it.
+                    let blank = |term: &Term<Listener>, line: Line| (0..=last.0).all(|c| term.grid()[line][Column(c)].c == ' ');
+                    while bottom > top && blank(&term, bottom) {
+                        bottom = Line(bottom.0 - 1);
+                    }
+                    let mut selection = Selection::new(SelectionType::Simple, Point::new(top, Column(0)), Side::Left);
+                    selection.update(Point::new(bottom, last), Side::Right);
+                    term.selection = Some(selection);
                 }
                 ToTab::Focus(on) => {
                     let mode = *reading_term.lock().mode();

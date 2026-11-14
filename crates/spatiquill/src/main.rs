@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{look, theme, Painter, Rect};
+use spatiand_app::ui::{look, theme, Input, List, Painter, Rect, Row};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 
 use grid::Grid;
@@ -125,6 +125,7 @@ struct Win {
     placed: Vec<(u64, Rect, Rect)>,
     plus: Rect,
     last_click: Option<(Instant, (u16, u16))>,
+    menu: Option<Menu>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -149,7 +150,8 @@ struct Quill {
     /// on another SpatiQuill window straight after, it was dropped there; if not, it becomes
     /// a window of its own.
     in_flight: Option<(u64, WindowId, Instant)>,
-    clipboard: String,
+    /// The right Control key is held: on a Mac, a Command key (see `keys::clip`).
+    right_control: bool,
     typed_at: Instant,
     /// The text's size has changed: the cells are measured again before the next drawing.
     resize_text: bool,
@@ -163,52 +165,30 @@ fn socket_path() -> PathBuf {
     dir.join(format!("spatiquill-{display}.sock"))
 }
 
-/// Whether the machine's clipboard is to be used: `SPATIQUILL_CLIPBOARD=off` keeps a test's
-/// selections out of the clipboard of whoever's machine it runs on.
-fn clipboard_on() -> bool {
-    std::env::var("SPATIQUILL_CLIPBOARD").as_deref() != Ok("off")
+/// What the terminal's menu (the right button, where the program has not asked for the mouse)
+/// offers.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum MenuItem {
+    Copy,
+    Paste,
+    SelectAll,
 }
 
-/// What the clipboard's programs are told text is. `pbcopy` and `pbpaste` take it from the
-/// locale, and a Mac application started from the Finder has none: they then read and write
-/// MacRoman, and every name with a character past ASCII comes out as mojibake.
-const UTF8: [(&str, &str); 2] = [("LANG", "en_US.UTF-8"), ("LC_CTYPE", "en_US.UTF-8")];
-
-/// The machine's own clipboard, where there is a way to reach it from here.
-fn system_copy(text: &str) {
-    if !clipboard_on() {
-        return;
-    }
-    let program: Option<(&str, &[&str])> = if cfg!(target_os = "macos") {
-        Some(("pbcopy", &[]))
-    } else if cfg!(target_os = "linux") {
-        Some(("wl-copy", &[]))
-    } else {
-        None
-    };
-    if let Some((program, args)) = program {
-        if let Ok(mut child) = Command::new(program).args(args).envs(UTF8).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            let _ = child.wait();
-        }
-    }
+/// The terminal's menu, open at a point of its window.
+struct Menu {
+    at: (f32, f32),
+    list: List,
+    items: Vec<(Row, MenuItem)>,
 }
 
-fn system_paste() -> Option<String> {
-    if !clipboard_on() {
-        return None;
+impl Menu {
+    fn rect(&self, size: (u32, u32)) -> Rect {
+        let h = self.items.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 16.0;
+        let w = 420.0;
+        let x = self.at.0.min(size.0 as f32 - w - 12.0).max(12.0);
+        let y = self.at.1.min(size.1 as f32 - h - 12.0).max(12.0);
+        Rect::new(x, y, w, h)
     }
-    let program: (&str, &[&str]) = if cfg!(target_os = "macos") {
-        ("pbpaste", &[])
-    } else if cfg!(target_os = "linux") {
-        ("wl-paste", &["--no-newline"])
-    } else {
-        return None;
-    };
-    let out = Command::new(program.0).args(program.1).envs(UTF8).stderr(Stdio::null()).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 impl Quill {
@@ -260,6 +240,7 @@ impl Quill {
             placed: Vec::new(),
             plus: Rect::default(),
             last_click: None,
+            menu: None,
         });
         id
     }
@@ -425,10 +406,11 @@ impl Quill {
         for win in &mut self.wins {
             win.dirty = true;
         }
+        // Onto the room's clipboard, which is every machine's it can see (the Mac's pasteboard,
+        // a host's), as every Spatiand application copies.
         if let Some(text) = copied {
             if !text.is_empty() {
-                system_copy(&text);
-                self.clipboard = text;
+                self.app.copy_text(text);
             }
         }
         // A shell that has finished takes its tab with it, as in every terminal.
@@ -475,9 +457,16 @@ impl Quill {
             self.wins.iter_mut().for_each(|w| w.dirty = true);
             return true;
         }
+        // The right Control, held or let go: on a Mac, a Command key (see `keys::clip`).
+        if let Event::Key { code: keys::RIGHT_CONTROL, pressed, .. } = event {
+            self.right_control = pressed;
+        }
         let Some(id) = event.window() else { return true };
         let Some(w) = self.win_index(id) else { return true };
         self.wins[w].dirty = true;
+        if self.wins[w].menu.is_some() && self.menu_input(w, &event) {
+            return true;
+        }
         match event {
             Event::Ready { .. } => {
                 self.wins[w].ready = true;
@@ -497,6 +486,11 @@ impl Quill {
             }
             Event::Focus { focused, .. } => {
                 self.wins[w].focused = focused;
+                if !focused {
+                    // The keys went elsewhere: nothing is held here any more.
+                    self.right_control = false;
+                    self.wins[w].menu = None;
+                }
                 if let Some(tab) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
                     tab.tell(&ToTab::Focus(focused));
                 }
@@ -603,8 +597,8 @@ impl Quill {
         let (x, y) = self.wins[w].pointer;
         let hover = self.wins[w].hover;
         if button != PointerButton::Left {
-            // The other buttons, to a program that asked for the mouse; the right pastes for
-            // one that did not.
+            // The other buttons, to a program that asked for the mouse; the right opens the
+            // terminal's menu over one that did not (it no longer pastes: Control-V does).
             let Some(tab) = self.active_tab(w) else { return };
             let cell = self.cell_at(w, x, y);
             let mouse = self.tabs.get(&tab).is_some_and(|t| t.screen.mouse);
@@ -613,8 +607,8 @@ impl Quill {
                 if let Some(t) = self.tabs.get_mut(&tab) {
                     t.tell(&ToTab::Mouse { button: b, pressed, motion: false, col: cell.0, row: cell.1 });
                 }
-            } else if pressed && button == PointerButton::Right {
-                self.paste(w);
+            } else if pressed && button == PointerButton::Right && cell.is_some() {
+                self.open_menu(w, (x, y));
             }
             return;
         }
@@ -684,14 +678,12 @@ impl Quill {
                     if double {
                         let (from, to) = word_at(&t.screen, start);
                         t.tell(&ToTab::Select(Some((from, to))));
-                        t.tell(&ToTab::Copy);
                     } else {
                         t.tell(&ToTab::Select(None));
                     }
-                } else {
-                    // What is selected is copied, as on every Linux desktop.
-                    t.tell(&ToTab::Copy);
                 }
+                // What is selected stays selected, and is not copied until Control-C (the
+                // owner, 2026-11-14: no copying on selecting).
             }
         }
     }
@@ -754,10 +746,7 @@ impl Quill {
     }
 
     fn paste(&mut self, w: usize) {
-        let text = system_paste().filter(|t| !t.is_empty()).unwrap_or_else(|| self.clipboard.clone());
-        if text.is_empty() {
-            return;
-        }
+        let Some(text) = self.app.clipboard_text().filter(|t| !t.is_empty()) else { return };
         if let Some(t) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
             t.tell(&ToTab::Paste(text));
         }
@@ -771,6 +760,26 @@ impl Quill {
             _ => None,
         };
         let id = self.wins[w].id;
+        // Copy and paste: Control-C and -V, Control-Shift-C and -V, and Command-C and -V on a
+        // Mac (its Command comes as the right Control). See `keys::clip` for which is which.
+        let alternate = self.active_tab(w).and_then(|t| self.tabs.get(&t)).is_some_and(|t| t.screen.alternate);
+        let mut copy_first = false;
+        match keys::clip(letter, m, self.right_control, alternate) {
+            keys::Clip::Copy => {
+                if let Some(t) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
+                    t.tell(&ToTab::Copy);
+                }
+                return;
+            }
+            keys::Clip::Paste => {
+                self.wins[w].selecting = None;
+                self.paste(w);
+                return;
+            }
+            // The tab knows whether something is selected: it copies, or sends the key on.
+            keys::Clip::CopyElseKey => copy_first = true,
+            keys::Clip::Key => {}
+        }
         if command {
             match (letter, key) {
                 (Some('t'), _) => {
@@ -790,16 +799,6 @@ impl Quill {
                 }
                 (Some('n'), _) => {
                     self.new_window();
-                    return;
-                }
-                (Some('c'), _) => {
-                    if let Some(t) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
-                        t.tell(&ToTab::Copy);
-                    }
-                    return;
-                }
-                (Some('v'), _) => {
-                    self.paste(w);
                     return;
                 }
                 (Some('=') | Some('+'), _) => return self.zoom(1.1),
@@ -874,7 +873,74 @@ impl Quill {
             Key::Char(c) if text.is_empty() && (m.control || m.alt) => c.to_string(),
             _ => text,
         };
-        t.tell(&ToTab::Key { key: keys::number(key), code, text, shift: m.shift, control: m.control, alt: m.alt });
+        t.tell(&ToTab::Key { key: keys::number(key), code, text, shift: m.shift, control: m.control, alt: m.alt, copy_first });
+    }
+
+    fn open_menu(&mut self, w: usize, at: (f32, f32)) {
+        let selected = self.active_tab(w).and_then(|t| self.tabs.get(&t)).is_some_and(|t| t.screen.cells.iter().any(|c| c.flags & wire::flags::SELECTED != 0));
+        let mut items = Vec::new();
+        if selected {
+            items.push((Row::with("Copy", "Ctrl+C"), MenuItem::Copy));
+        }
+        items.push((Row::with("Paste", "Ctrl+V"), MenuItem::Paste));
+        items.push((Row::new("Select all"), MenuItem::SelectAll));
+        let mut list = List::default();
+        list.focused = true;
+        self.wins[w].selecting = None;
+        self.wins[w].menu = Some(Menu { at, list, items });
+    }
+
+    /// The menu has the input first while it is open. Whether it took this event.
+    fn menu_input(&mut self, w: usize, event: &Event) -> bool {
+        let size = self.wins[w].size;
+        let pointer = self.wins[w].pointer;
+        let Some(menu) = self.wins[w].menu.as_mut() else { return false };
+        let rect = menu.rect(size);
+        match event {
+            // Another right press: the menu opens again where it is now.
+            Event::Button { button: PointerButton::Right, pressed: true, .. } => {
+                self.wins[w].menu = None;
+                return false;
+            }
+            Event::Button { button: PointerButton::Left, pressed: true, .. } if !rect.contains(pointer.0, pointer.1) => {
+                self.wins[w].menu = None;
+                return true;
+            }
+            Event::Key { key: Key::Escape, pressed: true, .. } => {
+                self.wins[w].menu = None;
+                return true;
+            }
+            // Any other key: the menu goes, and the key is the terminal's.
+            Event::Key { key, pressed: true, .. } if !matches!(key, Key::Up | Key::Down | Key::Enter | Key::Home | Key::End) => {
+                self.wins[w].menu = None;
+                return false;
+            }
+            Event::Key { pressed: false, .. } => return false,
+            _ => {}
+        }
+        let chosen = Input::of(event, 1.0).and_then(|input| menu.list.input(&input));
+        if let Some(row) = chosen {
+            let item = menu.items[row].1;
+            self.wins[w].menu = None;
+            let tab = self.active_tab(w);
+            match item {
+                MenuItem::Copy => {
+                    if let Some(t) = tab.and_then(|t| self.tabs.get_mut(&t)) {
+                        t.tell(&ToTab::Copy);
+                    }
+                }
+                MenuItem::Paste => self.paste(w),
+                MenuItem::SelectAll => {
+                    if let Some(t) = tab.and_then(|t| self.tabs.get_mut(&t)) {
+                        t.tell(&ToTab::SelectAll);
+                    }
+                }
+            }
+            return true;
+        }
+        // The buttons, the wheel and the keys are the menu's while it is open; the pointer
+        // still moves, and the window still changes, under it.
+        matches!(event, Event::Button { .. } | Event::Scroll { .. } | Event::Key { .. })
     }
 
     fn zoom(&mut self, by: f32) {
@@ -968,6 +1034,14 @@ impl Quill {
                     let pill = Rect::new((all.w - width) * 0.5, all.h - 64.0, width, 40.0);
                     look::glass(p, gl, pill, 20.0, 1.0);
                     p.label(gl, hint, pill, theme::FOOTER_EM * 0.85, theme::ink_detail(), 0.5);
+                }
+                if let Some(menu) = win.menu.as_mut() {
+                    let rect = menu.rect(size);
+                    p.glow(gl, rect, 20.0, [0.0, 0.0, 0.0, 0.45], 24.0);
+                    p.fill(gl, rect, 20.0, theme::ground());
+                    look::glass(p, gl, rect, 20.0, 1.0);
+                    let rows: Vec<Row> = menu.items.iter().map(|(r, _)| r.clone()).collect();
+                    menu.list.draw(p, gl, rect.inset(10.0), &rows);
                 }
                 p.end(gl);
             })?;
@@ -1131,7 +1205,7 @@ fn main() {
             next_tab: 1,
             listener,
             in_flight: None,
-            clipboard: String::new(),
+            right_control: false,
             typed_at: Instant::now(),
             resize_text: false,
         };
