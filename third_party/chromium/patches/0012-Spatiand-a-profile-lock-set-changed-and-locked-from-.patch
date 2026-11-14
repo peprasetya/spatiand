@@ -7,13 +7,14 @@ Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
 ---
  chrome/app/settings_strings.grdp              |   2 +-
  chrome/browser/BUILD.gn                       |   1 +
+ chrome/browser/profiles/profile_manager.cc    |  20 +-
  .../settings/people_page/people_page.html.ts  |  89 +-----
  .../browser/spatiand/profile_lock_dialog.cc   | 282 ++++++++++++++++--
  chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
- chrome/browser/spatiand/profiles_sync.cc      | 148 ++++++++-
- chrome/browser/spatiand/profiles_sync.h       |  28 ++
+ chrome/browser/spatiand/profiles_sync.cc      | 216 +++++++++++++-
+ chrome/browser/spatiand/profiles_sync.h       |  32 ++
  .../ui/views/profiles/profile_menu_view.cc    |  30 ++
- 8 files changed, 487 insertions(+), 111 deletions(-)
+ 9 files changed, 578 insertions(+), 112 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
 index a803c69e26..acb5857c52 100644
@@ -40,6 +41,58 @@ index 0a379630b4..4aa5d41e98 100644
      "//components/spellcheck:buildflags",
      "//components/spellcheck/browser",
      "//components/spellcheck/common",
+diff --git a/chrome/browser/profiles/profile_manager.cc b/chrome/browser/profiles/profile_manager.cc
+index 2e44109433..a50797232f 100644
+--- a/chrome/browser/profiles/profile_manager.cc
++++ b/chrome/browser/profiles/profile_manager.cc
+@@ -108,6 +108,10 @@
+ #include "google_apis/gaia/gaia_auth_util.h"
+ #include "ui/base/l10n/l10n_util.h"
+ 
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/profiles_sync.h"
++#endif
++
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+ #include "extensions/browser/api/management/management_api.h"
+ #include "extensions/browser/extension_system.h"
+@@ -181,6 +185,18 @@ using content::BrowserThread;
+ 
+ namespace {
+ 
++// Spatiand: a profile with a lock is never what a plain start opens by default, so it is not
++// recorded as last used or last open (the owner, 2026-11-14); a start asks for its PIN again
++// anyway. ProfilesSync::ForgetLockedAsLastUsed clears what was recorded before.
++bool HasSpatiandLock(const base::FilePath& profile_path) {
++#if BUILDFLAG(IS_LINUX)
++  const spatiand::ProfilesSync* profiles = spatiand::ProfilesSync::Get();
++  return profiles && profiles->HasLock(profile_path);
++#else
++  return false;
++#endif
++}
++
+ const void* const kProfileDestructionObserverKey =
+     &kProfileDestructionObserverKey;
+ 
+@@ -2163,6 +2179,7 @@ void ProfileManager::SaveActiveProfiles() {
+     // never get a browser.
+     if (!IsRegisteredAsEphemeral(&GetProfileAttributesStorage(),
+                                  (*it)->GetPath()) &&
++        !HasSpatiandLock((*it)->GetPath()) &&
+         profile_paths.find(profile_path) == profile_paths.end() &&
+         profile_path != base::FilePath(chrome::kSystemProfileDir)) {
+       profile_paths.insert(profile_path);
+@@ -2249,7 +2266,8 @@ void ProfileManager::SetProfileAsLastUsed(Profile* last_active) {
+   if (profiles_info_.find(last_active->GetPath()) != profiles_info_.end() &&
+       !last_active->IsSystemProfile()) {
+     base::FilePath profile_path_base = last_active->GetBaseName();
+-    if (profile_path_base != GetLastUsedProfileBaseName()) {
++    if (profile_path_base != GetLastUsedProfileBaseName() &&
++        !HasSpatiandLock(last_active->GetPath())) {
+       profiles::SetLastUsedProfile(profile_path_base);
+     }
+ 
 diff --git a/chrome/browser/resources/settings/people_page/people_page.html.ts b/chrome/browser/resources/settings/people_page/people_page.html.ts
 index b3303085ac..40179b1d95 100644
 --- a/chrome/browser/resources/settings/people_page/people_page.html.ts
@@ -574,10 +627,18 @@ index 2350d3f843..3c8938fd50 100644
  
  #endif  // CHROME_BROWSER_SPATIAND_PROFILE_LOCK_DIALOG_H_
 diff --git a/chrome/browser/spatiand/profiles_sync.cc b/chrome/browser/spatiand/profiles_sync.cc
-index b90c819ccb..7992892cef 100644
+index b90c819ccb..981c3f5cba 100644
 --- a/chrome/browser/spatiand/profiles_sync.cc
 +++ b/chrome/browser/spatiand/profiles_sync.cc
-@@ -25,6 +25,9 @@
+@@ -7,6 +7,7 @@
+ #include <array>
+ #include <utility>
+ 
++#include "base/command_line.h"
+ #include "base/files/file_enumerator.h"
+ #include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+@@ -25,6 +26,9 @@
  #include "chrome/browser/profiles/profile_manager.h"
  #include "chrome/browser/profiles/profile_metrics.h"
  #include "chrome/browser/spatiand/profile_lock_dialog.h"
@@ -587,7 +648,15 @@ index b90c819ccb..7992892cef 100644
  #include "chrome/browser/spatiand/shared_folder.h"
  #include "chrome/browser/themes/theme_service.h"
  #include "chrome/browser/themes/theme_service_factory.h"
-@@ -160,6 +163,28 @@ void UpdateRecordFile(const std::string& id, const ProfileRecord& record) {
+@@ -32,6 +36,7 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+ #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+ #include "chrome/browser/ui/profiles/profile_colors_util.h"
++#include "chrome/common/chrome_switches.h"
+ #include "chrome/common/pref_names.h"
+ #include "components/prefs/pref_service.h"
+ #include "crypto/hash.h"
+@@ -160,6 +165,28 @@ void UpdateRecordFile(const std::string& id, const ProfileRecord& record) {
    WriteJson(RecordFile(id), base::Value(std::move(dict)));
  }
  
@@ -616,16 +685,90 @@ index b90c819ccb..7992892cef 100644
  void WriteFirstRecord(const std::string& name, SkColor colour) {
    base::DictValue dict;
    dict.Set("name", name);
-@@ -214,7 +239,7 @@ ProfilesSync::ProfilesSync()
+@@ -213,8 +240,9 @@ ProfilesSync::ProfilesSync()
+     known_ = ReadStringSet(KnownFile());
      OnRead(ReadRecords());
    }
++  ForgetLockedAsLastUsed();
    storage_observation_.Observe(&manager->GetProfileAttributesStorage());
 -  manager->AddObserver(this);
 +  manager_observation_.Observe(manager);
    browsers_observation_.Observe(GlobalBrowserCollection::GetInstance());
    // Opens the last profile used, as SpatiMesh does, rather than asking whose each time; the
    // picker's own checkbox still turns that on.
-@@ -517,6 +542,16 @@ void ProfilesSync::OnProfileNameChanged(const base::FilePath& profile_path,
+@@ -225,6 +253,71 @@ ProfilesSync::ProfilesSync()
+ 
+ ProfilesSync::~ProfilesSync() = default;
+ 
++void ProfilesSync::ForgetLockedAsLastUsed() {
++  // Spatiand: a start never opens a profile with a lock, nor its PIN window, by itself (the owner,
++  // 2026-11-14); one is opened only by choosing it from the profile menu. ProfileManager records
++  // none as last used or last open, and this clears what was recorded before (by a start naming
++  // it, or before its lock was set, here or on another machine). Every start asks for the PIN
++  // again (`unlocked_` lives only this run), so a profile unlocked last time counts as locked. Run
++  // once, before the start's profile is chosen; a command line handed to a browser already running
++  // never comes here.
++  PrefService* local_state = g_browser_process->local_state();
++  ProfileManager* manager = g_browser_process->profile_manager();
++  const base::FilePath& user_data_dir = manager->user_data_dir();
++  // A start naming a locked profile opens the last used unlocked one, as a plain start does.
++  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
++  if (const base::FilePath named = command_line->GetSwitchValuePath(switches::kProfileDirectory);
++      !named.empty() && HasLock(user_data_dir.Append(named))) {
++    LOG(WARNING) << "SpatiMesh: " << named << " has a lock; the start opens the last profile used";
++    command_line->RemoveSwitch(switches::kProfileDirectory);
++  }
++  std::set<base::FilePath> open;
++  if (local_state->HasPrefPath(prefs::kProfilesLastActive)) {
++    const base::ListValue& list = local_state->GetList(prefs::kProfilesLastActive);
++    base::ListValue kept;
++    for (const base::Value& entry : list) {
++      if (const std::string* name = entry.GetIfString(); name && !name->empty()) {
++        const base::FilePath path = user_data_dir.Append(base::FilePath::FromUTF8Unsafe(*name));
++        if (HasLock(path)) {
++          continue;
++        }
++        open.insert(path);
++      }
++      kept.Append(entry.Clone());
++    }
++    if (kept.size() != list.size()) {
++      local_state->SetList(prefs::kProfilesLastActive, std::move(kept));
++    }
++  }
++  // The last used is also one of those open at exit when any are left, or the start would open
++  // none of them and show the picker.
++  const base::FilePath last = manager->GetLastUsedProfileDir();
++  if (!HasLock(last) && (open.empty() || open.contains(last))) {
++    return;
++  }
++  const auto unlocked = [this, manager](const std::set<base::FilePath>& among) {
++    return manager->FindLastActiveProfile(base::BindRepeating(
++        [](const ProfilesSync* self, const std::set<base::FilePath>* among,
++           ProfileAttributesEntry* entry) {
++          return !self->HasLock(entry->GetPath()) &&
++                 (among->empty() || among->contains(entry->GetPath()));
++        },
++        base::Unretained(this), base::Unretained(&among)));
++  };
++  std::optional<base::FilePath> other = unlocked(open);
++  if (!other && !open.empty()) {
++    other = unlocked({});
++  }
++  if (!other) {
++    // Every profile has a lock: a new one, as a first start makes it, made when the start opens
++    // it (ProfileManager in its own way, so OnProfileAdded shares it as any new profile). The
++    // next start finds it unlocked and opens it again.
++    other = manager->GenerateNextProfileDirectoryPath();
++    LOG(WARNING) << "SpatiMesh: every profile has a lock; the start makes " << other->BaseName();
++  }
++  local_state->SetFilePath(prefs::kProfileLastUsed, other->BaseName());
++}
++
+ void ProfilesSync::Poll() {
+   if (reading_) {
+     return;
+@@ -517,6 +610,16 @@ void ProfilesSync::OnProfileNameChanged(const base::FilePath& profile_path,
    }
  }
  
@@ -642,7 +785,7 @@ index b90c819ccb..7992892cef 100644
  void ProfilesSync::OnProfileAdded(Profile* profile) {
    // A profile's colour is its theme once it is open.
    if (!profile->IsRegularProfile()) {
-@@ -535,29 +570,134 @@ bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
+@@ -535,29 +638,134 @@ bool ProfilesSync::DeferShow(Profile* profile, base::OnceClosure show) {
    if (it == records_.end() || it->second.lock_hash.empty() || unlocked_.contains(id)) {
      return false;
    }
@@ -781,7 +924,7 @@ index b90c819ccb..7992892cef 100644
    }
    // Not opened: its waiting windows go, never having been seen.
 diff --git a/chrome/browser/spatiand/profiles_sync.h b/chrome/browser/spatiand/profiles_sync.h
-index 464c9166ca..6648eba40a 100644
+index 464c9166ca..8f909196b1 100644
 --- a/chrome/browser/spatiand/profiles_sync.h
 +++ b/chrome/browser/spatiand/profiles_sync.h
 @@ -17,6 +17,7 @@
@@ -803,7 +946,7 @@ index 464c9166ca..6648eba40a 100644
  namespace spatiand {
  
  // A profile as `apps/spatimesh/profiles/<id>/profile.json` has it.
-@@ -75,6 +80,15 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+@@ -75,12 +80,25 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
    // opens it for the next, until the last of them closes.
    bool DeferShow(Profile* profile, base::OnceClosure show);
  
@@ -819,7 +962,17 @@ index 464c9166ca..6648eba40a 100644
   private:
    ProfilesSync();
    ~ProfilesSync() override;
-@@ -93,6 +107,11 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+ 
+   void Poll();
+   void OnRead(std::map<std::string, ProfileRecord> records);
++  // At start: what this machine remembers as last used and last open, and the start's own
++  // --profile-directory, name no profile with a lock, which would otherwise greet the start with
++  // its PIN window. With every profile locked, the start makes a new one.
++  void ForgetLockedAsLastUsed();
+   void Apply(const std::string& id, const ProfileRecord& record, bool changed);
+   void Remove(const std::string& id);
+   void ApplyOrder(const std::map<std::string, ProfileRecord>& records);
+@@ -93,6 +111,11 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
  
    void AskToUnlock(const std::string& id, const std::u16string& name, const ProfileRecord& record);
    void Unlocked(const std::string& id, bool opened);
@@ -831,7 +984,7 @@ index 464c9166ca..6648eba40a 100644
  
    // ProfileAttributesStorage::Observer:
    void OnProfileAdded(const base::FilePath& profile_path) override;
-@@ -103,6 +122,10 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+@@ -103,6 +126,10 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
  
    // ProfileManagerObserver:
    void OnProfileAdded(Profile* profile) override;
@@ -842,7 +995,7 @@ index 464c9166ca..6648eba40a 100644
  
    // BrowserCollectionObserver:
    void OnBrowserClosed(BrowserWindowInterface* browser) override;
-@@ -122,10 +145,15 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
+@@ -122,10 +149,15 @@ class ProfilesSync : public ProfileAttributesStorage::Observer,
    std::set<std::string> removing_;
  
    std::set<std::string> unlocked_;

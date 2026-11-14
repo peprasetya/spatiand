@@ -303,6 +303,16 @@ shared `profile.json` so WPE and every machine agree. "Lock profiles now", there
 locked profile's windows out of sight and hushes their tabs until it is given; "Close its windows" is the way out, so
 no profile is left hidden with nothing asking for it. The lock window also offers "Open with a fingerprint" where
 SpatiKey is usable: `profile_unlock`, always a new touch, even with a touch set to last.
+
+**A start never opens a locked profile (patch 0012; the owner, 2026-11-14).** A profile with a lock is not recorded
+as last used or as open at exit, also when it was unlocked in that run (`profile_manager.cc`), and what was recorded
+before, or locked since on another machine, is forgotten at the start (`ProfilesSync::ForgetLockedAsLastUsed`): a
+plain start opens the unlocked profile used last. A start that names a locked profile (`--profile-directory`) opens
+that one too, not the named one's PIN window; a locked profile is reached only from the profile menu. With every
+profile locked the start makes a new, unlocked profile, as a first start does, and it is shared like any other. Not
+changed: a command line handed to a browser that is already running and names a locked profile shows its PIN
+window (nothing of the room's does that); and a lock set on the profile in use keeps it the one links open in for
+the rest of that run.
 Settings' "You and Google" is now "Your profile": no sign-in, sync or Google rows, only Customize profile and Import,
 which have no other home. A page of a locked profile may run hidden behind the lock
 until the PIN is given, as the window is what waits.
