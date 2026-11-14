@@ -37,6 +37,18 @@ impl Place {
         }
     }
 
+    /// Whether `other` is somewhere inside this folder (not this folder itself).
+    pub fn holds(&self, other: &Place) -> bool {
+        let mut at = other.parent();
+        while let Some(place) = at {
+            if place == *self {
+                return true;
+            }
+            at = place.parent();
+        }
+        false
+    }
+
     /// As a person or a Spatiand application writes it: a path, or `remote:path`.
     pub fn text(&self) -> String {
         match self {
@@ -143,6 +155,9 @@ pub enum Op {
 pub enum ToTab {
     Go(Place),
     Refresh,
+    /// What is in a folder opened in the list, beside the one gone to: answered with
+    /// [`FromTab::Contents`], while the tab goes on with everything else.
+    List(Place),
     /// Pictures for these items of the listing, at most `size` pixels a side.
     Pictures { indices: Vec<usize>, size: u32 },
     Do { id: u64, op: Op },
@@ -153,6 +168,8 @@ pub enum ToTab {
 pub enum FromTab {
     Listed { place: Place, items: Vec<Item>, free: Option<u64> },
     Failed { place: Place, error: String },
+    /// What is in a folder asked about with [`ToTab::List`], or why it could not be listed.
+    Contents { place: Place, items: Result<Vec<Item>, String> },
     Progress { id: u64, done: u64, total: u64, what: String },
     Done { id: u64, error: Option<String> },
     /// Sent as a picture frame, not JSON: see [`picture_frame`].
@@ -267,6 +284,9 @@ mod tests {
         assert_eq!(Place::Remote("Drive".into(), String::new()).parent(), None);
         assert_eq!(Place::Remote("Drive".into(), String::new()).join("a"), Place::Remote("Drive".into(), "a".into()));
         assert_eq!(p.text(), "Drive:Photos/2024");
+        assert!(Place::Remote("Drive".into(), String::new()).holds(&p) && Place::Remote("Drive".into(), "Photos".into()).holds(&p));
+        assert!(!p.holds(&p) && !Place::Remote("Other".into(), String::new()).holds(&p));
+        assert!(Place::Local("/a".into()).holds(&Place::Local("/a/b/c".into())) && !Place::Local("/a".into()).holds(&Place::Local("/ab".into())));
         let trail: Vec<String> = Place::Local("/Users/me/Pictures".into()).trail().into_iter().map(|(n, _)| n).collect();
         assert_eq!(trail, ["/", "Users", "me", "Pictures"]);
     }

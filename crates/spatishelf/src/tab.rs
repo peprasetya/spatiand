@@ -496,6 +496,19 @@ pub fn run() -> io::Result<()> {
                     }
                 }
             }
+            ToTab::List(place) => {
+                // On a thread: a remote's folder may take its time, or never answer, and the
+                // tab goes on meanwhile.
+                let out = out.clone();
+                let kept = kept.clone();
+                std::thread::spawn(move || {
+                    let items = match &place {
+                        Place::Local(p) => list_local(p),
+                        Place::Remote(r, p) => storage(&kept).and_then(|s| list_remote(&s, r, p)),
+                    };
+                    tell(&out, &FromTab::Contents { place, items: items.map(|(items, _)| items) });
+                });
+            }
             ToTab::Pictures { indices, size } => {
                 let Some(place) = here.clone() else { continue };
                 for index in indices {

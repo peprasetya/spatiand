@@ -1,6 +1,8 @@
 //! What the wearer's hand does in the window beyond a click: pressing and dragging things onto
 //! a folder, a place along the side, a tab or a step of the path (moved, or copied where they
-//! go to another disk or remote, or with Alt held); a band drawn round several; a name renamed
+//! go to another disk or remote, or with Alt or Control held); in the list, onto a folder's
+//! line or into what an opened folder holds, a closed folder springing open under a drag held
+//! over it (see `tree.rs`); a band drawn round several; a name renamed
 //! where it is, as Finder does (a click on the name of the one thing chosen, F2, or the menu);
 //! and the menus of the right button -- for the things under it, or for the folder itself.
 
@@ -10,7 +12,7 @@ use spatiand_app::ui::{look as room, theme, Field, Icon, List, Painter, Rect, Ro
 use spatiand_app::Modifiers;
 
 use crate::proto::{Item, Kind, Op, Place, ToTab};
-use crate::{list_columns, look, opener_for, own_program, places, Action, Opener, Overlay, Shelf, SideRow, SortBy, View, ROW, TILE};
+use crate::{list_columns, list_layout, look, opener_for, own_program, places, tree, Action, Opener, Overlay, Shelf, SideRow, SortBy, View, ROW, TILE};
 
 /// How far a press moves before it is a drag (or a band), in the window's pixels.
 const DRAG_AFTER: f32 = 7.0;
@@ -39,8 +41,11 @@ pub struct Press {
 /// Things being dragged.
 pub struct Drag {
     pub items: Vec<Place>,
-    /// The folder they are in.
+    /// The folder the first of them is in (in the list they may be in several): whether they
+    /// go to another disk, and so are copied, is said from it.
     pub from: Place,
+    /// A closed folder of the list held over, opening after a while.
+    pub spring: tree::Spring,
     /// The first of them, to draw under the pointer.
     pub kind: Kind,
     pub picture: Option<Texture>,
@@ -175,6 +180,8 @@ pub struct Target {
     pub place: Place,
     pub rect: Rect,
     pub tab: Option<usize>,
+    /// A closed folder's line of the list: it would spring open, held over.
+    pub closed: bool,
 }
 
 /// A band being drawn round things to choose them.
@@ -189,6 +196,8 @@ pub struct Band {
 pub struct Renaming {
     pub tab: usize,
     pub name: String,
+    /// What it is the name of: in the list, it may be in an opened folder.
+    pub place: Place,
     pub field: Field,
 }
 
@@ -225,12 +234,22 @@ impl Shelf {
             }
             View::List => {
                 let rect = Rect::new(c.x, c.y + 40.0 + at as f32 * ROW - tab.scroll, c.w, ROW - 4.0);
-                let cols = list_columns(rect);
-                let face = Rect::new(cols[0].x, rect.y + 7.0, rect.h - 14.0, rect.h - 14.0);
-                let name = Rect { x: face.right() + 14.0, w: cols[0].w - face.w - 14.0, ..cols[0] };
+                let depth = tab.shown.get(at).map_or(0, |&i| tab.depth(i));
+                let (_, face, name) = list_layout(rect, depth);
                 (rect, face, name)
             }
         }
+    }
+
+    /// The triangle of a folder's line of the list, which opens and closes it.
+    fn disclosure(&self, at: usize) -> Option<Rect> {
+        let tab = &self.tabs[self.active];
+        let index = *tab.shown.get(at)?;
+        if self.view != View::List || tab.is_note(index) || tab.items[index].kind != Kind::Folder {
+            return None;
+        }
+        let (cell, _, _) = self.cell(at);
+        Some(list_layout(cell, tab.depth(index)).0)
     }
 
     /// Where a name being renamed is typed: over the name, a little wider.
@@ -261,6 +280,15 @@ impl Shelf {
             return;
         }
         let hit = self.hit(x, y);
+        // A folder's triangle opens or closes it, and chooses nothing.
+        if let Some(at) = hit.filter(|&at| self.disclosure(at).is_some_and(|r| r.contains(x, y))) {
+            let tab = &self.tabs[self.active];
+            let index = tab.shown[at];
+            let open = tab.place_of(index).is_some_and(|p| tab.tree.is_open(&p));
+            self.disclose(index, !open);
+            self.last_click = None;
+            return;
+        }
         let on_name = hit.is_some_and(|at| self.cell(at).2.inset(-4.0).contains(x, y));
         let double = hit.is_some() && self.last_click.is_some_and(|(t, i)| t.elapsed() < Duration::from_millis(450) && Some(i) == hit);
         let tab = &mut self.tabs[self.active];
@@ -329,6 +357,7 @@ impl Shelf {
                 Some(_) => {}
                 None => drag.over_tab = None,
             }
+            drag.spring.over(target.as_ref().filter(|t| t.closed && tree::allowed(&drag.items, &t.place)).map(|t| &t.place), now);
             drag.target = target;
         }
         if self.band.is_some() {
@@ -339,12 +368,14 @@ impl Shelf {
     fn start_drag(&mut self) {
         let tab = &self.tabs[self.active];
         let items = tab.chosen();
-        let Some(first) = tab.selected.iter().next().copied().or_else(|| tab.item_at_cursor().map(|(i, _)| i)) else { return };
+        // The first of them as shown: what the picture under the pointer is of.
+        let Some(first) = tab.shown.iter().copied().find(|i| tab.selected.contains(i)).or_else(|| tab.item_at_cursor().map(|(i, _)| i)) else { return };
         let Some(item) = tab.items.get(first) else { return };
         let kind = item.kind;
+        let from = items.first().and_then(|i| i.parent()).unwrap_or_else(|| tab.place.clone());
         let storage = self.storage.clone();
         let forms = drag_forms(&items, |r, p| storage.as_ref().map(|s| s.url(r, p)));
-        self.drag = Some(Drag { items, from: tab.place.clone(), kind, picture: tab.pictures.get(&first).copied(), target: None, over_tab: None, held: self.modifiers, in_room: false });
+        self.drag = Some(Drag { items, from, spring: tree::Spring::default(), kind, picture: tab.pictures.get(&first).copied(), target: None, over_tab: None, held: self.modifiers, in_room: false });
         self.rename_due = None;
         // Handed to the room, so that it can go to another window -- or to anything that takes
         // files -- as well as within this one.
@@ -367,7 +398,7 @@ impl Shelf {
                 self.pointer_moved(x, y);
                 let answer = self.drag.as_ref().map(|d| (d.from.clone(), d.target.clone(), d.held, d.items.clone()));
                 if let Some((from, target, held, items)) = answer {
-                    match target.filter(|t| t.place != from && !items.contains(&t.place)) {
+                    match target.filter(|t| tree::allowed(&items, &t.place)) {
                         Some(t) => {
                             let copy = Self::copying(held, &from, &t.place);
                             self.app().accept_drag(Some(PLACES_FORM), !copy);
@@ -427,7 +458,7 @@ impl Shelf {
     fn incoming_moved(&mut self, x: f32, y: f32) {
         self.pointer = (x, y);
         let Some((items, form)) = self.incoming.as_ref().map(|i| (i.items.clone(), i.form)) else { return };
-        let target = self.drop_target(x, y, &items).filter(|t| !items.is_empty() && items.iter().all(|i| i.parent().as_ref() != Some(&t.place) && *i != t.place));
+        let target = self.drop_target(x, y, &items).filter(|t| tree::allowed(&items, &t.place));
         let answer = target.as_ref().map(|t| {
             let from = items.first().and_then(|i| i.parent());
             from.as_ref().is_none_or(|f| Self::copying(self.app_modifiers(), f, &t.place))
@@ -474,33 +505,62 @@ impl Shelf {
     fn drop_target(&self, x: f32, y: f32, items: &[Place]) -> Option<Target> {
         let tab = &self.tabs[self.active];
         if self.content.contains(x, y) {
+            if self.view == View::List {
+                // Onto a folder's line, into it; onto what an opened folder holds, into that
+                // folder; anywhere else, into the folder on show (see `tree::aim`).
+                let row = if y < self.content.y + 40.0 { None } else { self.line_at(y) };
+                let aim = tree::aim(&tab.entries, &tab.items, &tab.shown, row, &tab.place);
+                let (rect, closed) = match aim.line {
+                    Some(line) if aim.within => {
+                        let end = tree::block_end(&tab.entries, &tab.shown, line);
+                        let (top, foot) = (self.cell(line).0, self.cell(end).0);
+                        (Rect { h: foot.bottom() - top.y, ..top }, false)
+                    }
+                    Some(line) => (self.cell(line).0, !tab.tree.is_open(&aim.place)),
+                    None => (self.content, false),
+                };
+                return Some(Target { place: aim.place, rect, tab: None, closed });
+            }
             if let Some(at) = self.hit(x, y) {
-                let item = &tab.items[tab.shown[at]];
-                let place = tab.place.join(&item.name);
-                if item.kind == Kind::Folder && !items.contains(&place) {
-                    return Some(Target { place, rect: self.cell(at).1, tab: None });
+                let index = tab.shown[at];
+                let item = &tab.items[index];
+                if let Some(place) = tab.place_of(index).filter(|p| item.kind == Kind::Folder && !items.contains(p)) {
+                    return Some(Target { place, rect: self.cell(at).1, tab: None, closed: false });
                 }
             }
-            return Some(Target { place: tab.place.clone(), rect: self.content, tab: None });
+            return Some(Target { place: tab.place.clone(), rect: self.content, tab: None, closed: false });
         }
         if let Some(i) = self.placed_tabs.iter().position(|(r, _)| r.contains(x, y)) {
-            return Some(Target { place: self.tabs[i].place.clone(), rect: self.placed_tabs[i].0, tab: Some(i) });
+            return Some(Target { place: self.tabs[i].place.clone(), rect: self.placed_tabs[i].0, tab: Some(i), closed: false });
         }
         if let Some((rect, place)) = self.trail.iter().find(|(r, _)| r.contains(x, y)) {
-            return Some(Target { place: place.clone(), rect: *rect, tab: None });
+            return Some(Target { place: place.clone(), rect: *rect, tab: None, closed: false });
         }
         let row = crate::side_row_at(&self.side, x, y)?;
         match self.side_rows.get(row) {
-            Some(SideRow::Go(place)) => Some(Target { place: place.clone(), rect: self.side.row_rect(row).unwrap_or_default(), tab: None }),
+            Some(SideRow::Go(place)) => Some(Target { place: place.clone(), rect: self.side.row_rect(row).unwrap_or_default(), tab: None, closed: false }),
             _ => None,
         }
     }
 
+    /// A drag called off (Escape, the other button): let go of, nothing happens.
+    pub(crate) fn cancel_drag(&mut self) {
+        self.press = None;
+        if let Some(drag) = self.drag.take() {
+            // The room's drag goes on to its end; this window takes nothing from it.
+            if drag.in_room {
+                self.app().accept_drag(None, false);
+            }
+        }
+        self.dirty = true;
+    }
+
     /// Whether things going from `from` to `to` are copied rather than moved: when they go to
-    /// another disk or remote, as Finder has it, or with Alt (Option) held; Shift (Command on a
-    /// Mac) moves them whatever.
+    /// another disk or remote, as Finder has it, or with Alt (Option) held -- or Control, as
+    /// the file managers of Linux have it; Shift (Command on a Mac) moves them whatever. Either
+    /// way it is then the same job as the menu's Copy to or Move to, between any two places.
     pub(crate) fn copying(m: Modifiers, from: &Place, to: &Place) -> bool {
-        if m.alt {
+        if m.alt || m.control {
             return true;
         }
         if m.shift || (cfg!(target_os = "macos") && m.logo) {
@@ -519,11 +579,13 @@ impl Shelf {
 
     fn drop(&mut self, drag: Drag) {
         let Some(target) = drag.target else { return };
-        if target.place == drag.from || drag.items.iter().any(|i| target.place == *i) {
+        if !tree::allowed(&drag.items, &target.place) {
             return;
         }
         let copy = Self::copying(self.app().modifiers(), &drag.from, &target.place);
-        self.send(drag.items, target.place, copy);
+        // Of several from different folders, those already where they are let go of stay.
+        let items: Vec<Place> = drag.items.into_iter().filter(|i| i.parent().as_ref() != Some(&target.place)).collect();
+        self.send(items, target.place, copy);
     }
 
     /// Things copied or moved into a folder, as a job of the tab's.
@@ -546,7 +608,8 @@ impl Shelf {
         let rect = Rect::new(x0.min(x), y0.min(y), (x - x0).abs(), (y - y0).abs());
         let before = band.before.clone();
         let count = self.tabs[self.active].shown.len();
-        let inside: Vec<usize> = (0..count).filter(|&at| overlaps(self.cell(at).1, rect) || overlaps(self.cell(at).2, rect)).collect();
+        let tab = &self.tabs[self.active];
+        let inside: Vec<usize> = (0..count).filter(|&at| !tab.is_note(tab.shown[at]) && (overlaps(self.cell(at).1, rect) || overlaps(self.cell(at).2, rect))).collect();
         let tab = &mut self.tabs[self.active];
         tab.selected = before;
         for at in inside {
@@ -587,10 +650,20 @@ impl Shelf {
                 }
             }
         }
+        // A closed folder of the list held over springs open where it is.
+        if let Some(place) = self.drag.as_mut().and_then(|d| d.spring.due(Instant::now())) {
+            let tab = &self.tabs[self.active];
+            if let Some(index) = tab.shown.iter().copied().find(|&i| tab.place_of(i).as_ref() == Some(&place)) {
+                self.disclose(index, true);
+                let (x, y) = self.pointer;
+                self.pointer_moved(x, y);
+                self.dirty = true;
+            }
+        }
         if self.drag.is_some() || self.band.is_some() {
             let (x, y) = self.pointer;
             let c = self.content;
-            let by = if y < c.y + 30.0 && y > c.y - 40.0 { -18.0 } else if y > c.bottom() - 30.0 && y < c.bottom() + 40.0 { 18.0 } else { 0.0 };
+            let by = tree::edge_scroll(y, c.y, c.bottom());
             if by != 0.0 && x > c.x && x < c.right() {
                 let tab = self.tab();
                 tab.scroll = (tab.scroll + by).max(0.0);
@@ -610,6 +683,7 @@ impl Shelf {
     pub(crate) fn start_rename(&mut self, index: usize) {
         let tab = &self.tabs[self.active];
         let Some(item) = tab.items.get(index) else { return };
+        let Some(place) = tab.place_of(index) else { return };
         let (name, folder) = (item.name.clone(), item.kind == Kind::Folder);
         let at = tab.shown.iter().position(|&i| i == index);
         let em = if self.view == View::Grid { theme::ROW_EM * 0.62 } else { theme::ROW_EM * 0.7 };
@@ -620,7 +694,7 @@ impl Shelf {
         if let Some(at) = at {
             self.tabs[self.active].cursor = at;
         }
-        self.renaming = Some(Renaming { tab: self.active, name, field });
+        self.renaming = Some(Renaming { tab: self.active, name, place, field });
         self.dirty = true;
     }
 
@@ -636,8 +710,10 @@ impl Shelf {
             return;
         }
         let Some(tab) = self.tabs.get_mut(r.tab) else { return };
-        let item = tab.place.join(&r.name);
-        tab.land_on = Some(name.clone());
+        let item = r.place;
+        if item.parent().as_ref() == Some(&tab.place) {
+            tab.land_on = Some(name.clone());
+        }
         let id = self.next_op;
         self.next_op += 1;
         self.tabs[r.tab].tell(&ToTab::Do { id, op: Op::Rename { item, name } });
@@ -646,7 +722,8 @@ impl Shelf {
     /// The folder was listed again: a name being renamed that is not in it any more is not.
     pub(crate) fn relisted(&mut self, tab: usize) {
         if let Some(r) = &self.renaming {
-            if r.tab == tab && !self.tabs[tab].items.iter().any(|i| i.name == r.name) {
+            let t = &self.tabs[tab];
+            if r.tab == tab && !t.shown.iter().any(|&i| t.place_of(i).as_ref() == Some(&r.place)) {
                 self.renaming = None;
             }
         }
@@ -656,7 +733,7 @@ impl Shelf {
     pub(crate) fn renaming_at(&self) -> Option<usize> {
         let r = self.renaming.as_ref().filter(|r| r.tab == self.active)?;
         let tab = &self.tabs[self.active];
-        tab.shown.iter().position(|&i| tab.items[i].name == r.name)
+        tab.shown.iter().position(|&i| tab.place_of(i).as_ref() == Some(&r.place))
     }
 
     // --- menus --------------------------------------------------------------------------
@@ -700,6 +777,9 @@ impl Shelf {
         let (_, face, _) = self.cell(tab.cursor);
         let tab = self.tab();
         let index = tab.shown[tab.cursor];
+        if tab.is_note(index) {
+            return;
+        }
         if !tab.selected.contains(&index) {
             tab.selected.clear();
             tab.selected.insert(index);
@@ -716,9 +796,9 @@ impl Shelf {
 
     fn item_menu(&mut self, at: (f32, f32)) {
         let tab = &self.tabs[self.active];
-        let Some((_, item)) = tab.item_at_cursor() else { return };
+        let Some((index, item)) = tab.item_at_cursor() else { return };
         let item: Item = item.clone();
-        let place = tab.place.join(&item.name);
+        let Some(place) = tab.place_of(index) else { return };
         let local = matches!(tab.place, Place::Local(_));
         let several = tab.selected.len() > 1;
         let mut entries: Vec<(Row, Action)> = vec![(Row::with("Open", "Enter").icon(look::icon(item.kind)), Action::Open)];
@@ -856,17 +936,24 @@ impl Shelf {
             }
         }
         let Some(drag) = self.drag.as_ref() else { return };
-        let copy = match &drag.target {
-            Some(t) if t.place != drag.from => Self::copying(drag.held, &drag.from, &t.place),
-            _ => false,
-        };
-        let useful = drag.target.as_ref().filter(|t| t.place != drag.from && !drag.items.contains(&t.place));
+        let useful = drag.target.as_ref().filter(|t| tree::allowed(&drag.items, &t.place));
+        let copy = useful.is_some_and(|t| Self::copying(drag.held, &drag.from, &t.place));
         if let Some(target) = useful {
             if target.rect != self.content {
+                // Within the pane: a folder's line, or it and what it holds.
+                let inside = target.tab.is_none() && overlaps(target.rect, self.content);
+                p.clip(gl, if inside { self.content } else { p.bounds() });
                 p.glow(gl, target.rect, 16.0, [0.30, 0.62, 1.0, 0.45], 18.0);
                 p.fill(gl, target.rect.inset(-3.0), 16.0, [0.42, 0.68, 1.0, 0.22]);
+                p.unclip(gl);
+            } else {
+                // The folder on show, from inside an opened one: the pane is lit.
+                p.glow(gl, self.content.inset(4.0), 18.0, [0.30, 0.62, 1.0, 0.25], 18.0);
             }
         }
+        // Where it would do nothing (onto itself, into its own folder or into itself), said so
+        // under the pointer, in the list where such a place is under it.
+        let refused = drag.target.as_ref().filter(|t| !tree::allowed(&drag.items, &t.place) && t.rect != self.content);
         let (x, y) = self.pointer;
         let ghost = Rect::new(x + 16.0, y + 12.0, 96.0, 96.0);
         // Handed to the room, the room shows it, over this window as over any.
@@ -888,6 +975,19 @@ impl Shelf {
             p.fill(gl, pill, 20.0, theme::ground());
             room::glass(p, gl, pill, 20.0, 1.0);
             p.label(gl, &words, pill.inset(16.0), theme::FOOTER_EM, theme::ink(), 0.0);
+        } else if let Some(target) = refused {
+            let words = if drag.items.contains(&target.place) {
+                "Not onto itself".to_string()
+            } else if drag.items.iter().any(|i| i.holds(&target.place)) {
+                "Not into itself".to_string()
+            } else {
+                format!("Already in {}", target.place.name())
+            };
+            let w = p.measure(gl, &words, theme::FOOTER_EM, 4096.0).0 + 32.0;
+            let pill = Rect::new(ghost.x, ghost.bottom() + 10.0, w, 40.0);
+            p.fill(gl, pill, 20.0, theme::ground());
+            room::glass(p, gl, pill, 20.0, 1.0);
+            p.label(gl, &words, pill.inset(16.0), theme::FOOTER_EM, theme::ink_hint(), 0.0);
         }
     }
 }

@@ -245,6 +245,62 @@ from SpatiShelf onto SpatiMesh's tabs (Chromium's since 2026-11-10: the Rust win
 `tools/spatiand-dnd-e2e.py` with `SPATIAND_CHROMIUM_BIN`). Not yet: dragging out of a page (WebKit's own drags), and
 into or out of a Mac's or a host's own windows.
 
+## 2026-11-14: SpatiShelf's list opens folders where they are (Finder's list)
+
+The owner: "in list view, folder/sub-folder can be expanded like Apple Finder, so manage file/move
+file can be drag and drop in one window."
+
+**Opening.** Each folder's line has a triangle at its left (drawn: `Icon::Disclose` and
+`Icon::Disclosed` of the SDK, not a font's). A click on it opens the folder where it is: what it holds
+comes under it, one step in (30 px), to any depth; the other columns stay where they are. Right opens
+the folder at the cursor, Left closes it (or, from inside an opened folder, goes to that folder); a
+double click or Enter still goes into a folder. Closing a folder with the cursor inside it brings the
+cursor to the folder. What is open is kept per tab by each folder's whole place: a folder opened
+inside one that is closed is open again when that one is; gone into a folder and back, what was open
+there is open again (for this run of the window, not after a restart). The tiles open nothing.
+
+**Listing** (`crates/spatishelf/src/tree.rs`, plain logic with its tests). A folder is listed only
+when it is opened and on show (`ToTab::List`, answered by `FromTab::Contents`, on a thread of the
+tab's so it does not hold up the rest): never ahead and never all the way down, which matters on a
+remote. Until it comes a "Loading..." line stands under the folder; one that cannot be listed says
+why in red ("Could not be listed: This folder may not be opened."); an empty one says "Empty".
+Closing a folder forgets what was in it and stops waiting for a listing on its way (it is dropped when
+it comes). When the folder on show is listed again (Control-R, or after anything is done to files)
+every open folder on show is listed again too, the old lines staying until the new come, and the
+cursor, the chosen things and the scroll stay where they were. Sorting (the heads, the menu) orders
+each folder's things under it, folders first. The filter typed (Control-F) is for the folder's own
+things; hidden files are hidden all the way down. "N items" counts the folder's own. Several can be
+chosen across folders, as before (Control or Shift click, Space, Control-A, a band). Duplicate puts
+each copy beside its own original. Pictures of pictures and films are made for the folder's own
+things only; things in opened folders show their kind's mark.
+
+**Dragging within the window** (a press on a line and a move of 7 px, as before: the room's pointer
+on every platform, the Beam Pro's screen included). Onto a folder's line: into it, the line lit. Onto
+a file (or a note) in an opened folder: into that folder, its line and everything under it lit. Onto
+a file at the top, the space below the last line or the heads: into the folder on show, the pane lit
+-- how something is brought up out of an opened folder. A closed folder held over for a second opens
+(Finder's spring-loading). Near the top or foot of the pane it scrolls. Onto itself, into the folder
+it is already in, or into a folder inside itself is not taken and says so at the pointer ("Not onto
+itself", "Not into itself", "Already in Alpha"); of several from different folders, those already
+where they are let go of stay. Moved within a disk; **copied** to another disk or remote, or with
+**Alt or Control** held (Control as the file managers of Linux have it, Alt as Finder's Option); Shift
+(Command on a Mac) moves whatever -- one rule on every platform, and the same rule as dragging onto
+the side, a tab or the path. A move between two places of one remote is rclone's move; between
+storages, as the menu's Move to and Copy to do. Escape or the right button calls a drag off. Dragging
+out to other windows and applications is as it was (`App::start_drag`).
+
+**Checked** in the snapshot room on Linux (deepmagpie, scratch HOME/XDG_*/`SPATIAND_APPS_CONFIG`, a
+scratch tree): a folder and a folder in it opened, an empty one, one that may not be opened (the
+pictures showed the triangles, the steps in and the columns in line); a file dragged from an opened
+folder onto a closed folder's line (it sprang open; moved on disk, both folders' lines updated, all
+else still open); onto its own folder and a folder into a folder in itself (not taken, said so,
+nothing changed on disk); two chosen in different folders dragged onto a third (both moved); a file
+copied into an opened folder with Control held during the drag (both copies on disk); a file dragged
+out of an opened folder onto the empty space (moved up); Left and Right closing and opening again with
+what had changed. With the storage service on an alias remote of a scratch folder: two folders opened
+and a file dragged from one onto the other (moved there on disk). **Not checked**: in glasses, the
+Beam Pro, the Mac, a real cloud remote (slow listings), a folder of thousands opened.
+
 ## 2026-10-15: from the owner's first look
 
 | | |

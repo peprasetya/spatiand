@@ -2,7 +2,8 @@
 //! they are as sharp in the glasses as the text beside them) and tinted as text is.
 //!
 //! Drawn for Spatiand, in one hand: round ends and joins, one weight of line, and nothing
-//! filled but a play mark -- so a row of them reads as one set.
+//! filled but a play mark and a list's disclosure triangles -- so a row of them reads as one
+//! set.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -82,6 +83,10 @@ pub enum Icon {
     Paste,
     /// A key: a password, a passkey (SpatiKey).
     Key,
+    /// A list's folder, closed and open: a triangle pointing at it, and down into what it
+    /// holds (Finder's disclosure triangles).
+    Disclose,
+    Disclosed,
 }
 
 impl Icon {
@@ -138,6 +143,8 @@ impl Icon {
             Icon::Pencil => r#"<path d="M15 5l4 4L8.5 19.5H4.5v-4z"/><path d="M12.5 7.5l4 4"/>"#,
             Icon::Paste => r#"<rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/>"#,
             Icon::Key => r#"<circle cx="7.5" cy="12" r="4"/><path d="M11.5 12h9M17.5 12v3.5M20.5 12v2.5"/>"#,
+            Icon::Disclose => r##"<path d="M9.5 6.8v10.4a.7.7 0 0 0 1.1.6l7.1-5.2a.7.7 0 0 0 0-1.2l-7.1-5.2a.7.7 0 0 0-1.1.6z" fill="#fff" stroke-width="1.2"/>"##,
+            Icon::Disclosed => r##"<path d="M6.8 9.5h10.4a.7.7 0 0 1 .6 1.1l-5.2 7.1a.7.7 0 0 1-1.2 0l-5.2-7.1a.7.7 0 0 1 .6-1.1z" fill="#fff" stroke-width="1.2"/>"##,
             Icon::Back10 => r#"<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v3.8h3.8"/><path d="M9.3 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="14.4" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
             Icon::Forward10 => r#"<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.8h-3.8"/><path d="M8.8 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="13.9" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
         }
@@ -199,7 +206,7 @@ mod tests {
         let all = [
             Back, Forward, Up, Down, Play, Pause, Options, Info, Close, Plus, Grid, List, Search, Home, Folder, Desktop, Document, Download, Picture, Film, Music, Drive,
             Cloud, Trash, Rotate, Cube, Terminal, Link, Import, Server, Refresh, Eye, Back10, Forward10, Lock, SortName, SortRecent, Shuffle, Speaker, Muted,
-            Star, Pin, Puzzle, Copy, Globe, Warning, Cut, Pencil, Paste,
+            Star, Pin, Puzzle, Copy, Globe, Warning, Cut, Pencil, Paste, Disclose, Disclosed,
         ];
         for icon in all {
             let (_, _, rgba) = render(icon, 48).unwrap_or_else(|| panic!("{icon:?} does not render"));

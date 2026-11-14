@@ -18,6 +18,7 @@ mod look;
 mod proto;
 mod setup;
 mod tab;
+mod tree;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
@@ -142,9 +143,18 @@ struct ShelfTab {
     back: Vec<Place>,
     forward: Vec<Place>,
     state: State,
+    /// The folder's own listing, as it came.
+    top: Vec<Item>,
+    /// Every thing the lines are made of: `top` first (numbered as the tab numbers them), then
+    /// what folders opened in the list hold, and their notes (see `tree::flatten`).
     items: Vec<Item>,
+    /// Where each of `items` is.
+    entries: Vec<tree::Entry>,
+    /// The folders opened in the list, and their listings.
+    tree: tree::Tree,
     free: Option<u64>,
-    /// The items on show, after hiding and filtering: indices into `items`.
+    /// The lines on show, after hiding and filtering, opened folders' things under them:
+    /// indices into `items`.
     shown: Vec<usize>,
     pictures: HashMap<usize, Texture>,
     arrived: Vec<(usize, u32, u32, Vec<u8>)>,
@@ -184,7 +194,10 @@ impl ShelfTab {
             back: Vec::new(),
             forward: Vec::new(),
             state: State::Loading(Instant::now()),
+            top: Vec::new(),
             items: Vec::new(),
+            entries: Vec::new(),
+            tree: tree::Tree::default(),
             free: None,
             shown: Vec::new(),
             pictures: HashMap::new(),
@@ -225,32 +238,66 @@ impl ShelfTab {
         self.tell(&ToTab::Go(place));
     }
 
-    fn refilter(&mut self, hidden: bool, sort: (SortBy, bool)) {
+    /// The lines made again: after a listing, a folder opened or closed, the filter, the sort
+    /// or the view changed. `nested`: the list, where opened folders show what they hold. What
+    /// is chosen and the cursor stay on the things they were on, wherever those now are; opened
+    /// folders on show of which nothing is known are asked for.
+    fn refilter(&mut self, hidden: bool, sort: (SortBy, bool), nested: bool) {
         let words = self.filter.to_lowercase();
-        let at_cursor = self.shown.get(self.cursor).copied();
-        self.shown = self.items.iter().enumerate().filter(|(_, i)| (hidden || !i.hidden) && (words.is_empty() || i.name.to_lowercase().contains(&words))).map(|(n, _)| n).collect();
-        let items = &self.items;
-        self.shown.sort_by(|&a, &b| {
-            let order = sort.0.order(&items[a], &items[b]);
+        let place = |tab: &ShelfTab, i: usize| tree::place_of(&tab.entries, &tab.items, i);
+        let chosen: HashSet<Place> = self.selected.iter().filter_map(|&i| place(self, i)).collect();
+        let at_cursor = self.shown.get(self.cursor).and_then(|&i| place(self, i));
+        let at_anchor = self.shown.get(self.anchor).and_then(|&i| place(self, i));
+        let order = |a: &Item, b: &Item| {
+            let order = sort.0.order(a, b);
             if sort.1 { order.reverse() } else { order }
-        });
+        };
+        // The filter typed is for the folder's own things; hidden files are hidden all the way down.
+        let keep_top = |i: &Item| (hidden || !i.hidden) && (words.is_empty() || i.name.to_lowercase().contains(&words));
+        let keep = |i: &Item| hidden || !i.hidden;
+        let flat = tree::flatten(&self.place, &self.top, &self.tree, nested, &keep_top, &keep, &order);
+        self.items = flat.items;
+        self.entries = flat.entries;
+        self.shown = flat.lines;
+        self.tree.prune(&flat.on_show);
+        for wanted in flat.wanted {
+            self.tree.asked(wanted.clone());
+            self.tell(&ToTab::List(wanted));
+        }
+        let lines: HashMap<Place, usize> = self.shown.iter().enumerate().filter_map(|(at, &i)| place(self, i).map(|p| (p, at))).collect();
+        self.selected = chosen.iter().filter_map(|p| lines.get(p)).map(|&at| self.shown[at]).collect();
         // The cursor stays on what it was on.
-        self.cursor = at_cursor.and_then(|i| self.shown.iter().position(|&s| s == i)).unwrap_or(self.cursor);
+        self.cursor = at_cursor.and_then(|p| lines.get(&p).copied()).unwrap_or(self.cursor);
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
-        self.selected.retain(|s| self.shown.contains(s));
+        self.anchor = at_anchor.and_then(|p| lines.get(&p).copied()).unwrap_or(self.cursor);
     }
 
+    /// Where a thing is (none for a note).
+    fn place_of(&self, index: usize) -> Option<Place> {
+        tree::place_of(&self.entries, &self.items, index)
+    }
+
+    fn is_note(&self, index: usize) -> bool {
+        self.entries.get(index).is_some_and(|e| e.note.is_some())
+    }
+
+    fn depth(&self, index: usize) -> usize {
+        self.entries.get(index).map_or(0, |e| e.depth)
+    }
+
+    /// The line at the cursor, if it is a thing.
     fn item_at_cursor(&self) -> Option<(usize, &Item)> {
         let index = *self.shown.get(self.cursor)?;
-        Some((index, &self.items[index]))
+        (!self.is_note(index)).then(|| (index, &self.items[index]))
     }
 
     /// What the selection is, as places; the cursor's item if nothing is selected.
     fn chosen(&self) -> Vec<Place> {
-        let mut out: Vec<Place> = self.selected.iter().filter_map(|&i| self.items.get(i)).map(|i| self.place.join(&i.name)).collect();
+        // In the order shown, as a person reads them.
+        let mut out: Vec<Place> = self.shown.iter().filter(|i| self.selected.contains(i)).filter_map(|&i| self.place_of(i)).collect();
         if out.is_empty() {
-            if let Some((_, item)) = self.item_at_cursor() {
-                out.push(self.place.join(&item.name));
+            if let Some((index, _)) = self.item_at_cursor() {
+                out.extend(self.place_of(index));
             }
         }
         out
@@ -546,7 +593,7 @@ impl Shelf {
     }
 
     fn hear(&mut self) {
-        let (hidden, sort) = (self.hidden, self.sort);
+        let (hidden, sort, nested) = (self.hidden, self.sort, self.view == View::List);
         let mut finished = Vec::new();
         let mut listed = Vec::new();
         for (t, tab) in self.tabs.iter_mut().enumerate() {
@@ -578,17 +625,37 @@ impl Shelf {
                         }
                         tab.asked.clear();
                         tab.arrived.clear();
-                        tab.items = items;
+                        // Listed again where it was (after something was done, or asked): what
+                        // is chosen, the cursor and the scroll stay, and so does what is open.
+                        // Come to: from the top, or the folder come out of.
+                        let again = matches!(tab.state, State::Ready);
+                        if !again {
+                            tab.selected.clear();
+                            tab.shown.clear();
+                        }
+                        tab.top = items;
                         tab.free = free;
-                        tab.selected.clear();
-                        tab.shown.clear();
-                        tab.refilter(hidden, sort);
+                        tab.refilter(hidden, sort, nested);
+                        // What is open is listed again too: a move shows at both ends.
+                        for open in tab.tree.known() {
+                            tab.tree.asked(open.clone());
+                            tab.tell(&ToTab::List(open));
+                        }
                         listed.push(t);
                         let land = tab.land_on.take();
-                        tab.cursor = land.and_then(|name| tab.shown.iter().position(|&i| tab.items[i].name == name)).unwrap_or(0);
-                        tab.anchor = tab.cursor;
-                        tab.scroll = f32::NAN;
+                        if !again || land.is_some() {
+                            tab.cursor = land.and_then(|name| tab.shown.iter().position(|&i| tab.entries[i].depth == 0 && tab.entries[i].note.is_none() && tab.items[i].name == name)).unwrap_or(if again { tab.cursor } else { 0 });
+                            tab.anchor = tab.cursor;
+                        }
+                        if !again {
+                            tab.scroll = f32::NAN;
+                        }
                         tab.state = State::Ready;
+                    }
+                    FromTab::Contents { place, items } => {
+                        if tab.tree.arrived(&place, items) {
+                            tab.refilter(hidden, sort, nested);
+                        }
                     }
                     FromTab::Failed { place, error } if place == tab.place => tab.state = State::Failed(error),
                     FromTab::Picture { place, index, width, height, rgba } if place == tab.place => tab.arrived.push((index, width, height, rgba)),
@@ -757,8 +824,9 @@ impl Shelf {
             Action::Refresh => self.tab().tell(&ToTab::Refresh),
             Action::ToggleHidden => {
                 self.hidden = !self.hidden;
+                let nested = self.view == View::List;
                 for tab in &mut self.tabs {
-                    tab.refilter(!hidden, sort);
+                    tab.refilter(!hidden, sort, nested);
                 }
             }
             Action::OpenInTab(place) => self.new_tab(place),
@@ -770,10 +838,20 @@ impl Shelf {
                 }
             }
             Action::Duplicate => {
+                // Each beside itself: things chosen in opened folders are copied in their own.
                 let chosen = self.tab().chosen();
-                let here = self.tab().place.clone();
-                if matches!(here, Place::Local(_)) {
-                    self.send(chosen, here, true);
+                if matches!(self.tab().place, Place::Local(_)) {
+                    let mut by_folder: Vec<(Place, Vec<Place>)> = Vec::new();
+                    for item in chosen {
+                        let Some(folder) = item.parent() else { continue };
+                        match by_folder.iter_mut().find(|(f, _)| *f == folder) {
+                            Some((_, items)) => items.push(item),
+                            None => by_folder.push((folder, vec![item])),
+                        }
+                    }
+                    for (folder, items) in by_folder {
+                        self.send(items, folder, true);
+                    }
                 }
             }
             Action::MoveToMenu | Action::CopyToMenu => {
@@ -791,12 +869,12 @@ impl Shelf {
             Action::Sort(by) => {
                 // The same again turns it round.
                 self.sort = if self.sort.0 == by { (by, !self.sort.1) } else { (by, false) };
-                let sort = self.sort;
+                let (sort, nested) = (self.sort, self.view == View::List);
                 for tab in &mut self.tabs {
-                    tab.refilter(hidden, sort);
+                    tab.refilter(hidden, sort, nested);
                 }
             }
-            Action::SetView(view) => self.view = view,
+            Action::SetView(view) => self.set_view(view),
             Action::TerminalHere => {
                 if let (Place::Local(folder), Some(program)) = (self.tab().place.clone(), own_program("spatiquill")) {
                     let mut command = Command::new(program);
@@ -835,9 +913,9 @@ impl Shelf {
     }
 
     fn open(&mut self, with: Option<Opener>) {
-        let Some((_, item)) = self.tab().item_at_cursor() else { return };
+        let Some((index, item)) = self.tab().item_at_cursor() else { return };
         let item = item.clone();
-        let place = self.tab().place.join(&item.name);
+        let Some(place) = self.tab().place_of(index) else { return };
         if item.kind == Kind::Folder && with.is_none() {
             self.tab().go(place, true);
             return;
@@ -979,7 +1057,10 @@ impl Shelf {
         // The right button opens a menu for what it is over.
         if let Event::Button { button: PointerButton::Right, pressed: true, .. } = event {
             let (x, y) = self.pointer;
-            if matches!(self.overlay, Overlay::None) && self.drag.is_none() {
+            if self.drag.is_some() {
+                // The other button while dragging lets go of nothing: the drag is called off.
+                self.cancel_drag();
+            } else if matches!(self.overlay, Overlay::None) {
                 self.context_menu(x, y);
             }
             return true;
@@ -1117,7 +1198,11 @@ impl Shelf {
             }
         }
         if let Input::Key { key: Key::Escape, .. } = input {
-            if self.drag.take().is_some() || self.band.take().is_some() {
+            if self.drag.is_some() {
+                self.cancel_drag();
+                return;
+            }
+            if self.band.take().is_some() {
                 self.press = None;
                 return;
             }
@@ -1128,16 +1213,16 @@ impl Shelf {
                 self.filtering = false;
                 self.filter_field.set("");
                 self.tab().filter.clear();
-                let (h, sort) = (self.hidden, self.sort);
-                self.tab().refilter(h, sort);
+                let (h, sort, nested) = (self.hidden, self.sort, self.view == View::List);
+                self.tab().refilter(h, sort, nested);
                 return;
             }
             if let Some(typed) = self.filter_field.input(&input) {
                 let text = self.filter_field.text.clone();
-                let (h, sort) = (self.hidden, self.sort);
+                let (h, sort, nested) = (self.hidden, self.sort, self.view == View::List);
                 let tab = self.tab();
                 tab.filter = text;
-                tab.refilter(h, sort);
+                tab.refilter(h, sort, nested);
                 if typed == Typed::Entered {
                     self.filtering = false;
                     self.filter_field.focused = false;
@@ -1183,7 +1268,7 @@ impl Shelf {
             return;
         }
         if self.view_button.input(&input) {
-            self.view = if self.view == View::Grid { View::List } else { View::Grid };
+            self.set_view(if self.view == View::Grid { View::List } else { View::Grid });
             return;
         }
         if let Some(row) = self.side.input(&input) {
@@ -1204,7 +1289,7 @@ impl Shelf {
     /// in it, as listed.
     fn description(&mut self) -> spatiand_app::Description {
         let tab = self.tab();
-        let names: Vec<String> = tab.shown.iter().filter_map(|&i| tab.items.get(i)).map(|item| item.name.clone()).collect();
+        let names: Vec<String> = tab.shown.iter().filter(|&&i| !tab.is_note(i)).filter_map(|&i| tab.items.get(i)).map(|item| item.name.clone()).collect();
         spatiand_app::Description {
             kind: "files".into(),
             app: "SpatiShelf".into(),
@@ -1213,6 +1298,33 @@ impl Shelf {
             vocabulary: names.into_iter().take(150).collect(),
             directory: tab.place.text(),
             commands: Vec::new(),
+        }
+    }
+
+    /// Tiles or the list, for every tab: the list shows its opened folders open, the tiles the
+    /// folder alone.
+    fn set_view(&mut self, view: View) {
+        self.view = view;
+        let (hidden, sort, nested) = (self.hidden, self.sort, view == View::List);
+        for tab in &mut self.tabs {
+            tab.refilter(hidden, sort, nested);
+        }
+    }
+
+    /// Open a folder of the list where it is, or close it (`open`: which).
+    pub(crate) fn disclose(&mut self, index: usize, open: bool) {
+        let (hidden, sort, nested) = (self.hidden, self.sort, self.view == View::List);
+        let tab = self.tab();
+        let Some(place) = tab.place_of(index).filter(|_| tab.items[index].kind == Kind::Folder) else { return };
+        // Closed with the cursor inside it: the cursor comes to the folder, as Finder's does.
+        if !open && tab.shown.get(tab.cursor).and_then(|&i| tab.place_of(i)).is_some_and(|c| place.holds(&c)) {
+            if let Some(at) = tab.shown.iter().position(|&i| i == index) {
+                tab.cursor = at;
+            }
+        }
+        let changed = if open { tab.tree.expand(place) } else { tab.tree.collapse(&place) };
+        if changed {
+            tab.refilter(hidden, sort, nested);
         }
     }
 
@@ -1260,7 +1372,7 @@ impl Shelf {
                 Some('v') => self.act(Action::Paste),
                 Some('a') => {
                     let tab = self.tab();
-                    tab.selected = tab.shown.iter().copied().collect();
+                    tab.selected = tab.shown.iter().copied().filter(|&i| !tab.is_note(i)).collect();
                 }
                 Some('f') => {
                     self.filtering = true;
@@ -1272,8 +1384,8 @@ impl Shelf {
                 // Control-H on Linux, as its file managers have it; Shift-Command-. on a Mac.
                 Some('h') if m.shift || m.logo || !cfg!(target_os = "macos") => self.act(Action::ToggleHidden),
                 Some('.') if m.shift && m.logo => self.act(Action::ToggleHidden),
-                Some('1') => self.view = View::Grid,
-                Some('2') => self.view = View::List,
+                Some('1') => self.set_view(View::Grid),
+                Some('2') => self.set_view(View::List),
                 Some('l') => {
                     let text = self.tab().place.text();
                     self.say(text);
@@ -1306,13 +1418,26 @@ impl Shelf {
             if tab.shown.is_empty() {
                 return;
             }
-            let to = (tab.cursor as isize + by).clamp(0, tab.shown.len() as isize - 1) as usize;
+            let last = tab.shown.len() as isize - 1;
+            let mut to = (tab.cursor as isize + by).clamp(0, last) as usize;
+            // A note (an opened folder's "loading", "empty") is stepped over, onwards.
+            let on = if by < 0 { -1 } else { 1 };
+            while tab.is_note(tab.shown[to]) {
+                let next = to as isize + on;
+                if next < 0 || next > last {
+                    break;
+                }
+                to = next as usize;
+            }
+            if tab.is_note(tab.shown[to]) {
+                return;
+            }
             tab.cursor = to;
             // An arrow brings the cursor back on show even where it cannot go further.
             tab.revealed = None;
             if m.shift {
                 let (a, b) = (tab.anchor.min(to), tab.anchor.max(to));
-                tab.selected = tab.shown[a..=b].iter().copied().collect();
+                tab.selected = tab.shown[a..=b].iter().copied().filter(|&i| !tab.entries.get(i).is_some_and(|e| e.note.is_some())).collect();
             } else {
                 tab.selected.clear();
                 tab.anchor = to;
@@ -1321,6 +1446,29 @@ impl Shelf {
         match key {
             Key::Left if self.view == View::Grid => step(self, -1),
             Key::Right if self.view == View::Grid => step(self, 1),
+            // In the list, as Finder's: Right opens the folder at the cursor where it is; Left
+            // closes it, or from inside an opened folder goes to that folder.
+            Key::Right => {
+                if let Some((index, item)) = self.tab().item_at_cursor() {
+                    if item.kind == Kind::Folder {
+                        self.disclose(index, true);
+                    }
+                }
+            }
+            Key::Left => {
+                let tab = self.tab();
+                let Some((index, item)) = tab.item_at_cursor() else { return };
+                let open = item.kind == Kind::Folder && tab.place_of(index).is_some_and(|p| tab.tree.is_open(&p));
+                if open {
+                    self.disclose(index, false);
+                } else if let Some(line) = tree::parent_line(&tab.entries, &tab.shown, tab.cursor) {
+                    tab.cursor = line;
+                    tab.anchor = line;
+                    tab.revealed = None;
+                    tab.selected.clear();
+                    tab.selected.insert(tab.shown[line]);
+                }
+            }
             Key::Up => step(self, -columns),
             Key::Down => step(self, columns),
             Key::PageUp => step(self, -columns * 4),
@@ -1337,7 +1485,7 @@ impl Shelf {
                 // Space marks the thing at the cursor: choosing several without a modifier,
                 // which a glasses wearer with a pad has not always got.
                 let tab = self.tab();
-                if let Some(&index) = tab.shown.get(tab.cursor) {
+                if let Some(&index) = tab.shown.get(tab.cursor).filter(|&&i| !tab.is_note(i)) {
                     if !tab.selected.remove(&index) {
                         tab.selected.insert(index);
                     }
@@ -1382,15 +1530,17 @@ impl Shelf {
                 }
                 row as usize * columns + col as usize
             }
-            View::List => {
-                let row = ((y - c.y - 40.0 + tab.scroll) / ROW).floor();
-                if row < 0.0 {
-                    return None;
-                }
-                row as usize
-            }
+            // A note is not a thing: pressed, it is the empty part of the folder.
+            View::List => return self.line_at(y).filter(|&at| !tab.is_note(tab.shown[at])),
         };
         (at < tab.shown.len()).then_some(at)
+    }
+
+    /// Which line of the list, a thing or a note, is at a height of the content.
+    fn line_at(&self, y: f32) -> Option<usize> {
+        let tab = &self.tabs[self.active];
+        let row = ((y - self.content.y - 40.0 + tab.scroll) / ROW).floor();
+        (row >= 0.0 && (row as usize) < tab.shown.len()).then_some(row as usize)
     }
 
     fn draw(&mut self) -> Result<(), String> {
@@ -1408,7 +1558,7 @@ impl Shelf {
         // Pictures for what is on show, asked for once each.
         let (first, last) = self.visible_range();
         let tab = &mut self.tabs[self.active];
-        let wanted: Vec<usize> = tab.shown.get(first..last.min(tab.shown.len())).unwrap_or(&[]).iter().copied().filter(|i| tab.items[*i].kind.pictured() && !tab.asked.contains(i)).collect();
+        let wanted: Vec<usize> = tab.shown.get(first..last.min(tab.shown.len())).unwrap_or(&[]).iter().copied().filter(|i| *i < tab.top.len() && tab.items[*i].kind.pictured() && !tab.asked.contains(i)).collect();
         if !wanted.is_empty() {
             tab.asked.extend(wanted.iter().copied());
             tab.tell(&ToTab::Pictures { indices: wanted, size: 320 });
@@ -1571,7 +1721,7 @@ impl Shelf {
         let pointer = self.pointer;
         let sort = self.sort;
         // The name being renamed is typed over where it is, not written.
-        let renaming = self.renaming.as_ref().filter(|r| r.tab == self.active).map(|r| r.name.clone());
+        let renaming = self.renaming_at().map(|at| self.tabs[self.active].shown[at]);
         let tab = &mut self.tabs[self.active];
         for t in tab.stale.drain(..) {
             p.forget(gl, t);
@@ -1673,7 +1823,7 @@ impl Shelf {
                     }
                     look::face(p, gl, face, item.kind, picture, 14.0);
                     let name = Rect::new(cell.x + 2.0, face.bottom() + 8.0, cell.w - 4.0, 28.0);
-                    if renaming.as_deref() != Some(item.name.as_str()) {
+                    if renaming != Some(index) {
                         p.label(gl, &item.name, name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.5);
                     }
                     let detail = if item.kind == Kind::Folder { String::new() } else { look::size(item.size) };
@@ -1681,6 +1831,19 @@ impl Shelf {
                 }
                 View::List => {
                     let rect = Rect::new(area.x, y, area.w, ROW - 4.0);
+                    let entry = &tab.entries[index];
+                    let (triangle, icon, name) = list_layout(rect, entry.depth);
+                    if let Some(note) = &entry.note {
+                        // An opened folder's word for itself, where its things would be.
+                        let (words, ink) = match note {
+                            tree::Note::Loading => ("Loading\u{2026}".to_string(), theme::ink_hint()),
+                            tree::Note::Empty => ("Empty".to_string(), theme::ink_hint()),
+                            tree::Note::Failed(why) => (format!("Could not be listed: {why}"), room::trouble()),
+                        };
+                        let at = Rect { x: icon.x, w: rect.right() - icon.x - 20.0, ..rect };
+                        p.label(gl, &words, at, theme::DETAIL_EM * 0.9, ink, 0.0);
+                        continue;
+                    }
                     let hover = rect.contains(pointer.0, pointer.1);
                     if selected {
                         p.fill(gl, rect, theme::ROW_RADIUS, theme::selected());
@@ -1690,10 +1853,14 @@ impl Shelf {
                         p.fill(gl, rect, theme::ROW_RADIUS, theme::hover());
                     }
                     let cols = list_columns(rect);
-                    let icon = Rect::new(cols[0].x, rect.y + 7.0, rect.h - 14.0, rect.h - 14.0);
+                    if item.kind == Kind::Folder {
+                        let open = tab.tree.is_open(&entry.parent.join(&item.name));
+                        let lit = triangle.contains(pointer.0, pointer.1);
+                        let mark = Rect::new(triangle.x + (triangle.w - 22.0) * 0.5, triangle.y + (triangle.h - 22.0) * 0.5, 22.0, 22.0);
+                        draw_icon(p, gl, if open { Icon::Disclosed } else { Icon::Disclose }, mark, if lit { theme::ink() } else { theme::ink_detail() });
+                    }
                     look::face(p, gl, icon, item.kind, picture, 8.0);
-                    let name = Rect { x: icon.right() + 14.0, w: cols[0].w - icon.w - 14.0, ..cols[0] };
-                    if renaming.as_deref() != Some(item.name.as_str()) {
+                    if renaming != Some(index) {
                         p.label(gl, &item.name, name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.0);
                     }
                     p.label(gl, item.kind.word(), cols[1], theme::DETAIL_EM * 0.9, theme::ink_hint(), 0.0);
@@ -1746,7 +1913,8 @@ impl Shelf {
                 return;
             }
         }
-        let count = tab.shown.len();
+        // The folder's own things, as Finder counts them: not what opened folders hold.
+        let count = tab.shown.iter().filter(|&&i| tab.depth(i) == 0).count();
         let mut words = if count == 1 { "1 item".to_string() } else { format!("{count} items") };
         if !tab.selected.is_empty() {
             let size: u64 = tab.selected.iter().filter_map(|&i| tab.items.get(i)).filter(|i| i.kind != Kind::Folder).map(|i| i.size).sum();
@@ -1887,7 +2055,8 @@ fn side_row_at(list: &List, x: f32, y: f32) -> Option<usize> {
 
 fn list_columns(rect: Rect) -> [Rect; 4] {
     let (kind_w, size_w, date_w) = (170.0, 140.0, 200.0);
-    let name_w = rect.w - kind_w - size_w - date_w - 40.0;
+    // The last column ends short of the edge, clear of the scroll bar.
+    let name_w = rect.w - kind_w - size_w - date_w - 56.0;
     let mut x = rect.x + 10.0;
     let mut out = [Rect::default(); 4];
     for (i, w) in [name_w, kind_w, size_w, date_w].into_iter().enumerate() {
@@ -1895,6 +2064,21 @@ fn list_columns(rect: Rect) -> [Rect; 4] {
         x += w + 10.0;
     }
     out
+}
+
+/// How far in each step into an opened folder is, and the width the triangle takes.
+const INDENT: f32 = 30.0;
+const DISCLOSURE: f32 = 30.0;
+
+/// A line of the list at `depth`: its triangle (a folder's), its picture and its name, within
+/// the name's column; the other columns are where they are on every line.
+fn list_layout(rect: Rect, depth: usize) -> (Rect, Rect, Rect) {
+    let cols = list_columns(rect);
+    let x = cols[0].x + depth as f32 * INDENT;
+    let triangle = Rect::new(x - 6.0, rect.y, DISCLOSURE, rect.h);
+    let face = Rect::new(x + DISCLOSURE - 4.0, rect.y + 7.0, rect.h - 14.0, rect.h - 14.0);
+    let name = Rect { x: face.right() + 14.0, w: (cols[0].right() - face.right() - 14.0).max(0.0), ..cols[0] };
+    (triangle, face, name)
 }
 
 fn menu_rect(at: (f32, f32), rows: usize, size: (u32, u32)) -> Rect {
