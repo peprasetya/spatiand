@@ -1,7 +1,7 @@
 keyboard_click = true
 spatial_audio = true
-audio_directness_centred = 0.3499999940395355
-audio_directness_off_axis = 0.10000000149011612
+audio_directness_centred = 0.35
+audio_directness_off_axis = 0.1
 remote_microphone = true
 pip_corner = "bottom-right"
 pip_size = "small"

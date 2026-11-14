@@ -357,17 +357,17 @@ impl Sound {
         let device = cpal::default_host().default_output_device().ok_or("this machine has nowhere for sound to go")?;
         let supported = device.default_output_config().map_err(|e| format!("the sound device would not say what it takes: {e}"))?;
         let config: cpal::StreamConfig = supported.config();
-        let (rate, channels) = (config.sample_rate.0, config.channels);
+        let (rate, channels) = (config.sample_rate, config.channels);
         let feed = std::sync::Arc::downgrade(bus);
         let failed = feed.clone();
         let mut scratch = Vec::new();
         let stream = device
             .build_output_stream(
-                &config,
+                config,
                 move |out: &mut [f32], info: &cpal::OutputCallbackInfo| {
                     let stamp = info.timestamp();
                     // How long from now until what is written here is heard.
-                    let delay = stamp.playback.duration_since(&stamp.callback).unwrap_or(Duration::ZERO);
+                    let delay = stamp.playback.duration_since(stamp.callback);
                     match feed.upgrade() {
                         Some(feed) => feed.mix(out, channels, Instant::now() + delay, &mut scratch),
                         None => out.fill(0.0),
@@ -376,7 +376,7 @@ impl Sound {
                 move |e| {
                     log::warn!("the sound device: {e}");
                     // A device gone (unplugged): nothing will be heard from it again.
-                    if matches!(e, cpal::StreamError::DeviceNotAvailable) {
+                    if e.kind() == cpal::ErrorKind::DeviceNotAvailable {
                         if let Some(bus) = failed.upgrade() {
                             bus.died();
                         }

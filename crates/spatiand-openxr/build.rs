@@ -16,7 +16,8 @@ fn compile(source: &str, stage: ShaderStage) -> Vec<u32> {
     let module = frontend
         .parse(&glsl::Options::from(stage), source)
         .unwrap_or_else(|e| panic!("could not parse the {stage:?} shader: {e:?}"));
-    let info = Validator::new(ValidationFlags::all(), Capabilities::PUSH_CONSTANT)
+    // Push constants are "immediates" to naga since 27.
+    let info = Validator::new(ValidationFlags::all(), Capabilities::IMMEDIATES)
         .validate(&module)
         .unwrap_or_else(|e| panic!("the {stage:?} shader is not valid: {e:?}"));
     let options = spv::Options {

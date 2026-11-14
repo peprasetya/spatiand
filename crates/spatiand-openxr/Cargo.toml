@@ -21,4 +21,4 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 
 [build-dependencies]
-naga = { version = "25", features = ["glsl-in", "spv-out"] }
+naga = { version = "30", features = ["glsl-in", "spv-out"] }

@@ -1,7 +1,7 @@
 keyboard_click = false
 spatial_audio = false
-audio_directness_centred = 0.4000000059604645
-audio_directness_off_axis = 0.15000000596046448
+audio_directness_centred = 0.4
+audio_directness_off_axis = 0.15
 remote_microphone = false
 pip_corner = "top-left"
 pip_size = "large"

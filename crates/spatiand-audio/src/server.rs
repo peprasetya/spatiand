@@ -430,17 +430,17 @@ impl Drop for Engine {
 struct Node {
     state: Arc<SlotState>,
     /// Both streams are kept alive by being held here; dropping them removes the nodes.
-    _sink: pw::stream::Stream,
+    _sink: pw::stream::StreamRc,
     _sink_listener: pw::stream::StreamListener<SinkData>,
-    _out: pw::stream::Stream,
+    _out: pw::stream::StreamRc,
     _out_listener: pw::stream::StreamListener<OutData>,
     /// The surround sound going out to [`SURROUND_SINK`], while recording.
-    bed: Option<(pw::stream::Stream, pw::stream::StreamListener<BedData>)>,
+    bed: Option<(pw::stream::StreamRc, pw::stream::StreamListener<BedData>)>,
 }
 
 /// The recording's mixing sink, kept alive by being held.
 struct Surround {
-    _sink: pw::stream::Stream,
+    _sink: pw::stream::StreamRc,
     _listener: pw::stream::StreamListener<Arc<Ring>>,
 }
 
@@ -452,9 +452,9 @@ fn run(
     commands: pw::channel::Receiver<Command>,
 ) -> Result<(), pw::Error> {
     pw::init();
-    let mainloop = pw::main_loop::MainLoop::new(None)?;
-    let context = pw::context::Context::new(&mainloop)?;
-    let core = context.connect(None)?;
+    let mainloop = pw::main_loop::MainLoopRc::new(None)?;
+    let context = pw::context::ContextRc::new(&mainloop, None)?;
+    let core = context.connect_rc(None)?;
 
     let nodes: Rc<RefCell<HashMap<Slot, Node>>> = Rc::default();
     let directness = Rc::new(RefCell::new(directness));
@@ -622,7 +622,7 @@ struct OutData {
 }
 
 fn open_slot(
-    core: &pw::core::Core,
+    core: &pw::core::CoreRc,
     slot: Slot,
     rate: u32,
     head: Head,
@@ -638,8 +638,8 @@ fn open_slot(
     // nothing has to be taught about any of this. It is deliberately not a candidate for the
     // machine's default sink: a window's sink is for that window's app, and anything that
     // landed here by accident would be placed at a window it has nothing to do with.
-    let sink = pw::stream::Stream::new(
-        core,
+    let sink = pw::stream::StreamRc::new(
+        core.clone(),
         &name,
         pw::properties::properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
@@ -781,8 +781,8 @@ fn open_slot(
     )?;
 
     // ---- The stereo that comes back out, into whatever the glasses are.
-    let out = pw::stream::Stream::new(
-        core,
+    let out = pw::stream::StreamRc::new(
+        core.clone(),
         &format!("{name}.out"),
         pw::properties::properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
@@ -880,7 +880,7 @@ struct BedData {
 }
 
 /// Send a window's surround sound to [`SURROUND_SINK`], for as long as the node holds it.
-fn start_bed(core: &pw::core::Core, slot: Slot, rate: u32, node: &mut Node) {
+fn start_bed(core: &pw::core::CoreRc, slot: Slot, rate: u32, node: &mut Node) {
     if node.bed.is_some() {
         return;
     }
@@ -895,14 +895,14 @@ fn start_bed(core: &pw::core::Core, slot: Slot, rate: u32, node: &mut Node) {
 }
 
 fn open_bed(
-    core: &pw::core::Core,
+    core: &pw::core::CoreRc,
     slot: Slot,
     rate: u32,
     state: Arc<SlotState>,
-) -> Result<(pw::stream::Stream, pw::stream::StreamListener<BedData>), pw::Error> {
+) -> Result<(pw::stream::StreamRc, pw::stream::StreamListener<BedData>), pw::Error> {
     let name = format!("{}.surround", sink_name(slot));
-    let stream = pw::stream::Stream::new(
-        core,
+    let stream = pw::stream::StreamRc::new(
+        core.clone(),
         &name,
         pw::properties::properties! {
             *pw::keys::MEDIA_TYPE => "Audio",
@@ -959,9 +959,9 @@ fn open_bed(
 ///
 /// Always processed, even with nothing playing into it, so the recording's surround track runs
 /// at the audio clock's pace through the silences too rather than stopping and starting.
-fn open_surround(core: &pw::core::Core, rate: u32, into: Arc<Ring>) -> Result<Surround, pw::Error> {
-    let sink = pw::stream::Stream::new(
-        core,
+fn open_surround(core: &pw::core::CoreRc, rate: u32, into: Arc<Ring>) -> Result<Surround, pw::Error> {
+    let sink = pw::stream::StreamRc::new(
+        core.clone(),
         SURROUND_SINK,
         pw::properties::properties! {
             *pw::keys::MEDIA_TYPE => "Audio",

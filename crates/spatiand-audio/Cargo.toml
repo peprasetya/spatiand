@@ -10,7 +10,7 @@ glam.workspace = true
 log.workspace = true
 thiserror.workspace = true
 # dlopen for libmysofa, so a machine without it still runs -- see `hrtf`.
-libloading = "0.8"
+libloading = "0.9"
 
 # The audio server, and the only part of this crate that is not portable arithmetic. Optional
 # so that the geometry and the rendering can be built and tested on any machine -- including a
@@ -20,7 +20,7 @@ libloading = "0.8"
 # `v0_3_49` is what exposes `Buffer::requested`, which is how many frames the graph is
 # asking for this cycle. The bindings gate it because the field arrived in PipeWire
 # 0.3.49; SteamOS ships 1.6, and everything this runs on is far past it.
-pipewire = { version = "0.8", optional = true, features = ["v0_3_49"] }
+pipewire = { version = "0.10", optional = true, features = ["v0_3_49"] }
 
 # On Android the engine plays out through AAudio; see `server_fed.rs`.
 [target.'cfg(target_os = "android")'.dependencies]

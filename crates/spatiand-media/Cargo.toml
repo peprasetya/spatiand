@@ -33,11 +33,11 @@ rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg8", "l
 # PipeWire through a `pw-cat` of our own instead (`sound.rs`), which is what lets the room
 # place it -- and needs no ALSA headers, which the Deck's build container has not got.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
-cpal = "0.15"
+cpal = "0.18"
 
 [dev-dependencies]
 env_logger.workspace = true
-png = "0.17"
+png = "0.18"
 
 [[example]]
 name = "frame"

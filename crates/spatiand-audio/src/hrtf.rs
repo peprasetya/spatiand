@@ -152,7 +152,12 @@ impl Hrtf {
                 None => libloading::Library::new(LIBRARY),
             }
         }
-        .map_err(|e| Error::NoLibrary(e.to_string()))?;
+        // libloading 0.9 says only "dlopen failed" and keeps dlerror's words, which say why, as
+        // the error's source.
+        .map_err(|e| match std::error::Error::source(&e) {
+            Some(why) => Error::NoLibrary(format!("{e}: {why}")),
+            None => Error::NoLibrary(e.to_string()),
+        })?;
 
         // SAFETY: each signature is transcribed from `mysofa.h`, checked against the installed
         // header rather than from memory. The pointers stay valid while `library` is alive,
