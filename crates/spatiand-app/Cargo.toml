@@ -20,7 +20,7 @@ libc = "0.2"
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 # What a key means: the compositor sends its keymap, and this reads it.
-xkbcommon = "0.8"
+xkbcommon = "0.9"
 memmap2 = "0.9"
 # The room's icons, drawn from SVG at the size they are shown.
 resvg = "0.50"
