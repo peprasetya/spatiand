@@ -1724,8 +1724,13 @@ fn swipe_on_the_window(state: &mut Spatiand, windows: &[crate::scene::WindowQuad
 /// ```text
 /// click:u,v  rclick:u,v  back:u,v  forward:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v
 /// scroll:dx,dy  thumbs:dy,seconds,hover  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
-/// roomup  notice  dictate:/tmp/said.wav  pad:3,1
+/// roomup  notice  dictate:/tmp/said.wav  pad:3,1  clipboard  key:rctrl+46
 /// ```
+///
+/// `clipboard` reads the room's clipboard as a pasting window would and logs it
+/// (`clipboard: held ...`, then `clipboard: text ...`), as the control socket's `clipboard`
+/// does. A key's modifiers are `ctrl` (the left Control), `rctrl` (the right Control, which is
+/// what a Mac's Command reaches the room's clients as), `shift`, `alt` and `logo`.
 ///
 /// `pad:fingers,deep` is a trackpad's press, deep or not, through the room's controls and the
 /// window's application's layout: see [`pad_press`].
@@ -1783,6 +1788,8 @@ enum Scripted {
     /// `pad:fingers,deep`: a trackpad's press, as a Mac's trackpad gives it to the room. See
     /// [`pad_press`].
     Pad(u8, bool),
+    /// The room's clipboard, read and logged.
+    Clipboard,
 }
 
 fn scripted_steps() -> Vec<Scripted> {
@@ -1816,6 +1823,7 @@ fn scripted_steps() -> Vec<Scripted> {
                     for part in rest.split('+') {
                         match part.trim() {
                             "ctrl" => held.push(29),
+                            "rctrl" => held.push(97),
                             "shift" => held.push(42),
                             "alt" => held.push(56),
                             "logo" | "super" => held.push(125),
@@ -1839,6 +1847,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("notice", _) => Scripted::Notice,
                 ("dictate", _) => Scripted::Dictate(rest.to_string()),
                 ("describe", _) => Scripted::Describe,
+                ("clipboard", _) => Scripted::Clipboard,
                 ("pad", [fingers, deep]) if (1.0..=5.0).contains(fingers) => Scripted::Pad(*fingers as u8, *deep != 0.0),
                 ("window", _) => Scripted::Window(rest.to_string()),
                 _ => {
@@ -2208,6 +2217,7 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
         }
         Scripted::Hold(code, down) => key_event(state, *code, *down),
         Scripted::Pad(fingers, deep) => pad_press(state, windows, *at, *fingers, *deep),
+        Scripted::Clipboard => crate::control::read_clipboard(state, |line| log::info!("clipboard: {line}")),
         Scripted::Wait(_) | Scripted::Dump(_) | Scripted::Window(_) => {}
     }
 }

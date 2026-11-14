@@ -190,39 +190,46 @@ impl Control {
     /// Paste the clipboard into a pipe, exactly as a window asking for text would, and answer
     /// with what came out of it.
     fn read_clipboard(&self, state: &mut Spatiand, client: u64) {
-        let tell = |line: &str| say(&self.clients, client, line);
-        tell(&format!("held {}", state.clipboard.describe()));
-        let (mut reader, writer) = match std::io::pipe() {
-            Ok(pipe) => pipe,
-            Err(e) => return tell(&format!("failed no pipe: {e}")),
-        };
-        if let Some(say) = state.clipboard.paste_here(
-            "text/plain;charset=utf-8".into(),
-            writer.into(),
-            &state.seat,
-            state.xwm.as_mut(),
-            &state.loop_handle,
-        ) {
-            state.clipboard_out.push(say);
-        }
         let clients = self.clients.clone();
-        let _ = std::thread::Builder::new()
-            .name("spatiand-control-read".into())
-            .spawn(move || {
-                let (done_tx, done_rx) = channel();
-                std::thread::spawn(move || {
-                    let mut bytes = Vec::new();
-                    let result = reader.read_to_end(&mut bytes).map(|_| bytes);
-                    let _ = done_tx.send(result);
-                });
-                let line = match done_rx.recv_timeout(READ_PATIENCE) {
-                    Ok(Ok(bytes)) => format!("text {}", keys::escape(&bytes)),
-                    Ok(Err(e)) => format!("failed reading: {e}"),
-                    Err(_) => format!("failed nothing finished writing in {} s", READ_PATIENCE.as_secs()),
-                };
-                say(&clients, client, &line);
-            });
+        read_clipboard(state, move |line| say(&clients, client, line));
     }
+}
+
+/// Paste the clipboard into a pipe, exactly as a window asking for text would, and tell `tell`
+/// who holds it (`held ...`) and then, from a thread of its own, what came out of it
+/// (`text ...` or `failed ...`). The control socket's `clipboard`, and the snapshot room's
+/// `clipboard` step.
+pub fn read_clipboard(state: &mut Spatiand, tell: impl Fn(&str) + Send + 'static) {
+    tell(&format!("held {}", state.clipboard.describe()));
+    let (mut reader, writer) = match std::io::pipe() {
+        Ok(pipe) => pipe,
+        Err(e) => return tell(&format!("failed no pipe: {e}")),
+    };
+    if let Some(say) = state.clipboard.paste_here(
+        "text/plain;charset=utf-8".into(),
+        writer.into(),
+        &state.seat,
+        state.xwm.as_mut(),
+        &state.loop_handle,
+    ) {
+        state.clipboard_out.push(say);
+    }
+    let _ = std::thread::Builder::new()
+        .name("spatiand-control-read".into())
+        .spawn(move || {
+            let (done_tx, done_rx) = channel();
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let result = reader.read_to_end(&mut bytes).map(|_| bytes);
+                let _ = done_tx.send(result);
+            });
+            let line = match done_rx.recv_timeout(READ_PATIENCE) {
+                Ok(Ok(bytes)) => format!("text {}", keys::escape(&bytes)),
+                Ok(Err(e)) => format!("failed reading: {e}"),
+                Err(_) => format!("failed nothing finished writing in {} s", READ_PATIENCE.as_secs()),
+            };
+            tell(&line);
+        });
 }
 
 fn say(clients: &Mutex<HashMap<u64, UnixStream>>, client: u64, line: &str) {
