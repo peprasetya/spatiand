@@ -12,7 +12,10 @@ best=""
 # revision the pinned Chromium names, built here from source. An Electron application's copy has
 # no version anyone chose and is another build's output (CLAUDE.md: nothing borrowed from another
 # build as a shortcut); it is the fallback only where SpatiMesh has not been built on this Mac.
-mesh="${SPATIMESH_MAC_TREE:-$HOME/Developer/spatimesh-mac}/chromium/src/out/mac-ozone/SpatiMesh.app/Contents/Frameworks/SpatiMesh Framework.framework/Versions/Current/Libraries"
+# (SpatiMesh links ANGLE into its framework, so the two libraries are a build of their own in the
+# same tree: `out/mac-angle`, SpatiMesh's arguments with `use_static_angle = false`, targets
+# `third_party/angle:libEGL third_party/angle:libGLESv2`; two or three minutes.)
+mesh="${SPATIMESH_MAC_TREE:-$HOME/Developer/spatimesh-mac}/chromium/src/out/mac-angle"
 if [ -f "$mesh/libEGL.dylib" ] && [ -f "$mesh/libGLESv2.dylib" ]; then best="$mesh"; fi
 [ -n "$best" ] ||
 for app in "/Applications/Visual Studio Code.app" /Applications/*.app "$HOME"/Applications/*.app; do
