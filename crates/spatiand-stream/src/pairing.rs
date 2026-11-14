@@ -310,6 +310,22 @@ mod tests {
         Fingerprint([n; 32])
     }
 
+    /// Known answer: the key confirmations both ends send, for a fixed SPAKE2 key, as this code
+    /// gave them before the RustCrypto upgrade (HMAC-SHA256 from ring, unchanged by it; the
+    /// fingerprints themselves are pinned in `transport`). A device on the old build and a
+    /// host on the new must still confirm each other.
+    #[test]
+    fn the_confirmations_are_byte_for_byte_what_they_were() {
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        let key = [0x42u8; 32];
+        let host = confirmation(&key, HOST_LABEL, &fp(1), &fp(2));
+        let device = confirmation(&key, CLIENT_LABEL, &fp(1), &fp(2));
+        assert_eq!(hex(host.as_ref()), "0fd8db1d9ff33705608b8dc8b6561f07563b218f3f1634c3bd4820d2e23d5e3f");
+        assert_eq!(hex(device.as_ref()), "e94e3908a7fce5cbe44aaf8cbf3e748450364c79b7ab2eb81482d15951b0e5b6");
+        assert!(confirms(&key, HOST_LABEL, &fp(1), &fp(2), host.as_ref()));
+        assert!(!confirms(&key, CLIENT_LABEL, &fp(1), &fp(2), host.as_ref()));
+    }
+
     const LASTS: Duration = Duration::from_secs(120);
 
     /// One whole exchange, in memory: the device with `typed` as its code and the fingerprints

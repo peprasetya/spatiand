@@ -191,6 +191,29 @@ mod tests {
         assert_ne!(alice.finish(&bob.message()).unwrap(), bob.finish(&alice.message()).unwrap());
     }
 
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// Known answers: both sides' messages and the key, byte for byte, as this code gave them
+    /// on curve25519-dalek 4 and sha2 0.10 (which agree with BoringSSL, `agrees_with_boringssl`).
+    /// A library upgrade that changes any of them would leave every phone unable to pair.
+    #[test]
+    fn the_exchange_is_byte_for_byte_what_it_was() {
+        let alice = Spake2::new(Role::Alice, CLIENT, SERVER, b"123456", &random(1));
+        let bob = Spake2::new(Role::Bob, SERVER, CLIENT, b"123456", &random(2));
+        assert_eq!(hex(&alice.message()), "c5fb6d957be16ad99a89d359817ee822ef601d1717911d47352af1fa7ae580a5");
+        assert_eq!(hex(&bob.message()), "253f477cf198ec897cb2b163b67f0178415d95441431dbeaa32bf01d3e0c6ba7");
+        assert_eq!(hex(&alice.finish(&bob.message()).unwrap()), "fb50aba112cbb08159266c9baa5aeb8dc5e7247cc9d736c09ea4e92f137d6fb066f2d1fb7d9fc979cd0d122b62d56a44e048c2341d8064dbbf6680ffc430ffb4");
+        assert_eq!(hex(&alice.password_scalar), "0848c149c51f44ac0257d23a85c552d9f21ad341c5cfc475aee338f3cfc0956c");
+        // What a phone could send that is no message: the wrong length, or no point at all
+        // (y = 2 is not on the curve).
+        assert!(alice.finish(&[1u8; 31]).is_none());
+        let mut not_a_point = [0u8; 32];
+        not_a_point[0] = 2;
+        assert!(alice.finish(&not_a_point).is_none());
+    }
+
     #[test]
     fn the_password_scalar_is_a_multiple_of_eight() {
         for seed in 0..32u8 {

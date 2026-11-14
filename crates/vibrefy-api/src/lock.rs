@@ -62,8 +62,16 @@ pub fn check_shape(pin: &str) -> Result<(), PinError> {
 /// Hashes a PIN for storage. The salt is fresh every time, so setting the same PIN twice
 /// does not produce the same string on disk.
 pub fn hash(pin: &str) -> Result<String, PinError> {
+    let mut salt = [0u8; 16];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut salt);
+    hash_with_salt(pin, &salt)
+}
+
+/// [`hash`] with the salt given: what is stored, as a PHC string
+/// (`$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>`, both in unpadded base64).
+fn hash_with_salt(pin: &str, salt: &[u8; 16]) -> Result<String, PinError> {
     check_shape(pin)?;
-    let salt = SaltString::generate(&mut rand_core::OsRng);
+    let salt = SaltString::encode_b64(salt).expect("16 bytes are a salt");
     Ok(Argon2::default()
         .hash_password(pin.as_bytes(), &salt)
         .expect("Argon2 with a generated salt cannot fail")
@@ -164,6 +172,24 @@ impl Lock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Known answers, as argon2 0.5 and password-hash 0.5 made them: the stored string for a
+    /// fixed salt, and a string stored by that version, which must still verify. A config
+    /// written before an upgrade has to keep opening its lock after it.
+    #[test]
+    fn the_stored_form_is_byte_for_byte_what_it_was() {
+        let salt: [u8; 16] = std::array::from_fn(|i| i as u8 * 17);
+        assert_eq!(hash_with_salt("4821", &salt).unwrap(), "$argon2id$v=19$m=19456,t=2,p=1$ABEiM0RVZneImaq7zN3u/w$whsI8IzX9DIviGyfzwulmVorTiLZBqECfX8H6g4Gnn8");
+        // `hash("1234")` on the old version, its salt random.
+        let stored = "$argon2id$v=19$m=19456,t=2,p=1$07Z/2TsjmLUyb8u6VnrMQQ$1kV/A3mDkVIqefG2t5BC7PSdWNbmp0+2iHL1o0znkM0";
+        assert!(verify(stored, "1234"));
+        assert!(!verify(stored, "1235"));
+        // A fresh hash has the same parameters and lengths: 16 bytes of salt, 32 of hash.
+        let fresh = hash("1234").unwrap();
+        let parts: Vec<&str> = fresh.split('$').collect();
+        assert_eq!(&parts[..4], &["", "argon2id", "v=19", "m=19456,t=2,p=1"]);
+        assert_eq!((parts[4].len(), parts[5].len()), (22, 43));
+    }
 
     #[test]
     fn a_pin_is_four_to_eight_digits() {

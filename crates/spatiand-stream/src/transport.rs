@@ -609,6 +609,21 @@ mod tests {
             .expect("a runtime")
     }
 
+    /// Known answers, as this code gave them on sha2 0.10: a certificate's fingerprint (what
+    /// every roster and `known` file holds, and what SPAKE2 binds as the identities) and the
+    /// pairing code shown for two of them. Either changing would unpair every machine.
+    #[test]
+    fn fingerprints_and_codes_are_byte_for_byte_what_they_were() {
+        let cert = CertificateDer::from(b"not really a certificate, but bytes all the same".to_vec());
+        let fp = Fingerprint::of(&cert);
+        assert_eq!(fp.to_string(), "5d8b6b82dfdeff7e0ad28e5ff9ef47110ebb6349f6b7d6b8cc40816ce4e7b71a");
+        assert_eq!(fp.short(), "5d8b6b82");
+        assert_eq!(Fingerprint::of(&CertificateDer::from(Vec::new())).to_string(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        let other = Fingerprint([0x5a; 32]);
+        assert_eq!(pairing_code(&fp, &other), "237 082");
+        assert_eq!(pairing_code(&other, &fp), pairing_code(&fp, &other));
+    }
+
     #[test]
     fn a_fingerprint_is_the_same_both_ways_round() {
         let identity = Identity::new().unwrap();

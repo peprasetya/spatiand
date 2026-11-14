@@ -86,6 +86,27 @@ fn little_endian(n: &BigUint, len: usize) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// A throwaway 2048-bit key made for this test with `openssl genpkey`; it opens nothing.
+    const TEST_KEY: &str = include_str!("../tests/data/test-adbkey.pem");
+
+    /// Known answer: the `adbkey.pub` line for the test key, as this code made it on
+    /// num-bigint 0.4 and base64 0.22. It is what a phone stores when it pairs; another
+    /// string for the same key and the phone no longer knows this computer.
+    #[test]
+    fn the_public_key_line_is_byte_for_byte_what_it_was() {
+        let key = AdbKey::from_pem(TEST_KEY).unwrap();
+        assert_eq!(key.exponent, 65537);
+        let line = key.public_key("spatiand@test");
+        assert_eq!(
+            line,
+            "QAAAADFWe90vvQlATCkbHAaeA13jFQUKg7zXFI3ifqu/RfBcOWCa3JWZFKZLmRjD0832nwCeP3WnuXPh6RPLUQlU3+JL8GwonctY6pvqpasJbdciu73/4Hjflv0koyHQOdHMiTzqys+Q3wuLm3qeCvp7yZXYmcyYPuAi7GOU44ylX4bnWgqOJWjMajTTpBqSlCAA+0gQjVWp7tDl1BhglCQad3RYVlBjrp52VFrSsCcTPpJFjPbkEEODCpI/ZhKwowtXdxjjcDq2XSO5YPEPcEzZG/KPzn8DeVHnz/39EWNakOtVOvnn7hEyqpbh65RYW/eTKujnYg5e+5wnbnum6X1rP4i8waXu76bVt/D96gJvx6xQi0pnzKpU5txBcL9ZO/ZGpk6a3qqGg4RG+A5mim/8lySArMQkG2kWL32xbSOZDaMzzIKo7ClSu9ZX88FOvOdFWh5xCG0Gu/zTl+bEDmPr6kuZXSuvCBTUw2B/hEgmG1yrlaXPb8RIj/IflgDuPRX8WEN8A9AErTQU71YkIrbhl1M1yOGzts/PWA8HYQqd9eeo0kgQAEAcLZW6ADZsaxiVrk3STclm1m/OtMD4TsndojsqT0VPYXROZRIeusuZGnP67A3A0lQMHT8I328ihSSGdHCeVrJrvMj4f47ZMCIVoAs8uxgHTP2/OgScZdbBcZCYjL2DawEAAQA= spatiand@test"
+        );
+        // The PEM read the same way from its DER.
+        let body: String = TEST_KEY.lines().filter(|l| !l.starts_with("-----")).collect();
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(&body).unwrap(), key.pkcs8);
+        assert!(AdbKey::from_pem("-----BEGIN PRIVATE KEY-----\nnot base64!\n-----END PRIVATE KEY-----").is_err());
+    }
+
     /// adb's own key pair on this computer, if it has one: the public key worked out here must
     /// be the one adb wrote next to it.
     #[test]

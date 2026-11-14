@@ -284,6 +284,14 @@ mod tests {
         assert_eq!(s.url("My Drive", "a b/ü.jpg"), "http://spatiand:t0k@127.0.0.1:47731/dav/My%20Drive/a%20b/%C3%BC.jpg");
     }
 
+    /// Known answer, as base64 0.22 wrote it: the header the service is asked with. Standard
+    /// alphabet, padded, as HTTP's Basic wants.
+    #[test]
+    fn the_basic_header_is_byte_for_byte_what_it_was() {
+        let s = Storage { port: 47731, token: "t0k?>".into() };
+        assert_eq!(s.auth(), "Basic c3BhdGlhbmQ6dDBrPz4=");
+    }
+
     #[test]
     fn an_older_build_of_our_own_service_is_replaced_and_anyone_elses_is_not() {
         let dir = std::env::temp_dir().join(format!("spatiand-storage-stamp-{}", std::process::id()));
