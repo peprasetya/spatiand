@@ -71,8 +71,7 @@ impl Opening {
 
 /// Where a remote's file is fetched to for an application that takes only files.
 fn fetched_into(place: &Place) -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into())).join(".cache"));
-    let mut dir = base.join("spatishelf").join("opened");
+    let mut dir = openwith::cache_dir().join("opened");
     if let Place::Remote(r, p) = place {
         dir = dir.join(r);
         if let Some((folder, _)) = p.rsplit_once('/') {

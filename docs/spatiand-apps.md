@@ -340,14 +340,29 @@ trash, Delete is for good, after asking. Nothing is pasted into it and nothing i
   `.nomedia`, so that the gallery does not show what is in it. Paths in its info files are from the
   volume's top, as the spec has a disk's.
 - **The Mac**: Finder's Trash. Put there by `NSFileManager trashItemAtURL` (what Finder does, so
-  Finder's Put Back works for it), listed from `~/.Trash` and each `/Volumes/*/.Trashes/<uid>`,
-  emptied by deleting what is in them. Where a thing came from Finder keeps in the Trash's
-  `.DS_Store`, which is not read: SpatiShelf remembers what it put there itself
-  (`~/.config/spatiand/local/spatishelf-trash.json`), and Put back works for those; for what Finder
-  put there SpatiShelf says it does not know, and Finder's Put Back does it. *Workaround: the proper
-  whole reads the `.DS_Store`'s `ptbL`/`ptbN` records.* macOS keeps `~/.Trash` from programs without
+  Finder's Put Back works for it: the system writes Finder's record for it too), listed from
+  `~/.Trash` and each `/Volumes/*/.Trashes/<uid>`, emptied by deleting what is in them. **Where each
+  thing came from is read from the Trash's `.DS_Store`**, as Finder wrote it: `ptbL`, the folder from
+  the top of the disk (`private/tmp/sstest/files/`; `/` for the home Trash, `/Volumes/<disk>` for a
+  disk's), and `ptbN`, the thing's own name when the Trash renamed it ("a.txt 17-56-07-829.txt" is
+  shown and put back as "a.txt"). The reader (`ds_store.rs`) is SpatiShelf's own, read-only, from the
+  format's notes (the `Bud1` buddy allocator, its `DSDB` B-tree of records keyed by file name, a
+  four-letter code and a typed value), defensive -- every length checked, no node twice, no deeper
+  than the tree says -- and tested on every system (Finder's own file rebuilt byte for byte, a tree
+  with inner nodes and every kind of value, every byte of a file damaged in turn). SpatiShelf's own
+  memory (`~/.config/spatiand/local/spatishelf-trash.json`) is kept too and comes first: it is known
+  before Finder's record is written, and has when the thing was put there; each memory now holds the
+  thing's inode, so that something else later in the Trash by the name is not taken for it (older
+  memories without one are still read). **After SpatiShelf puts back something Finder put there,
+  Finder's record of it stays in the `.DS_Store`** (SpatiShelf never writes the file): Finder tolerates
+  that -- a record of nothing is ignored, and the next thing by the name gets a new one -- and so does
+  this reader, which only looks up what is in the Trash. macOS keeps `~/.Trash` from programs without
   Full Disk Access: then the Trash says so ("Allow Spatiand in System Settings, Privacy & Security,
-  Full Disk Access") rather than looking empty.
+  Full Disk Access") rather than looking empty. Checked in the snapshot room (littleotter): a scratch
+  file trashed by the system's trash call from outside SpatiShelf (so only Finder's record knew it)
+  shown "from /private/tmp/sstest/files" and put back; a second by the same name (renamed in the
+  Trash) shown by its own name and put back as "zz-finder-test 2.txt" beside the first; one trashed
+  by SpatiShelf put back from its memory. Not checked: a disk's `.Trashes` (no other disk on that Mac).
 - **Remotes** have no trash here: Delete asks first, and says where it goes -- "It goes to Google
   Drive's own trash, not to this machine's Trash." for the kinds rclone deletes into their own trash
   by default (Drive, OneDrive, Box, pCloud, MEGA, Dropbox), "for good? This cannot be undone." for the
@@ -397,8 +412,20 @@ when one is remembered, "Forget X for .jpg files". Several chosen are all opened
   SVG by resvg.
 - **The Mac** (`openwith_mac.rs`): Launch Services through `NSWorkspace` --
   `URLsForApplicationsToOpenURL`, `URLForApplicationToOpenURL` for the default, `iconForFile` for the
-  icon (its TIFF) -- started with `open -a <app> <files>`; "Other..." is what is in /Applications,
+  icon -- started with `open -a <app> <files>`; "Other..." is what is in /Applications,
   /Applications/Utilities, ~/Applications, /System/Applications(/Utilities). Remembered by the ending.
+  The icon is **drawn at the size shown** (64 px): into an `NSBitmapImageRep` of that size (8 bits,
+  RGBA, device RGB) through `NSGraphicsContext graphicsContextWithBitmapImageRep`, AppKit choosing
+  the icon's own picture for it, on SpatiShelf's worker thread (none of these classes is main-thread-only;
+  the context is that thread's own, pushed and popped on its per-thread stack; the `NSImage` is only
+  read; an autorelease pool per icon). Not by its `TIFFRepresentation`, as first: that renders every
+  size, the first 1024x1024 in 16-bit floats (Preview's: 74 MB, 32 pictures), which the `image` crate
+  cannot read ("Unhandled TIFF sample format 3"), so no icon showed, at ~130 ms and tens of MB each.
+  Kept per application in memory for the run and as PNGs in `~/.cache/spatishelf/app-icons`, named by
+  the bundle's path and its `Info.plist`'s time (an update draws it again). Checked in the snapshot
+  room (littleotter): the menu's nine with their icons; "Other..." with an empty cache, its 72 others
+  drawn and kept in 0.31 s (about 4 ms an icon), the first screenful there 0.3 s after the click, and
+  the last of the list (scrolled to with End) with theirs.
 - **Android, the Beam Pro** (`openwith_android.rs`): only the APK's Java may ask the PackageManager,
   so the room is asked, over its protocol: **`spatiand_xr_v1.ask_system`** (version 11), JSON in, JSON
   written into a descriptor -- `openers`, `all_openers`, `open_with` (the protocol's description says

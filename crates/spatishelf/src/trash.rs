@@ -17,10 +17,13 @@
 //!   reinstalled (the app's own folders do not); named for Spatiand rather than for the uid,
 //!   which Android changes when the app is installed again; hidden and with a `.nomedia`, so
 //!   that the gallery and other apps do not show what is in it.
-//! * **The Mac**: Finder's own Trash (`mac.rs`): put there by `NSFileManager`, so that Finder's
-//!   Put Back works for it too, and listed from `~/.Trash`.
+//! * **The Mac**: Finder's own Trash (`trash_mac.rs`): put there by `NSFileManager`, so that
+//!   Finder's Put Back works for it too, listed from `~/.Trash` and each disk's
+//!   `.Trashes/<uid>`, where each thing came from read from the Trash's `.DS_Store`
+//!   (`ds_store.rs`) as Finder wrote it.
 //!
-//! Everything but the Mac's few calls is plain file work, tested below.
+//! Everything but the Mac's few calls is plain file work, tested below (and the `.DS_Store`
+//! reader in its own file, on every system).
 
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -30,6 +33,11 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 #[path = "trash_mac.rs"]
 mod mac;
+
+/// Finder's records, read: used on the Mac, tested everywhere.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[path = "ds_store.rs"]
+pub mod ds_store;
 
 /// Something in the trash.
 #[derive(Debug, Clone, PartialEq)]
@@ -806,6 +814,8 @@ mod tests {
         assert_eq!(android_volume(Path::new("/data/local/tmp/x")), None);
     }
 
+    // A Mac's trash is Finder's, not known by a freedesktop shape (`can_holding` is None there).
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn a_trash_is_known_by_its_shape() {
         let dir = scratch("shape");

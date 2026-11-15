@@ -77,8 +77,15 @@ pub fn icon(app: &App, size: u32) -> Option<(u32, u32, Vec<u8>)> {
     platform::icon(app, size)
 }
 
+/// SpatiShelf's own cache: `$XDG_CACHE_HOME/spatishelf`, by default `~/.cache/spatishelf`.
+pub fn cache_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/tmp".into())).join(".cache"));
+    base.join("spatishelf")
+}
+
 /// A picture file -- PNG, SVG, or anything `image` reads -- as RGBA, `size` pixels a side at
-/// most.
+/// most. (Not the Mac's: AppKit draws its applications' icons.)
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn picture_file(path: &Path, size: u32) -> Option<(u32, u32, Vec<u8>)> {
     let ending = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     if ending == "svg" || ending == "svgz" {
@@ -105,7 +112,7 @@ pub fn picture_file(path: &Path, size: u32) -> Option<(u32, u32, Vec<u8>)> {
     pixels_of(image, size)
 }
 
-pub fn pixels_of(image: image::DynamicImage, size: u32) -> Option<(u32, u32, Vec<u8>)> {
+fn pixels_of(image: image::DynamicImage, size: u32) -> Option<(u32, u32, Vec<u8>)> {
     let small = if image.width() > size || image.height() > size { image.thumbnail(size, size) } else { image };
     let small = small.to_rgba8();
     let (w, h) = small.dimensions();
