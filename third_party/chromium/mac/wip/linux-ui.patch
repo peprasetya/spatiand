@@ -8825,6 +8825,25 @@ index 65b6901118..bb976ce7c5 100644
  #endif
        return discoveries;
      }
+diff --git a/extensions/common/command.cc b/extensions/common/command.cc
+index 033c2e367d..0a8e8fc2e7 100644
+--- a/extensions/common/command.cc
++++ b/extensions/common/command.cc
+@@ -113,8 +113,13 @@ Command::Command(std::string_view command_name,
+ std::string Command::CommandPlatform() {
+ #if BUILDFLAG(IS_WIN)
+   return ui::kKeybindingPlatformWin;
+-#elif BUILDFLAG(IS_MAC)
++#elif BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return ui::kKeybindingPlatformMac;
++#elif BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: the Linux UI on macOS takes its shortcuts on Control, as on Linux (Command
++  // reaches it as the right Control), so an extension's shortcuts are its Linux ones: a
++  // "default" of "Ctrl+E" was turned into Command+E and refused, and the extension with it.
++  return ui::kKeybindingPlatformLinux;
+ #elif BUILDFLAG(IS_CHROMEOS)
+   return ui::kKeybindingPlatformChromeOs;
+ #elif BUILDFLAG(IS_LINUX)
 diff --git a/gpu/command_buffer/service/BUILD.gn b/gpu/command_buffer/service/BUILD.gn
 index e3b29bbacb..55ce3d1385 100644
 --- a/gpu/command_buffer/service/BUILD.gn
