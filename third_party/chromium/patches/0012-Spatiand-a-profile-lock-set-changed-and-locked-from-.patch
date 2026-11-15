@@ -9,12 +9,12 @@ Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
  chrome/browser/BUILD.gn                       |   1 +
  chrome/browser/profiles/profile_manager.cc    |  20 +-
  .../settings/people_page/people_page.html.ts  |  89 +---
- .../browser/spatiand/profile_lock_dialog.cc   | 394 ++++++++++++++++--
+ .../browser/spatiand/profile_lock_dialog.cc   | 408 ++++++++++++++++--
  chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
  chrome/browser/spatiand/profiles_sync.cc      | 222 +++++++++-
  chrome/browser/spatiand/profiles_sync.h       |  32 ++
  .../ui/views/profiles/profile_menu_view.cc    |  30 ++
- 9 files changed, 690 insertions(+), 118 deletions(-)
+ 9 files changed, 704 insertions(+), 118 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
 index a803c69e26..acb5857c52 100644
@@ -217,10 +217,10 @@ index b3303085ac..40179b1d95 100644
  
        </div>
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
-index 2acc69b61a..e9e4af71ee 100644
+index 2acc69b61a..3fff4c332a 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.cc
 +++ b/chrome/browser/spatiand/profile_lock_dialog.cc
-@@ -3,25 +3,36 @@
+@@ -3,6 +3,7 @@
  
  #include "chrome/browser/spatiand/profile_lock_dialog.h"
  
@@ -228,9 +228,8 @@ index 2acc69b61a..e9e4af71ee 100644
  #include <memory>
  #include <utility>
  
- #include "base/functional/bind.h"
+@@ -10,18 +11,28 @@
  #include "base/functional/callback.h"
-+#include "base/memory/ptr_util.h"
  #include "base/memory/raw_ptr.h"
  #include "base/memory/weak_ptr.h"
 +#include "base/strings/string_util.h"
@@ -245,6 +244,7 @@ index 2acc69b61a..e9e4af71ee 100644
 +#include "ui/base/metadata/metadata_header_macros.h"
 +#include "ui/base/metadata/metadata_impl_macros.h"
  #include "ui/base/mojom/ui_base_types.mojom-shared.h"
++#include "ui/native_theme/native_theme.h"
  #include "ui/views/accessibility/view_accessibility.h"
 +#include "ui/views/controls/button/md_text_button.h"
 +#include "ui/views/controls/button/radio_button.h"
@@ -257,7 +257,7 @@ index 2acc69b61a..e9e4af71ee 100644
  #include "ui/views/window/dialog_delegate.h"
  
  namespace spatiand {
-@@ -31,46 +42,198 @@ namespace {
+@@ -31,46 +42,212 @@ namespace {
  constexpr int kTriesBeforeWaiting = 5;
  constexpr base::TimeDelta kWait = base::Seconds(30);
  
@@ -314,6 +314,19 @@ index 2acc69b61a..e9e4af71ee 100644
 +BEGIN_METADATA(FittedClientView)
 +END_METADATA
 +
++// A dialog's window in the colours of SpatiMesh's own windows: light or dark as the Spatiand look
++// is (which reaches this theme through the toolkits' settings, ui/linux/portal_settings_linux.cc,
++// or stands in for them where there is no toolkit), as on the Mac. A window of no profile and no
++// parent was given the desktop toolkit's theme on Linux -- Qt's under KDE, as the room's session
++// says it is -- whose window colour is Qt's palette, which Qt cannot turn dark: the PIN window was
++// light, its field and buttons dark, in the owner's dark session (2026-11-15).
++class OwnWindow : public views::Widget {
++ public:
++  const ui::NativeTheme* GetNativeTheme() const override {
++    return ui::NativeTheme::GetInstanceForNativeUi();
++  }
++};
++
 +// A dialog in a window of its own, owning that window as it owns itself: both go when the window
 +// closes, however it does (its buttons, Escape, the window's close, the browser's exit), the
 +// window first. Before its views go, the dialog lets go of its pointers to them.
@@ -329,8 +342,9 @@ index 2acc69b61a..e9e4af71ee 100644
 +  // Shows it; `this` is deleted when its window closes.
 +  void Open() {
 +    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
-+    window_ = base::WrapUnique(views::DialogDelegate::CreateDialogWidget(
-+        this, /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView()));
++    window_ = std::make_unique<OwnWindow>();
++    window_->Init(views::DialogDelegate::GetDialogWidgetInitParams(
++        this, /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView(), gfx::Rect()));
 +    window_->MakeCloseSynchronous(
 +        base::BindOnce(&OwnWindowDialog::Closed, base::Unretained(this)));
 +    window_->Show();
@@ -468,7 +482,7 @@ index 2acc69b61a..e9e4af71ee 100644
        return false;
      }
      checking_ = true;
-@@ -90,13 +253,7 @@ class ProfileLockDialog : public views::DialogDelegate {
+@@ -90,13 +267,7 @@ class ProfileLockDialog : public views::DialogDelegate {
      }
      field_->SetText(std::u16string());
      field_->RequestFocus();
@@ -483,7 +497,7 @@ index 2acc69b61a..e9e4af71ee 100644
    }
  
    void Finish(bool opened) {
-@@ -105,28 +262,215 @@ class ProfileLockDialog : public views::DialogDelegate {
+@@ -105,28 +276,215 @@ class ProfileLockDialog : public views::DialogDelegate {
      }
    }
  
