@@ -8,13 +8,13 @@ Subject: [PATCH 292/310] Spatiand: a profile lock set, changed and locked from
  chrome/app/settings_strings.grdp              |   2 +-
  chrome/browser/BUILD.gn                       |   1 +
  chrome/browser/profiles/profile_manager.cc    |  20 +-
- .../settings/people_page/people_page.html.ts  |  89 +----
- .../browser/spatiand/profile_lock_dialog.cc   | 347 ++++++++++++++++--
+ .../settings/people_page/people_page.html.ts  |  89 +---
+ .../browser/spatiand/profile_lock_dialog.cc   | 394 ++++++++++++++++--
  chrome/browser/spatiand/profile_lock_dialog.h |  18 +-
- chrome/browser/spatiand/profiles_sync.cc      | 222 ++++++++++-
+ chrome/browser/spatiand/profiles_sync.cc      | 222 +++++++++-
  chrome/browser/spatiand/profiles_sync.h       |  32 ++
  .../ui/views/profiles/profile_menu_view.cc    |  30 ++
- 9 files changed, 644 insertions(+), 117 deletions(-)
+ 9 files changed, 690 insertions(+), 118 deletions(-)
 
 diff --git a/chrome/app/settings_strings.grdp b/chrome/app/settings_strings.grdp
 index a803c69e26..acb5857c52 100644
@@ -217,10 +217,10 @@ index b3303085ac..40179b1d95 100644
  
        </div>
 diff --git a/chrome/browser/spatiand/profile_lock_dialog.cc b/chrome/browser/spatiand/profile_lock_dialog.cc
-index 2acc69b61a..fd20475141 100644
+index 2acc69b61a..e9e4af71ee 100644
 --- a/chrome/browser/spatiand/profile_lock_dialog.cc
 +++ b/chrome/browser/spatiand/profile_lock_dialog.cc
-@@ -3,20 +3,28 @@
+@@ -3,25 +3,36 @@
  
  #include "chrome/browser/spatiand/profile_lock_dialog.h"
  
@@ -242,6 +242,8 @@ index 2acc69b61a..fd20475141 100644
  #include "chrome/browser/spatiand/profiles_sync.h"
 +#include "components/spatikey/client.h"
  #include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
  #include "ui/base/mojom/ui_base_types.mojom-shared.h"
  #include "ui/views/accessibility/view_accessibility.h"
 +#include "ui/views/controls/button/md_text_button.h"
@@ -249,7 +251,13 @@ index 2acc69b61a..fd20475141 100644
  #include "ui/views/controls/label.h"
  #include "ui/views/controls/textfield/textfield.h"
  #include "ui/views/layout/box_layout.h"
-@@ -31,45 +39,155 @@ namespace {
+ #include "ui/views/view.h"
+ #include "ui/views/widget/widget.h"
++#include "ui/views/window/dialog_client_view.h"
+ #include "ui/views/window/dialog_delegate.h"
+ 
+ namespace spatiand {
+@@ -31,46 +42,198 @@ namespace {
  constexpr int kTriesBeforeWaiting = 5;
  constexpr base::TimeDelta kWait = base::Seconds(30);
  
@@ -288,6 +296,24 @@ index 2acc69b61a..fd20475141 100644
 +  return label;
 +}
 +
++// A dialog's client view at its own size: no smaller and no bigger than what it shows, so its
++// window says so (xdg_toplevel's min and max size, equal), and the room, or a desktop, offers it
++// that size. A dialog without a parent has no bubble frame on Linux, whose maximum is its preferred
++// size (as it has on the Mac), and the dialog's client view has no maximum of its own: the room
++// offered the PIN window its 1280x800 for any new window, mostly empty.
++class FittedClientView : public views::DialogClientView {
++  METADATA_HEADER(FittedClientView, views::DialogClientView)
++
++ public:
++  using views::DialogClientView::DialogClientView;
++
++  gfx::Size GetMinimumSize() const override { return GetPreferredSize({}); }
++  gfx::Size GetMaximumSize() const override { return GetPreferredSize({}); }
++};
++
++BEGIN_METADATA(FittedClientView)
++END_METADATA
++
 +// A dialog in a window of its own, owning that window as it owns itself: both go when the window
 +// closes, however it does (its buttons, Escape, the window's close, the browser's exit), the
 +// window first. Before its views go, the dialog lets go of its pointers to them.
@@ -312,6 +338,27 @@ index 2acc69b61a..fd20475141 100644
 +
 +  // The window is closing, its views still there: let go of them, and say what is to be said.
 +  virtual void Closing() = 0;
++
++  // What it shows has grown or shrunk (a line said, a button shown): the window takes its new
++  // size, and says it is that size.
++  void Refit() {
++    if (!window_) {
++      return;
++    }
++    window_->OnSizeConstraintsChanged();
++    window_->SetSize(window_->non_client_view()->GetPreferredSize({}));
++  }
++
++  // Says `text` in `label`, the window following its size.
++  void Say(views::Label* label, const std::u16string& text) {
++    label->SetText(text);
++    Refit();
++  }
++
++  // views::DialogDelegate:
++  views::ClientView* CreateClientView(views::Widget* widget) override {
++    return new FittedClientView(widget, TransferOwnershipOfContentsView());
++  }
 +
 + private:
 +  void Closed(views::Widget::ClosedReason) {
@@ -385,11 +432,14 @@ index 2acc69b61a..fd20475141 100644
 +    finger_ = nullptr;
 +  }
 +
-+  void UsableKnown(bool usable) { finger_->SetVisible(usable); }
++  void UsableKnown(bool usable) {
++    finger_->SetVisible(usable);
++    Refit();
++  }
 +
 +  void AskFinger() {
 +    finger_->SetEnabled(false);
-+    said_->SetText(u"Waiting for a finger on SpatiKey's Touch ID.");
++    Say(said_, u"Waiting for a finger on SpatiKey's Touch ID.");
 +    base::DictValue fields;
 +    fields.Set("profile", base::UTF16ToUTF8(profile_name_));
 +    spatikey::Ask("profile_unlock", std::move(fields),
@@ -403,7 +453,7 @@ index 2acc69b61a..fd20475141 100644
 +      return;
 +    }
 +    finger_->SetEnabled(true);
-+    said_->SetText(base::UTF8ToUTF16(answer.error().message));
++    Say(said_, base::UTF8ToUTF16(answer.error().message));
 +  }
 +
    // Whether the dialog closes now: not until the many rounds of hashing have said.
@@ -412,11 +462,13 @@ index 2acc69b61a..fd20475141 100644
        return false;
      }
 -    if (base::Time::Now() < wait_until_) {
+-      said_->SetText(u"Too many wrong tries: wait a moment.");
 +    if (!tries_.Allowed()) {
-       said_->SetText(u"Too many wrong tries: wait a moment.");
++      Say(said_, u"Too many wrong tries: wait a moment.");
        return false;
      }
-@@ -90,13 +208,7 @@ class ProfileLockDialog : public views::DialogDelegate {
+     checking_ = true;
+@@ -90,13 +253,7 @@ class ProfileLockDialog : public views::DialogDelegate {
      }
      field_->SetText(std::u16string());
      field_->RequestFocus();
@@ -427,11 +479,11 @@ index 2acc69b61a..fd20475141 100644
 -    } else {
 -      said_->SetText(u"That is not it.");
 -    }
-+    said_->SetText(tries_.Wrong());
++    Say(said_, tries_.Wrong());
    }
  
    void Finish(bool opened) {
-@@ -105,28 +217,215 @@ class ProfileLockDialog : public views::DialogDelegate {
+@@ -105,28 +262,215 @@ class ProfileLockDialog : public views::DialogDelegate {
      }
    }
  
@@ -561,7 +613,7 @@ index 2acc69b61a..fd20475141 100644
 +      return false;
 +    }
 +    if (const std::u16string why = Refusal(); !why.empty()) {
-+      said_->SetText(why);
++      Say(said_, why);
 +      return false;
 +    }
 +    if (hash_.empty()) {
@@ -569,7 +621,7 @@ index 2acc69b61a..fd20475141 100644
 +      return false;
 +    }
 +    if (!tries_.Allowed()) {
-+      said_->SetText(u"Too many wrong tries: wait a moment.");
++      Say(said_, u"Too many wrong tries: wait a moment.");
 +      return false;
 +    }
 +    working_ = true;
@@ -585,7 +637,7 @@ index 2acc69b61a..fd20475141 100644
 +    if (hash != hash_) {
 +      present_->SetText(std::u16string());
 +      present_->RequestFocus();
-+      said_->SetText(tries_.Wrong());
++      Say(said_, tries_.Wrong());
 +      return;
 +    }
 +    Save();

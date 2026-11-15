@@ -6,14 +6,36 @@ Subject: [PATCH 285/310] Spatiand: SpatiMesh in every string
 Cromite's grit renames Chrome, Chromium and Bromite at build time; the name is SpatiMesh, Cromite's
 own strings included.
 ---
- tools/grit/grit/grd_reader.py | 23 +++++++++++++++--------
- 1 file changed, 15 insertions(+), 8 deletions(-)
+ tools/grit/grit/grd_reader.py | 31 +++++++++++++++++++++++--------
+ 1 file changed, 23 insertions(+), 8 deletions(-)
 
 diff --git a/tools/grit/grit/grd_reader.py b/tools/grit/grit/grd_reader.py
-index 46b1b31bc8..d0f9d98b69 100755
+index 46b1b31bc8..e4c2542937 100755
 --- a/tools/grit/grit/grd_reader.py
 +++ b/tools/grit/grit/grd_reader.py
-@@ -158,14 +158,20 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):
+@@ -6,6 +6,7 @@
+ '''Class for reading GRD files into memory, without processing them.'''
+ 
+ import os.path
++import re
+ import sys
+ import xml.sax
+ import xml.sax.handler
+@@ -151,6 +152,13 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):
+     content = content_orig.replace("Chromiumdontreplace", "zzzyyyyxxxx1")
+     content = content.replace("Chromedontreplace", "zzzyyyyxxxx2")
+     content = content.replace("chromedontreplace", "zzzyyyyxxxx3")
++    # Spatiand: the Chrome Web Store keeps its name, whichever way a string spells it ("Chrome Web
++    # Store", "Chrome web store", "Chrome Webstore", ...): it is Google's store, where its links go.
++    content = re.sub(r"Chrome(?= [Ww]eb ?[Ss]tore)", "zzzyyyyxxxx2", content)
++    content = re.sub(r"chrome(?= [Ww]eb ?[Ss]tore)", "zzzyyyyxxxx3", content)
++    # An element's id inside a string, which the page's script looks for by that name (Customize
++    # Chrome's store link: app.ts checks for 'chromeWebstoreLink').
++    content = content.replace("chromeWebstoreLink", "zzzyyyyxxxx3WebstoreLink")
+     content = content.replace("//chrome", "zzzyyyyxxxx4")
+     content = content.replace("chrome://", "zzzyyyyxxxx5")
+     content = content.replace("/chrome/", "zzzyyyyxxxx6")
+@@ -158,14 +166,20 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):
      content = content.replace(".chromium.org", "zzzyyyyxxxx8")
      content = content.replace("chromebook", "zzzyyyyxxxx9")
      content = content.replace("chromeos", "zzzyyyyxxxxA")
@@ -42,7 +64,7 @@ index 46b1b31bc8..d0f9d98b69 100755
  
      content = content.replace("zzzyyyyxxxx1", "Chromium")
      content = content.replace("zzzyyyyxxxx2", "Chrome")
-@@ -177,6 +183,7 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):
+@@ -177,6 +191,7 @@ class GrdContentHandler(xml.sax.handler.ContentHandler):
      content = content.replace("zzzyyyyxxxx8", ".chromium.org")
      content = content.replace("zzzyyyyxxxx9", "chromebook")
      content = content.replace("zzzyyyyxxxxA", "chromeos")
