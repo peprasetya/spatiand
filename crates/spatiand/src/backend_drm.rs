@@ -3246,7 +3246,7 @@ pub fn run(
                     }
                     // The assistant's questions and actions (`crate::assist`); what needs the shell is
                     // done next frame, as a pointer's is.
-                    pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms));
+                    pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms, Some(&crate::assist::Sight { orientation, stereo })));
                     crate::spatikey::serve(&mut runtime.state, time_ms);
 
                     if !typed
@@ -3747,6 +3747,11 @@ pub fn run(
                 if let Some(r) = recorder.as_mut() {
                     r.frame(&mut renderer, target_fbo);
                 }
+            }
+
+            // What the assistant asked to see of the view: this frame's left eye, as drawn.
+            if !flip_waiting {
+                crate::assist::frame_drawn(&mut renderer, target_fbo, (0, 0, stereo.per_eye.0 as i32, stereo.per_eye.1 as i32));
             }
 
             screenshot_owed |= screenshot;

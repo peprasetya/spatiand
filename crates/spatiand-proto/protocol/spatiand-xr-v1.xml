@@ -520,6 +520,16 @@
         of names and words likely to be said: file names, a page's headings),
         "directory", and "commands" (a terminal's last commands, the last one
         last). A client with nothing to say closes it at once.
+
+        This is the client's own account of itself, and may hold more than is
+        on show: a whole page, a terminal's scroll-back. It is not what the
+        wearer sees. The assistant's account of what the wearer sees is the
+        room's own picture of the window as it is shown (spatiand_assist_v1,
+        "seen": cropped to the part in view, at whatever zoom it is drawn);
+        this text goes with it only when a request reaches past what is on
+        screen ("the rest of the article", "the other window"), and is marked
+        to the model as not on screen. A client need not, and should not, try
+        to answer with only what is on show.
       </description>
       <arg name="fd" type="fd" summary="where to write the description"/>
     </event>
@@ -563,6 +573,24 @@
     <request name="ask">
       <description summary="a question or an action">
         One JSON object; the answer is written into `answer` and it is closed.
+
+        `{"do": "seen"}` is what the wearer sees, made by the room the same
+        way for every window, on every platform: the window they are looking
+        at (the one in the middle of the view; else the focused one in view;
+        else the one filling most of it; never the assistant's own), its
+        picture as shown -- the part inside the field of view only, at the
+        zoom it is drawn at -- with which part that is (`part`, `[u0, u1, v0,
+        v1]` of the window from its top left), how much of the view it fills,
+        and the other windows in view. `"window"` names another; `"view":
+        true` adds the left eye's picture of the whole view as last drawn
+        (`view_png`); `"picture": false` leaves the pictures out. A room with
+        no head to look from (a flat room) answers with every window whole.
+        `{"do": "target"}`, the window a request with none named acts on, is
+        likewise the one looked at when the room knows where the wearer looks.
+
+        Only the room and the assistant use this interface: a copy of this
+        file in a client (Chromium's) needs no change for what is added here,
+        and is brought up to date with that client's next monthly build.
       </description>
       <arg name="json" type="string" summary="what is asked, as JSON"/>
       <arg name="answer" type="fd" summary="where the answer is written"/>

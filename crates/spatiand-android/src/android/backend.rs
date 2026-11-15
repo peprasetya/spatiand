@@ -1843,7 +1843,7 @@ pub fn run(
                     }
                     // The assistant's questions and actions (`crate::assist`); what needs the shell is
                     // done next frame, as a pointer's is.
-                    pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms));
+                    pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms, Some(&crate::assist::Sight { orientation, stereo })));
                     crate::spatikey::serve(&mut runtime.state, time_ms);
 
                     if !typed && !shell.wants_text() && right_click && pointers.drag.is_none() && !right_was_down {
@@ -2059,6 +2059,10 @@ pub fn run(
                 screenshot_owed |= screenshot;
                 let take_shot = std::mem::take(&mut screenshot_owed);
                 let mut shot: Option<Vec<u8>> = None;
+                // What the assistant asked to see of the view: the left eye, as drawn.
+                let want_view = crate::assist::view_wanted();
+                let eye_w = if on_glasses { w / 2 } else { w };
+                let mut view: Option<Vec<u8>> = None;
                 let mut target = renderer.bind(&mut output.surface)?;
                 let mut frame = renderer.render(&mut target, (w, h).into(), Transform::Normal)?;
                 frame.with_context(|gl| unsafe {
@@ -2160,7 +2164,15 @@ pub fn run(
                         gl.ReadPixels(0, 0, w, h, ffi::RGBA, ffi::UNSIGNED_BYTE, pixels.as_mut_ptr() as *mut _);
                         shot = Some(pixels);
                     }
+                    if want_view {
+                        let mut pixels = vec![0u8; (eye_w * h * 4) as usize];
+                        gl.ReadPixels(0, 0, eye_w, h, ffi::RGBA, ffi::UNSIGNED_BYTE, pixels.as_mut_ptr() as *mut _);
+                        view = Some(pixels);
+                    }
                 })?;
+                if let Some(pixels) = view {
+                    crate::assist::view_read(pixels, eye_w as u32, h as u32, true);
+                }
                 // The swap below flushes; nothing here waits on the GPU.
                 let _ = frame.finish()?;
                 if let Some(pixels) = shot {

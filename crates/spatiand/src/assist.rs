@@ -1,8 +1,9 @@
 //! The room's side of its assistant (`spatiand_assist_v1`; `docs/ai-integrations.md`).
 //!
 //! The assistant is one of Spatiand's own programs, and asks here what is in the room and does
-//! what it was asked to there: lists the windows and the applications, reads a window (its own
-//! account of itself, or a picture of it), points, clicks, scrolls and types on a window as the
+//! what it was asked to there: lists the windows and the applications, sees what the wearer sees
+//! (`seen`: the window looked at as it is shown, cropped to the part in view, and the view), reads
+//! a window (its own account of itself, or a picture of it), points, clicks, scrolls and types on a window as the
 //! wearer would, and hands the shell what only the shell does -- opening an application,
 //! focusing, hiding, pinning or closing a window, recentring.
 //!
@@ -266,8 +267,10 @@ pub fn serve(
     windows: &[crate::scene::WindowQuad],
     renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
     time_ms: u32,
+    sight: Option<&Sight>,
 ) -> Vec<ShellEvent> {
     tend_ears();
+    tend_view_owed();
     let mut events = Vec::new();
     if let Some(shell) = shell {
         events.extend(keep_running(state, shell));
@@ -365,6 +368,7 @@ pub fn serve(
                 };
                 describe(state, id, asked);
             }
+            "seen" => seen(state, windows, renderer, sight, asked),
             "picture" => {
                 let Some(id) = window_of(state, &asked) else {
                     asked.refuse("no such window");
@@ -372,7 +376,7 @@ pub fn serve(
                 };
                 let largest = asked.number("largest").unwrap_or(1280.0).clamp(256.0, 2048.0) as u32;
                 match windows.iter().find(|q| state.layout.id_of(&q.window) == Some(id)) {
-                    Some(quad) => match picture(renderer, quad, largest) {
+                    Some(quad) => match picture(renderer, quad, largest, [0.0, 1.0, 0.0, 1.0]) {
                         Ok((png, w, h)) => asked.answer(json!({ "png": spatiand_voice::speech::encode_base64(&png), "width": w, "height": h })),
                         Err(why) => asked.refuse(&why),
                     },
@@ -456,8 +460,22 @@ pub fn serve(
                 asked.answer(json!({ "window": id }));
             }
             // The window an action with no window named would be done to.
+            // What the wearer is looking at, when the room knows where they look: what they mean
+            // by "this" is in front of them, focused or not. Else the one they work in.
             "target" => {
-                let id = window_of(state, &asked);
+                let looked = asked.number("window").is_none().then(|| sight).flatten().and_then(|sight| {
+                    let visible = seeable(state, windows);
+                    let quads: Vec<spatiand_render::Quad> = visible
+                        .iter()
+                        .map(|&k| crate::scene::window_quad(&windows[k].placement, windows[k].pixels.0 as f64 / windows[k].pixels.1.max(1) as f64))
+                        .collect();
+                    let mut shown = on_show(&quads, sight);
+                    for s in shown.iter_mut() {
+                        s.quad = visible[s.quad];
+                    }
+                    looked_at(state, windows, &shown).filter(|&k| !is_own(&windows[k].window)).and_then(|k| state.layout.id_of(&windows[k].window))
+                });
+                let id = looked.or_else(|| window_of(state, &asked));
                 asked.answer(json!({ "window": id }));
             }
             // Its figure: which, what it is doing, whether it is shown. Drawn by the scene
@@ -622,11 +640,13 @@ fn describe(state: &Spatiand, id: usize, asked: Asked) {
     }
 }
 
-/// A window's picture as the wearer sees it, at most `largest` pixels across, as PNG.
+/// A window's picture as the wearer sees it, at most `largest` pixels across, as PNG: the part
+/// `part` of it (`[u0, u1, v0, v1]`, fractions from its top left).
 fn picture(
     renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
     quad: &crate::scene::WindowQuad,
     largest: u32,
+    part: [f32; 4],
 ) -> Result<(Vec<u8>, u32, u32), String> {
     use smithay::backend::renderer::gles::ffi;
     let (tw, th) = (quad.buffer.0 as i32, quad.buffer.1 as i32);
@@ -651,22 +671,16 @@ fn picture(
         return Err("the window's picture could not be read".into());
     }
     let image = image::RgbaImage::from_raw(tw as u32, th as u32, raw).ok_or("the window's picture was the wrong size")?;
-    // Only the part the window shows (a viewport may crop its buffer), and no wider than asked.
-    let [u0, u1, v0, v1] = quad.crop;
-    let (x, y) = ((u0 * tw as f32) as u32, (v0 * th as f32) as u32);
+    // Only the part the window shows (a viewport may crop its buffer) -- and of that, the part
+    // asked for -- no wider than asked.
+    let [c0, c1, d0, d1] = quad.crop;
+    let [p0, p1, q0, q1] = part;
+    let (u0, u1) = (c0 + (c1 - c0) * p0, c0 + (c1 - c0) * p1);
+    let (v0, v1) = (d0 + (d1 - d0) * q0, d0 + (d1 - d0) * q1);
+    let (x, y) = (((u0 * tw as f32) as u32).min(tw as u32 - 1), ((v0 * th as f32) as u32).min(th as u32 - 1));
     let (w, h) = ((((u1 - u0) * tw as f32) as u32).max(1), (((v1 - v0) * th as f32) as u32).max(1));
     let image = image::imageops::crop_imm(&image, x, y, w.min(tw as u32 - x), h.min(th as u32 - y)).to_image();
-    let image = if image.width() > largest {
-        let h = (image.height() as u64 * largest as u64 / image.width() as u64).max(1) as u32;
-        image::imageops::resize(&image, largest, h, image::imageops::FilterType::Triangle)
-    } else {
-        image
-    };
-    let (w, h) = image.dimensions();
-    let rgb = image::DynamicImage::ImageRgba8(image).to_rgb8();
-    let mut png = Vec::new();
-    rgb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
-    Ok((png, w, h))
+    encode(image, largest)
 }
 
 /// The pointer on a window at a fraction of it across and down, with a button going down or up.
@@ -789,9 +803,338 @@ fn keys_of(text: &str) -> Option<(u32, bool, bool, bool, bool)> {
     Some((code?, shift, ctrl, alt, logo))
 }
 
+// --- what the wearer sees ---
+
+/// Where the wearer is looking from: the head as the frame is drawn, and the eyes' field. The
+/// backend hands it to [`serve`] so that "what do you see" is answered with what is in front of
+/// them, not with everything a window holds.
+#[derive(Clone, Copy, Debug)]
+pub struct Sight {
+    pub orientation: glam::DQuat,
+    pub stereo: spatiand_render::StereoConfig,
+}
+
+/// One window as the wearer sees it now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OnShow {
+    /// Its index among the windows drawn.
+    pub quad: usize,
+    /// The part of it inside the view, `[u0, u1, v0, v1]`: fractions of the window, from its top
+    /// left. `[0, 1, 0, 1]` when all of it is in view.
+    pub part: [f32; 4],
+    /// How much of the view it fills, not hidden behind another window: 0 to 1.
+    pub share: f32,
+    /// It is what the middle of the view falls on.
+    pub centre: bool,
+}
+
+/// The windows in view, from the left eye: the part of each inside its field (a grid of points
+/// on the window, each projected), and how much of the view each fills in front of the others
+/// (a grid of rays from the eye, each finding the nearest window). Hidden windows are not drawn,
+/// so are not here.
+pub fn on_show(quads: &[spatiand_render::Quad], sight: &Sight) -> Vec<OnShow> {
+    use glam::{DVec3, Vec4};
+    let eye = spatiand_render::eye_for(spatiand_render::EyeSide::Left, sight.orientation, DVec3::ZERO, &sight.stereo);
+    let vp = eye.view_projection();
+    let (tx, ty) = ((sight.stereo.h_fov_deg / 2.0).to_radians().tan(), (sight.stereo.v_fov_deg() / 2.0).to_radians().tan());
+    // How much of the view each fills: rays across it.
+    let (across, down) = (64usize, 36usize);
+    let mut hits = vec![0usize; quads.len()];
+    let mut centre = None;
+    for j in 0..=down {
+        for i in 0..=across {
+            let (x, y) = (2.0 * i as f64 / across as f64 - 1.0, 1.0 - 2.0 * j as f64 / down as f64);
+            let direction = (sight.orientation * DVec3::new(1.0, -x * tx, y * ty)).normalize();
+            let ray = spatiand_render::Ray { origin: eye.position, direction };
+            if let Some((k, _)) = spatiand_render::pick(&ray, quads) {
+                hits[k] += 1;
+                if i == across / 2 && j == down / 2 {
+                    centre = Some(k);
+                }
+            }
+        }
+    }
+    let total = ((across + 1) * (down + 1)) as f32;
+    let mut out = Vec::new();
+    for (k, quad) in quads.iter().enumerate() {
+        // The part inside the field: points on the window that project inside it.
+        let n = 48;
+        let (mut u0, mut u1, mut v0, mut v1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for j in 0..=n {
+            for i in 0..=n {
+                let (u, v) = (i as f64 / n as f64, j as f64 / n as f64);
+                let p = quad.centre + quad.orientation * DVec3::new(0.0, (0.5 - u) * quad.width, (0.5 - v) * quad.height);
+                let clip = vp * Vec4::new(p.x as f32, p.y as f32, p.z as f32, 1.0);
+                if clip.w > 0.0 && (clip.x / clip.w).abs() <= 1.0 && (clip.y / clip.w).abs() <= 1.0 {
+                    u0 = u0.min(u as f32);
+                    u1 = u1.max(u as f32);
+                    v0 = v0.min(v as f32);
+                    v1 = v1.max(v as f32);
+                }
+            }
+        }
+        if u0 > u1 || hits[k] == 0 && centre != Some(k) {
+            continue;
+        }
+        // Out to the edge of the field, half a step past the last point inside it.
+        let half = 0.5 / n as f32;
+        let widen = |a: f32, inward: bool| if inward { (a - half).max(0.0) } else { (a + half).min(1.0) };
+        let part = [if u0 > 0.0 { widen(u0, true) } else { 0.0 }, if u1 < 1.0 { widen(u1, false) } else { 1.0 }, if v0 > 0.0 { widen(v0, true) } else { 0.0 }, if v1 < 1.0 { widen(v1, false) } else { 1.0 }];
+        out.push(OnShow { quad: k, part, share: hits[k] as f32 / total, centre: centre == Some(k) });
+    }
+    out
+}
+
+/// The windows that count for what the wearer sees: those on show, **without the assistant's own**
+/// -- its chat window is looked through, not at: asked "what do I see?" while it is in front of a
+/// page (it opens where the wearer looks), the page is what is meant. Its own window only when
+/// there is no other.
+fn seeable(state: &Spatiand, windows: &[crate::scene::WindowQuad]) -> Vec<usize> {
+    let shown: Vec<usize> = (0..windows.len()).filter(|&k| !state.layout.is_hidden(&windows[k].window)).collect();
+    let theirs: Vec<usize> = shown.iter().copied().filter(|&k| !is_own(&windows[k].window)).collect();
+    if theirs.is_empty() {
+        shown
+    } else {
+        theirs
+    }
+}
+
+/// The window the wearer is looking at, among those on show: the one in the middle of the view;
+/// else the focused one, if it is in view; else the one filling the most of it. Never the
+/// assistant's own chat window unless it is the only one.
+fn looked_at(state: &Spatiand, windows: &[crate::scene::WindowQuad], shown: &[OnShow]) -> Option<usize> {
+    let theirs: Vec<&OnShow> = shown.iter().filter(|s| !is_own(&windows[s.quad].window)).collect();
+    let pick = |list: &[&OnShow]| -> Option<usize> {
+        if let Some(c) = list.iter().find(|s| s.centre) {
+            return Some(c.quad);
+        }
+        let focused = state.layout.focused_id();
+        if let Some(f) = list.iter().find(|s| focused.is_some() && state.layout.id_of(&windows[s.quad].window) == focused) {
+            return Some(f.quad);
+        }
+        list.iter().max_by(|a, b| a.share.partial_cmp(&b.share).unwrap_or(std::cmp::Ordering::Equal)).map(|s| s.quad)
+    };
+    pick(&theirs).or_else(|| pick(&shown.iter().collect::<Vec<_>>()))
+}
+
+/// `{"do": "seen"}`: **what the wearer sees** -- the window they are looking at as it is shown
+/// (its picture cropped to the part in view, at whatever zoom it is drawn at), which part that is,
+/// how much of the view it fills, and the other windows in view. With `"window"`, that window's
+/// part in view instead (all of it, said as not on show, if it is out of view). With
+/// `"view": true`, also the view itself as the left eye was last shown it, every window in it
+/// (`view_png`) -- for a question about more than one window. `"picture": false` for the account
+/// without pictures. The same in every room, for every kind of window: the room's own picture,
+/// not the application's account of itself (that is `describe`).
+fn seen(state: &Spatiand, windows: &[crate::scene::WindowQuad], renderer: &mut smithay::backend::renderer::gles::GlesRenderer, sight: Option<&Sight>, asked: Asked) {
+    let largest = asked.number("largest").unwrap_or(1280.0).clamp(256.0, 2048.0) as u32;
+    let visible = seeable(state, windows);
+    let quads: Vec<spatiand_render::Quad> = visible
+        .iter()
+        .map(|&k| crate::scene::window_quad(&windows[k].placement, windows[k].pixels.0 as f64 / windows[k].pixels.1.max(1) as f64))
+        .collect();
+    let mut shown = match sight {
+        Some(sight) => on_show(&quads, sight),
+        None => Vec::new(),
+    };
+    for s in shown.iter_mut() {
+        s.quad = visible[s.quad];
+    }
+    // No head to look from (a flat room, a desktop), or nothing found in view: every window is
+    // seen whole, and the one worked in is the one looked at.
+    let flat = shown.is_empty();
+    if flat {
+        shown = visible.iter().map(|&k| OnShow { quad: k, part: [0.0, 1.0, 0.0, 1.0], share: 0.0, centre: false }).collect();
+    }
+    let named = asked.number("window").map(|n| n as usize);
+    let quad_of = |id: usize| windows.iter().position(|q| state.layout.id_of(&q.window) == Some(id));
+    let target = match named {
+        Some(id) => quad_of(id),
+        None if flat => window_of(state, &asked).and_then(quad_of),
+        None => looked_at(state, windows, &shown),
+    };
+    let describe = |k: usize, s: Option<&OnShow>| {
+        let w = &windows[k];
+        let id = state.layout.id_of(&w.window);
+        json!({
+            "window": id,
+            "app": id.and_then(|id| state.app_id_of_id(id)).unwrap_or_default(),
+            "title": state.title_of(&w.window).unwrap_or_default(),
+            "own": is_own(&w.window),
+            "in_view": s.is_some(),
+            "part": s.map(|s| s.part),
+            "share": s.map(|s| (s.share * 100.0).round() / 100.0),
+        })
+    };
+    let mut answer = json!({ "flat": flat });
+    if let Some(k) = target {
+        let s = shown.iter().find(|s| s.quad == k);
+        let mut about = describe(k, s);
+        let part = s.map_or([0.0, 1.0, 0.0, 1.0], |s| s.part);
+        about["whole"] = json!(part == [0.0, 1.0, 0.0, 1.0]);
+        if asked.get("picture").and_then(Value::as_bool) != Some(false) {
+            match picture(renderer, &windows[k], largest, part) {
+                Ok((png, w, h)) => {
+                    about["png"] = json!(spatiand_voice::speech::encode_base64(&png));
+                    about["width"] = json!(w);
+                    about["height"] = json!(h);
+                }
+                Err(why) => about["picture_error"] = json!(why),
+            }
+        }
+        answer["looking_at"] = about;
+    }
+    answer["others"] = json!(shown.iter().filter(|s| Some(s.quad) != target).map(|s| describe(s.quad, Some(s))).collect::<Vec<_>>());
+    if asked.get("view").and_then(Value::as_bool) == Some(true) {
+        if sight.is_some() {
+            // Answered once the frame being drawn is: what the eye was shown.
+            VIEW_OWED.lock().unwrap().push((asked, answer, largest, std::time::Instant::now()));
+            return;
+        }
+        answer["view_error"] = json!("this room draws no view of its own");
+    }
+    asked.answer(answer);
+}
+
+/// `seen` questions that want the view, waiting for the frame being drawn.
+static VIEW_OWED: Mutex<Vec<(Asked, Value, u32, std::time::Instant)>> = Mutex::new(Vec::new());
+
+/// Whether the assistant is waiting for a picture of the view: the backend reads the frame back
+/// for it ([`view_read`]) only then.
+pub fn view_wanted() -> bool {
+    !VIEW_OWED.lock().unwrap().is_empty()
+}
+
+/// The frame has been drawn into `fbo`, the left eye in `eye` (`x, y, width, height`): what
+/// asked for the view is answered with it, read back as the screenshot is -- exactly what was on
+/// the glass. Called by the backend after it draws; what waits more than half a second (no frame
+/// drawn: the glasses off) is answered without it.
+pub fn frame_drawn(renderer: &mut smithay::backend::renderer::gles::GlesRenderer, fbo: u32, eye: (i32, i32, i32, i32)) {
+    if !view_wanted() {
+        return;
+    }
+    use smithay::backend::renderer::gles::ffi;
+    let (x, y, w, h) = eye;
+    let raw = renderer
+        .with_context(|gl| unsafe {
+            let mut raw = vec![0u8; (w.max(0) * h.max(0) * 4) as usize];
+            gl.BindFramebuffer(ffi::FRAMEBUFFER, fbo);
+            gl.ReadPixels(x, y, w, h, ffi::RGBA, ffi::UNSIGNED_BYTE, raw.as_mut_ptr() as *mut _);
+            gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
+            raw
+        })
+        .unwrap_or_default();
+    // The scene is drawn flipped into this framebuffer, so read top row first it is the right way up.
+    view_read(raw, w as u32, h as u32, false);
+}
+
+/// The left eye's picture, read back by the backend (`bottom_up` when its rows came bottom
+/// first, as from a window's own framebuffer): what asked for the view is answered with it.
+pub fn view_read(raw: Vec<u8>, w: u32, h: u32, bottom_up: bool) {
+    let owed: Vec<_> = std::mem::take(&mut *VIEW_OWED.lock().unwrap());
+    if owed.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let raw = if bottom_up && w > 0 { raw.chunks((w * 4) as usize).rev().flatten().copied().collect() } else { raw };
+        let image = image::RgbaImage::from_raw(w, h, raw);
+        for (asked, mut answer, largest, _) in owed {
+            match image.as_ref().map(|i| encode(i.clone(), largest)) {
+                Some(Ok((png, pw, ph))) => {
+                    answer["view_png"] = json!(spatiand_voice::speech::encode_base64(&png));
+                    answer["view_width"] = json!(pw);
+                    answer["view_height"] = json!(ph);
+                }
+                Some(Err(why)) => answer["view_error"] = json!(why),
+                None => answer["view_error"] = json!("the view could not be read back"),
+            }
+            asked.answer(answer);
+        }
+    });
+}
+
+/// What waited too long for a frame: answered without the view.
+fn tend_view_owed() {
+    let mut owed = VIEW_OWED.lock().unwrap();
+    let (late, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut *owed).into_iter().partition(|(_, _, _, at)| at.elapsed() > std::time::Duration::from_millis(500));
+    *owed = waiting;
+    drop(owed);
+    for (asked, mut answer, _, _) in late {
+        answer["view_error"] = json!("no frame was drawn to see the view in");
+        asked.answer(answer);
+    }
+}
+
+/// A picture scaled to at most `largest` across, as PNG.
+fn encode(image: image::RgbaImage, largest: u32) -> Result<(Vec<u8>, u32, u32), String> {
+    let image = if image.width() > largest {
+        let h = (image.height() as u64 * largest as u64 / image.width() as u64).max(1) as u32;
+        image::imageops::resize(&image, largest, h, image::imageops::FilterType::Triangle)
+    } else {
+        image
+    };
+    let (w, h) = image.dimensions();
+    let rgb = image::DynamicImage::ImageRgba8(image).to_rgb8();
+    let mut png = Vec::new();
+    rgb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).map_err(|e| e.to_string())?;
+    Ok((png, w, h))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::keys_of;
+    use super::{keys_of, on_show, Sight};
+    use glam::{DQuat, DVec3};
+
+    fn window(yaw_deg: f64, pitch_deg: f64, radius: f64, width: f64, aspect: f64) -> spatiand_render::Quad {
+        let placement = crate::window::Placement { yaw: yaw_deg.to_radians(), pitch: pitch_deg.to_radians(), radius, width, ..Default::default() };
+        crate::scene::window_quad(&placement, aspect)
+    }
+
+    fn ahead() -> Sight {
+        Sight { orientation: DQuat::IDENTITY, stereo: spatiand_render::StereoConfig::default() }
+    }
+
+    #[test]
+    fn a_window_straight_ahead_and_in_view_is_seen_whole() {
+        let shown = on_show(&[window(0.0, 0.0, 2.2, 1.1, 1.6)], &ahead());
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].part, [0.0, 1.0, 0.0, 1.0]);
+        assert!(shown[0].centre && shown[0].share > 0.3 && shown[0].share < 0.9, "{shown:?}");
+    }
+
+    #[test]
+    fn a_window_too_big_for_the_view_is_seen_in_part() {
+        // Brought close, or made huge: wider and taller than the field; only its middle is seen.
+        let shown = on_show(&[window(0.0, 0.0, 1.0, 3.0, 1.6)], &ahead());
+        let [u0, u1, v0, v1] = shown[0].part;
+        assert!(u0 > 0.2 && u1 < 0.8 && v0 > 0.1 && v1 < 0.9, "{:?}", shown[0].part);
+        // Near the middle: the left eye sits a little left of the head and its neck above it.
+        assert!((u0 + u1 - 1.0).abs() < 0.05 && (v0 + v1 - 1.0).abs() < 0.12, "centred: {:?}", shown[0].part);
+        assert!(shown[0].share > 0.95);
+    }
+
+    #[test]
+    fn turned_away_the_window_leaves_the_view_by_its_side() {
+        // A window to the left (+yaw), the head turned so that only its right part is in view.
+        let quads = [window(25.0, 0.0, 2.2, 1.1, 1.6), window(0.0, 0.0, 2.2, 1.1, 1.6)];
+        let sight = Sight { orientation: DQuat::from_axis_angle(DVec3::Z, (-5f64).to_radians()), ..ahead() };
+        let shown = on_show(&quads, &sight);
+        let left = shown.iter().find(|s| s.quad == 0).expect("the window to the left, in part");
+        assert!(left.part[0] > 0.3 && left.part[1] == 1.0, "{:?}", left.part);
+        assert!(!left.centre);
+        assert!(shown.iter().find(|s| s.quad == 1).is_some_and(|s| s.centre));
+        // Turned right round, neither is seen.
+        let behind = Sight { orientation: DQuat::from_axis_angle(DVec3::Z, std::f64::consts::PI), ..ahead() };
+        assert!(on_show(&quads, &behind).is_empty());
+    }
+
+    #[test]
+    fn a_window_in_front_hides_the_one_behind_it() {
+        let quads = [window(0.0, 0.0, 3.0, 1.2, 1.6), window(0.0, 0.0, 2.0, 1.2, 1.6)];
+        let shown = on_show(&quads, &ahead());
+        let far = shown.iter().find(|s| s.quad == 0);
+        let near = shown.iter().find(|s| s.quad == 1).unwrap();
+        assert!(near.centre && far.is_none_or(|f| f.share < near.share / 3.0), "{shown:?}");
+    }
 
     #[test]
     fn keys_are_read_as_people_write_them() {

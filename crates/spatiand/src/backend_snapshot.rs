@@ -832,7 +832,12 @@ pub fn run(
                                         Err(std::sync::mpsc::TryRecvError::Empty) => {}
                                     }
                                 }
-                                for event in crate::assist::serve(&mut runtime.state, None, &windows, &mut renderer, 0) {
+                                // Where the snapshot looks from: what the assistant is told the wearer sees.
+                                let sight = crate::assist::Sight {
+                                    orientation: DQuat::from_axis_angle(DVec3::Z, yaw_deg.to_radians()) * DQuat::from_axis_angle(DVec3::Y, pitch_deg.to_radians()),
+                                    stereo: StereoConfig { per_eye: (width, height), ..Default::default() },
+                                };
+                                for event in crate::assist::serve(&mut runtime.state, None, &windows, &mut renderer, 0, Some(&sight)) {
                                     log::info!("assist: the shell would be asked {event:?}");
                                 }
                                 if let Some(said) = dictation.tick() {
