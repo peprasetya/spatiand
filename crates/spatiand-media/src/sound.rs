@@ -657,4 +657,10 @@ impl Stream {
     pub fn set_volume(&self, volume: f32) {
         self.sound.set_volume(volume);
     }
+
+    /// Drop what was pushed and not yet handed on: it is not to be heard (an assistant told to
+    /// be quiet). What the output already has -- a few hundredths of a second -- is still heard.
+    pub fn clear(&self) {
+        self.sound.clear();
+    }
 }

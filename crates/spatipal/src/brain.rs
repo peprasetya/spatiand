@@ -16,6 +16,17 @@
 //! then the chat -- so the server reads only what is new. The room as it is now (the time, the
 //! windows) goes with the wearer's words, not in the system message, where a minute passing made
 //! the server read everything after it again.
+//!
+//! **What the wearer sees comes first** (the owner, 2026-11-15: "the priority is what the user
+//! see ... the hidden things -- the page or the other application -- become additional
+//! information if they are related to the question"). Every turn knows which window they are
+//! looking at and how much of it is in view (the room's `seen`). A request about what is seen --
+//! "describe this", "what am I looking at", "apa ini" -- comes with the room's picture of it as it
+//! is shown: cropped to the part in view, at the zoom it is drawn at, so a page zoomed in on one
+//! picture is that picture ([`about_the_view`]). A window's own text (`describe`: a whole page, a
+//! terminal's scroll-back) is given only when the request reaches past what is on screen -- "the
+//! rest of the article" -- and marked as not on screen ([`past_the_view`]); other windows only
+//! when asked for.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -163,6 +174,10 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     // asked first, it put a round trip and a second before every answer.
     let decision = if turn.look { None } else { decide(hemera, s, turn) };
     let windows = room.ask(json!({"do": "windows"}));
+    // What the wearer sees: the window looked at and the others in view -- with its picture, or
+    // the whole view's, when what they ask is about it.
+    let about = if turn.look { About::Window } else { about_the_view(&turn.text) };
+    let seen = room.ask(json!({"do": "seen", "picture": about != About::Nothing, "view": about == About::Room, "largest": 1024}));
     let mut messages = vec![json!({"role": "system", "content": system(s, false)})];
     for said in remembered(&turn.history) {
         let mut text = said.text.clone();
@@ -171,19 +186,42 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         }
         messages.push(json!({"role": said.role, "content": text}));
     }
-    // The room as it is, with the wearer's words; the window being looked at, shown, when the
-    // wearer asked about "this".
-    let words = format!("{}\n{}", room_note(&windows), turn.text);
-    let mut user = json!({"role": "user", "content": words});
-    if turn.look {
-        let picture = room.ask(json!({"do": "picture", "largest": 1024}));
-        if let Some(png) = picture.get("png").and_then(Value::as_str) {
-            user["content"] = json!([
-                {"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{png}")}},
-                {"type": "text", "text": words},
-            ]);
+    // The room as it is, with the wearer's words: the picture of what they see first, when the
+    // request is about it; then the window's own text, when the request reaches past the screen.
+    let mut words = format!("{}\n{}", room_note(&windows, &seen), turn.text);
+    let looked = seen.pointer("/looking_at/window").and_then(Value::as_u64);
+    if let (Some(window), true) = (looked, past_the_view(&turn.text)) {
+        let own = room.ask(json!({"do": "describe", "window": window}));
+        if let Some(text) = own.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+            let text: String = text.chars().take(3000).collect();
+            words = format!(
+                "{}\n[Window {window}'s own text: all of it, much of it NOT on screen now. The picture is what the wearer sees; for what they ask about beyond it -- the rest of the page, what is above or below -- answer from this text:]\n{text}\n[End of window {window}'s text.]\n{}",
+                room_note(&windows, &seen),
+                turn.text
+            );
+            log::info!("brain: given window {window}'s own text too ({} characters): the request reaches past the screen", text.chars().count());
         }
     }
+    let mut content = Vec::new();
+    if let Some(png) = seen.get("view_png").and_then(Value::as_str) {
+        content.push(json!({"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{png}")}}));
+        log::info!("brain: given the wearer's view");
+    } else if let Some(png) = seen.pointer("/looking_at/png").and_then(Value::as_str) {
+        content.push(json!({"type": "image_url", "image_url": {"url": format!("data:image/png;base64,{png}")}}));
+        log::info!("brain: given what the wearer sees of window {} ({})", looked.unwrap_or(0), part_words(seen.pointer("/looking_at/part")));
+    }
+    // `SPATIPAL_TEST_RECORD=<folder>`: the picture the model is given, kept for a test to look at.
+    if let (Some(dir), Some(png)) = (std::env::var_os("SPATIPAL_TEST_RECORD"), seen.get("view_png").or(seen.pointer("/looking_at/png")).and_then(Value::as_str)) {
+        if let Some(bytes) = spatiand_voice::speech::decode_base64(png) {
+            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("seen-{}.png", crate::store::now())), bytes);
+        }
+    }
+    let user = if content.is_empty() {
+        json!({"role": "user", "content": words})
+    } else {
+        content.push(json!({"type": "text", "text": words}));
+        json!({"role": "user", "content": content})
+    };
     messages.push(user);
 
     let mut large = false;
@@ -340,7 +378,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         for picture in pictures {
             messages.push(json!({"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": picture}},
-                {"type": "text", "text": "The window you looked at."},
+                {"type": "text", "text": "What you looked at, as the wearer sees it."},
             ]}));
         }
     }
@@ -360,8 +398,9 @@ fn system(s: &Settings, larger: bool) -> String {
          \n\
          Talk like a person: short, natural sentences. Answer in the language of the wearer's last message: English to English, Indonesian to Indonesian; only when they mix the two in that message, mix them too. What you write is spoken aloud: no markdown, no lists unless asked, no emoji.\n\
          \n\
-         Each message from the wearer begins with a note in square brackets on the room as it is then: the time, the windows on show, and the hidden ones. The wearer did not say it; use it when it helps.\n\
-         The windows on show are what the wearer sees and means. A hidden window is not in the room, and may be something on their computer's own screen: read it, look at it or bring it out only when they name it or ask for it. Asked what is open, talk about what is on show, and mention the hidden ones only if asked.\n\
+         Each message from the wearer begins with a note in square brackets on the room as it is then: the time, the window they are looking at and how much of it is in view, the other windows on show, and the hidden ones. The wearer did not say it; use it when it helps.\n\
+         What the wearer sees comes first. \"This\", \"here\", \"what I see\" mean the window they are looking at, and only the part of it in view. When they ask about it, a picture of exactly what they see comes with their message: describe and answer from that picture -- if it shows one image, it is that image -- not from what you know of the page or the application. Text marked as more than is on screen is there only for what the request needs beyond the view (the rest of an article, the other window); do not describe it as what they see.\n\
+         Go to other windows or applications only when the wearer asks for one (\"the other window\", \"open the browser\", \"in the terminal\") or the request cannot be done in the one they are looking at; then you may use that window, or show a result in it. A hidden window is not in the room, and may be something on their computer's own screen: read it, look at it or bring it out only when they name it or ask for it. Asked what is open, talk about what is on show, and mention the hidden ones only if asked.\n\
          Told to go away or that it is all for now, call dismiss, and do nothing to any window.\n\
          \n\
          You act in the room with your tools: open applications, work windows as the wearer would (read them, look at them, click, right-click, scroll, drag, type, press keys), bring the room back in front of the wearer, and keep reminders. To find where to click, look at the window first; places are fractions of the window from 0 to 1, from its top left. Say briefly what you are doing.\n\
@@ -396,8 +435,12 @@ pub fn prime(s: &Settings, larger: bool) -> Value {
     })
 }
 
-/// The room as it is now, for the wearer's message: the time, and the windows in it.
-fn room_note(windows: &Value) -> String {
+/// The room as it is now, for the wearer's message: the time, the window the wearer is looking
+/// at and how much of it they see, and the windows in the room.
+fn room_note(windows: &Value, seen: &Value) -> String {
+    let looked = seen.pointer("/looking_at/window").and_then(Value::as_u64);
+    let in_view: Vec<u64> = seen.get("others").and_then(Value::as_array).into_iter().flatten().filter_map(|o| o.get("window").and_then(Value::as_u64)).collect();
+    let flat = seen.get("flat").and_then(Value::as_bool).unwrap_or(true);
     let (mut shown, mut hidden) = (String::new(), String::new());
     let (mut n_shown, mut n_hidden) = (0, 0);
     for w in windows.get("windows").and_then(Value::as_array).into_iter().flatten() {
@@ -413,6 +456,13 @@ fn room_note(windows: &Value) -> String {
         }
         if w.get("own").and_then(Value::as_bool) == Some(true) {
             flags.push("your own chat window");
+        }
+        let seeing;
+        if Some(id) == looked {
+            seeing = format!("the wearer is looking at it, {}", if flat { "all of it".to_string() } else { part_words(seen.pointer("/looking_at/part")) });
+            flags.push(&seeing);
+        } else if !flat && w.get("hidden").and_then(Value::as_bool) != Some(true) {
+            flags.push(if in_view.contains(&id) { "also in view" } else { "out of view" });
         }
         let flags = if flags.is_empty() { String::new() } else { format!(" ({})", flags.join(", ")) };
         let line = format!("\n- window {id}: {app} \u{2014} {title}{flags}");
@@ -433,6 +483,97 @@ fn room_note(windows: &Value) -> String {
     }
     let hidden = if hidden.is_empty() { String::new() } else { format!("\nHidden, not in the room:{hidden}") };
     format!("[It is {}. Windows on show in the room:{shown}{hidden}]", crate::time::now_line(crate::store::now()))
+}
+
+/// What a request is about, of what the wearer sees.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum About {
+    /// Not what is on screen: the time, a reminder, a question of its own.
+    Nothing,
+    /// The window they are looking at: "this", "what I see", "the picture".
+    Window,
+    /// More than one window: "everything in view", "these windows".
+    Room,
+}
+
+/// Whether the wearer is asking about what they see, by their words, in either language: then
+/// the room's picture of it goes with the request. Broad on purpose -- "ini" and "this" count --
+/// because a picture of what is seen given needlessly costs a second, and one not given is the
+/// whole page described instead of the picture zoomed into (the owner's test, 2026-11-15).
+pub fn about_the_view(text: &str) -> About {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric() && c != '\'').map(|w| w.trim_matches('\'')).filter(|w| !w.is_empty()).collect();
+    let has = |list: &[&str]| words.iter().any(|w| list.contains(w));
+    let phrase = |list: &[&str]| list.iter().any(|p| lower.contains(p));
+    const ROOM: &[&str] = &["windows", "jendela-jendela", "everything", "around", "sekeliling", "sekitar", "semuanya", "ruangan"];
+    const ROOM_PHRASES: &[&str] = &["all the windows", "in the room", "in view", "semua jendela", "di ruangan", "di sekitar"];
+    if has(ROOM) || phrase(ROOM_PHRASES) {
+        return About::Room;
+    }
+    const WINDOW: &[&str] = &[
+        "see", "seeing", "saw", "seen", "look", "looking", "looks", "view", "screen", "show", "showing", "shown", "display", "displayed", "describe", "description", "picture",
+        "pictures", "image", "images", "photo", "photos", "page", "window", "this", "that", "these", "those", "here", "read", "reading", "says", "say", "written", "zoom",
+        "zoomed", "visible", "front", "video", "chart", "graph", "map", "text", "button", "menu", "tab", "article", "link", "site", "website", "diagram", "table", "error",
+        "lihat", "liat", "melihat", "terlihat", "kelihatan", "tampil", "tampilan", "layar", "gambar", "foto", "halaman", "jendela", "ini", "itu", "sini", "situ", "baca",
+        "bacakan", "membaca", "tulisan", "tertulis", "jelaskan", "deskripsikan", "gambarkan", "depan", "tombol", "artikel", "situs", "web", "grafik", "peta", "tabel",
+    ];
+    if has(WINDOW) {
+        About::Window
+    } else {
+        About::Nothing
+    }
+}
+
+/// Whether the request reaches past what is on screen -- the rest of a page, all of a document,
+/// what is above or below, another window's contents: then the window's own text is given too,
+/// marked as not on screen.
+pub fn past_the_view(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    const PAST: &[&str] = &[
+        "rest", "whole", "entire", "full", "remaining", "summarize", "summarise", "summary", "below", "above", "further", "beyond", "earlier", "later", "previous", "next", "document",
+        "seluruh", "seluruhnya", "keseluruhan", "lengkap", "sisanya", "sisa", "selanjutnya", "berikutnya", "sebelumnya", "ringkas", "ringkasan", "rangkum", "rangkuman", "dokumen",
+        "bawah", "atas",
+    ];
+    words.iter().any(|w| PAST.contains(w)) || ["all of it", "the other window", "jendela lain", "semua isinya", "off screen", "not on screen"].iter().any(|p| lower.contains(p))
+}
+
+/// The part of a window in view, in words, from `seen`'s `[u0, u1, v0, v1]`.
+pub fn part_words(part: Option<&Value>) -> String {
+    let p: Vec<f64> = part.and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_f64).collect()).unwrap_or_default();
+    let [u0, u1, v0, v1] = match p.as_slice() {
+        [a, b, c, d] => [*a, *b, *c, *d],
+        _ => return "all of it".into(),
+    };
+    let share = ((u1 - u0) * (v1 - v0)).clamp(0.0, 1.0);
+    if share > 0.97 {
+        return "all of it".into();
+    }
+    let across = if u0 > 0.02 && u1 < 0.98 {
+        "the middle"
+    } else if u0 > 0.02 {
+        "the right"
+    } else if u1 < 0.98 {
+        "the left"
+    } else {
+        ""
+    };
+    let down = if v0 > 0.02 && v1 < 0.98 {
+        "the middle"
+    } else if v0 > 0.02 {
+        "the bottom"
+    } else if v1 < 0.98 {
+        "the top"
+    } else {
+        ""
+    };
+    let place = match (down, across) {
+        ("", "") => "most".to_string(),
+        ("", a) | (a, "") => a.to_string(),
+        ("the middle", "the middle") => "the middle".to_string(),
+        (d, a) => format!("{d} {}", a.trim_start_matches("the ")),
+    };
+    format!("{place} of it, {:.0}% of the window", share * 100.0)
 }
 
 /// How much of the chat the model is given, at the least, and the steps its start moves in: the
@@ -478,16 +619,49 @@ mod tests {
     fn what_is_sent_begins_the_same_whatever_the_room() {
         let s = Settings::default();
         let a = system(&s, false);
-        let note = room_note(&json!({"windows": [{"window": 3, "app": "id.prasetya.spatiand.spatiquill", "title": "~", "focused": true}]}));
+        let note = room_note(&json!({"windows": [{"window": 3, "app": "id.prasetya.spatiand.spatiquill", "title": "~", "focused": true}]}), &json!({}));
         assert!(!a.contains("window 3") && note.contains("window 3: spatiquill"));
         assert_eq!(a, system(&s, false));
         assert!(note.starts_with("[It is ") && note.ends_with("(focused)]"));
         let both = room_note(&json!({"windows": [
             {"window": 6, "app": "Terminal", "title": "temp", "hidden": true},
             {"window": 3, "app": "spatiquill", "title": "~"},
-        ]}));
+        ]}), &json!({}));
         let (on_show, kept) = both.split_once("Hidden, not in the room:").unwrap();
         assert!(on_show.contains("window 3") && !on_show.contains("window 6") && kept.contains("window 6"));
+    }
+
+    #[test]
+    fn what_is_seen_is_given_when_it_is_asked_about() {
+        for said in ["describe what I see", "what am I looking at?", "what's this?", "jelaskan gambar ini", "apa ini?", "zoom in on the picture: what is it", "read me the title", "what does the error say"] {
+            assert_eq!(about_the_view(said), About::Window, "{said:?}");
+        }
+        for said in ["what time is it?", "remind me at eight to call mum", "buka browser", "how are you", "berapa derajat di Jakarta besok?"] {
+            assert_eq!(about_the_view(said), About::Nothing, "{said:?}");
+        }
+        for said in ["what are all these windows?", "describe everything in view", "apa saja di sekeliling saya"] {
+            assert_eq!(about_the_view(said), About::Room, "{said:?}");
+        }
+    }
+
+    #[test]
+    fn the_window_s_own_text_only_when_the_request_goes_past_the_screen() {
+        assert!(past_the_view("what does the rest of the article say?"));
+        assert!(past_the_view("ringkas seluruh halaman ini"));
+        assert!(past_the_view("read the other window"));
+        assert!(!past_the_view("describe what I see"));
+        assert!(!past_the_view("what is in this picture?"));
+    }
+
+    #[test]
+    fn the_note_says_what_is_looked_at_and_how_much() {
+        let windows = json!({"windows": [{"window": 3, "app": "spatimesh", "title": "Cats"}, {"window": 4, "app": "spatiquill", "title": "~"}, {"window": 5, "app": "spatishelf", "title": "Home"}]});
+        let seen = json!({"flat": false, "looking_at": {"window": 3, "part": [0.25, 0.75, 0.0, 0.5]}, "others": [{"window": 4, "share": 0.1}]});
+        let note = room_note(&windows, &seen);
+        assert!(note.contains("window 3: spatimesh \u{2014} Cats (the wearer is looking at it, the top middle of it, 25% of the window)"), "{note}");
+        assert!(note.contains("window 4: spatiquill \u{2014} ~ (also in view)") && note.contains("window 5: spatishelf \u{2014} Home (out of view)"), "{note}");
+        assert_eq!(part_words(Some(&json!([0.0, 1.0, 0.0, 1.0]))), "all of it");
+        assert_eq!(part_words(Some(&json!([0.4, 0.6, 0.4, 0.6]))), "the middle of it, 4% of the window");
     }
 
     #[test]
@@ -550,8 +724,9 @@ fn wants_larger(hemera: &Hemera, model: &str, request: &str, last: &str) -> bool
                   and actions in the room: opening applications, working windows, clicking, typing, reminders, settings. \
                   The larger model answers what needs careful thought: writing or explaining code, calculations of several steps, \
                   analysis, planning, comparing, long or exact writing, translating long text. \
-                  The quick model is told the time, the date and what is in the room, so questions about them are quick. \
+                  The quick model is told the time, the date and what is in the room, and sees what the wearer sees, so questions about them are quick. \
                   For example: \"what time is it?\" quick; \"what day is it tomorrow?\" quick; \"buka browser\" quick; \
+                  \"describe what I see\" quick; \"apa ini?\" quick; \
                   \"how many days until Friday?\" quick; \"write a script that backs up my photos\" larger; \
                   \"explain how a VPN works\" larger; \"compare these two laptops\" larger. Reply with one word: quick or larger.";
     let user = if last.is_empty() { format!("Request: {request}") } else { format!("Your last answer: {last}\n\nRequest: {request}") };

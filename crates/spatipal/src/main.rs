@@ -113,6 +113,9 @@ struct Pal {
     /// once it is heard out).
     state: &'static str,
     finished_at: Option<Instant>,
+    /// When the wearer last spoke over it, and what it had been saying: what is heard next is
+    /// checked against that.
+    interrupted: Option<(Instant, String)>,
 }
 
 /// What the window is lent to draw from: built from the fields themselves, so that the app and
@@ -362,6 +365,38 @@ impl Pal {
                 // attentive, not smiling as after an answer.
                 self.voice.say(if self.speech.languages.iter().any(|l| l == "id") { "Ya?" } else { "Yes?" });
                 self.conversation.touch();
+                self.finished_at = None;
+            }
+            Heard::Interrupted => {
+                // Its voice has stopped already (the ears stopped it); the answer stops too, and
+                // what they say next is the next thing asked.
+                self.interrupted = Some((Instant::now(), self.voice.lately_said()));
+                self.voice.interrupt();
+                if self.answering.is_some() {
+                    self.brain.stop();
+                }
+                self.finished_at = None;
+                log::info!("interrupted: listening to the wearer");
+            }
+            // Heard over its voice: what was its own voice is not asked.
+            Heard::Asked { text, ended } if self.interrupted.as_ref().is_some_and(|(at, _)| at.elapsed() < Duration::from_secs(15)) => {
+                let (_, said) = self.interrupted.take().unwrap();
+                match ears::not_its_own(&text, &said) {
+                    Some(rest) if rest != text => {
+                        log::info!("heard over it {text:?}: its own words left out, {rest:?} is the wearer's");
+                        self.heard(Heard::Asked { text: rest, ended });
+                    }
+                    Some(_) => self.heard(Heard::Asked { text, ended }),
+                    None => log::info!("heard over it {text:?}: its own voice, not the wearer's -- nothing asked"),
+                }
+            }
+            // "Stop", "quiet", "diam": only that -- nothing is asked of the model.
+            Heard::Asked { text, .. } if ears::is_hush(&text) => {
+                log::info!("told to be quiet ({text:?}): quiet");
+                self.voice.interrupt();
+                if self.answering.is_some() {
+                    self.brain.stop();
+                }
                 self.finished_at = None;
             }
             Heard::Asked { text, ended } => self.ask(text, Some(ended)),
@@ -730,6 +765,7 @@ fn main() {
             away: false,
             state: "",
             finished_at: None,
+            interrupted: None,
         };
         if !background {
             pal.open_window();

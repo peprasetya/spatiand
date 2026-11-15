@@ -158,6 +158,23 @@ impl Hemera {
         self.post(path, "application/json", request.to_string().as_bytes(), timeout)
     }
 
+    /// A POST of a form (`multipart/form-data`): text fields, and one file as `file`. Answered in
+    /// JSON.
+    pub fn post_form(&self, path: &str, fields: &[(&str, &str)], file: (&str, &str, &[u8]), timeout: Duration) -> Result<Value, String> {
+        let boundary = "spatiand-voice-5b1e0c47";
+        let mut body = Vec::with_capacity(file.2.len() + 2048);
+        for (name, value) in fields {
+            body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+        }
+        let (filename, content_type, bytes) = file;
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n").as_bytes(),
+        );
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        self.post(path, &format!("multipart/form-data; boundary={boundary}"), &body, timeout)
+    }
+
     /// A request whose answer is read as it comes (server-sent events): the body, to be read
     /// line by line. Dropping it stops the answer.
     pub fn post_stream(&self, path: &str, request: &Value, timeout: Duration) -> Result<Box<dyn std::io::Read + Send + Sync>, String> {

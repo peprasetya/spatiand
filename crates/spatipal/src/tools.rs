@@ -40,7 +40,7 @@ impl Room {
 
 /// The tools, for the small model (`hand_over` among them) or the large.
 pub fn all(small: bool) -> Vec<Value> {
-    let window = json!({"type": "integer", "description": "The window's number, from the list of windows. Left out: the focused window."});
+    let window = json!({"type": "integer", "description": "The window's number, from the list of windows. Left out: the window the wearer is looking at."});
     let fraction = |what: &str| json!({"type": "number", "description": format!("{what}, as a fraction of the window from 0 to 1, from its top left")});
     let mut tools = vec![
         tool("open_app", "Open an application in the room, by its name.", json!({"name": {"type": "string"}}), &["name"]),
@@ -53,14 +53,14 @@ pub fn all(small: bool) -> Vec<Value> {
             &["action"],
         ),
         tool(
-            "read_window",
-            "What a window shows, as text: a terminal's screen and its last commands, a web page's words, a folder's names, the field being typed in. Use this first to know what is in a window.",
-            json!({"window": window}),
+            "look_at_window",
+            "See what the wearer sees: a picture of a window as it is shown to them, only the part in view, at the zoom they have. Use this for anything about what they see, and to find where something is before clicking. With view true: everything in view, all the windows.",
+            json!({"window": window, "view": {"type": "boolean"}}),
             &[],
         ),
         tool(
-            "look_at_window",
-            "See a picture of a window: only to find where something is before clicking on it, or when read_window says too little.",
+            "read_window",
+            "A window's own text: a whole web page's words, a terminal's screen and last commands, a folder's names, the field being typed in. It is often much more than is on screen: use it for exact words, or when the wearer asks about what is not in view (the rest of a page, another window). Not to describe what they see.",
             json!({"window": window}),
             &[],
         ),
@@ -211,6 +211,9 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
         }
         "read_window" => {
             let mut answer = room.ask(with_window(json!({"do": "describe"})));
+            if answer.get("error").is_none() {
+                answer["note"] = json!("The window's own text: more than is on screen, perhaps. What the wearer sees is what look_at_window shows.");
+            }
             // What a window shows can be long: the end of it is what is being worked on.
             if let Some(text) = answer.get("text").and_then(Value::as_str) {
                 if text.chars().count() > 4000 {
@@ -224,18 +227,38 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
             done(answer.to_string(), Some("read a window".into()))
         }
         "look_at_window" => {
-            let answer = room.ask(with_window(json!({"do": "picture", "largest": 1024})));
-            match answer.get("png").and_then(Value::as_str) {
-                Some(png) => Done {
-                    content: format!(
-                        "The picture follows, {} by {} pixels. Places on it are fractions across and down.",
-                        answer.get("width").and_then(Value::as_u64).unwrap_or(0),
-                        answer.get("height").and_then(Value::as_u64).unwrap_or(0)
-                    ),
-                    picture: Some(format!("data:image/png;base64,{png}")),
-                    did: Some("looked at a window".into()),
-                    held: None,
-                },
+            // What the room shows the wearer of it -- the part in view -- not the whole window.
+            let view = get("view").as_bool() == Some(true);
+            let mut what = json!({"do": "seen", "largest": 1024, "view": view});
+            if let Some(w) = named {
+                what["window"] = json!(w);
+            }
+            let answer = room.ask(what);
+            let looked = answer.get("looking_at").cloned().unwrap_or(Value::Null);
+            let (png, about) = match (answer.get("view_png").and_then(Value::as_str), looked.get("png").and_then(Value::as_str)) {
+                (Some(png), _) => (Some(png.to_string()), "everything in view, as the wearer sees it".to_string()),
+                (None, Some(png)) => {
+                    let part = crate::brain::part_words(looked.get("part"));
+                    let in_view = looked.get("in_view").and_then(Value::as_bool) != Some(false);
+                    let w = looked.get("window").and_then(Value::as_u64).unwrap_or(0);
+                    (
+                        Some(png.to_string()),
+                        if in_view { format!("window {w} as the wearer sees it: {part}") } else { format!("window {w}, all of it -- it is not in view now") },
+                    )
+                }
+                _ => (None, String::new()),
+            };
+            match png {
+                Some(png) => {
+                    // Places are fractions of the window, so a picture of a part says which.
+                    let part = looked.get("part").cloned().unwrap_or(json!([0.0, 1.0, 0.0, 1.0]));
+                    Done {
+                        content: format!("The picture follows: {about}. Places to click are fractions of the whole window from its top left; this picture is its part {part} (u0, u1, v0, v1)."),
+                        picture: Some(format!("data:image/png;base64,{png}")),
+                        did: Some("looked at what the wearer sees".into()),
+                        held: None,
+                    }
+                }
                 None => answer_of(answer, String::new()),
             }
         }

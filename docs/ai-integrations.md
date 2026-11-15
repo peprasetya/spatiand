@@ -120,9 +120,11 @@ windows, pressing Enter in a terminal and anything that sends or deletes ask fir
 
 - The microphone from the compositor; pauses cut phrases as in dictation; each phrase transcribed.
   The name at the start, or a follow-up within ~8 s of an answer, makes it the assistant's.
-- **It does not hear itself**: the microphone is ignored while it speaks (and a moment after).
+- **It hears the wearer over itself, not itself** (since 2026-11-15): its own voice is taken back
+  out of the microphone, and speaking over it stops it -- below, "Talking over it".
 - Speech: `voxcpm2` streamed (`stream_format: sse`, 24 kHz PCM), sentence by sentence as the
-  model writes; a voice from hemera's library or described in words; the mouth from the sound.
+  model writes; a voice from hemera's library, or one described in words and **made into a library
+  voice once** so that every sentence is the same voice -- below; the mouth from the sound.
 
 ## Built so far
 
@@ -273,6 +275,179 @@ an Indonesian sentence; the Deck and the Beam Pro; a VRM figure's states (still 
 - **No way to shut it down**: closing its window left it listening. Closing now quits it unless it
   is switched on (`on`); the `dismiss` tool ("you may go") has it say goodbye and go -- or, switched
   on, stay deaf and unseen for its reminders until opened again.
+
+### Talking over it, one voice, and what the wearer sees (2026-11-15)
+
+The owner, testing on the Mac: "let user interrupt with voice if the spatipal is speaking...
+sometimes I just want it to be shut up"; "long response, I found the SpatiPal is changing voices";
+"always focus on what the user see"; and asked to describe what he saw in SpatiMesh, zoomed onto
+one picture, it read the whole page. Then, on the last two: "don't change the browser... make
+something like screen capture. The priority is what the user see... the hidden things -- the page
+or the other application -- become additional information if they are related to the question."
+
+**Talking over it** (`spatiand_voice::echo`, `crates/spatipal/src/ears.rs`). The microphone stays
+open while it speaks. **One design for every platform, in SpatiPal, against the exact samples it
+plays**: each 50 ms slice handed to the room is kept with the moment it is to be heard
+(`echo::Played`), and the microphone is put on the same timeline by counting its samples from the
+earliest arrival (`MicClock`, steady, no jumps for a late read). Then:
+
+1. the delay between the two -- the room, the device, the air: 50 ms to a second, different on
+   every machine -- is found by matching their loudness over the last four seconds, and believed
+   when two matches half a second apart agree (`DelayFinder`);
+2. a partitioned-block frequency-domain adaptive filter (overlap-save, constrained gradient, 192
+   ms after the delay; the family of Speex's and WebRTC's linear stage) learns the path -- the
+   room's own spatial filters, the speakers, the frame -- and takes it out (`Canceller`); it learns
+   only while the microphone is not well above its voice, and starts again if it ever adds more
+   than it takes;
+3. a gate judges each 16 ms in 16 bands from 100 Hz to 3.7 kHz: what its voice leaves in each band
+   for what was played there is learnt as it speaks (the loud end, the 90th of a hundred), and the
+   wearer is heard where there is three times that after the canceller **and** twice its voice's
+   loud end in the microphone as it came, over the room's floor, with a pitch (`Gate`). The second
+   condition is what keeps it from stopping itself: on one clock the canceller took most of its
+   voice away, but its slips at the start of a sentence, judged alone, were heard as the wearer
+   four times in a minute and a half of real speech;
+4. six such blocks of the last sixteen, three running, while it speaks or has something to say:
+   **it stops** (`BargeIn`) -- the sentence being made is cut off at hemera, nothing waiting is
+   said, and what the room has not played yet is dropped (`Voice::interrupt`, `Stream::clear`);
+   the model writing the rest is stopped; what the wearer says is cut from where they began (the
+   last 0.6 s, kept) and is the next request. **Only "stop", "quiet", "shh", "diam", "cukup",
+   "berhenti" and the like** (`ears::is_hush`): it is quiet, and nothing is asked. What is heard
+   after it stopped is checked against what it had been saying (`ears::not_its_own`): mostly its
+   own words (three in four of the longer ones) and it is not asked at all; its own words at the
+   start ("...a woman named Mera. Wait, what is the capital of France?") are left out -- a
+   safeguard behind the gate.
+
+Until the delay is found, what it played over the whole last second stands for what may be heard,
+the loudest of it, and only once it has played for longer than a second: careful while its echo is
+still being looked for, and the way the wearer is heard at all when its voice never reaches the
+microphone (earphones), where there is no echo to find.
+
+Why not the platforms' own cancellers: each takes as its reference what *it* plays. macOS's
+voice-processing unit cancels only what goes out through that unit; Android's
+`VOICE_COMMUNICATION` source and `AcousticEchoCanceler` the call path's output, which is rarely the
+glasses' USB sound; PipeWire's echo-cancel module the sink routed through it. The voice reaches the
+glasses through the room's own HRTF mixer on every platform, so none of them sees it without
+moving the room's whole sound through voice processing -- every film and game with it (ducked,
+narrowed, gain-ridden). **The proper alternative**, if the in-process one is not enough on a
+device: the room plays and records through the platform's voice path only while the assistant
+listens -- the Mac's output unit becoming a VoiceProcessingIO unit with its input, Android's capture
+the `VoiceCommunication` input preset with the room's output in communication mode, PipeWire's
+`echo-cancel` loaded by the room for its own streams -- one platform piece each, under the same
+`Echo`. Not built: none of it could be heard here.
+
+Measured on deepmagpie, nobody at a microphone: the snapshot room with a WAV as its microphone
+and SpatiPal in it, `SPATIPAL_TEST_ECHO=<gain>,<ms>,<ppm>,<distortion>` putting what it plays back
+into the microphone through a made-up room (reflections, a tail, two clocks apart, small speakers'
+squash); its voice is voxcpm2's own (peaks -1 dBFS, speech -19 dBFS), the wearer's a man's voice
+from hemera's library (-24 dBFS). Gain 0.4 is its voice at the microphone as loud as the wearer's
+(normal volume: speakers at the temples, the mouth a little further); 1.0 is 6-8 dB louder.
+
+| | normal (0.4) | loud (1.0, 2.0) |
+|---|---|---|
+| Long answers, nobody speaking over them | **no stop** (21 sentences) | no stop in 4 runs (14, 17, 20 and 29 sentences); **a false stop in 2 runs of 6**, about twice in five minutes of loud speech, both with its voice 6-8 dB over the wearer's, heavily squashed, on clocks 40 ppm apart |
+| "Wait. What is the capital of France?" 20 s into an answer | stopped twice, the question heard whole and answered ("Paris."), the story cut where it was | stopped; heard as "What is the capital of France?" (the "Wait" before it was sure), answered |
+| "Stop." alone | stopped, quiet, nothing asked | -- |
+| A question over its answer, none of its voice in the microphone (earphones) | stopped, the question heard and answered | -- |
+
+After a false stop Whisper writes its own words; those are now checked against what it was saying
+(`ears::not_its_own`, tested on the transcript the rig produced) and not asked -- the earlier rig run
+had sent them to the model as a request.
+
+The same pieces against 95 s of its real recorded voice, offline (`echo::tests::on_real_speech`,
+`ECHO_SPEECH=...`): **no stop in 12 conditions** (gain 0.4, 1.0, 2.0; one clock and 40 and 150 ppm
+apart; clean to squashed) -- 19 minutes of its voice; a sentence spoken over it stopped it **272 ms**
+after it began in 8 of 8 at normal volume, and in 6 of 8 when it was 6-8 dB louder (not in its
+first seconds, while the delay and its voice are still being learnt); a lone "Stop." in 5 of 8 at
+normal volume and 1 of 8 louder. So: **speak up, or say a few words**, over a loud answer. In the
+first two to three seconds of the first answer after it starts, nothing stops it: the delay and
+what its voice leaves are not known yet. The canceller took 6-10 dB away on one clock and 0-4 dB
+on two; the gate does not lean on it.
+
+Not verified: any of it with a real microphone and real speakers -- the glasses on a head, the
+Mac's or the Beam Pro's capture (they are unchanged: the room's microphone as before, one design in
+SpatiPal on all three); a moving head (the path changes; it relearns as it goes). The log says what
+it does: `echo: its voice comes back N ms after it is played`, `ears: while it speaks: ...` every 10
+s, `ears: the wearer began speaking over it: it stops (...)`.
+
+**One voice** (`spatiand_voice::speech::made_voice`, `crates/spatipal/src/voice.rs`). The cause:
+with no library voice chosen (the default), SpatiPal gave the description with every sentence, and
+hemera hands a description to VoxCPM2 in front of the text (`SpeechApi.java`: `"(" + instructions +
+")" + input`) -- **the model designs a voice for each request, from that request's text** (its seed
+is fixed, so the same sentence always gets the same voice, and different sentences different ones).
+Spoken a sentence at a time, an answer was a choir: five sentences of one answer had median pitches
+from 139 to 238 Hz, and hemera's own speaker model (`diarized_json`) put the Indonesian one down as
+somebody else. Now the description is said once, ten seconds of it in both languages, and kept in
+hemera's library as a voice named from the model and the description (`spatipal-<hash>`, consent
+"synthetic..."); every sentence is said in that voice (`voice: sentence N in the voice spatipal-...`
+in the log), the same in every answer and on every device, made again only if the description
+changes; made when SpatiPal starts, so the first answer does not wait. Checked: the same five
+sentences, one speaker by the diarization; a 14-sentence answer said both ways, same words: pitch
+from sentence to sentence 1.8 semitones (sd) against 2.6, timbre 2.4 against 3.1 (mean log-mel
+distance from the set's own average) -- and no sentence in another voice. What still moves is
+VoxCPM2's own prosody with a reference. **The proper alternative**, for a voice closer still: hemera
+offering a library voice as VoxCPM2's continuation prompt (`prompt_audio` and its text, which
+audio.cpp has) rather than only a reference; or a real recording, with its owner's consent, chosen
+as the voice in SpatiPal's settings (that path was always one voice).
+
+**What the wearer sees** (`crates/spatiand/src/assist.rs` `seen`, `crates/spatipal/src/brain.rs`).
+**The room's picture is the primary context; the application's text is secondary.** The room knows
+where the wearer looks and what each window looks like as it is drawn, for every kind of window on
+every platform (Spatiand's apps, SpatiMesh, Mac windows, a host's): `{"do": "seen"}` answers with
+the window looked at -- the one in the middle of the view, else the focused one in view, else the
+one filling most of it, never SpatiPal's own -- its picture **cropped to the part inside the field
+of view, at the zoom it is drawn at** (a page zoomed onto one picture is that picture: the browser
+draws its zoom), which part that is, how much of the view it fills, and the other windows in view;
+`"view": true` adds the left eye's picture of the whole view, read back from the frame as the
+screenshot is. The part in view is found by projecting a grid of points of the window through the
+left eye; what fills the view, and which window is in front, by a grid of rays from the eye. A
+request with no window named now acts on the window looked at (`target`).
+
+SpatiPal, every turn: the note before the wearer's words says which window they are looking at and
+how much of it is in view ("the top middle of it, 25% of the window"), which others are also in view
+and which are out of view. When the request is about what is seen (`brain::about_the_view`: "this",
+"see", "describe", "screen", "picture", "ini", "lihat", "gambar", "layar", ...), the picture of what
+they see goes with it -- or of the whole view, for "everything", "these windows", "sekeliling". The
+window's own text (`describe`: the whole page, a terminal's scroll-back) is given only when the
+request reaches past the screen (`brain::past_the_view`: "the rest", "whole", "summarize", "below",
+"the other window", "sisanya", "seluruh", ...), marked to the model as not on screen. The system
+message: what they see comes first; answer from the picture; text marked not on screen only for what
+the request needs beyond the view; other windows only when asked for, and then results may go there.
+`look_at_window` is now the room's `seen` (the part in view); `read_window` says its text may be
+more than is on screen. Both models take pictures: `neohorse-1:4b` and `Qwen3.8:27b-q3` are each
+loaded in hemera with their `mmproj` (`/opt/hemera/hemera.json`).
+
+No browser change (the owner's decision). `describe` keeps its meaning, now written down in the
+protocol's notes: the client's own account, which may be more than is on show. The assistant
+protocol's `ask` notes say what `seen` answers; no request was added, so no client's copy of the
+XML needed changing (Chromium's is brought up to date with its next monthly build).
+
+Checked, 2026-11-15:
+
+- **The cause, on the Deck with the real SpatiMesh** (its test room, `tools/chromium-test`, the
+  installed build): a test page, "Village news" -- paragraphs, and three drawn pictures under
+  "The harbour" (a sailboat), "The park" (a tree) and "Housing" (a house). `describe` answered
+  with the whole page's words, 1103 characters, the sections below the screen included, and nothing
+  of the pictures; pinched in to fill the window with the sailboat (`pinch:3`), it answered with
+  the same whole page. Before, that was what SpatiPal read.
+- **Now, end to end in the snapshot room on deepmagpie** (where the browser cannot run: a stand-in
+  window showing the Deck's picture of the page and answering `describe` with the Deck's answer;
+  SpatiPal asked by a WAV, its chat window open in front of the page): "describe what I see" --
+  zoomed: *"a sailboat with a brown hull and white sails, sailing on dark blue water under a light
+  blue sky with a yellow circle (the sun)... mostly blank white space to the right"*; not zoomed:
+  the first two sections and *"A 'The park' heading at the bottom"* -- nothing of what is below
+  the screen. Then "what does the rest of the page say?", spoken over the first answer: it stopped,
+  was given the page's own text marked not on screen, and answered *"Below what's on screen, the
+  page continues: under 'The park', volunteers will paint the benches... a 'Housing' section..."*.
+  The pictures it was given are kept by `SPATIPAL_TEST_RECORD` (the window as shown, its own chat
+  window looked through). "Describe what I see" goes to the quick model, which sees: 1-2 s.
+- The geometry -- the part of a window in view, the window in front, turned away -- by unit tests
+  in `assist.rs`.
+
+Not verified: the crop to the part in view on a real head (the snapshot room places windows where
+its head looks, so its windows were always whole in view); the view picture (`"view": true`, read
+back from the frame) on any glasses -- the snapshot room draws no frame to read; the Mac build (the
+room's `seen` and the read-back are in the Beam Pro's and the Mac's shared backend, which checks
+for Android here); Mac windows and a host's in the room (the same texture path, not run).
 
 ## Dictation with no room
 

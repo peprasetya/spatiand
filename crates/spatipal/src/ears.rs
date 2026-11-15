@@ -15,14 +15,22 @@
 //! phrase so far goes to Whisper as a draft ([`Cut::Draft`]); when the pause turns out to be the
 //! end, the draft's text is the phrase's, half a second sooner than writing it after.
 //!
-//! **Not its own voice**: a phrase heard while it is speaking, or a moment after, is dropped.
+//! **Not its own voice, but the wearer over it**: what it plays is taken back out of the
+//! microphone (`spatiand_voice::echo`: a canceller against the very samples it played, and a
+//! gate that knows what is left of them), so the wearer is heard while it speaks. Speaking over
+//! it stops it at once -- its voice, what it was about to say, the model writing the rest -- and
+//! what they say is heard from where they began ([`Heard::Interrupted`]; the owner, 2026-11-15:
+//! "let user interrupt with voice if the spatipal is speaking"). Anything else heard while it
+//! speaks is let go, as before.
 
+use std::collections::VecDeque;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use spatiand_voice::echo::{Echo, MicClock, SimulatedRoom};
 use spatiand_voice::phrases::{is_hallucination, Cut, Phrases};
 use spatiand_voice::{Hemera, VoiceSettings, RATE};
 
@@ -44,6 +52,8 @@ pub enum Heard {
     Asked { text: String, ended: Instant },
     /// Only the name: the wearer wants its attention.
     Called,
+    /// The wearer began speaking over it: it has stopped speaking, and stops answering.
+    Interrupted,
 }
 
 /// What the ears are doing.
@@ -109,6 +119,8 @@ impl Conversation {
 /// helpers as they finish. Each piece of writing is a job, by number.
 enum Said {
     Began,
+    /// The wearer is speaking over its voice.
+    Interrupted,
     /// What was heard came to nothing, or was its own voice.
     Gone,
     Draft { job: u64, samples: Vec<i16> },
@@ -168,69 +180,164 @@ pub fn start(
     Ears { stop, once }
 }
 
-/// The microphone, cut into what was said.
+/// The microphone, cut into what was said -- with its own voice taken out of it first
+/// (`spatiand_voice::echo`), and the wearer heard over it: speaking while it speaks stops it.
 fn cut(mut microphone: std::fs::File, voice: Voice, stopped: Arc<AtomicBool>, said: Sender<Said>) {
-    let mut cutter = Phrases::new(RATE, PAUSE_MS);
+    let mut cutter = Cutter { phrases: Phrases::new(RATE, PAUSE_MS), began: Instant::now(), hearing: false, jobs: 0, draft: None, said };
     let mut bytes = vec![0u8; (RATE as usize / 50) * 2];
-    let mut began = Instant::now();
-    let mut hearing = false;
-    let mut jobs = 0u64;
-    let mut draft = None;
+    let played = voice.played();
+    let mut echo = Echo::new();
+    let mut room = test_room().map(|r| (r, MicClock::new()));
+    // What was heard while it spoke, cleaned of its voice: the start of what the wearer said
+    // over it, which the barge-in is sure of only a quarter of a second in.
+    let mut lately: VecDeque<i16> = VecDeque::new();
+    // The wearer spoke over it: what follows is theirs, whatever the voice is still finishing.
+    let mut over_it = false;
+    // When the canceller's state was last put in the log.
+    let mut told = Instant::now();
     while !stopped.load(Ordering::Relaxed) {
         if microphone.read_exact(&mut bytes).is_err() {
             log::info!("ears: the room's microphone closed");
             return;
         }
-        let samples: Vec<i16> = bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
-        // Its own voice in the room: what is heard then is not the wearer's. Still fed, so the
-        // room's noise goes on being learnt.
-        if voice.busy() {
-            let _ = cutter.listen(&samples);
-            let _ = cutter.flush();
-            if std::mem::take(&mut hearing) {
-                draft = None;
-                let _ = said.send(Said::Gone);
+        let at = Instant::now();
+        let mut samples: Vec<f32> = bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect();
+        let speaking = voice.busy();
+        let blocks = {
+            let played = played.lock().unwrap();
+            if let Some((room, clock)) = room.as_mut() {
+                // A test's room: its voice back in the microphone, as speakers by it would put it
+                // -- in the microphone's own time, steady, as a device's samples are.
+                let mut back = vec![0.0; samples.len()];
+                let from = clock.arrived(&played, at, samples.len());
+                room.echo(&played, from, &mut back);
+                for (s, b) in samples.iter_mut().zip(back) {
+                    *s += b;
+                }
             }
-            continue;
+            echo.hear(&played, at, &samples, speaking)
+        };
+        if speaking && told.elapsed() > Duration::from_secs(10) {
+            told = Instant::now();
+            log::info!("ears: while it speaks: {} (its voice back after {:?} ms)", echo.last, echo.delay_ms());
         }
-        for cut in cutter.listen(&samples) {
+        for heard in blocks {
+            let clean: Vec<i16> = heard.left.iter().map(|s| (s * 32768.0).clamp(-32768.0, 32767.0) as i16).collect();
+            if heard.barge_in && !over_it {
+                over_it = true;
+                voice.interrupt();
+                log::info!("ears: the wearer began speaking over it: it stops ({}, its voice back after {:?} ms)", echo.last, echo.delay_ms());
+                if cutter.said.send(Said::Interrupted).is_err() {
+                    return;
+                }
+                // From where they began.
+                let start: Vec<i16> = lately.drain(..).collect();
+                if !cutter.feed(&start) {
+                    return;
+                }
+            }
+            if speaking && !over_it {
+                // Its own voice in the room, or about to be: what is heard then is let go unless
+                // it is the wearer over it. Still fed, so the room's noise goes on being learnt.
+                lately.extend(&clean);
+                while lately.len() > RATE as usize * 6 / 10 {
+                    lately.pop_front();
+                }
+                if !cutter.quiet(&clean) {
+                    return;
+                }
+                continue;
+            }
+            if !cutter.feed(&clean) {
+                return;
+            }
+            if over_it && !speaking && !cutter.hearing {
+                over_it = false;
+            }
+        }
+        if !speaking {
+            lately.clear();
+        }
+    }
+}
+
+/// The cutter and what it has said of the phrase being heard.
+struct Cutter {
+    phrases: Phrases,
+    began: Instant,
+    hearing: bool,
+    jobs: u64,
+    draft: Option<u64>,
+    said: Sender<Said>,
+}
+
+impl Cutter {
+    /// What was heard, cut. `false` when no one is listening any more.
+    fn feed(&mut self, samples: &[i16]) -> bool {
+        for cut in self.phrases.listen(samples) {
             let sent = match cut {
                 Cut::Began => {
-                    began = Instant::now();
-                    hearing = true;
-                    said.send(Said::Began)
+                    self.began = Instant::now();
+                    self.hearing = true;
+                    self.said.send(Said::Began)
                 }
                 Cut::Draft(samples) => {
-                    jobs += 1;
-                    draft = Some(jobs);
-                    said.send(Said::Draft { job: jobs, samples })
+                    self.jobs += 1;
+                    self.draft = Some(self.jobs);
+                    self.said.send(Said::Draft { job: self.jobs, samples })
                 }
                 Cut::Resumed => {
-                    draft = None;
-                    said.send(Said::Resumed)
+                    self.draft = None;
+                    self.said.send(Said::Resumed)
                 }
                 Cut::Phrase(samples) => {
-                    hearing = false;
+                    self.hearing = false;
                     let ended = Instant::now() - Duration::from_millis(PAUSE_MS as u64);
-                    let (job, drafted) = match draft.take() {
+                    let (job, drafted) = match self.draft.take() {
                         Some(job) => (job, true),
                         None => {
-                            jobs += 1;
-                            (jobs, false)
+                            self.jobs += 1;
+                            (self.jobs, false)
                         }
                     };
-                    said.send(Said::Phrase { job, drafted, samples, began, ended })
+                    self.said.send(Said::Phrase { job, drafted, samples, began: self.began, ended })
                 }
                 Cut::Dropped => {
-                    hearing = false;
-                    said.send(Said::Gone)
+                    self.hearing = false;
+                    self.said.send(Said::Gone)
                 }
             };
             if sent.is_err() {
-                return;
+                return false;
             }
         }
+        true
     }
+
+    /// Heard, but not to be taken as said: the room's noise is learnt, nothing is cut.
+    fn quiet(&mut self, samples: &[i16]) -> bool {
+        let _ = self.phrases.listen(samples);
+        let _ = self.phrases.flush();
+        if std::mem::take(&mut self.hearing) {
+            self.draft = None;
+            return self.said.send(Said::Gone).is_ok();
+        }
+        true
+    }
+}
+
+/// `SPATIPAL_TEST_ECHO=<gain>,<delay ms>[,<drift ppm>[,<distortion>]]`: **for tests only**, a
+/// made-up room puts what it plays back into the microphone, as the glasses' speakers would put
+/// it into theirs -- there are no speakers on a test machine, and none may be heard on the
+/// owner's. (The proper test is the glasses on a head; this is how the canceller, the gate and the
+/// barge-in are driven end to end without one.)
+fn test_room() -> Option<SimulatedRoom> {
+    let raw = std::env::var("SPATIPAL_TEST_ECHO").ok()?;
+    let n: Vec<f64> = raw.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+    let mut room = SimulatedRoom::new(*n.first()? as f32, n.get(1).copied().unwrap_or(150.0) / 1000.0, n.get(2).copied().unwrap_or(0.0));
+    room.distortion = n.get(3).copied().unwrap_or(0.5) as f32;
+    log::warn!("ears: SPATIPAL_TEST_ECHO: a made-up room puts its voice back into the microphone ({raw})");
+    Some(room)
 }
 
 /// What was said, written by Whisper and judged. Whisper writes on helper threads, one job at a
@@ -267,6 +374,10 @@ impl Judge {
                 Said::Began => {
                     self.hearing = true;
                     self.tell(Heard::Ear(Ear::Hearing))
+                }
+                Said::Interrupted => {
+                    self.conversation.touch();
+                    self.tell(Heard::Interrupted)
                 }
                 Said::Gone => {
                     self.hearing = false;
@@ -449,6 +560,55 @@ fn meant(text: &str, name: &str, in_conversation: bool) -> Option<Heard> {
     }
 }
 
+/// Whether what was said is only "be quiet" -- "stop", "shh", "quiet please", "diam", "sudah,
+/// stop" -- in either language: it is silenced, and nothing is asked (the owner, 2026-11-15:
+/// "sometimes I just want it to be shut up"). Thanks or a goodbye with it ("sudah, makasih") is
+/// not only that: the model hears it, and may go.
+pub fn is_hush(text: &str) -> bool {
+    let words: Vec<String> = text.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).filter(|w| !w.is_empty()).collect();
+    if words.is_empty() || words.len() > 5 {
+        return false;
+    }
+    // Words that say it.
+    const HUSH: &[&str] = &[
+        "stop", "quiet", "hush", "shh", "shhh", "sh", "ssst", "sst", "psst", "silence", "enough", "shut", "diam", "berhenti", "stopp", "cukup", "hentikan", "setop",
+    ];
+    // Words that may come with them.
+    const WITH: &[&str] = &[
+        "please", "now", "it", "be", "up", "talking", "ok", "okay", "oke", "that's", "thats", "that", "is", "pixel", "dong", "ya", "dulu", "sudah", "udah", "dah", "aja", "saja", "tolong", "deh", "you", "can", "just", "wait", "hey", "hei",
+    ];
+    words.iter().any(|w| HUSH.contains(&w.as_str())) && words.iter().all(|w| HUSH.contains(&w.as_str()) || WITH.contains(&w.as_str()))
+}
+
+/// What the wearer said over it, without what was its own voice: Whisper, given what the
+/// microphone heard after it stopped, may write the end of its own last words first ("...a woman
+/// named Mera. Wait, what is the capital of France?"), or nothing but them when the gate took its
+/// voice for the wearer's. Mostly its own words -- three in four of the longer words (four
+/// letters or more, at least three of them) are words it said in the last half minute -- and it
+/// was its own voice: `None`. Else its own words at the start are taken off. A safeguard behind
+/// the canceller and the gate; Whisper does not write its words as they were said ("that's" for
+/// "that"), so it goes by words, not by the sentence.
+pub fn not_its_own(text: &str, lately_said: &str) -> Option<String> {
+    let plain = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase().replace('\'', "");
+    let said: std::collections::HashSet<String> = lately_said.split_whitespace().map(plain).filter(|w| !w.is_empty()).collect();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let long: Vec<String> = words.iter().map(|w| plain(w)).filter(|w| w.chars().count() >= 4).collect();
+    let its = long.iter().filter(|w| said.contains(*w)).count();
+    if long.len() >= 3 && its * 4 >= long.len() * 3 {
+        return None;
+    }
+    // Its own words at the start: as long a run of them as there is, if more than one.
+    let run = words.iter().take_while(|w| said.contains(&plain(w))).count();
+    let cut = if run >= 2 { run } else { 0 };
+    let rest = words[cut..].join(" ");
+    let rest = rest.trim_start_matches(|c: char| !c.is_alphanumeric()).trim().to_string();
+    if rest.chars().filter(|c| c.is_alphanumeric()).count() < 2 {
+        None
+    } else {
+        Some(rest)
+    }
+}
+
 /// Whether `text` begins with `name` (after a greeting, perhaps): the rest of it, if so.
 ///
 /// By sound as well as by letters: Whisper writes "Pixel" as "Piksel" when the sentence around it
@@ -522,6 +682,29 @@ mod tests {
         assert_eq!(addressed("Piksel tolong ingatkan aku", "Pixel").as_deref(), Some("tolong ingatkan aku"));
         assert_eq!(addressed("Pixel.", "Pixel").as_deref(), Some(""));
         assert_eq!(addressed("Oke Pixel open the browser", "Pixel").as_deref(), Some("open the browser"));
+    }
+
+    #[test]
+    fn its_own_words_heard_over_it_are_not_the_wearer_s() {
+        let said = "Once there was a lighthouse. A keeper of the light in those days was a woman named Mera. She lived alone.";
+        assert_eq!(not_its_own("A keeper of the light in those days was a woman named Mera. Wait, what is the capital of France?", said).as_deref(), Some("Wait, what is the capital of France?"));
+        assert_eq!(not_its_own("woman named Mera.", said), None);
+        assert_eq!(not_its_own("What is the capital of France?", said).as_deref(), Some("What is the capital of France?"));
+        assert_eq!(not_its_own("Stop.", said).as_deref(), Some("Stop."));
+        // As Whisper wrote its own voice, heard as the wearer's (2026-11-15).
+        let said = "Once, on a rock that the maps argued about, there stood a light. Iwan was not a large man, and his hair had gone the colour of the sea.";
+        assert_eq!(not_its_own("Once on a rock that's- Iwan was not a large man, and his hair had gone the color of-", said), None);
+        assert_eq!(not_its_own("and what does Iwan do at night?", said).as_deref(), Some("and what does Iwan do at night?"));
+    }
+
+    #[test]
+    fn be_quiet_is_only_that() {
+        for said in ["Stop.", "stop it", "Shh!", "quiet please", "Be quiet.", "shut up", "Diam!", "sudah, stop", "Cukup dulu ya", "Berhenti.", "okay stop", "that's enough"] {
+            assert!(is_hush(said), "{said:?}");
+        }
+        for said in ["stop the music in the browser", "sudah, makasih", "berhenti di halaman dua", "what is a stop sign", "yes", "wait", "enough about that, tell me about the moon"] {
+            assert!(!is_hush(said), "{said:?}");
+        }
     }
 
     #[test]

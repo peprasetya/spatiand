@@ -110,6 +110,10 @@ fn play_file(path: &std::path::Path, rate: u32, mut sink: Sink) -> Result<Microp
             // A moment of the room first, as when a person presses the key and then speaks: the
             // pause detector learns the room's noise in its first moments.
             let mut lead = 80;
+            // On the clock, as a device's samples come: a sleep of ten milliseconds each time
+            // ran a percent or more slow, and a microphone that slow is no microphone (the
+            // assistant's echo canceller follows a device's clock against its own voice's).
+            let mut due = std::time::Instant::now();
             while !stopped.load(std::sync::atomic::Ordering::Relaxed) {
                 let chunk: Vec<i16> = if lead > 0 {
                     lead -= 1;
@@ -134,7 +138,11 @@ fn play_file(path: &std::path::Path, rate: u32, mut sink: Sink) -> Result<Microp
                         .collect()
                 };
                 sink(&chunk);
-                std::thread::sleep(std::time::Duration::from_millis(10));
+                due += std::time::Duration::from_millis(10);
+                let now = std::time::Instant::now();
+                if due > now {
+                    std::thread::sleep(due - now);
+                }
             }
         })
         .map_err(|e| format!("no thread for the microphone: {e}"))?;
