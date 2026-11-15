@@ -111,6 +111,8 @@ fn run(heard: Receiver<Message>, events: Sender<Message>, changed: impl Fn(Place
     };
     // Each folder watched, and the place it is news for.
     let mut watched: HashMap<PathBuf, Place> = HashMap::new();
+    // The same, and each by its real path too: what an event is looked up in.
+    let mut lookup: HashMap<PathBuf, Place> = HashMap::new();
     let mut bounce = Debounce::default();
     loop {
         let message = match bounce.wait(Instant::now()) {
@@ -135,6 +137,15 @@ fn run(heard: Receiver<Message>, events: Sender<Message>, changed: impl Fn(Place
                         }
                     }
                 }
+                // Events name a folder by its real path (FSEvents says /private/tmp for /tmp on
+                // a Mac): each folder is also known by that, or a folder opened through a
+                // symbolic link never refreshed.
+                lookup = wanted.clone();
+                for (folder, place) in &wanted {
+                    if let Ok(real) = std::fs::canonicalize(folder) {
+                        lookup.entry(real).or_insert_with(|| place.clone());
+                    }
+                }
                 watched = wanted;
                 bounce.forget(&places.into_iter().collect());
             }
@@ -145,7 +156,7 @@ fn run(heard: Receiver<Message>, events: Sender<Message>, changed: impl Fn(Place
                 }
                 let now = Instant::now();
                 for path in &event.paths {
-                    if let Some(place) = place_for(path, &watched) {
+                    if let Some(place) = place_for(path, &lookup) {
                         bounce.changed(place, now);
                     }
                 }
