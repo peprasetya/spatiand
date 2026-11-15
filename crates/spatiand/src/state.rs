@@ -1710,6 +1710,29 @@ impl Spatiand {
                 // `None` means the surface has no toplevel role data, or another thread
                 // panicked holding that lock. Neither is a reason to configure it again.
                 if initial_configure_sent == Some(false) {
+                    // The size every window is offered, within what the window said it can
+                    // be (xdg_toplevel's min and max size, committed before this first
+                    // configure). A dialog of a fixed size -- SpatiMesh's PIN window, a GTK
+                    // message -- was offered 1280x800 and took it on the Deck, drawn huge
+                    // and mostly empty, while a client that ignores the offer stayed small
+                    // (2026-11-15).
+                    let (min, max) = smithay::wayland::compositor::with_states(surface, |states| {
+                        let mut cached = states.cached_state.get::<smithay::wayland::shell::xdg::SurfaceCachedState>();
+                        let current = cached.current();
+                        (current.min_size, current.max_size)
+                    });
+                    let fit = |offered: i32, min: i32, max: i32| {
+                        let at_most = if max > 0 { offered.min(max) } else { offered };
+                        if min > 0 { at_most.max(min) } else { at_most }
+                    };
+                    let size = (
+                        fit(DEFAULT_WINDOW_SIZE.0, min.w, max.w),
+                        fit(DEFAULT_WINDOW_SIZE.1, min.h, max.h),
+                    );
+                    if size != DEFAULT_WINDOW_SIZE {
+                        log::info!("a window that can be at most {}x{} is offered {}x{}", max.w, max.h, size.0, size.1);
+                        toplevel.with_pending_state(|state| state.size = Some(size.into()));
+                    }
                     toplevel.send_configure();
                 }
             }
