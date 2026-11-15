@@ -7,6 +7,9 @@ use spatiand_app::ui::{look, theme, Button, Field, Icon, Input, List, Painter, R
 use spatiand_app::Gl;
 use spatiand_voice::VoiceSettings;
 
+/// How long a chat's bin waits for its second press.
+const ARMED_FOR: std::time::Duration = std::time::Duration::from_secs(4);
+
 use crate::store::{Chat, Said, Settings};
 
 /// The answer being given, as it comes.
@@ -111,6 +114,11 @@ pub struct Window {
     editing: Option<Line>,
     edit: Field,
     pointer: (f32, f32),
+    /// The bin on the chat under the pointer: pressed once it shows "Delete", pressed again
+    /// within a few seconds the chat is forgotten.
+    forget: Button,
+    forget_row: Option<usize>,
+    armed: Option<(usize, std::time::Instant)>,
 }
 
 impl Window {
@@ -139,6 +147,9 @@ impl Window {
             editing: None,
             edit: Field::default(),
             pointer: (0.0, 0.0),
+            forget: Button::default(),
+            forget_row: None,
+            armed: None,
         }
     }
 
@@ -205,10 +216,27 @@ impl Window {
             .iter()
             .map(|c| Row::with(if c.title.is_empty() { "New chat".to_string() } else { c.title.clone() }, crate::time::short(c.updated)))
             .collect();
+        let hovered = self.chats.hovered();
+        let armed = self.armed.filter(|(_, at)| at.elapsed() < ARMED_FOR).map(|(i, _)| i);
+        let mut rows = rows;
+        // The chat under the pointer shows its bin where its time was.
+        if let Some(row) = hovered.or(armed).and_then(|i| rows.get_mut(i)) {
+            row.trailing = None;
+        }
         self.chats.draw(p, gl, side, &rows);
         if let Some(i) = view.current {
             if let Some(r) = self.chats.row_rect(i) {
                 p.fill(gl, Rect { w: 4.0, ..r }, 2.0, look::TEAL);
+            }
+        }
+        self.forget_row = None;
+        if let Some(i) = hovered.or(armed) {
+            if let Some(r) = self.chats.row_rect(i) {
+                let asking = armed == Some(i);
+                let w = if asking { 210.0 } else { 44.0 };
+                let at = Rect { x: r.x + r.w - w - 6.0, y: r.y + (r.h - 44.0).max(0.0) / 2.0, w, h: 44.0_f32.min(r.h) };
+                self.forget.draw_icon(p, gl, at, Icon::Trash, if asking { "Delete" } else { "" });
+                self.forget_row = Some(i);
             }
         }
 
@@ -301,6 +329,28 @@ impl Window {
                 return None;
             }
         }
+        // The bin on a chat, before the list: a press on it is not a press on the chat.
+        if let Some(i) = self.forget_row {
+            let on_bin = self.forget.contains(self.pointer.0, self.pointer.1);
+            match input {
+                Input::Press { pressed: true, .. } if on_bin => {
+                    self.forget.input(&input);
+                    return None;
+                }
+                Input::Press { pressed: false, .. } if self.forget.input(&input) => {
+                    if self.armed.is_some_and(|(at, when)| at == i && when.elapsed() < ARMED_FOR) {
+                        self.armed = None;
+                        return Some(Want::ForgetChat(i));
+                    }
+                    self.armed = Some((i, std::time::Instant::now()));
+                    return None;
+                }
+                Input::Pointer { .. } | Input::PointerLeft => {
+                    self.forget.input(&input);
+                }
+                _ => {}
+            }
+        }
         if let Some(row) = self.chats.input(&input) {
             return Some(Want::OpenChat(row));
         }
@@ -327,7 +377,7 @@ impl Window {
         } else if self.send.input(&input) {
             return self.take_field();
         }
-        // A chat is forgotten with the right button on it.
+        // A chat is forgotten with its bin (pressed twice), or Control/Super-Delete on the one open.
         if let Input::Key { key: spatiand_app::Key::Delete, modifiers, .. } = &input {
             if (modifiers.logo || modifiers.control) && view.current.is_some() {
                 return view.current.map(Want::ForgetChat);
