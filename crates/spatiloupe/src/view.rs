@@ -1141,13 +1141,13 @@ impl View {
             }
         }
         match input {
-            Input::Press { pressed: true } => {
+            Input::Press { pressed: true, .. } => {
                 if !self.over_controls(self.pointer.0, self.pointer.1) {
                     self.pressed_at = Some((self.pointer.0, self.pointer.1, Instant::now()));
                     self.dragging = false;
                 }
             }
-            Input::Press { pressed: false } => {
+            Input::Press { pressed: false, .. } => {
                 let was = self.pressed_at.take();
                 let dragged = std::mem::take(&mut self.dragging);
                 if std::mem::take(&mut self.drag_slides) {

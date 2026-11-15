@@ -416,6 +416,30 @@ impl Spatiand {
     }
 }
 
+/// What answers `spatiand_xr_v1.ask_system` on this platform: set by a backend whose system
+/// only the room can ask (Android's, whose PackageManager only the app's Java may reach). It
+/// is handed the question and the descriptor to write the answer into, and closes it when
+/// done; it is called on the compositor's thread and must not keep it waiting.
+type SystemAsker = Box<dyn Fn(String, std::os::fd::OwnedFd) + Send + Sync>;
+static SYSTEM_ASKER: std::sync::OnceLock<SystemAsker> = std::sync::OnceLock::new();
+
+/// Answer the clients' `ask_system` with `asker` (once, at start).
+#[allow(dead_code)]
+pub fn answer_system_with(asker: impl Fn(String, std::os::fd::OwnedFd) + Send + Sync + 'static) {
+    let _ = SYSTEM_ASKER.set(Box::new(asker));
+}
+
+fn ask_system(json: String, answer: std::os::fd::OwnedFd) {
+    match SYSTEM_ASKER.get() {
+        Some(asker) => asker(json, answer),
+        // Here a client asks the system itself (desktop entries, Launch Services).
+        None => {
+            let mut file = std::fs::File::from(answer);
+            let _ = std::io::Write::write_all(&mut file, br#"{"error":"Here an application asks the system itself."}"#);
+        }
+    }
+}
+
 impl Dispatch<SpatiandXrV1, ()> for Spatiand {
     fn request(
         state: &mut Self,
@@ -455,6 +479,7 @@ impl Dispatch<SpatiandXrV1, ()> for Spatiand {
                 // there is a head to track. See `crate::pose`.
                 state.pose_channels_to_open = true;
             }
+            spatiand_xr_v1::Request::AskSystem { json, answer } => ask_system(json, answer),
             spatiand_xr_v1::Request::Destroy => {}
             _ => {}
         }

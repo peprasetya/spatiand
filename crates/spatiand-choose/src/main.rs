@@ -481,7 +481,7 @@ fn run(ask: Ask) -> Result<Option<Vec<PathBuf>>, String> {
                     chooser.list.input(&input);
                     None
                 }
-                Input::Press { pressed } => {
+                Input::Press { pressed, .. } => {
                     if !pressed && chooser.ok.contains(hover.0, hover.1) {
                         chooser.ok()
                     } else if !pressed && chooser.cancel.contains(hover.0, hover.1) {

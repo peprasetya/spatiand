@@ -156,6 +156,15 @@ final class Shell {
      * display's id, or -1 if there is no helper or it could not be done.
      */
     static int openApp(String component, Surface surface, int width, int height) {
+        return openApp(component, surface, width, height, null, null);
+    }
+
+    /**
+     * As {@link #openApp(String, Surface, int, int)}, the app handed a file to open: {@code uri}
+     * (one of {@link OpenFiles}, granted to it by {@link #askSystem}) of type {@code type}, or
+     * none.
+     */
+    static int openApp(String component, Surface surface, int width, int height, String uri, String type) {
         Integer display = call(ShellHelper.CREATE_DISPLAY, data -> {
             data.writeString("Spatiand: " + component);
             data.writeInt(width);
@@ -166,16 +175,122 @@ final class Shell {
         }, Parcel::readInt, -1);
         if (display == null || display < 0) return -1;
         int id = display;
-        Integer started = call(ShellHelper.LAUNCH, data -> {
-            data.writeInt(id);
-            data.writeString(component);
-        }, Parcel::readInt, -100);
+        Integer started = launchOn(id, component, uri, type);
         Log.i(TAG, "opened " + component + " on display " + id + ": " + started);
         if (started == null || started < 0) {
             closeApp(id);
             return -1;
         }
         return id;
+    }
+
+    /** Start an app on a display it is already on, with a file to open (or none). */
+    static int relaunch(int display, String component, String uri, String type) {
+        Integer started = launchOn(display, component, uri, type);
+        return started == null ? -100 : started;
+    }
+
+    private static Integer launchOn(int display, String component, String uri, String type) {
+        return call(ShellHelper.LAUNCH, data -> {
+            data.writeInt(display);
+            data.writeString(component);
+            // Since the helper's version 2: a file for it to open.
+            if (uri != null) {
+                data.writeString(uri);
+                data.writeString(type);
+            }
+        }, Parcel::readInt, -100);
+    }
+
+    // --- "Open with", for SpatiShelf (spatiand_xr_v1.ask_system) ---
+
+    private static String error(String why) {
+        try {
+            return new JSONObject().put("error", why).toString();
+        } catch (Exception e) {
+            return "{\"error\":\"?\"}";
+        }
+    }
+
+    private static String component(ResolveInfo r) {
+        return r.activityInfo.packageName + "/" + r.activityInfo.name;
+    }
+
+    /**
+     * What a native program in the app asks of the system through the room, as JSON (the
+     * protocol's description of {@code ask_system} says what): which of the phone's apps open a
+     * kind of file, and handing one of them a file, granted to it to read. Off the compositor's
+     * thread.
+     */
+    static String askSystem(String json) {
+        Context c = context;
+        if (c == null) return error("Spatiand is not ready.");
+        try {
+            JSONObject q = new JSONObject(json);
+            PackageManager pm = c.getPackageManager();
+            String type = q.optString("type", "*/*");
+            switch (q.optString("do")) {
+                case "openers": {
+                    Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(OpenFiles.uriFor(q.getString("path")), type);
+                    List<ResolveInfo> found = pm.queryIntentActivities(view, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY));
+                    ResolveInfo best = pm.resolveActivity(view, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY));
+                    // No default chosen, Android answers with its own chooser: not an app.
+                    String preferred = best != null && best.activityInfo != null && !"android".equals(best.activityInfo.packageName)
+                            && !best.activityInfo.name.endsWith("ResolverActivity") ? component(best) : null;
+                    return openersJson(c, pm, found, preferred);
+                }
+                case "all_openers": {
+                    Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(OpenFiles.uriFor("/storage/emulated/0/any"), "*/*");
+                    List<ResolveInfo> found = pm.queryIntentActivities(view, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY));
+                    return openersJson(c, pm, found, null);
+                }
+                case "open_with": {
+                    String id = q.getString("id");
+                    android.content.ComponentName name = android.content.ComponentName.unflattenFromString(id);
+                    if (name == null) return error("Not an app: " + id);
+                    android.net.Uri uri = OpenFiles.uriFor(q.getString("path"));
+                    c.grantUriPermission(name.getPackageName(), uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    String label = pm.getActivityInfo(name, PackageManager.ComponentInfoFlags.of(0)).loadLabel(pm).toString();
+                    return new JSONObject().put("ok", true).put("component", id).put("uri", uri.toString()).put("type", type).put("label", label).toString();
+                }
+                default:
+                    return error("Not something that can be asked: " + q.optString("do"));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "ask_system: " + e);
+            return error(e.toString());
+        }
+    }
+
+    private static String openersJson(Context c, PackageManager pm, List<ResolveInfo> found, String preferred) throws Exception {
+        File dir = new File(c.getCacheDir(), "open-icons");
+        dir.mkdirs();
+        JSONArray apps = new JSONArray();
+        Set<String> seen = new HashSet<>();
+        for (ResolveInfo r : found) {
+            if (r.activityInfo == null || r.activityInfo.packageName.equals(c.getPackageName())) continue;
+            String id = component(r);
+            if (!seen.add(id)) continue;
+            File icon = new File(dir, id.replace('/', '_') + ".png");
+            if (!icon.exists()) {
+                try {
+                    draw(r.loadIcon(pm), icon);
+                } catch (Exception e) {
+                    Log.w(TAG, "no icon for " + id + ": " + e);
+                }
+            }
+            JSONObject app = new JSONObject().put("id", id).put("name", r.loadLabel(pm).toString()).put("default", id.equals(preferred));
+            if (icon.exists()) app.put("icon", icon.getPath());
+            if (id.equals(preferred)) {
+                // The system's own choice first.
+                JSONArray first = new JSONArray().put(app);
+                for (int i = 0; i < apps.length(); i++) first.put(apps.get(i));
+                apps = first;
+            } else {
+                apps.put(app);
+            }
+        }
+        return new JSONObject().put("apps", apps).toString();
     }
 
     /** The app's window has a new size, and a new surface of that size to draw into. */

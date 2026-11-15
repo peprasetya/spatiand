@@ -162,7 +162,8 @@ pub enum Event {
     /// Where the pointer is, in the window's own pixels from its top left.
     PointerMoved { window: WindowId, x: f32, y: f32 },
     PointerLeft { window: WindowId },
-    Button { window: WindowId, button: Button, pressed: bool },
+    /// `modifiers`: what was held on the keyboard as it was pressed or let go of.
+    Button { window: WindowId, button: Button, pressed: bool, modifiers: Modifiers },
     /// A wheel or two fingers, in pixels; positive is down and to the right.
     Scroll { window: WindowId, dx: f32, dy: f32 },
     /// `code` is the key's position (Linux's number for it); `text` is what pressing it typed,
@@ -372,6 +373,36 @@ impl App {
             let _ = std::io::Read::read_to_string(&mut file, &mut answer);
             let _ = reply.send(answer);
         });
+    }
+
+    /// Ask the room what only it can ask of the system it runs on (`spatiand_xr_v1.ask_system`:
+    /// on Android, which applications open a kind of file, and opening one with it). One JSON
+    /// object, `{"do": ...}`; the answer is JSON, `{"error": "..."}` where the room cannot or
+    /// will not, waited for as long as `wait` at most.
+    pub fn ask_system(&mut self, json: &str, wait: std::time::Duration) -> Result<String, String> {
+        let read = self.wire.ask_system(json).ok_or("This room cannot be asked that.")?;
+        let _ = self.queue.flush();
+        use std::os::fd::AsRawFd;
+        let deadline = std::time::Instant::now() + wait;
+        let mut answer = Vec::new();
+        let mut buffer = [0u8; 16384];
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err("The room did not answer in time.".into());
+            }
+            let mut poll = libc::pollfd { fd: read.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+            if unsafe { libc::poll(&mut poll, 1, left.as_millis().min(i32::MAX as u128) as i32) } <= 0 {
+                continue;
+            }
+            match unsafe { libc::read(read.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) } {
+                0 => break,
+                n if n > 0 => answer.extend_from_slice(&buffer[..n as usize]),
+                _ if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted => {}
+                _ => return Err(std::io::Error::last_os_error().to_string()),
+            }
+        }
+        String::from_utf8(answer).map_err(|e| e.to_string())
     }
 
     /// The room's microphone, as its assistant: 16 kHz mono 16-bit samples to read, until this is

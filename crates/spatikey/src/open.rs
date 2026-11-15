@@ -199,7 +199,7 @@ fn row_of(summary: &Summary) -> Row {
     };
     let at = summary.passkey_rp.clone().or_else(|| summary.sites.first().map(|s| site_shown(s))).or_else(|| summary.apps.first().cloned()).unwrap_or_default();
     let trailing: Vec<String> = [who, at].into_iter().filter(|s| !s.is_empty()).collect();
-    Row { label: title_of(summary), trailing: (!trailing.is_empty()).then(|| trailing.join("  \u{b7}  ")), heading: false, icon: Some(icon) }
+    Row { label: title_of(summary), trailing: (!trailing.is_empty()).then(|| trailing.join("  \u{b7}  ")), picture: None, heading: false, icon: Some(icon) }
 }
 
 // --- one entry ---
@@ -745,7 +745,7 @@ impl Edit {
             self.pointer = (*x, *y);
         }
         // A press on a field gives it the keys.
-        if let Input::Press { pressed: true } = input {
+        if let Input::Press { pressed: true, .. } = input {
             let (x, y) = self.pointer;
             if let Some(at) = spots.iter().position(|s| matches!(s, Spot::Field(i) if self.fields[*i].contains(x, y))) {
                 self.focus = at;

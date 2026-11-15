@@ -299,7 +299,7 @@ impl Recover {
             self.pointer = (*x, *y);
         }
         // A press on the field gives it the keys.
-        if let Input::Press { pressed: true } = input {
+        if let Input::Press { pressed: true, .. } = input {
             if self.field.contains(self.pointer.0, self.pointer.1) {
                 self.focus = 0;
             }

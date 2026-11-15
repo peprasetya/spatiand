@@ -158,8 +158,9 @@ pub mod theme {
 pub enum Input {
     Pointer { x: f32, y: f32 },
     PointerLeft,
-    /// The pointer's main button.
-    Press { pressed: bool },
+    /// The pointer's main button, and what was held on the keyboard as it went: Shift to
+    /// extend a choice, Control (Command) to add to it.
+    Press { pressed: bool, modifiers: Modifiers },
     Scroll { dx: f32, dy: f32 },
     Key { key: Key, text: Option<String>, modifiers: Modifiers },
     /// Two fingers pinching, as a factor since the last: see [`crate::App::set_pinch_taken`].
@@ -173,7 +174,7 @@ impl Input {
         match event {
             Event::PointerMoved { x, y, .. } => Some(Input::Pointer { x: x / scale, y: y / scale }),
             Event::PointerLeft { .. } => Some(Input::PointerLeft),
-            Event::Button { button: crate::Button::Left, pressed, .. } => Some(Input::Press { pressed: *pressed }),
+            Event::Button { button: crate::Button::Left, pressed, modifiers, .. } => Some(Input::Press { pressed: *pressed, modifiers: *modifiers }),
             Event::Scroll { dx, dy, .. } => Some(Input::Scroll { dx: dx / scale, dy: dy / scale }),
             Event::Pinch { scale, .. } => Some(Input::Pinch { scale: *scale }),
             // Escape held is one Escape: repeated, it closed what was under what it closed.

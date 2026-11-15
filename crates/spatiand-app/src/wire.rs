@@ -172,7 +172,7 @@ impl Wire {
         let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=10, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=11, ()).ok();
         // Only a process the room gave its assistant's key to has any business here, and it says
         // the key at once: every question before that is refused.
         let assist: Option<spatiand_assist_v1::SpatiandAssistV1> = match std::env::var("SPATIAND_ASSIST_KEY") {
@@ -858,6 +858,15 @@ impl Wire {
         Some(read)
     }
 
+    /// Ask the room what only it can ask the system (`spatiand_xr_v1.ask_system`): the answer
+    /// is read from the returned end. None from a room too old to be asked.
+    pub(crate) fn ask_system(&mut self, json: &str) -> Option<std::os::fd::OwnedFd> {
+        let xr = self.xr.as_ref().filter(|xr| xr.version() >= 11)?;
+        let (read, write) = pipe()?;
+        xr.ask_system(json.to_string(), std::os::fd::AsFd::as_fd(&write));
+        Some(read)
+    }
+
     /// The room's microphone, read from the returned end.
     pub(crate) fn assist_listen(&mut self) -> Option<std::os::fd::OwnedFd> {
         let assist = self.assist.as_ref()?;
@@ -1071,7 +1080,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for Wire {
                         0x112 => Button::Middle,
                         other => Button::Other(other),
                     };
-                    state.events.push(Event::Button { window, button, pressed });
+                    // What is held as it is pressed: a click with Shift extends, with Control adds.
+                    let modifiers = state.keyboard.held_modifiers();
+                    state.events.push(Event::Button { window, button, pressed, modifiers });
                 }
             }
             wl_pointer::Event::Axis { axis, value, .. } => {

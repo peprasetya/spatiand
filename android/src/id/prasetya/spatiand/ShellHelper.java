@@ -53,7 +53,7 @@ import java.util.Map;
  */
 public final class ShellHelper extends Binder {
     /** Told to the app on attaching; the app starts a new helper when its own is newer. */
-    static final int VERSION = 1;
+    static final int VERSION = 2;
     static final String TAG = "spatiand-shell";
     static final String PACKAGE = "id.prasetya.spatiand";
     static final String AUTHORITY = PACKAGE + ".shell";
@@ -356,7 +356,10 @@ public final class ShellHelper extends Binder {
                 case LAUNCH: {
                     int id = data.readInt();
                     String component = data.readString();
-                    int result = launch(id, component);
+                    // Since version 2: a file for the app to open, which the app has granted it.
+                    String uri = data.dataAvail() > 0 ? data.readString() : null;
+                    String type = data.dataAvail() > 0 ? data.readString() : null;
+                    int result = launch(id, component, uri, type);
                     answer(reply, result);
                     return true;
                 }
@@ -682,14 +685,19 @@ public final class ShellHelper extends Binder {
         }
     }
 
-    /** Start an app's activity ("package/class") on a display, as its launcher icon does. */
-    int launch(int id, String component) throws Exception {
+    /**
+     * Start an app's activity ("package/class") on a display, as its launcher icon does; or, with
+     * {@code uri}, as viewing that file (Spatiand's own content address, which the app has
+     * already granted the activity's package to read: the shell may not grant it).
+     */
+    int launch(int id, String component, String uri, String type) throws Exception {
         ComponentName name = ComponentName.unflattenFromString(component);
         if (name == null) throw new IllegalArgumentException("not a component: " + component);
-        Intent intent = new Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_LAUNCHER)
-                .setComponent(name)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+        Intent intent = uri == null
+                ? new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                        .addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+                : new Intent(Intent.ACTION_VIEW).setDataAndType(android.net.Uri.parse(uri), type);
+        intent.setComponent(name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         Bundle options = android.app.ActivityOptions.makeBasic().setLaunchDisplayId(id).toBundle();
         Method start = null;
         for (Method m : activityManager.getClass().getMethods()) {

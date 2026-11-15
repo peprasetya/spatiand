@@ -16,7 +16,7 @@ use super::phone::{self, Typed};
 use super::{logging, shared, NativeWindow};
 
 /// A Java string as a Rust one.
-unsafe fn java_string(env: *mut JNIEnv, text: jstring) -> Option<String> {
+pub(super) unsafe fn java_string(env: *mut JNIEnv, text: jstring) -> Option<String> {
     let chars = ((**env).v1_1.GetStringUTFChars)(env, text, std::ptr::null_mut());
     if chars.is_null() {
         return None;
@@ -100,6 +100,9 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_begin(_env: *mut JNIEnv,
             if let Err(e) = super::apps::attach(&mut display_handle) {
                 log::error!("{e}");
             }
+            // What Spatiand's native programs cannot ask Android themselves: the apps that open
+            // a file, and opening one with it in the room (SpatiShelf's "Open with").
+            crate::xr::answer_system_with(super::apps::ask_system);
             let mut runtime = crate::Runtime { state, display_handle };
             log::info!("session started");
             if let Err(e) = super::backend::run(&mut event_loop, &mut display, &mut runtime, &shared) {

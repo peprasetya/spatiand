@@ -754,7 +754,7 @@ impl Playing {
             match input {
                 Input::Key { key: Key::Escape, .. } => self.menu = None,
                 // A press anywhere else puts the menu away.
-                Input::Press { pressed: true } if !list.contains(self.pointer.0, self.pointer.1) => self.menu = None,
+                Input::Press { pressed: true, .. } if !list.contains(self.pointer.0, self.pointer.1) => self.menu = None,
                 _ => {}
             }
             if self.menu.is_some() || matches!(input, Input::Key { .. }) {
@@ -782,7 +782,7 @@ impl Playing {
             }
         }
         match input {
-            Input::Press { pressed: true } => {
+            Input::Press { pressed: true, .. } => {
                 if was_shown && self.bar.inset(-12.0).contains(self.pointer.0, self.pointer.1) {
                     self.seeking = true;
                     self.seek_to_pointer();
@@ -790,7 +790,7 @@ impl Playing {
                     self.turning = Some(self.pointer);
                 }
             }
-            Input::Press { pressed: false } => {
+            Input::Press { pressed: false, .. } => {
                 self.seeking = false;
                 self.turning = None;
             }

@@ -163,7 +163,48 @@ pub fn launch(app: &AppEntry) {
         return;
     }
     log::info!("opening {}", app.name);
-    send(Command::Open { component: app.exec.clone(), label: app.name.clone() });
+    send(Command::Open { component: app.exec.clone(), label: app.name.clone(), data: None });
+}
+
+/// `spatiand_xr_v1.ask_system` (SpatiShelf's "Open with"): asked of `Shell.askSystem` off the
+/// compositor's thread, and answered into `answer`. An app chosen to open a file is opened in the
+/// room as from the launcher, handed the file.
+pub fn ask_system(json: String, answer: std::os::fd::OwnedFd) {
+    std::thread::spawn(move || {
+        let said = jni::with_shell(|env, class| unsafe {
+            let method = jni::shell_method(env, class, c"askSystem", c"(Ljava/lang/String;)Ljava/lang/String;")?;
+            let args = [jvalue { l: jni::new_string(env, &json) }];
+            let text = ((**env).v1_1.CallStaticObjectMethodA)(env, class, method, args.as_ptr());
+            if text.is_null() {
+                return None;
+            }
+            jni::java_string(env, text.cast())
+        })
+        .flatten()
+        .unwrap_or_else(|| r#"{"error":"Android could not be asked."}"#.to_string());
+        let reply = match serde_json::from_str::<serde_json::Value>(&said) {
+            // Handed the file: opened in the room.
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(true) => {
+                let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                open_with(&field("component"), &field("label"), &field("uri"), &field("type"))
+            }
+            _ => said,
+        };
+        let mut file = std::fs::File::from(answer);
+        let _ = std::io::Write::write_all(&mut file, reply.as_bytes());
+    });
+}
+
+/// An app opened with a file to view: on a display of its own as from the launcher, or, already
+/// open, handed the file where it is. What to answer.
+fn open_with(component: &str, label: &str, uri: &str, kind: &str) -> String {
+    if !READY.load(Ordering::SeqCst) {
+        java_start_helper();
+        return r#"{"error":"Spatiand's helper for Android apps is starting: try again in a moment."}"#.to_string();
+    }
+    log::info!("opening {uri} with {label}");
+    send(Command::Open { component: component.to_string(), label: label.to_string(), data: Some((uri.to_string(), kind.to_string())) });
+    r#"{"ok":true}"#.to_string()
 }
 
 /// Something the app has to say about the phone's apps: why a helper could not be started.
@@ -215,7 +256,8 @@ pub fn notice_pressed() -> bool {
 // --- windows ---
 
 enum Command {
-    Open { component: String, label: String },
+    /// An app opened, or brought forward; `data`: a file for it to open (its address and type).
+    Open { component: String, label: String, data: Option<(String, String)> },
     Gone { display: i32 },
     HelperGone,
     Tap { x: f64, y: f64 },
@@ -300,14 +342,18 @@ fn run(stream: std::os::unix::net::UnixStream, inbox: Receiver<Command>) {
         };
         for command in first.into_iter().chain(inbox.try_iter()) {
             match command {
-                Command::Open { component, label } => {
+                Command::Open { component, label, data } => {
                     if let Some(entry) = entries.values_mut().find(|e| e.component == component) {
                         entry.show = true;
+                        // Open already: handed the file where it is.
+                        if let Some((uri, kind)) = &data {
+                            java_relaunch(entry.display, &component, uri, kind);
+                        }
                         continue;
                     }
                     let id = next_id;
                     next_id += 1;
-                    match open(&mut client, id, &component, &label) {
+                    match open(&mut client, id, &component, &label, data.as_ref()) {
                         Ok(entry) => {
                             entries.insert(id, entry);
                         }
@@ -380,10 +426,10 @@ fn run(stream: std::os::unix::net::UnixStream, inbox: Receiver<Command>) {
 }
 
 /// A new reader the window's size, a display drawing into it, and the app started there.
-fn open(client: &mut Client, id: u32, component: &str, label: &str) -> Result<Entry, String> {
+fn open(client: &mut Client, id: u32, component: &str, label: &str, data: Option<&(String, String)>) -> Result<Entry, String> {
     let size = FIRST_SIZE;
     let (output, window) = Output::for_window(size).map_err(|e| e.to_string())?;
-    let display = java_open(component, window, size).ok_or("the helper could not put it on a display")?;
+    let display = java_open(component, window, size, data).ok_or("the helper could not put it on a display")?;
     client.open(id, &app_id(package_of(component)), label);
     let surface = client.windows.get(&id).map(|w| wayland_client::Proxy::id(&w.surface).protocol_id());
     client.show(id, Converted::of(output.clone(), size))?;
@@ -773,18 +819,34 @@ fn java_start_helper() {
     });
 }
 
-fn java_open(component: &str, window: *mut ndk_sys::ANativeWindow, size: (u32, u32)) -> Option<i32> {
+/// An app started on a display it is on already, handed a file to view.
+fn java_relaunch(display: i32, component: &str, uri: &str, kind: &str) {
+    jni::with_shell(|env, class| unsafe {
+        let Some(method) = jni::shell_method(env, class, c"relaunch", c"(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)I") else { return };
+        let args = [jvalue { i: display }, jvalue { l: jni::new_string(env, component) }, jvalue { l: jni::new_string(env, uri) }, jvalue { l: jni::new_string(env, kind) }];
+        ((**env).v1_1.CallStaticIntMethodA)(env, class, method, args.as_ptr());
+    });
+}
+
+fn java_open(component: &str, window: *mut ndk_sys::ANativeWindow, size: (u32, u32), data: Option<&(String, String)>) -> Option<i32> {
     let display = jni::with_shell(|env, class| unsafe {
-        let method = jni::shell_method(env, class, c"openApp", c"(Ljava/lang/String;Landroid/view/Surface;II)I")?;
+        let method = jni::shell_method(env, class, c"openApp", c"(Ljava/lang/String;Landroid/view/Surface;IILjava/lang/String;Ljava/lang/String;)I")?;
         let surface = ndk_sys::ANativeWindow_toSurface(env.cast(), window);
         if surface.is_null() {
             return None;
         }
+        // No file: Java's nulls.
+        let (uri, kind) = match data {
+            Some((u, k)) => (jni::new_string(env, u), jni::new_string(env, k)),
+            None => (std::ptr::null_mut(), std::ptr::null_mut()),
+        };
         let args = [
             jvalue { l: jni::new_string(env, component) },
             jvalue { l: surface.cast() },
             jvalue { i: size.0 as i32 },
             jvalue { i: size.1 as i32 },
+            jvalue { l: uri },
+            jvalue { l: kind },
         ];
         Some(((**env).v1_1.CallStaticIntMethodA)(env, class, method, args.as_ptr()))
     })??;

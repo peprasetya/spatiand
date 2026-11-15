@@ -26,9 +26,17 @@ pub struct Row {
     pub heading: bool,
     /// Drawn before the label: what kind of place, or thing, the row is.
     pub icon: Option<super::Icon>,
+    /// Drawn before the label in place of an icon: a picture of its own (an application's).
+    pub picture: Option<super::Texture>,
 }
 
 impl Row {
+    /// The same row with a picture before its label, where an icon would be.
+    pub fn picture(mut self, picture: super::Texture) -> Row {
+        self.picture = Some(picture);
+        self
+    }
+
     pub fn new(label: impl Into<String>) -> Row {
         Row { label: label.into(), ..Row::default() }
     }
@@ -115,7 +123,14 @@ impl List {
                 label.w = (label.w - taken - 24.0).max(0.0);
             }
             let ink = if selected { theme::ink() } else { theme::ink_row() };
-            if let Some(icon) = row.icon {
+            if let Some(picture) = row.picture {
+                // A picture is its own colours, a little larger than an icon's mark.
+                let side = (theme::ROW_EM * 1.15).min(at.h - 6.0);
+                let mark = Rect::new(label.x - 2.0, at.y + (at.h - side) * 0.5, side, side);
+                p.image(gl, picture, mark, [0.0, 0.0, 1.0, 1.0], 0.0, [1.0, 1.0, 1.0, 1.0], false);
+                label.x += side + 14.0;
+                label.w = (label.w - side - 14.0).max(0.0);
+            } else if let Some(icon) = row.icon {
                 let side = theme::ROW_EM * 0.95;
                 let mark = Rect::new(label.x, at.y + (at.h - side) * 0.5, side, side);
                 super::icons::draw(p, gl, icon, mark, if selected { theme::mark() } else { theme::ink_detail() });
@@ -175,14 +190,14 @@ impl List {
                 self.hover = None;
                 self.pressed = None;
             }
-            Input::Press { pressed: true } => {
+            Input::Press { pressed: true, .. } => {
                 self.pressed = self.hover;
                 if let Some(row) = self.hover {
                     self.cursor = row;
                 }
             }
             // Chosen on letting go over the row that was pressed, like a button anywhere.
-            Input::Press { pressed: false } => {
+            Input::Press { pressed: false, .. } => {
                 let pressed = self.pressed.take();
                 if pressed.is_some() && pressed == self.hover {
                     return pressed;
@@ -478,13 +493,13 @@ impl Grid {
                 self.hover = None;
                 self.pressed = None;
             }
-            Input::Press { pressed: true } => {
+            Input::Press { pressed: true, .. } => {
                 self.pressed = self.hover;
                 if let Some(tile) = self.hover {
                     self.cursor = tile;
                 }
             }
-            Input::Press { pressed: false } => {
+            Input::Press { pressed: false, .. } => {
                 let pressed = self.pressed.take();
                 if pressed.is_some() && pressed == self.hover {
                     return pressed;
@@ -606,13 +621,13 @@ impl Strip {
                 self.hover = None;
                 self.pressed = None;
             }
-            Input::Press { pressed: true } => {
+            Input::Press { pressed: true, .. } => {
                 self.pressed = self.hover;
                 if let Some(tile) = self.hover {
                     self.cursor = tile;
                 }
             }
-            Input::Press { pressed: false } => {
+            Input::Press { pressed: false, .. } => {
                 let pressed = self.pressed.take();
                 if pressed.is_some() && pressed == self.hover {
                     return pressed;
@@ -690,7 +705,7 @@ impl Tabs {
         match input {
             Input::Pointer { x, y } => self.hover = self.placed.iter().position(|rect| rect.contains(*x, *y)),
             Input::PointerLeft => self.hover = None,
-            Input::Press { pressed: true } => {
+            Input::Press { pressed: true, .. } => {
                 if let Some(tab) = self.hover {
                     self.active = tab;
                 }
@@ -724,6 +739,100 @@ pub struct Field {
     /// The other end of the selection, when there is one: what is between it and the caret.
     anchor: Option<usize>,
     area: Rect,
+    /// The pointer, as last told.
+    pointer: (f32, f32),
+    /// The pointer's doing, waiting for the next draw to be told which character it is at:
+    /// only the painter can measure the text.
+    aim: Option<Aim>,
+    /// A press in the field not yet let go of: a move drags out a selection from it.
+    dragging: Option<Grab>,
+    /// The last press, for a double (a word) or a triple (everything) click.
+    last_press: Option<(std::time::Instant, (f32, f32), u8)>,
+    /// The pointer's button, pressed in the field, is held: a press and its letting go can both
+    /// come before the press is drawn, and then there is nothing to drag.
+    held: bool,
+}
+
+/// What a press or a drag in a field was, to be put at a character when the field is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Aim {
+    /// A press at `x`: `clicks` in a row (1, 2 a word, 3 everything), `extend` with Shift held.
+    Press { x: f32, clicks: u8, extend: bool },
+    /// The pointer moved to `x` with the button held.
+    Drag { x: f32 },
+}
+
+/// What a drag from a press holds on to: the character pressed at, or the word (or all) a
+/// double (triple) click chose, which a drag then grows from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Grab {
+    from: usize,
+    to: usize,
+    clicks: u8,
+}
+
+/// How near in time and place two presses are to be one double click.
+const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(450);
+const DOUBLE_CLICK_SLOP: f32 = 6.0;
+
+/// Which kind of character a word is made of: a double click chooses a run of one kind.
+fn word_class(c: char) -> u8 {
+    if c.is_alphanumeric() || c == '_' {
+        0
+    } else if c.is_whitespace() {
+        1
+    } else {
+        2
+    }
+}
+
+/// The word around the character boundary `at` of `text`: (from, to), in characters. The
+/// character after the boundary is the one pressed on (the last, at the end).
+pub fn word_at(text: &str, at: usize) -> (usize, usize) {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return (0, 0);
+    }
+    let at = at.min(chars.len());
+    let on = if at == chars.len() { at - 1 } else { at };
+    let class = word_class(chars[on]);
+    let mut from = on;
+    while from > 0 && word_class(chars[from - 1]) == class {
+        from -= 1;
+    }
+    let mut to = on + 1;
+    while to < chars.len() && word_class(chars[to]) == class {
+        to += 1;
+    }
+    (from, to)
+}
+
+/// The character boundary nearest `x` along a line of `count` characters whose boundaries are
+/// at `width(i)` (the width of the first `i` characters, which grows with `i`): found by
+/// halving, so a long line costs a few measurements, not one a character.
+pub fn boundary_at(x: f32, count: usize, mut width: impl FnMut(usize) -> f32) -> usize {
+    if x <= 0.0 || count == 0 {
+        return 0;
+    }
+    if width(count) <= x {
+        return count;
+    }
+    // The first boundary at or past x...
+    let (mut low, mut high) = (0usize, count);
+    while low < high {
+        let mid = (low + high) / 2;
+        if width(mid) < x {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    // ...or the one before it, whichever is nearer.
+    if low > 0 && x - width(low - 1) < width(low) - x {
+        low - 1
+    } else {
+        low
+    }
 }
 
 /// What typing into a field came to.
@@ -835,8 +944,27 @@ impl Field {
         // A trailing space has no ink and so no width as far as the text setter is concerned:
         // measured with something after it, and that something taken off again.
         let stop = p.measure(gl, "|", em, wide).0;
-        let caret = if before.is_empty() { 0.0 } else { p.measure(gl, &format!("{before}|"), em, wide).0 - stop };
-        let slide = (caret - text.w + 6.0).max(0.0);
+        let mut caret = if before.is_empty() { 0.0 } else { p.measure(gl, &format!("{before}|"), em, wide).0 - stop };
+        let mut slide = (caret - text.w + 6.0).max(0.0);
+        // The pointer's doing, put at the character it was at, as the text lay when it was
+        // pressed (slid by where the caret was).
+        if let Some(aim) = self.aim.take() {
+            let count = shown.chars().count();
+            let mut width = |chars: usize| -> f32 {
+                let part: String = shown.chars().take(chars).collect();
+                if part.is_empty() { 0.0 } else { p.measure(gl, &format!("{part}|"), em, wide).0 - stop }
+            };
+            let x = match aim {
+                Aim::Press { x, .. } | Aim::Drag { x } => x - (text.x - slide),
+            };
+            let at = boundary_at(x, count, &mut width);
+            self.point(aim, at);
+            if !self.held {
+                self.dragging = None;
+            }
+            caret = width(self.caret);
+            slide = (caret - text.w + 6.0).max(0.0);
+        }
         p.clip(gl, text);
         if let Some((from, to)) = self.selection() {
             let width = |p: &mut Painter, chars: usize| {
@@ -862,8 +990,102 @@ impl Field {
         self.text.char_indices().nth(chars).map_or(self.text.len(), |(at, _)| at)
     }
 
+    /// A press or a drag put at the character boundary `at`.
+    fn point(&mut self, aim: Aim, at: usize) {
+        let length = self.text.chars().count();
+        let at = at.min(length);
+        match aim {
+            Aim::Press { extend: true, .. } => {
+                // Shift: from the far end of what was chosen (or from the caret) to here.
+                let anchor = match self.selection() {
+                    Some((from, to)) if at <= from => to,
+                    Some((from, to)) if at >= to => from,
+                    Some((from, _)) => self.anchor.unwrap_or(from),
+                    None => self.caret,
+                };
+                self.anchor = (anchor != at).then_some(anchor);
+                self.caret = at;
+                self.dragging = self.held.then_some(Grab { from: anchor, to: anchor, clicks: 1 });
+            }
+            Aim::Press { clicks, .. } => {
+                let (from, to) = match clicks {
+                    1 => (at, at),
+                    2 => word_at(&self.text, at),
+                    _ => (0, length),
+                };
+                self.anchor = (from != to).then_some(from);
+                self.caret = to;
+                self.dragging = self.held.then_some(Grab { from, to, clicks });
+            }
+            Aim::Drag { .. } => {
+                let Some(grab) = self.dragging else { return };
+                // Grown from what the press chose -- by characters, or by words after a double
+                // click -- to wherever the pointer is.
+                let (from, to) = match grab.clicks {
+                    1 => (grab.from, at),
+                    2 => {
+                        let (a, b) = word_at(&self.text, at);
+                        if a < grab.from { (grab.to, a) } else { (grab.from, b.max(grab.to)) }
+                    }
+                    _ => (0, length),
+                };
+                self.anchor = (from != to).then_some(from);
+                self.caret = to;
+            }
+        }
+    }
+
+    /// The pointer in the field. A press puts the caret where it is (two in a row choose a
+    /// word, three everything; with Shift, from what was chosen to there); a drag chooses.
+    /// Only a focused field heeds it: whether a press elsewhere ends the typing is for the
+    /// application to say.
+    fn pointer_input(&mut self, input: &Input) {
+        match input {
+            Input::Pointer { x, y } => {
+                self.pointer = (*x, *y);
+                if self.dragging.is_some() && self.focused {
+                    // The press itself, waiting to be drawn, stays: the drag goes on from it.
+                    if !matches!(self.aim, Some(Aim::Press { .. })) {
+                        self.aim = Some(Aim::Drag { x: *x });
+                    }
+                }
+            }
+            Input::Press { pressed: true, modifiers } if self.focused && self.area.contains(self.pointer.0, self.pointer.1) => {
+                let now = std::time::Instant::now();
+                let (x, y) = self.pointer;
+                let clicks = match self.last_press {
+                    Some((when, at, n)) if !modifiers.shift && now.duration_since(when) < DOUBLE_CLICK && (at.0 - x).abs() <= DOUBLE_CLICK_SLOP && (at.1 - y).abs() <= DOUBLE_CLICK_SLOP => n % 3 + 1,
+                    _ => 1,
+                };
+                self.last_press = Some((now, (x, y), clicks));
+                self.aim = Some(Aim::Press { x, clicks, extend: modifiers.shift });
+                // Held from now on: a move before the next draw is a drag from it.
+                self.dragging = Some(Grab { from: self.caret, to: self.caret, clicks });
+                self.held = true;
+            }
+            Input::Press { pressed: false, .. } | Input::PointerLeft => {
+                // A drag's last move not yet drawn is drawn first, and that is its end.
+                if !matches!(self.aim, Some(Aim::Drag { .. })) {
+                    self.dragging = None;
+                }
+                self.held = false;
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether the pointer's button, pressed in this field, is still held: a drag choosing.
+    pub fn is_dragging(&self) -> bool {
+        self.dragging.is_some()
+    }
+
+    /// Hand the field input: keys type, and the pointer puts the caret and chooses (see
+    /// [`Field::pointer_input`]). What typing came to, if it came to anything.
     pub fn input(&mut self, input: &Input) -> Option<Typed> {
-        let Input::Key { key, text, modifiers } = input else { return None };
+        let Input::Key { key, text, modifiers } = input else {
+            self.pointer_input(input);
+            return None;
+        };
         if !self.focused {
             return None;
         }
@@ -1044,11 +1266,180 @@ impl Button {
                 self.hover = false;
                 self.pressed = false;
             }
-            Input::Press { pressed: true } => self.pressed = self.hover,
-            Input::Press { pressed: false } => return std::mem::take(&mut self.pressed) && self.hover,
+            Input::Press { pressed: true, .. } => self.pressed = self.hover,
+            Input::Press { pressed: false, .. } => return std::mem::take(&mut self.pressed) && self.hover,
             Input::Key { key: Key::Enter | Key::Space, .. } if self.focused => return true,
             _ => {}
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod field_tests {
+    use super::*;
+    use crate::Modifiers;
+
+    /// A field of `text` at the left of the window, each character 10 wide.
+    fn field(text: &str) -> Field {
+        let mut f = Field::default();
+        f.set(text);
+        f.focused = true;
+        f.area = Rect::new(0.0, 0.0, 600.0, 40.0);
+        f
+    }
+
+    /// The pointer's doing put at its character, as a draw does.
+    fn drawn(f: &mut Field) {
+        if let Some(aim) = f.aim.take() {
+            let x = match aim {
+                Aim::Press { x, .. } | Aim::Drag { x } => x,
+            };
+            let count = f.text.chars().count();
+            let at = boundary_at(x, count, |i| i as f32 * 10.0);
+            f.point(aim, at);
+            if !f.held {
+                f.dragging = None;
+            }
+        }
+    }
+
+    #[test]
+    fn a_click_or_a_drag_that_comes_whole_before_a_draw() {
+        // Pressed and let go of before the field was drawn: a click, and a move after it is
+        // no drag.
+        let mut f = field("holiday.jpeg");
+        f.input(&Input::Pointer { x: 31.0, y: 20.0 });
+        f.input(&Input::Press { pressed: true, modifiers: Modifiers::default() });
+        release(&mut f);
+        drawn(&mut f);
+        assert_eq!((f.caret, f.selection()), (3, None));
+        moved(&mut f, 90.0);
+        assert_eq!(f.selection(), None, "nothing held, nothing chosen");
+        // Pressed, moved and let go of, all before a draw after the press's: the drag's end
+        // is drawn.
+        press(&mut f, 0.0, false);
+        f.input(&Input::Pointer { x: 70.0, y: 20.0 });
+        release(&mut f);
+        drawn(&mut f);
+        assert_eq!(f.selected_text().as_deref(), Some("holiday"));
+        assert!(!f.is_dragging());
+    }
+
+    fn press(f: &mut Field, x: f32, shift: bool) {
+        f.input(&Input::Pointer { x, y: 20.0 });
+        f.input(&Input::Press { pressed: true, modifiers: Modifiers { shift, ..Modifiers::default() } });
+        drawn(f);
+    }
+
+    fn release(f: &mut Field) {
+        f.input(&Input::Press { pressed: false, modifiers: Modifiers::default() });
+    }
+
+    fn moved(f: &mut Field, x: f32) {
+        f.input(&Input::Pointer { x, y: 20.0 });
+        drawn(f);
+    }
+
+    #[test]
+    fn the_nearest_boundary_is_found_by_halving() {
+        let mono = |i: usize| i as f32 * 10.0;
+        assert_eq!(boundary_at(-5.0, 12, mono), 0);
+        assert_eq!(boundary_at(14.0, 12, mono), 1);
+        assert_eq!(boundary_at(16.0, 12, mono), 2);
+        assert_eq!(boundary_at(119.0, 12, mono), 12);
+        assert_eq!(boundary_at(500.0, 12, mono), 12);
+        assert_eq!(boundary_at(5.0, 0, mono), 0);
+        let mut asked = 0;
+        boundary_at(333.0, 1000, |i| {
+            asked += 1;
+            i as f32 * 10.0
+        });
+        assert!(asked < 16, "a long line is measured a few times, not a thousand ({asked})");
+    }
+
+    #[test]
+    fn words_are_runs_of_one_kind() {
+        assert_eq!(word_at("holiday.jpeg", 3), (0, 7));
+        assert_eq!(word_at("holiday.jpeg", 7), (7, 8), "the dot alone");
+        assert_eq!(word_at("holiday.jpeg", 9), (8, 12));
+        assert_eq!(word_at("holiday.jpeg", 12), (8, 12), "at the end, the last word");
+        assert_eq!(word_at("my  film_2.mkv", 3), (2, 4), "the spaces between");
+        assert_eq!(word_at("my  film_2.mkv", 6), (4, 10), "an underscore is part of a word");
+        assert_eq!(word_at("", 0), (0, 0));
+        assert_eq!(word_at("café crème", 2), (0, 4), "in characters");
+    }
+
+    #[test]
+    fn a_click_puts_the_caret_and_clears_the_choice() {
+        let mut f = field("holiday.jpeg");
+        f.select(0, 7);
+        press(&mut f, 31.0, false);
+        release(&mut f);
+        assert_eq!((f.caret, f.selection()), (3, None));
+        f.input(&Input::Key { key: Key::Char('x'), text: Some("X".into()), modifiers: Modifiers::default() });
+        assert_eq!(f.text, "holXiday.jpeg", "typed where it was put");
+    }
+
+    #[test]
+    fn a_drag_chooses_either_way() {
+        let mut f = field("holiday.jpeg");
+        press(&mut f, 20.0, false);
+        moved(&mut f, 70.0);
+        assert_eq!(f.selected_text().as_deref(), Some("liday"));
+        moved(&mut f, 0.0);
+        assert_eq!(f.selected_text().as_deref(), Some("ho"), "back past where it began");
+        release(&mut f);
+        moved(&mut f, 110.0);
+        assert_eq!(f.selected_text().as_deref(), Some("ho"), "let go of, a move chooses nothing more");
+        assert!(!f.is_dragging());
+    }
+
+    #[test]
+    fn two_clicks_a_word_three_everything() {
+        let mut f = field("holiday.jpeg");
+        press(&mut f, 92.0, false);
+        release(&mut f);
+        press(&mut f, 92.0, false);
+        assert_eq!(f.selected_text().as_deref(), Some("jpeg"));
+        // Dragged on from a double click: word by word.
+        moved(&mut f, 22.0);
+        assert_eq!(f.selected_text().as_deref(), Some("holiday.jpeg"));
+        release(&mut f);
+        press(&mut f, 92.0, false);
+        assert_eq!(f.selected_text().as_deref(), Some("holiday.jpeg"), "the third: all of it");
+        release(&mut f);
+        // Far from the last: a first click again.
+        press(&mut f, 30.0, false);
+        assert_eq!((f.caret, f.selection()), (3, None));
+    }
+
+    #[test]
+    fn shift_click_extends_from_the_caret_or_the_choice() {
+        let mut f = field("holiday.jpeg");
+        press(&mut f, 20.0, false);
+        release(&mut f);
+        press(&mut f, 70.0, true);
+        assert_eq!(f.selected_text().as_deref(), Some("liday"));
+        release(&mut f);
+        press(&mut f, 100.0, true);
+        assert_eq!(f.selected_text().as_deref(), Some("liday.jp"), "further, from the same end");
+        release(&mut f);
+        press(&mut f, 0.0, true);
+        assert_eq!(f.selected_text().as_deref(), Some("holiday.jp"), "before it: from its other end");
+    }
+
+    #[test]
+    fn an_unfocused_field_or_a_press_outside_does_nothing() {
+        let mut f = field("holiday.jpeg");
+        f.select(0, 7);
+        f.focused = false;
+        press(&mut f, 31.0, false);
+        assert_eq!(f.selected_text().as_deref(), Some("holiday"));
+        f.focused = true;
+        f.input(&Input::Pointer { x: 800.0, y: 20.0 });
+        f.input(&Input::Press { pressed: true, modifiers: Modifiers::default() });
+        drawn(&mut f);
+        assert_eq!(f.selected_text().as_deref(), Some("holiday"), "outside it: the application's to say");
     }
 }

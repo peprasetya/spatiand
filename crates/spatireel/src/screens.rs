@@ -318,7 +318,7 @@ impl Home {
             }
         }
         // A press on a shelf gives it the keys as well.
-        if let Input::Press { pressed: true } = input {
+        if let Input::Press { pressed: true, .. } = input {
             let _ = sources;
         }
         if let Some(chosen) = self.shelf.input(input) {
@@ -916,7 +916,7 @@ impl Add {
         if let Input::Pointer { x, y } = input {
             self.pointer = (*x, *y);
         }
-        if let Input::Press { pressed: true } = input {
+        if let Input::Press { pressed: true, .. } = input {
             if let Some(index) = self.fields.iter().take(count).position(|field| field.contains(self.pointer.0, self.pointer.1)) {
                 self.focus = index;
             }

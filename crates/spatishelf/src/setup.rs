@@ -261,7 +261,7 @@ impl Setup {
                         self.set_focus(self.focus.saturating_sub(1));
                         return Want::Nothing;
                     }
-                    Input::Press { pressed: true } => {
+                    Input::Press { pressed: true, .. } => {
                         // The field under the pointer takes the keys.
                         let clicked = std::iter::once(&self.name).chain(self.fields.iter()).position(|f| f.contains(POINTER.with(|p| p.get().0), POINTER.with(|p| p.get().1)));
                         if let Some(at) = clicked {

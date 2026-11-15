@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="10">
+  <interface name="spatiand_xr_v1" version="11">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -82,6 +82,34 @@
         application.
       </description>
       <arg name="id" type="new_id" interface="spatiand_xr_pose_channel_v1"/>
+    </request>
+
+    <request name="ask_system" since="11">
+      <description summary="the system's own applications, where a client cannot ask itself">
+        What only the room can ask of the system it runs on, for a client that
+        cannot: on Android only the app's own Java may ask the PackageManager
+        which applications open a kind of file, or start one with it, and
+        Spatiand's applications are native programs inside it. Elsewhere a
+        client asks the system itself (a desktop entry, Launch Services) and the
+        room answers `{"error": ...}`.
+
+        One JSON object; the answer, JSON, is written into `answer`, which the
+        room then closes:
+
+        - `{"do": "openers", "path": p, "type": mime}`: the applications that
+          open that file, `{"apps": [{"id", "name", "default", "icon"}]}`,
+          `icon` a PNG file the client may read, the system's own choice first.
+        - `{"do": "all_openers", "type": mime}`: every application that opens
+          files at all, for a choice of any.
+        - `{"do": "open_with", "id": app, "path": p, "type": mime}`: open the
+          file with that application, in the room, as any of the system's own
+          applications is opened there; `{"ok": true}` once it is on its way.
+
+        An answer of `{"error": "..."}` says what went wrong in words fit to
+        show.
+      </description>
+      <arg name="json" type="string" summary="what is asked, as JSON"/>
+      <arg name="answer" type="fd" summary="where the answer is written"/>
     </request>
 
     <enum name="error">

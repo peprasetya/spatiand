@@ -36,6 +36,11 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
+        <!-- The apps that open a kind of file, for SpatiShelf's "Open with" (Shell.askSystem). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="*/*" />
+        </intent>
     </queries>
     <application
         android:label="Spatiand"
@@ -83,5 +88,12 @@
             android:name=".ShellProvider"
             android:authorities="id.prasetya.spatiand.shell"
             android:exported="true" />
+        <!-- Files SpatiShelf hands to the phone's own apps ("Open with"): read only, and only by
+             an app granted the one address (OpenFiles, Shell.askSystem). -->
+        <provider
+            android:name=".OpenFiles"
+            android:authorities="id.prasetya.spatiand.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
     </application>
 </manifest>
