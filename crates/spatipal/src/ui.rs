@@ -254,7 +254,7 @@ impl Window {
         foot.take_right(10.0);
         self.back.draw(p, gl, back, "Done");
         if let Some(line) = self.editing {
-            self.edit.hint = format!("{} \u{2014} Enter keeps it", label(line));
+            self.edit.hint = format!("{} \u{2014} Enter or a click elsewhere keeps it, Escape drops it", label(line));
             self.edit.focused = true;
             self.edit.draw(p, gl, foot);
         } else {
@@ -350,6 +350,21 @@ impl Window {
     }
 
     fn settings_input(&mut self, input: Input, view: &View) -> Option<Want> {
+        // A setting being typed is kept when the wearer goes elsewhere -- a press outside its
+        // field, or Back -- as well as on Enter; only Escape drops it. (It was kept on Enter
+        // alone, and a hemera address typed and left was silently lost, 2026-11-15.)
+        let leaving = matches!(input, Input::Press { pressed: true, .. }) && !self.edit.contains(self.pointer.0, self.pointer.1);
+        if let (Some(line), true) = (self.editing, leaving) {
+            let text = self.edit.text.trim().to_string();
+            self.editing = None;
+            let (mut s, mut v) = (view.settings.clone(), view.speech.clone());
+            set_text(line, &text, &mut s, &mut v);
+            // The press is also the start of what it was aimed at (Back, another line): the
+            // field gives it up now and the release does the rest, as before.
+            self.back.input(&input);
+            self.lines.input(&input);
+            return Some(Want::Keep(s, v));
+        }
         if self.back.input(&input) {
             self.editing = None;
             return Some(Want::Chat);
