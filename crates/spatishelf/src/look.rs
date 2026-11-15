@@ -79,6 +79,18 @@ pub fn size(bytes: u64) -> String {
 }
 
 /// When, as a person says it: the time today, the day this year, the date otherwise.
+/// A moment moved to this machine's own clock: what [`when`] is to be given, which reads its
+/// seconds as the hours of a day (given as they are, the hours were Greenwich's: "Today 09:52"
+/// for a file made at 16:52 in Jakarta).
+pub fn local(seconds: i64) -> i64 {
+    let t = seconds as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return seconds;
+    }
+    seconds + tm.tm_gmtoff as i64
+}
+
 pub fn when(seconds: Option<i64>, now: i64) -> String {
     let Some(at) = seconds else { return String::new() };
     let (days, secs) = (at.div_euclid(86400), at.rem_euclid(86400));

@@ -21,3 +21,18 @@ serde.workspace = true
 serde_json.workspace = true
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff"] }
+# Folders on show listed again when anything changes them: inotify on Linux and Android,
+# FSEvents on the Mac, behind one interface.
+notify = "8.2"
+# Applications' icons, which are SVG as often as not on Linux.
+resvg = "0.50"
+
+# Linux's "Open with": the room's own reading of an Exec line and of the icon theme.
+[target.'cfg(not(any(target_os = "macos", target_os = "android")))'.dependencies]
+spatiand-platform = { path = "../spatiand-platform" }
+
+# The Mac's own pieces: Finder's trash, and Launch Services' applications for a file.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSError", "NSFileManager", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSImage", "NSWorkspace"] }

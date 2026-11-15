@@ -133,7 +133,12 @@ impl Flat {
 
 pub fn place_of(entries: &[Entry], items: &[Item], index: usize) -> Option<Place> {
     let entry = entries.get(index).filter(|e| e.note.is_none())?;
-    Some(entry.parent.join(&items.get(index)?.name))
+    let item = items.get(index)?;
+    // A thing in the trash is where it is in it, not by its name in the place "Trash".
+    if let Some(trashed) = &item.trashed {
+        return Some(Place::Local(trashed.file.clone()));
+    }
+    Some(entry.parent.join(&item.name))
 }
 
 /// The lines of `root`, whose own listing is `top`. `nested`: folders opened are shown open
@@ -161,7 +166,7 @@ fn add(flat: &mut Flat, indices: Vec<usize>, tree: &Tree, nested: bool, keep: &d
         let depth = flat.entries[index].depth + 1;
         flat.on_show.insert(place.clone());
         let note = |flat: &mut Flat, note: Note, parent: &Place| {
-            flat.items.push(Item { name: String::new(), kind: Kind::Other, size: 0, modified: None, hidden: false });
+            flat.items.push(Item { name: String::new(), kind: Kind::Other, size: 0, modified: None, hidden: false, trashed: None });
             flat.entries.push(Entry { parent: parent.clone(), depth, note: Some(note) });
             flat.lines.push(flat.items.len() - 1);
         };
@@ -294,11 +299,11 @@ mod tests {
     use super::*;
 
     fn file(name: &str, size: u64) -> Item {
-        Item { name: name.into(), kind: Kind::of(name, false), size, modified: Some(size as i64), hidden: name.starts_with('.') }
+        Item { name: name.into(), kind: Kind::of(name, false), size, modified: Some(size as i64), hidden: name.starts_with('.'), trashed: None }
     }
 
     fn folder(name: &str) -> Item {
-        Item { name: name.into(), kind: Kind::Folder, size: 0, modified: Some(0), hidden: false }
+        Item { name: name.into(), kind: Kind::Folder, size: 0, modified: Some(0), hidden: false, trashed: None }
     }
 
     fn at(path: &str) -> Place {

@@ -15,10 +15,14 @@
 
 mod hand;
 mod look;
+mod opening;
+mod openwith;
 mod proto;
 mod setup;
 mod tab;
+mod trash;
 mod tree;
+mod watch;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Read;
@@ -172,6 +176,10 @@ struct ShelfTab {
     /// Things being done, by their number: what, how far.
     doing: HashMap<u64, (String, u64, u64)>,
     stale: Vec<Texture>,
+    /// The folders the tab was last told to watch: the one on show and those opened in it.
+    watching: Vec<Place>,
+    /// When a remote folder on show, which cannot be watched, was last listed again.
+    polled: Instant,
 }
 
 impl ShelfTab {
@@ -212,6 +220,8 @@ impl ShelfTab {
             land_on: None,
             doing: HashMap::new(),
             stale: Vec::new(),
+            watching: Vec::new(),
+            polled: Instant::now(),
         };
         tab.tell(&ToTab::Go(place));
         Ok(tab)
@@ -264,6 +274,13 @@ impl ShelfTab {
             self.tree.asked(wanted.clone());
             self.tell(&ToTab::List(wanted));
         }
+        // What is on show is watched, and nothing else: the folder, and what is opened in it.
+        let mut watch: Vec<Place> = std::iter::once(self.place.clone()).chain(flat.on_show.iter().cloned()).collect();
+        watch.sort_by_key(|p| p.text());
+        if watch != self.watching {
+            self.tell(&ToTab::Watch(watch.clone()));
+            self.watching = watch;
+        }
         let lines: HashMap<Place, usize> = self.shown.iter().enumerate().filter_map(|(at, &i)| place(self, i).map(|p| (p, at))).collect();
         self.selected = chosen.iter().filter_map(|p| lines.get(p)).map(|&at| self.shown[at]).collect();
         // The cursor stays on what it was on.
@@ -312,6 +329,15 @@ impl ShelfTab {
             place => place.name(),
         }
     }
+
+    /// Whether what is on show is in the trash: the trash itself, or a folder inside it.
+    fn in_trash(&self) -> bool {
+        match &self.place {
+            Place::Trash => true,
+            Place::Local(p) => trash::is_within(std::path::Path::new(p)),
+            Place::Remote(..) => false,
+        }
+    }
 }
 
 fn home() -> Option<PathBuf> {
@@ -327,6 +353,7 @@ fn places() -> Vec<(String, Place)> {
                 out.push((name.to_string(), Place::Local(path.to_string())));
             }
         }
+        out.push(("Trash".to_string(), Place::Trash));
         return out;
     }
     let Some(home) = home() else { return vec![("Computer".into(), Place::Local("/".into()))] };
@@ -339,6 +366,8 @@ fn places() -> Vec<(String, Place)> {
         }
     }
     out.push(("Computer".to_string(), Place::Local("/".into())));
+    // Last, as Finder and Dolphin have it.
+    out.push(("Trash".to_string(), Place::Trash));
     out
 }
 
@@ -350,6 +379,8 @@ enum Done {
     /// What rclone said to a creation or an answer: done, a question, or a refusal.
     Configured(Result<Option<(String, setup::Question)>, String>),
     Imported(Result<Vec<String>, String>),
+    /// An application's picture, for "Open with", by its id.
+    AppPicture(String, Option<(u32, u32, Vec<u8>)>),
 }
 
 enum Overlay {
@@ -371,14 +402,30 @@ enum Asking {
 #[derive(Clone, PartialEq, Debug)]
 enum Action {
     Open,
-    OpenWith(Opener),
+    /// What is chosen opened with this application.
+    OpenWith(openwith::Choice),
+    /// The applications that open the thing at the cursor, as a menu ("Open with").
+    OpenWithMenu,
+    /// Every application, for a choice of any ("Other...").
+    OtherAppsMenu,
+    /// Whether the application chosen next is to open this kind of file always.
+    ToggleAlways,
+    /// This kind of file opened as before it was chosen to be opened always with one.
+    ForgetAlways,
     Copy,
     Cut,
     Paste,
     Rename,
     NewFolder,
+    /// To the trash; where there is none (a remote), or in the trash already, gone for good
+    /// after asking.
     Trash,
+    /// Gone for good, after asking: Shift-Delete, or from the trash.
     Delete,
+    /// What is chosen in the trash put back where it came from.
+    Restore,
+    /// Everything in the trash gone for good, after asking.
+    EmptyTrash,
     CopyPath,
     Refresh,
     ToggleHidden,
@@ -395,12 +442,6 @@ enum Action {
     Sort(SortBy),
     SetView(View),
     TerminalHere,
-}
-
-#[derive(Clone, PartialEq, Debug)]
-enum Opener {
-    Own(&'static str),
-    Native,
 }
 
 struct Shelf {
@@ -436,6 +477,8 @@ struct Shelf {
     backward: Button,
     forward: Button,
     view_button: Button,
+    /// "Empty", over the trash.
+    empty_button: Button,
     placed_tabs: Vec<(Rect, Rect)>,
     plus: Rect,
     trail: Vec<(Rect, Place)>,
@@ -453,6 +496,8 @@ struct Shelf {
     menu_at: (f32, f32),
     /// Something dragged here from elsewhere in the room.
     incoming: Option<hand::Incoming>,
+    /// What "Open with" knows and remembers (`opening.rs`).
+    opening: opening::Opening,
 }
 
 #[derive(Clone)]
@@ -497,15 +542,6 @@ fn detached(mut command: Command) -> Result<(), String> {
     command.spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Which Spatiand application opens a kind of file, if one does.
-fn opener_for(kind: Kind) -> Option<&'static str> {
-    match kind {
-        Kind::Picture | Kind::Pdf | Kind::Model => Some("spatiloupe"),
-        Kind::Film | Kind::Music => Some("spatireel"),
-        _ => None,
-    }
-}
-
 impl Shelf {
     fn app(&mut self) -> &mut App {
         self.app.as_mut().expect("the app")
@@ -536,6 +572,7 @@ impl Shelf {
                 "Pictures" | "Camera" => Icon::Picture,
                 "Films" => Icon::Film,
                 "Music" => Icon::Music,
+                "Trash" => Icon::Trash,
                 _ => Icon::Drive,
             };
             rows.push((Row::new(name).icon(icon), SideRow::Go(place)));
@@ -620,21 +657,26 @@ impl Shelf {
             while let Some(m) = tab.gather.next() {
                 match m {
                     FromTab::Listed { place, items, free } if place == tab.place => {
+                        // Listed again where it was (after something was done, asked, or a
+                        // change seen): what is chosen, the cursor and the scroll stay, and so
+                        // does what is open. Come to: from the top, or the folder come out of.
+                        let again = matches!(tab.state, State::Ready);
+                        // Pictures of what has not changed stay with it, wherever it now is in
+                        // the listing: a folder that changes while on show does not flicker.
+                        let kept = if again { keep_pictures(&tab.top, &items, &mut tab.pictures, &mut tab.asked) } else { Default::default() };
                         for (_, t) in tab.pictures.drain() {
                             tab.stale.push(t);
                         }
-                        tab.asked.clear();
+                        tab.pictures = kept.0;
+                        tab.asked = kept.1;
                         tab.arrived.clear();
-                        // Listed again where it was (after something was done, or asked): what
-                        // is chosen, the cursor and the scroll stay, and so does what is open.
-                        // Come to: from the top, or the folder come out of.
-                        let again = matches!(tab.state, State::Ready);
                         if !again {
                             tab.selected.clear();
                             tab.shown.clear();
                         }
                         tab.top = items;
                         tab.free = free;
+                        tab.polled = Instant::now();
                         tab.refilter(hidden, sort, nested);
                         // What is open is listed again too: a move shows at both ends.
                         for open in tab.tree.known() {
@@ -657,14 +699,23 @@ impl Shelf {
                             tab.refilter(hidden, sort, nested);
                         }
                     }
+                    // Changed from anywhere: listed again, the folder on show or one opened in it.
+                    FromTab::Changed(place) => {
+                        if place == tab.place {
+                            tab.tell(&ToTab::Refresh);
+                        } else if tab.tree.listings.contains_key(&place) {
+                            tab.tree.asked(place.clone());
+                            tab.tell(&ToTab::List(place));
+                        }
+                    }
                     FromTab::Failed { place, error } if place == tab.place => tab.state = State::Failed(error),
-                    FromTab::Picture { place, index, width, height, rgba } if place == tab.place => tab.arrived.push((index, width, height, rgba)),
+                    FromTab::Picture { place, index, width, height, rgba } if tab.place_of(index).as_ref() == Some(&place) => tab.arrived.push((index, width, height, rgba)),
                     FromTab::Progress { id, done, total, what } => {
                         tab.doing.insert(id, (what, done, total));
                     }
                     FromTab::Done { id, error } => {
                         tab.doing.remove(&id);
-                        finished.push((t, error));
+                        finished.push((id, error));
                     }
                     _ => {}
                 }
@@ -684,13 +735,17 @@ impl Shelf {
         for t in listed {
             self.relisted(t);
         }
-        for (t, error) in finished {
-            if let Some(e) = error {
-                self.fail(e);
+        for (id, error) in finished {
+            if let Some(e) = &error {
+                self.fail(e.clone());
+            }
+            // A file fetched for an application: opened with it, and nothing else changed.
+            if self.fetched(id, error.as_deref()) {
+                continue;
             }
             // Whatever was done, every tab showing the places it touched is listed again: the
-            // simplest true thing, and listing is cheap next to copying.
-            let _ = t;
+            // simplest true thing, and listing is cheap next to copying. (A change made here is
+            // seen by the watching too; this is the remote's only way, and the quickest.)
             for tab in &mut self.tabs {
                 tab.tell(&ToTab::Refresh);
             }
@@ -755,6 +810,7 @@ impl Shelf {
                     }
                 }
                 Done::Imported(Err(e)) => self.fail(e),
+                Done::AppPicture(id, pixels) => self.opening.arrived.push((id, pixels)),
             }
         }
     }
@@ -763,7 +819,21 @@ impl Shelf {
         let (hidden, sort) = (self.hidden, self.sort);
         match action {
             Action::Open => self.open(None),
-            Action::OpenWith(opener) => self.open(Some(opener)),
+            Action::OpenWith(choice) => self.chose_app(choice),
+            Action::OpenWithMenu => {
+                let at = self.menu_at;
+                self.open_with_menu(at);
+            }
+            Action::OtherAppsMenu => {
+                let at = self.menu_at;
+                self.other_apps_menu(at);
+            }
+            Action::ToggleAlways => {
+                self.opening.always_next = !self.opening.always_next;
+                let at = self.menu_at;
+                self.open_with_menu(at);
+            }
+            Action::ForgetAlways => self.forget_always(),
             Action::Copy | Action::Cut => {
                 let chosen = self.tab().chosen();
                 if !chosen.is_empty() {
@@ -775,6 +845,10 @@ impl Shelf {
             Action::Paste => {
                 let Some((from, moving)) = self.clipboard.clone() else { return };
                 let to = self.tab().place.clone();
+                if self.tab().in_trash() {
+                    self.say("Nothing is pasted into the Trash: things go there with Delete.");
+                    return;
+                }
                 let id = self.next_op;
                 self.next_op += 1;
                 let op = if moving { Op::Move { from, to } } else { Op::Copy { from, to } };
@@ -798,11 +872,14 @@ impl Shelf {
                 if chosen.is_empty() {
                     return;
                 }
-                // A remote has no trash here, and neither has a phone: those are asked about.
-                let local = chosen.iter().all(|p| matches!(p, Place::Local(_))) && !cfg!(target_os = "android");
-                if local {
+                // A remote has no trash here, and what is in the trash already can only go for
+                // good: those are asked about.
+                let local = chosen.iter().all(|p| matches!(p, Place::Local(path) if !trash::is_within(std::path::Path::new(path))));
+                if local && !self.tab().in_trash() {
                     let id = self.next_op;
                     self.next_op += 1;
+                    let n = chosen.len();
+                    self.say(format!("{} to the Trash", if n == 1 { chosen[0].name() } else { format!("{n} items") }));
                     self.tab().tell(&ToTab::Do { id, op: Op::Trash(chosen) });
                 } else {
                     self.act(Action::Delete);
@@ -813,8 +890,50 @@ impl Shelf {
                 if chosen.is_empty() {
                     return;
                 }
-                let what = if chosen.len() == 1 { chosen[0].name() } else { format!("{} items", chosen.len()) };
-                self.overlay = Overlay::Confirm { text: format!("Delete {what} for good? There is no trash to take it back from."), action: Action::Delete, ok: Button::default(), cancel: Button::default() };
+                let names = self.names_of(&chosen);
+                let what = if chosen.len() == 1 { names[0].clone() } else { format!("these {} items", chosen.len()) };
+                // A remote's own trash, where it has one: said so; anything else is gone.
+                let remote_kind = match &chosen[0] {
+                    Place::Remote(r, _) => self.remotes.iter().find(|x| x.name == *r).map(|x| x.kind.clone()),
+                    _ => None,
+                };
+                let text = match remote_kind.as_deref().and_then(remote_trash) {
+                    Some(bin) => format!("Delete {what}? It goes to {bin}, not to this machine's Trash."),
+                    None => format!("Delete {what} for good? This cannot be undone."),
+                };
+                self.overlay = Overlay::Confirm { text, action: Action::Delete, ok: Button::default(), cancel: Button::default() };
+            }
+            Action::Restore => {
+                let chosen: Vec<Place> = self.tab().chosen().into_iter().filter(|p| matches!(p, Place::Local(_))).collect();
+                if chosen.is_empty() {
+                    return;
+                }
+                let id = self.next_op;
+                self.next_op += 1;
+                let n = chosen.len();
+                let names = self.names_of(&chosen);
+                self.say(format!("{} put back", if n == 1 { names[0].clone() } else { format!("{n} items") }));
+                self.tab().tell(&ToTab::Do { id, op: Op::Restore(chosen) });
+            }
+            Action::EmptyTrash => {
+                // Counted from the trash as listed when it is on show, else asked of the disk.
+                let (count, size) = match &self.tabs[self.active].place {
+                    Place::Trash => {
+                        let tab = &self.tabs[self.active];
+                        (tab.top.len(), tab.top.iter().map(|i| i.size).sum::<u64>())
+                    }
+                    _ => {
+                        let all = trash::list().unwrap_or_default();
+                        (all.len(), all.iter().map(|e| e.size).sum())
+                    }
+                };
+                if count == 0 {
+                    self.say("The Trash is empty.");
+                    return;
+                }
+                let items = if count == 1 { "the 1 item".to_string() } else { format!("all {count} items") };
+                let text = format!("Empty the Trash? {} in it ({}) will be deleted for good. This cannot be undone.", capitalised(&items), look::size(size));
+                self.overlay = Overlay::Confirm { text, action: Action::EmptyTrash, ok: Button::default(), cancel: Button::default() };
             }
             Action::CopyPath => {
                 let text = self.tab().chosen().iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
@@ -900,6 +1019,12 @@ impl Shelf {
                 self.next_op += 1;
                 self.tab().tell(&ToTab::Do { id, op: Op::Delete(chosen) });
             }
+            Action::EmptyTrash => {
+                let id = self.next_op;
+                self.next_op += 1;
+                self.say("Emptying the Trash\u{2026}");
+                self.tab().tell(&ToTab::Do { id, op: Op::EmptyTrash });
+            }
             Action::Forget(name) => {
                 if let Some(storage) = self.storage.clone() {
                     self.jobs.send(Box::new(move || {
@@ -912,57 +1037,13 @@ impl Shelf {
         }
     }
 
-    fn open(&mut self, with: Option<Opener>) {
-        let Some((index, item)) = self.tab().item_at_cursor() else { return };
-        let item = item.clone();
-        let Some(place) = self.tab().place_of(index) else { return };
-        if item.kind == Kind::Folder && with.is_none() {
-            self.tab().go(place, true);
-            return;
-        }
-        let opener = with.unwrap_or_else(|| match opener_for(item.kind) {
-            Some(own) => Opener::Own(own),
-            None => Opener::Native,
-        });
-        let result = match (&opener, &place) {
-            (Opener::Own(program), _) => {
-                let Some(path) = own_program(program) else {
-                    self.fail(format!("{program} is not installed here."));
-                    return;
-                };
-                let mut command = Command::new(path);
-                match &place {
-                    Place::Local(p) => {
-                        command.arg(p);
-                    }
-                    // SpatiLoupe knows remotes itself; SpatiReel is given the stream.
-                    Place::Remote(r, p) if *program == "spatireel" => {
-                        if let Some(storage) = &self.storage {
-                            command.arg(storage.url(r, p));
-                        }
-                    }
-                    Place::Remote(..) => {
-                        command.arg(place.text());
-                    }
-                }
-                if *program == "spatiquill" {
-                    command.env("SPATIQUILL_FOLDER", match &place {
-                        Place::Local(p) => p.clone(),
-                        _ => String::new(),
-                    });
-                }
-                detached(command)
-            }
-            (Opener::Native, Place::Local(p)) => native_open(p),
-            (Opener::Native, Place::Remote(r, p)) => match &self.storage {
-                Some(storage) => native_open(&storage.url(r, p)),
-                None => Err("the storage service is not running".into()),
-            },
-        };
-        match result {
-            Ok(()) => self.say(format!("Opening {}\u{2026}", item.name)),
-            Err(e) => self.fail(format!("{} would not open: {e}", item.name)),
-        }
+    /// The names things are shown by: in the trash their own, not the trash's numbered ones.
+    fn names_of(&self, places: &[Place]) -> Vec<String> {
+        let tab = &self.tabs[self.active];
+        places
+            .iter()
+            .map(|p| tab.shown.iter().find(|&&i| tab.place_of(i).as_ref() == Some(p)).map(|&i| tab.items[i].name.clone()).unwrap_or_else(|| p.name()))
+            .collect()
     }
 
     fn side_chosen(&mut self, row: usize) {
@@ -1093,7 +1174,7 @@ impl Shelf {
             Overlay::None => {}
             Overlay::Menu { at, list, entries } => {
                 let rect = menu_rect(*at, entries.len(), self.size);
-                let outside = matches!(input, Input::Press { pressed: true }) && !rect.contains(self.pointer.0, self.pointer.1);
+                let outside = matches!(input, Input::Press { pressed: true, .. }) && !rect.contains(self.pointer.0, self.pointer.1);
                 if outside || matches!(input, Input::Key { key: Key::Escape, .. }) {
                     self.overlay = Overlay::None;
                     return;
@@ -1185,13 +1266,29 @@ impl Shelf {
                     }
                     return;
                 }
-                Input::Press { pressed: true } if r.field.contains(self.pointer.0, self.pointer.1) => return,
-                Input::Press { pressed: true } => self.finish_rename(),
+                // In the field, the pointer is the field's: a click puts the caret, a drag
+                // chooses, two clicks a word, Shift-click extends (the SDK's `Field`).
+                Input::Press { pressed: true, .. } if r.field.contains(self.pointer.0, self.pointer.1) => {
+                    r.field.input(&input);
+                    return;
+                }
+                // Anywhere else, as Finder has it: the name typed is taken, and the click does
+                // what it does.
+                Input::Press { pressed: true, .. } => self.finish_rename(),
+                Input::Pointer { .. } | Input::Press { pressed: false, .. } | Input::PointerLeft => {
+                    let dragging = r.field.is_dragging();
+                    r.field.input(&input);
+                    // A drag choosing letters is not a drag of the pane's.
+                    if dragging {
+                        self.dirty = true;
+                        return;
+                    }
+                }
                 _ => {}
             }
         }
         // Letting go: the end of a press, a drag or a band, wherever the pointer is.
-        if let Input::Press { pressed: false } = input {
+        if let Input::Press { pressed: false, .. } = input {
             if self.press.is_some() || self.drag.is_some() || self.band.is_some() {
                 self.release();
                 return;
@@ -1236,7 +1333,7 @@ impl Shelf {
         }
         let (x, y) = self.pointer;
         // The bar of tabs.
-        if let Input::Press { pressed: true } = input {
+        if let Input::Press { pressed: true, .. } = input {
             if let Some(at) = self.placed_tabs.iter().position(|(r, _)| r.contains(x, y)) {
                 if self.placed_tabs[at].1.inset(-6.0).contains(x, y) && self.tabs.len() > 1 {
                     self.close_tab(at);
@@ -1271,12 +1368,16 @@ impl Shelf {
             self.set_view(if self.view == View::Grid { View::List } else { View::Grid });
             return;
         }
+        if self.tabs[self.active].place == Place::Trash && self.empty_button.input(&input) {
+            self.act(Action::EmptyTrash);
+            return;
+        }
         if let Some(row) = self.side.input(&input) {
             self.side_chosen(row);
             return;
         }
         match input {
-            Input::Press { pressed: true } if self.content.contains(x, y) => self.content_press(x, y),
+            Input::Press { pressed: true, .. } if self.content.contains(x, y) => self.content_press(x, y),
             Input::Scroll { dy, .. } if self.content.contains(x, y) => {
                 let tab = self.tab();
                 tab.scroll = (tab.scroll + dy).max(0.0);
@@ -1395,7 +1496,8 @@ impl Shelf {
             match key {
                 Key::Up => self.go_up(),
                 Key::Down => self.act(Action::Open),
-                Key::Backspace => self.act(Action::Trash),
+                // With Shift (or Alt, as Finder's Option-Command-Delete), gone for good after asking.
+                Key::Backspace => self.act(if m.shift || m.alt { Action::Delete } else { Action::Trash }),
                 Key::Left | Key::Char('[') => self.history(true),
                 Key::Right | Key::Char(']') => self.history(false),
                 Key::Tab => self.active = (self.active + if m.shift { self.tabs.len() - 1 } else { 1 }) % self.tabs.len(),
@@ -1477,7 +1579,8 @@ impl Shelf {
             Key::End => step(self, 100000),
             Key::Enter => self.act(Action::Open),
             Key::Backspace => self.go_up(),
-            Key::Delete => self.act(Action::Trash),
+            // Shift-Delete: gone for good, after asking, as on every desktop.
+            Key::Delete => self.act(if m.shift { Action::Delete } else { Action::Trash }),
             Key::Escape => {
                 self.tab().selected.clear();
             }
@@ -1624,6 +1727,13 @@ impl Shelf {
         let view_rect = Rect { x: head.right() - vw, w: vw, ..head };
         head.w -= vw + 12.0;
         self.view_button.draw_icon(p, gl, view_rect, view_icon, view_label);
+        // The trash's own button, as Finder's Empty.
+        if self.tabs[self.active].place == Place::Trash {
+            let ew = Button::icon_width(p, gl, "Empty");
+            let rect = Rect { x: head.right() - ew, w: ew, ..head };
+            head.w -= ew + 12.0;
+            self.empty_button.draw_icon(p, gl, rect, Icon::Trash, "Empty");
+        }
         if self.filtering || !self.filter_field.text.is_empty() {
             let fw = 340.0f32.min(head.w * 0.4);
             self.filter_field.hint = "Find in this folder".into();
@@ -1723,6 +1833,7 @@ impl Shelf {
         // The name being renamed is typed over where it is, not written.
         let renaming = self.renaming_at().map(|at| self.tabs[self.active].shown[at]);
         let tab = &mut self.tabs[self.active];
+        let in_trash = tab.place == Place::Trash;
         for t in tab.stale.drain(..) {
             p.forget(gl, t);
         }
@@ -1752,7 +1863,15 @@ impl Shelf {
                 return;
             }
             State::Ready if tab.shown.is_empty() => {
-                let text = if !tab.filter.is_empty() { "Nothing here by that name." } else if tab.items.is_empty() { "This folder is empty." } else { "Only hidden files here." };
+                let text = if !tab.filter.is_empty() {
+                    "Nothing here by that name."
+                } else if in_trash {
+                    "The Trash is empty."
+                } else if tab.items.is_empty() {
+                    "This folder is empty."
+                } else {
+                    "Only hidden files here."
+                };
                 room::message(p, gl, area, text, theme::ink_detail());
                 return;
             }
@@ -1787,9 +1906,11 @@ impl Shelf {
         p.clip(gl, area);
         if view == View::List {
             let h = Rect::new(area.x, area.y, area.w, header);
-            let cols = list_columns(h);
+            let cols = list_columns(h, in_trash);
             // Each head sorts by itself, the one sorted by marked with which way.
-            for (i, (word, by, align)) in [("NAME", SortBy::Name, 0.0), ("KIND", SortBy::Kind, 0.0), ("SIZE", SortBy::Size, 1.0), ("MODIFIED", SortBy::Modified, 1.0)].into_iter().enumerate() {
+            // In the trash: where each came from, and when it was put there.
+            let (second, fourth) = if in_trash { ("FROM", "DELETED") } else { ("KIND", "MODIFIED") };
+            for (i, (word, by, align)) in [("NAME", SortBy::Name, 0.0), (second, SortBy::Kind, 0.0), ("SIZE", SortBy::Size, 1.0), (fourth, SortBy::Modified, 1.0)].into_iter().enumerate() {
                 let on = sort.0 == by;
                 let word = if on { format!("{word} {}", if sort.1 { "\u{25bc}" } else { "\u{25b2}" }) } else { word.to_string() };
                 if cols[i].contains(pointer.0, pointer.1) {
@@ -1826,13 +1947,17 @@ impl Shelf {
                     if renaming != Some(index) {
                         p.label(gl, &item.name, name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.5);
                     }
-                    let detail = if item.kind == Kind::Folder { String::new() } else { look::size(item.size) };
+                    let detail = match &item.trashed {
+                        Some(t) => format!("from {}", origin_folder(t)),
+                        None if item.kind == Kind::Folder => String::new(),
+                        None => look::size(item.size),
+                    };
                     p.label(gl, &detail, Rect { y: name.bottom(), h: 24.0, ..name }, theme::FOOTER_EM * 0.8, theme::ink_hint(), 0.5);
                 }
                 View::List => {
                     let rect = Rect::new(area.x, y, area.w, ROW - 4.0);
                     let entry = &tab.entries[index];
-                    let (triangle, icon, name) = list_layout(rect, entry.depth);
+                    let (triangle, icon, name) = list_layout(rect, entry.depth, in_trash);
                     if let Some(note) = &entry.note {
                         // An opened folder's word for itself, where its things would be.
                         let (words, ink) = match note {
@@ -1852,9 +1977,9 @@ impl Shelf {
                     } else if hover {
                         p.fill(gl, rect, theme::ROW_RADIUS, theme::hover());
                     }
-                    let cols = list_columns(rect);
+                    let cols = list_columns(rect, in_trash);
                     if item.kind == Kind::Folder {
-                        let open = tab.tree.is_open(&entry.parent.join(&item.name));
+                        let open = tree::place_of(&tab.entries, &tab.items, index).is_some_and(|p| tab.tree.is_open(&p));
                         let lit = triangle.contains(pointer.0, pointer.1);
                         let mark = Rect::new(triangle.x + (triangle.w - 22.0) * 0.5, triangle.y + (triangle.h - 22.0) * 0.5, 22.0, 22.0);
                         draw_icon(p, gl, if open { Icon::Disclosed } else { Icon::Disclose }, mark, if lit { theme::ink() } else { theme::ink_detail() });
@@ -1863,11 +1988,19 @@ impl Shelf {
                     if renaming != Some(index) {
                         p.label(gl, &item.name, name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.0);
                     }
-                    p.label(gl, item.kind.word(), cols[1], theme::DETAIL_EM * 0.9, theme::ink_hint(), 0.0);
-                    if item.kind != Kind::Folder {
+                    match &item.trashed {
+                        Some(t) => {
+                            p.label(gl, &origin_folder(t), cols[1], theme::DETAIL_EM * 0.9, theme::ink_detail(), 0.0);
+                        }
+                        None => {
+                            p.label(gl, item.kind.word(), cols[1], theme::DETAIL_EM * 0.9, theme::ink_hint(), 0.0);
+                        }
+                    }
+                    // A folder in the trash is counted whole, as what emptying it frees.
+                    if item.kind != Kind::Folder || item.trashed.is_some() {
                         p.label(gl, &look::size(item.size), cols[2], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
                     }
-                    p.label(gl, &look::when(item.modified, now), cols[3], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
+                    p.label(gl, &look::when(item.modified.map(look::local), look::local(now)), cols[3], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
                 }
             }
         }
@@ -1933,6 +2066,11 @@ impl Shelf {
     fn paint_overlay(&mut self, p: &mut Painter, gl: &spatiand_app::Gl, all: Rect) {
         let size = self.size;
         let storage = self.storage.clone();
+        // Applications' pictures come from the worker: put on the GPU here, where it is.
+        for (id, pixels) in self.opening.arrived.drain(..) {
+            let texture = pixels.and_then(|(w, h, rgba)| p.texture(gl, &rgba, w, h).ok());
+            self.opening.pictures.insert(id, texture);
+        }
         match &mut self.overlay {
             Overlay::None => {}
             Overlay::Menu { at, list, entries } => {
@@ -1942,7 +2080,15 @@ impl Shelf {
                 p.glow(gl, rect, 20.0, [0.0, 0.0, 0.0, 0.45], 24.0);
                 p.fill(gl, rect, 20.0, theme::ground());
                 room::glass(p, gl, rect, 20.0, 1.0);
-                let rows: Vec<Row> = entries.iter().map(|(r, _)| r.clone()).collect();
+                let mut rows: Vec<Row> = entries.iter().map(|(r, _)| r.clone()).collect();
+                // "Open with": each application with its own picture, once it has come.
+                for (row, (_, action)) in rows.iter_mut().zip(entries.iter()) {
+                    if let Action::OpenWith(openwith::Choice::System(id)) = action {
+                        if let Some(Some(picture)) = self.opening.pictures.get(id) {
+                            row.picture = Some(*picture);
+                        }
+                    }
+                }
                 list.draw(p, gl, rect.inset(10.0), &rows);
             }
             Overlay::Ask { what, field, ok, cancel } => {
@@ -2053,8 +2199,10 @@ fn side_row_at(list: &List, x: f32, y: f32) -> Option<usize> {
     Some(first + ((y - top) / per).floor().max(0.0) as usize)
 }
 
-fn list_columns(rect: Rect) -> [Rect; 4] {
-    let (kind_w, size_w, date_w) = (170.0, 140.0, 200.0);
+/// The list's columns: name, kind, size, date. In the trash (`wide`) the second is where each
+/// thing came from, and wider.
+fn list_columns(rect: Rect, wide: bool) -> [Rect; 4] {
+    let (kind_w, size_w, date_w) = (if wide { 400.0 } else { 170.0 }, 140.0, 200.0);
     // The last column ends short of the edge, clear of the scroll bar.
     let name_w = rect.w - kind_w - size_w - date_w - 56.0;
     let mut x = rect.x + 10.0;
@@ -2072,8 +2220,8 @@ const DISCLOSURE: f32 = 30.0;
 
 /// A line of the list at `depth`: its triangle (a folder's), its picture and its name, within
 /// the name's column; the other columns are where they are on every line.
-fn list_layout(rect: Rect, depth: usize) -> (Rect, Rect, Rect) {
-    let cols = list_columns(rect);
+fn list_layout(rect: Rect, depth: usize, wide: bool) -> (Rect, Rect, Rect) {
+    let cols = list_columns(rect, wide);
     let x = cols[0].x + depth as f32 * INDENT;
     let triangle = Rect::new(x - 6.0, rect.y, DISCLOSURE, rect.h);
     let face = Rect::new(x + DISCLOSURE - 4.0, rect.y + 7.0, rect.h - 14.0, rect.h - 14.0);
@@ -2082,11 +2230,61 @@ fn list_layout(rect: Rect, depth: usize) -> (Rect, Rect, Rect) {
 }
 
 fn menu_rect(at: (f32, f32), rows: usize, size: (u32, u32)) -> Rect {
-    let h = rows as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 16.0;
+    // No taller than the window: a long one ("Other...") scrolls.
+    let h = (rows as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 16.0).min(size.1 as f32 - 24.0);
     let w = 620.0;
     let x = at.0.min(size.0 as f32 - w - 12.0).max(12.0);
     let y = at.1.min(size.1 as f32 - h - 12.0).max(12.0);
     Rect::new(x, y, w, h)
+}
+
+/// Where a thing in the trash came from, as its folder, the home folder written `~`.
+fn origin_folder(trashed: &proto::Trashed) -> String {
+    let Some(origin) = trashed.origin.as_deref() else { return "where, not known".into() };
+    let folder = std::path::Path::new(origin).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    match home().map(|h| h.to_string_lossy().into_owned()) {
+        Some(h) if folder == h => "~".into(),
+        Some(h) if folder.starts_with(&format!("{h}/")) => format!("~{}", &folder[h.len()..]),
+        _ => folder,
+    }
+}
+
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
+/// The pictures of things listed again unchanged (the same name, size and date), at their
+/// numbers in the new listing; and which of those were asked for.
+fn keep_pictures(old: &[Item], new: &[Item], pictures: &mut HashMap<usize, Texture>, asked: &mut HashSet<usize>) -> (HashMap<usize, Texture>, HashSet<usize>) {
+    let key = |i: &Item| (i.name.clone(), i.size, i.modified);
+    let at: HashMap<_, usize> = new.iter().enumerate().map(|(n, i)| (key(i), n)).collect();
+    let (mut kept, mut kept_asked) = (HashMap::new(), HashSet::new());
+    for (old_index, item) in old.iter().enumerate() {
+        if let Some(&n) = at.get(&key(item)) {
+            if let Some(t) = pictures.remove(&old_index) {
+                kept.insert(n, t);
+                if asked.remove(&old_index) {
+                    kept_asked.insert(n);
+                }
+            }
+        }
+    }
+    (kept, kept_asked)
+}
+
+/// Remotes whose deletions go to their own trash, as rclone has them by default: what a
+/// deletion there says.
+fn remote_trash(kind: &str) -> Option<&'static str> {
+    match kind {
+        "drive" => Some("Google Drive's own trash"),
+        "onedrive" => Some("OneDrive's recycle bin"),
+        "box" => Some("Box's trash"),
+        "pcloud" => Some("pCloud's trash"),
+        "mega" => Some("MEGA's rubbish bin"),
+        "dropbox" => Some("Dropbox's deleted files"),
+        _ => None,
+    }
 }
 
 fn kind_word(kind: &str) -> String {
@@ -2210,6 +2408,7 @@ fn main() {
             backward: Button::default(),
             forward: Button::default(),
             view_button: Button::default(),
+            empty_button: Button::default(),
             placed_tabs: Vec::new(),
             plus: Rect::default(),
             trail: Vec::new(),
@@ -2223,6 +2422,7 @@ fn main() {
             sort: (SortBy::Name, false),
             menu_at: (0.0, 0.0),
             incoming: None,
+            opening: opening::Opening::new(),
         };
         shelf.rebuild_side();
         let tab = ShelfTab::spawn(start)?;
@@ -2248,7 +2448,7 @@ mod tests {
     use super::*;
 
     fn item(name: &str, kind: Kind, size: u64, modified: i64) -> Item {
-        Item { name: name.into(), kind, size, modified: Some(modified), hidden: false }
+        Item { name: name.into(), kind, size, modified: Some(modified), hidden: false, trashed: None }
     }
 
     #[test]

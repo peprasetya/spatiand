@@ -12,7 +12,8 @@ use spatiand_app::ui::{look as room, theme, Field, Icon, List, Painter, Rect, Ro
 use spatiand_app::Modifiers;
 
 use crate::proto::{Item, Kind, Op, Place, ToTab};
-use crate::{list_columns, list_layout, look, opener_for, own_program, places, tree, Action, Opener, Overlay, Shelf, SideRow, SortBy, View, ROW, TILE};
+use crate::openwith::Choice;
+use crate::{list_columns, list_layout, look, own_program, places, tree, Action, Overlay, Shelf, SideRow, SortBy, View, ROW, TILE};
 
 /// How far a press moves before it is a drag (or a band), in the window's pixels.
 const DRAG_AFTER: f32 = 7.0;
@@ -125,6 +126,7 @@ fn drag_forms(items: &[Place], dav: impl Fn(&str, &str) -> Option<String>) -> Ve
         .filter_map(|p| match p {
             Place::Local(path) => Some(file_uri(path)),
             Place::Remote(r, path) => dav(r, path),
+            Place::Trash => None,
         })
         .collect();
     let text = items.iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
@@ -235,7 +237,7 @@ impl Shelf {
             View::List => {
                 let rect = Rect::new(c.x, c.y + 40.0 + at as f32 * ROW - tab.scroll, c.w, ROW - 4.0);
                 let depth = tab.shown.get(at).map_or(0, |&i| tab.depth(i));
-                let (_, face, name) = list_layout(rect, depth);
+                let (_, face, name) = list_layout(rect, depth, tab.place == Place::Trash);
                 (rect, face, name)
             }
         }
@@ -249,7 +251,7 @@ impl Shelf {
             return None;
         }
         let (cell, _, _) = self.cell(at);
-        Some(list_layout(cell, tab.depth(index)).0)
+        Some(list_layout(cell, tab.depth(index), tab.place == Place::Trash).0)
     }
 
     /// Where a name being renamed is typed: over the name, a little wider.
@@ -272,7 +274,7 @@ impl Shelf {
         }
         // The list's heads sort it.
         if self.view == View::List && y < self.content.y + 40.0 {
-            let cols = list_columns(Rect::new(self.content.x, self.content.y, self.content.w, 40.0));
+            let cols = list_columns(Rect::new(self.content.x, self.content.y, self.content.w, 40.0), self.tabs[self.active].place == Place::Trash);
             let by = [SortBy::Name, SortBy::Kind, SortBy::Size, SortBy::Modified];
             if let Some(i) = cols.iter().position(|c| c.contains(x, y)) {
                 self.act(Action::Sort(by[i]));
@@ -560,6 +562,10 @@ impl Shelf {
     /// the file managers of Linux have it; Shift (Command on a Mac) moves them whatever. Either
     /// way it is then the same job as the menu's Copy to or Move to, between any two places.
     pub(crate) fn copying(m: Modifiers, from: &Place, to: &Place) -> bool {
+        // Onto the trash is into the trash, whatever is held.
+        if *to == Place::Trash {
+            return false;
+        }
         if m.alt || m.control {
             return true;
         }
@@ -594,6 +600,21 @@ impl Shelf {
             return;
         }
         let what = if items.len() == 1 { items[0].name() } else { format!("{} items", items.len()) };
+        // Sent to the trash: put in it. A remote has no trash here, and its things are deleted
+        // from their menu, after asking -- never by a drop.
+        if to == Place::Trash {
+            let local: Vec<Place> = items.into_iter().filter(|p| matches!(p, Place::Local(path) if !crate::trash::is_within(std::path::Path::new(path)))).collect();
+            if local.is_empty() {
+                self.say("Only this machine's things go into its Trash: delete a remote's from its menu.");
+                return;
+            }
+            let what = if local.len() == 1 { local[0].name() } else { format!("{} items", local.len()) };
+            self.say(format!("{what} to the Trash"));
+            let id = self.next_op;
+            self.next_op += 1;
+            self.tab().tell(&ToTab::Do { id, op: Op::Trash(local) });
+            return;
+        }
         self.say(format!("{} {what} to {}\u{2026}", if copy { "Copying" } else { "Moving" }, to.name()));
         let id = self.next_op;
         self.next_op += 1;
@@ -660,6 +681,15 @@ impl Shelf {
                 self.dirty = true;
             }
         }
+        // A remote folder on show cannot be watched: it is listed again every little while
+        // (and at once after anything SpatiShelf itself does to it), but not under a drag or a
+        // name being typed.
+        let busy = self.drag.is_some() || self.renaming.is_some() || self.band.is_some();
+        let tab = &mut self.tabs[self.active];
+        if matches!(tab.place, Place::Remote(..)) && matches!(tab.state, crate::State::Ready) && tab.doing.is_empty() && !busy && tab.polled.elapsed() >= crate::watch::REMOTE_EVERY {
+            tab.polled = Instant::now();
+            tab.tell(&ToTab::Refresh);
+        }
         if self.drag.is_some() || self.band.is_some() {
             let (x, y) = self.pointer;
             let c = self.content;
@@ -682,6 +712,10 @@ impl Shelf {
 
     pub(crate) fn start_rename(&mut self, index: usize) {
         let tab = &self.tabs[self.active];
+        // What is in the trash keeps the name the trash knows it by.
+        if tab.in_trash() {
+            return;
+        }
         let Some(item) = tab.items.get(index) else { return };
         let Some(place) = tab.place_of(index) else { return };
         let (name, folder) = (item.name.clone(), item.kind == Kind::Folder);
@@ -799,25 +833,32 @@ impl Shelf {
         let Some((index, item)) = tab.item_at_cursor() else { return };
         let item: Item = item.clone();
         let Some(place) = tab.place_of(index) else { return };
-        let local = matches!(tab.place, Place::Local(_));
+        let local = matches!(tab.place, Place::Local(_) | Place::Trash);
+        let in_trash = tab.in_trash();
         let several = tab.selected.len() > 1;
         let mut entries: Vec<(Row, Action)> = vec![(Row::with("Open", "Enter").icon(look::icon(item.kind)), Action::Open)];
+        // In the trash: back where it came from, or gone for good.
+        if in_trash {
+            if item.trashed.is_some() {
+                entries.push((Row::new(if several { format!("Put back {} items", tab.selected.len()) } else { "Put back".into() }).icon(Icon::Back), Action::Restore));
+            }
+            entries.push((Row::new("Open with\u{2026}").icon(Icon::Forward), Action::OpenWithMenu));
+            entries.push((Row::with("Copy", keys("C")).icon(Icon::Copy), Action::Copy));
+            entries.push((Row::new("Move to\u{2026}").icon(Icon::Forward), Action::MoveToMenu));
+            entries.push((Row::new("Copy to\u{2026}").icon(Icon::Copy), Action::CopyToMenu));
+            entries.push((Row::with("Delete for good\u{2026}", "Delete").icon(Icon::Trash), Action::Delete));
+            entries.push((Row::new("Copy the path").icon(Icon::Link), Action::CopyPath));
+            self.open_menu(at, entries);
+            return;
+        }
         if item.kind == Kind::Folder {
             entries.push((Row::new("Open in a new tab").icon(Icon::Plus), Action::OpenInTab(place.clone())));
             if local && own_program("spatiquill").is_some() {
-                entries.push((Row::new("Open in SpatiQuill").icon(Icon::Terminal), Action::OpenWith(Opener::Own("spatiquill"))));
-            }
-        } else {
-            for (name, program) in [("SpatiLoupe", "spatiloupe"), ("SpatiReel", "spatireel")] {
-                if own_program(program).is_some() && opener_for(item.kind) != Some(program) {
-                    entries.push((Row::new(format!("Open with {name}")).icon(Icon::Eye), Action::OpenWith(Opener::Own(program))));
-                }
-            }
-            if !cfg!(target_os = "android") {
-                let other = if cfg!(target_os = "macos") { "Open with the Mac's app" } else { "Open with another app" };
-                entries.push((Row::new(other).icon(Icon::Link), Action::OpenWith(Opener::Native)));
+                entries.push((Row::new("Open in SpatiQuill").icon(Icon::Terminal), Action::OpenWith(Choice::Own("spatiquill".into()))));
             }
         }
+        // Finder's Open With: this machine's applications for it, Spatiand's own among them.
+        entries.push((Row::new("Open with\u{2026}").icon(Icon::Forward), Action::OpenWithMenu));
         let count = if several { format!(" {} items", tab.selected.len()) } else { String::new() };
         entries.push((Row::with(format!("Copy{count}"), keys("C")).icon(Icon::Copy), Action::Copy));
         entries.push((Row::with(format!("Cut{count}"), keys("X")).icon(Icon::Cut), Action::Cut));
@@ -833,16 +874,24 @@ impl Shelf {
             entries.push((Row::with("Rename", "F2").icon(Icon::Pencil), Action::Rename));
         }
         let remote = !local;
-        let away = if remote || cfg!(target_os = "android") { "Delete\u{2026}" } else { "Move to the trash" };
+        let away = if remote { "Delete\u{2026}" } else { "Move to the Trash" };
         entries.push((Row::with(away, if cfg!(target_os = "macos") { "\u{2318}\u{232b}" } else { "Delete" }).icon(Icon::Trash), Action::Trash));
+        if !remote {
+            entries.push((Row::with("Delete for good\u{2026}", if cfg!(target_os = "macos") { "\u{21e7}\u{2318}\u{232b}" } else { "Shift+Delete" }).icon(Icon::Close), Action::Delete));
+        }
         entries.push((Row::new("Copy the path").icon(Icon::Link), Action::CopyPath));
         self.open_menu(at, entries);
     }
 
     fn folder_menu(&mut self, at: (f32, f32)) {
         let local = matches!(self.tabs[self.active].place, Place::Local(_));
-        let mut entries: Vec<(Row, Action)> = vec![(Row::with("New folder", if cfg!(target_os = "macos") { "\u{21e7}\u{2318}N" } else { "Ctrl+Shift+N" }).icon(Icon::Folder), Action::NewFolder)];
-        if self.clipboard.is_some() {
+        let in_trash = self.tabs[self.active].in_trash();
+        let mut entries: Vec<(Row, Action)> = if in_trash {
+            vec![(Row::new("Empty the Trash\u{2026}").icon(Icon::Trash), Action::EmptyTrash)]
+        } else {
+            vec![(Row::with("New folder", if cfg!(target_os = "macos") { "\u{21e7}\u{2318}N" } else { "Ctrl+Shift+N" }).icon(Icon::Folder), Action::NewFolder)]
+        };
+        if self.clipboard.is_some() && !in_trash {
             entries.push((Row::with("Paste here", keys("V")).icon(Icon::Paste), Action::Paste));
         }
         let (view, icon) = if self.view == View::Grid { ("Show as a list", Icon::List) } else { ("Show as tiles", Icon::Grid) };
@@ -867,6 +916,9 @@ impl Shelf {
         }
         if let Place::Remote(name, _) = &place {
             entries.push((Row::new(format!("Forget {name}\u{2026}")).icon(Icon::Close), Action::Forget(name.clone())));
+        }
+        if place == Place::Trash {
+            entries.push((Row::new("Empty the Trash\u{2026}").icon(Icon::Trash), Action::EmptyTrash));
         }
         self.open_menu(at, entries);
     }

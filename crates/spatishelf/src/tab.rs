@@ -55,11 +55,29 @@ fn list_local(path: &str) -> Result<(Vec<Item>, Option<u64>), String> {
             let folder = meta.as_ref().is_ok_and(|m| m.is_dir()) && !is_package(&name);
             let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
             let modified = meta.ok().and_then(|m| seconds(m.modified()));
-            Item { hidden: name.starts_with('.'), kind: Kind::of(&name, folder), name, size, modified }
+            Item { hidden: name.starts_with('.'), kind: Kind::of(&name, folder), name, size, modified, trashed: None }
         })
         .collect();
     sort(&mut items);
     Ok((items, free_space(path)))
+}
+
+/// What is in the trash, each thing by its own name and with where it came from; when it was
+/// put there is its date.
+fn list_trash() -> Result<(Vec<Item>, Option<u64>), String> {
+    let mut items: Vec<Item> = crate::trash::list()?
+        .into_iter()
+        .map(|e| Item {
+            kind: Kind::of(&e.name, e.folder),
+            size: e.size,
+            modified: e.deleted,
+            hidden: false,
+            trashed: Some(crate::proto::Trashed { file: e.file.to_string_lossy().into_owned(), origin: e.origin.map(|o| o.to_string_lossy().into_owned()), deleted: e.deleted }),
+            name: e.name,
+        })
+        .collect();
+    sort(&mut items);
+    Ok((items, None))
 }
 
 fn free_space(path: &str) -> Option<u64> {
@@ -112,6 +130,7 @@ fn list_remote(storage: &Storage, remote: &str, path: &str) -> Result<(Vec<Item>
             size: e.size.max(0) as u64,
             modified: parse_time(&e.modified),
             name: e.name,
+            trashed: None,
         })
         .collect();
     sort(&mut items);
@@ -132,7 +151,18 @@ fn parse_time(text: &str) -> Option<i64> {
     let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146097 + doe - 719468;
-    Some(days * 86400 + h * 3600 + min * 60 + s)
+    // The zone it was written in: `Z`, or `+07:00` after the seconds and their fraction (a
+    // local disk's times, as rclone gives them, are the machine's own).
+    let zone = time.get(8..).unwrap_or("").trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    let offset = match zone.as_bytes().first() {
+        Some(sign @ (b'+' | b'-')) => {
+            let mut parts = zone[1..].split(':').map(|n| n.parse::<i64>().ok());
+            let (oh, om) = (parts.next().flatten().unwrap_or(0), parts.next().flatten().unwrap_or(0));
+            (oh * 3600 + om * 60) * if *sign == b'-' { -1 } else { 1 }
+        }
+        _ => 0,
+    };
+    Some(days * 86400 + h * 3600 + min * 60 + s - offset)
 }
 
 /// A small picture of a file, for its tile.
@@ -190,6 +220,7 @@ fn fs_and_name(place: &Place) -> (String, String) {
             Some((dir, name)) => (format!("{r}:{dir}"), name.to_string()),
             None => (format!("{r}:"), p.clone()),
         },
+        Place::Trash => (String::new(), String::new()),
     }
 }
 
@@ -197,11 +228,13 @@ fn whole(place: &Place) -> String {
     match place {
         Place::Local(p) => p.clone(),
         Place::Remote(r, p) => format!("{r}:{p}"),
+        Place::Trash => String::new(),
     }
 }
 
 fn is_dir(place: &Place, storage: &Storage) -> bool {
     match place {
+        Place::Trash => false,
         Place::Local(p) => Path::new(p).is_dir(),
         Place::Remote(r, p) => {
             let (fs, name) = fs_and_name(&Place::Remote(r.clone(), p.clone()));
@@ -303,48 +336,11 @@ fn storage_or(kept: &Mutex<Option<Storage>>) -> Result<Storage, String> {
     storage(kept)
 }
 
-/// Into the trash: a Mac's own, or the freedesktop one everything on Linux shares.
-fn trash(path: &Path) -> Result<(), String> {
-    let home = PathBuf::from(std::env::var_os("HOME").ok_or("no home folder")?);
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    if cfg!(target_os = "macos") {
-        let bin = home.join(".Trash");
-        let target = free_name(&bin, &name);
-        return std::fs::rename(path, &target).map_err(|e| e.to_string());
-    }
-    if cfg!(target_os = "android") {
-        return Err("There is no trash on this machine.".into());
-    }
-    let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share")).join("Trash");
-    let (files, info) = (base.join("files"), base.join("info"));
-    std::fs::create_dir_all(&files).map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&info).map_err(|e| e.to_string())?;
-    let target = free_name(&files, &name);
-    let leaf = target.file_name().unwrap().to_string_lossy().into_owned();
-    let now = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) as i64;
-    let (days, secs) = (now.div_euclid(86400), now.rem_euclid(86400));
-    // Civil date from days (the inverse of the above).
-    let z = days + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + (m <= 2) as i64;
-    let stamp = format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60);
-    let original = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    std::fs::write(info.join(format!("{leaf}.trashinfo")), format!("[Trash Info]\nPath={}\nDeletionDate={stamp}\n", original.display())).map_err(|e| e.to_string())?;
-    std::fs::rename(path, &target).map_err(|e| e.to_string())
-}
-
 fn delete(place: &Place, storage: &Mutex<Option<Storage>>) -> Result<(), String> {
     match place {
-        Place::Local(p) => {
-            let path = Path::new(p);
-            if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) }.map_err(|e| e.to_string())
-        }
+        Place::Trash => Ok(()),
+        // From the trash, with what it knew of it; anywhere else, just gone.
+        Place::Local(p) => crate::trash::purge(Path::new(p)),
         Place::Remote(..) => {
             let storage = storage_or(storage)?;
             if is_dir(place, &storage) {
@@ -360,22 +356,42 @@ fn delete(place: &Place, storage: &Mutex<Option<Storage>>) -> Result<(), String>
 fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, u64, &str)) -> Result<(), String> {
     match op {
         Op::Copy { from, to } => from.iter().try_for_each(|item| transfer(item, &to, false, storage, report)),
+        // Moved onto the trash: put in it.
+        Op::Move { from, to: Place::Trash } => run_op(Op::Trash(from), storage, report),
         Op::Move { from, to } => from.iter().try_for_each(|item| {
             if item.parent().as_ref() == Some(&to) {
                 return Ok(());
             }
-            transfer(item, &to, true, storage, report)
+            transfer(item, &to, true, storage, report)?;
+            // Taken out of the trash by a move: what the trash knew of it goes too.
+            if let Place::Local(p) = item {
+                crate::trash::moved_out(Path::new(p));
+            }
+            Ok(())
         }),
         Op::Trash(items) => items.iter().try_for_each(|item| match item {
-            Place::Local(p) => trash(Path::new(p)),
+            Place::Local(p) => crate::trash::put(Path::new(p)),
             Place::Remote(..) => Err("A remote has no trash here: delete it instead.".into()),
+            Place::Trash => Ok(()),
         }),
         Op::Delete(items) => items.iter().try_for_each(|item| delete(item, storage)),
+        Op::Restore(items) => items.iter().try_for_each(|item| match item {
+            Place::Local(p) => crate::trash::restore(Path::new(p)).map(|_| ()),
+            _ => Err("That is not in the Trash.".into()),
+        }),
+        Op::EmptyTrash => crate::trash::empty(),
+        Op::Fetch { item, into } => {
+            std::fs::create_dir_all(&into).map_err(|e| e.to_string())?;
+            let storage = storage_or(storage)?;
+            let (fs, name) = fs_and_name(&item);
+            rclone_job(&storage, "operations/copyfile", json!({"srcFs": fs, "srcRemote": name, "dstFs": into, "dstRemote": name}), &format!("Fetching {name}"), report)
+        }
         Op::Rename { item, name } => {
             if name.contains('/') || name.trim().is_empty() {
                 return Err("A name may not be empty or have a / in it.".into());
             }
             match &item {
+                Place::Trash => Err("The Trash keeps its name.".into()),
                 Place::Local(p) => {
                     let to = Path::new(p).with_file_name(&name);
                     if to.exists() {
@@ -396,6 +412,7 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
             }
         }
         Op::Mkdir { inside, name } => match &inside {
+            Place::Trash => Err("No folder is made in the Trash.".into()),
             Place::Local(p) => std::fs::create_dir(Path::new(p).join(&name)).map_err(|e| e.to_string()),
             Place::Remote(..) => {
                 let storage = storage_or(storage)?;
@@ -441,9 +458,9 @@ pub fn run() -> io::Result<()> {
                     queue.retain(|j| j.0 == current);
                 }
                 while !queue.is_empty() {
-                    let (folder, index, file, kind, size) = queue.remove(0);
+                    let (_folder, index, file, kind, size) = queue.remove(0);
                     if let Some((width, height, rgba)) = picture(&file, kind, size, &kept) {
-                        if !tell(&out, &FromTab::Picture { place: folder, index, width, height, rgba }) {
+                        if !tell(&out, &FromTab::Picture { place: file.clone(), index, width, height, rgba }) {
                             return;
                         }
                     }
@@ -462,7 +479,13 @@ pub fn run() -> io::Result<()> {
         match place {
             Place::Local(p) => list_local(p),
             Place::Remote(r, p) => list_remote(&storage(kept)?, r, p),
+            Place::Trash => list_trash(),
         }
+    };
+    // The folders on show, watched: a change from anywhere is told to the window.
+    let watching = {
+        let out = out.clone();
+        crate::watch::start(move |place| tell(&out, &FromTab::Changed(place)))
     };
     while let Ok(message) = asked.recv() {
         match message {
@@ -505,6 +528,7 @@ pub fn run() -> io::Result<()> {
                     let items = match &place {
                         Place::Local(p) => list_local(p),
                         Place::Remote(r, p) => storage(&kept).and_then(|s| list_remote(&s, r, p)),
+                        Place::Trash => list_trash(),
                     };
                     tell(&out, &FromTab::Contents { place, items: items.map(|(items, _)| items) });
                 });
@@ -513,10 +537,15 @@ pub fn run() -> io::Result<()> {
                 let Some(place) = here.clone() else { continue };
                 for index in indices {
                     if let Some(item) = items.get(index).filter(|i| i.kind.pictured()) {
-                        let _ = pictures_tx.send((place.clone(), index, place.join(&item.name), item.kind, size));
+                        let file = match &item.trashed {
+                            Some(t) => Place::Local(t.file.clone()),
+                            None => place.join(&item.name),
+                        };
+                        let _ = pictures_tx.send((place.clone(), index, file, item.kind, size));
                     }
                 }
             }
+            ToTab::Watch(places) => watching.set(places),
             ToTab::Do { id, op } => {
                 // Done on a thread, so that the tab goes on listing while a large copy runs.
                 let out = out.clone();
@@ -548,6 +577,9 @@ mod tests {
         assert_eq!(parse_time("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(parse_time("2026-10-14T14:48:03Z"), Some(1791989283));
         assert_eq!(parse_time("garbage"), None);
+        // A local disk's, in its own zone, with a fraction of a second.
+        assert_eq!(parse_time("2026-10-14T21:48:03.271+07:00"), Some(1791989283));
+        assert_eq!(parse_time("2026-10-14T09:48:03-05:00"), Some(1791989283));
     }
 
     #[test]

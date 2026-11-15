@@ -10,11 +10,16 @@ use serde::{Deserialize, Serialize};
 pub enum Place {
     Local(String),
     Remote(String, String),
+    /// What is in the trash -- every trash of this machine's -- as one place (`trash.rs`). Its
+    /// things are each where they are in the trash (`Item::trashed`).
+    Trash,
 }
 
 impl Place {
     pub fn join(&self, name: &str) -> Place {
         match self {
+            // Its things are not by name in it: see `Item::trashed`.
+            Place::Trash => Place::Trash,
             Place::Local(p) => Place::Local(std::path::Path::new(p).join(name).to_string_lossy().into_owned()),
             Place::Remote(r, p) if p.is_empty() => Place::Remote(r.clone(), name.to_string()),
             Place::Remote(r, p) => Place::Remote(r.clone(), format!("{}/{name}", p.trim_end_matches('/'))),
@@ -26,11 +31,13 @@ impl Place {
             Place::Local(p) => std::path::Path::new(p).parent().map(|q| Place::Local(q.to_string_lossy().into_owned())),
             Place::Remote(_, p) if p.is_empty() => None,
             Place::Remote(r, p) => Some(Place::Remote(r.clone(), p.rsplit_once('/').map_or(String::new(), |(a, _)| a.to_string()))),
+            Place::Trash => None,
         }
     }
 
     pub fn name(&self) -> String {
         match self {
+            Place::Trash => "Trash".into(),
             Place::Local(p) => std::path::Path::new(p).file_name().map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned()),
             Place::Remote(r, p) if p.is_empty() => r.clone(),
             Place::Remote(_, p) => p.rsplit('/').next().unwrap_or(p).to_string(),
@@ -54,6 +61,7 @@ impl Place {
         match self {
             Place::Local(p) => p.clone(),
             Place::Remote(r, p) => format!("{r}:{p}"),
+            Place::Trash => "Trash".into(),
         }
     }
 
@@ -136,6 +144,18 @@ pub struct Item {
     /// Seconds since 1970, if known.
     pub modified: Option<i64>,
     pub hidden: bool,
+    /// For a thing in the trash: where it is in it, where it came from, and when.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trashed: Option<Trashed>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Trashed {
+    /// Where it is now, in the trash.
+    pub file: String,
+    pub origin: Option<String>,
+    /// Seconds since 1970.
+    pub deleted: Option<i64>,
 }
 
 /// Something done to files, which takes as long as it takes.
@@ -145,8 +165,16 @@ pub enum Op {
     Move { from: Vec<Place>, to: Place },
     /// To the trash, where there is one.
     Trash(Vec<Place>),
-    /// Gone for good: what a remote, or a phone with no trash, offers.
+    /// Gone for good (after asking): from the trash, from a remote, or with Shift-Delete.
+    /// A thing in the trash goes with what the trash knew of it.
     Delete(Vec<Place>),
+    /// Things in the trash put back where they came from.
+    Restore(Vec<Place>),
+    /// Everything in every trash gone for good.
+    EmptyTrash,
+    /// A remote's file copied into a folder of this machine's, for an application that opens
+    /// files and not addresses.
+    Fetch { item: Place, into: String },
     Rename { item: Place, name: String },
     Mkdir { inside: Place, name: String },
 }
@@ -161,6 +189,9 @@ pub enum ToTab {
     /// Pictures for these items of the listing, at most `size` pixels a side.
     Pictures { indices: Vec<usize>, size: u32 },
     Do { id: u64, op: Op },
+    /// The folders on show -- the one gone to and those opened in the list -- to be watched,
+    /// and all others not: answered with [`FromTab::Changed`] whenever one changes.
+    Watch(Vec<Place>),
     Quit,
 }
 
@@ -172,6 +203,8 @@ pub enum FromTab {
     Contents { place: Place, items: Result<Vec<Item>, String> },
     Progress { id: u64, done: u64, total: u64, what: String },
     Done { id: u64, error: Option<String> },
+    /// A folder being watched changed, from anywhere: to be listed again.
+    Changed(Place),
     /// Sent as a picture frame, not JSON: see [`picture_frame`].
     #[serde(skip)]
     Picture { place: Place, index: usize, width: u32, height: u32, rgba: Vec<u8> },
@@ -293,7 +326,7 @@ mod tests {
 
     #[test]
     fn messages_and_pictures_come_through_in_pieces() {
-        let a = FromTab::Listed { place: Place::Local("/".into()), items: vec![Item { name: "a.jpg".into(), kind: Kind::Picture, size: 3, modified: Some(1), hidden: false }], free: Some(9) };
+        let a = FromTab::Listed { place: Place::Local("/".into()), items: vec![Item { name: "a.jpg".into(), kind: Kind::Picture, size: 3, modified: Some(1), hidden: false, trashed: None }], free: Some(9) };
         let b = FromTab::Picture { place: Place::Local("/".into()), index: 2, width: 1, height: 1, rgba: vec![1, 2, 3, 4] };
         let bytes = [encode_from_tab(&a), encode_from_tab(&b)].concat();
         let mut g = Gather::default();

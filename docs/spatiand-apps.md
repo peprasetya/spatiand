@@ -178,7 +178,7 @@ snapshot backend, pictures going over as dmabufs.
 |---|---|
 | `storage/` (`spatiand-storage`) | Go (the toolchain pinned by the `toolchain` line in `storage/go.mod`, which `go` fetches on any machine), with **rclone v1.76 linked in as a library** (every backend). Remotes in Spatiand's own `~/.config/spatiand/rclone.conf`; the user's own rclone remotes are copied in only when asked ("From rclone"). Answers on 127.0.0.1 behind a token kept in `storage.token` beside the remotes: `/rc/<method>` is rclone's remote control (lists, copies, moves, deletes, `config/create` and its questions); `/dav/<remote>/...` is each remote as WebDAV, for streaming and for native applications. rclone's file cache is **off**: nothing is kept on disk. Where it is: `$XDG_RUNTIME_DIR/spatiand-storage.json`. Started by the first application that wants it, detached; a second start finds the first. `storage/build.sh mac|linux|android` builds it from the Mac for all three (no cgo). *Upstream v1.76 as a Go module, not a fork: no patch has been needed; a `replace` line in `go.mod` makes it a fork the day one is.* |
 | `crates/spatiand-storage` | Its Rust client. `remote:path` is a **virtual place** to every application; files stream by URL (FFmpeg) or are read into memory. |
-| `crates/spatishelf` | **Every tab a process** (`spatishelf --tab`): it lists, makes pictures (images, film frames, HEIF; remote pictures read into memory) and copies. Sidebar of places (per platform; `/sdcard` places on Android) and remotes; tiles or a list; several chosen (click with Control/Shift, Space, Control-A); path bar; back, forward, up; type to jump, Control-F to filter; copy, cut, paste (local by itself, anything with a remote through rclone, as a job with a progress bar); rename, new folder, trash (the Mac's, freedesktop's on Linux; remotes and Android delete for good, after asking); a menu on the right button; open with SpatiLoupe, SpatiReel, SpatiQuill (folders) or the platform's own (`open`, `xdg-open`; a remote's file by its WebDAV address). **Add remote**: every kind rclone has, searchable, its main options as a form, then rclone's own questions one at a time (OAuth kinds open the browser and wait). "Other apps": the WebDAV address, name and password, and a button that mounts it in Finder (Mac) or opens it in the file manager (Linux). |
+| `crates/spatishelf` | **Every tab a process** (`spatishelf --tab`): it lists, makes pictures (images, film frames, HEIF; remote pictures read into memory) and copies. Sidebar of places (per platform; `/sdcard` places on Android) and remotes; tiles or a list; several chosen (click with Control/Shift, Space, Control-A); path bar; back, forward, up; type to jump, Control-F to filter; copy, cut, paste (local by itself, anything with a remote through rclone, as a job with a progress bar); rename, new folder, the trash (see "2026-11-15" below: each system's own, a Trash place, put back, empty; remotes delete after asking); a menu on the right button; open with SpatiLoupe, SpatiReel, SpatiQuill (folders) or any of the platform's applications ("Open with", 2026-11-15). **Add remote**: every kind rclone has, searchable, its main options as a form, then rclone's own questions one at a time (OAuth kinds open the browser and wait). "Other apps": the WebDAV address, name and password, and a button that mounts it in Finder (Mac) or opens it in the file manager (Linux). |
 | `crates/spatiloupe` | Pictures by the `image` crate, and HEIF (a phone's tile grid put together), AVIF and JPEG 2000 by FFmpeg; SVG by resvg; moving GIF, APNG, WebP; EXIF shown; zoom about the pointer, pan, rotate, a strip of the folder's other files, an info pane; controls on glass that fade. **Stereo photographs**: MPO pairs, side by side, crossed, over and under, told by name (`_sbs`, `.jps`...) or by the picture itself (the two halves' detail compared), squeezed pairs recognised by a film's shape; in the room each eye is given its view, flat the left one; the packing can be changed, eyes swapped, depth moved (`,` `.`). **PDF** by PDFium (`tools/fetch-pdfium.sh`, shipped beside the programs): pages down a column drawn at the size shown, search with the results marked, the outline. **glTF/GLB** by its own renderer: metallic-roughness PBR (base colour, metal-rough, normal, occlusion, emission, cut-out and see-through), lit by three lights and a studio sky, a soft shadow, 4x MSAA; in the room drawn for each eye with off-axis frusta; drag to turn, scroll to near. Remote files (`remote:path`) and folders open as local ones do. |
 | `crates/spatiquill` | **Every tab a process** (`spatiquill --tab`) holding a pseudo-terminal and alacritty's emulator (`alacritty_terminal` 0.26), sending its screen to the window; one process holds every window, and a second start opens a window in it. Glyphs from the platform's monospaced face through cosmic-text into one atlas, the whole screen one draw: colour (16, 256, true), bold, italic, underline, emoji, wide CJK. Tabs named by the running program or the folder; dragged along the bar to reorder, **off the window into a window of its own, or onto another SpatiQuill window**. Copy and paste by keys, through the room's clipboard (see "SpatiQuill's copy and paste" below); scrollback with a marker; mouse to programs that ask for it; a crashed tab offers a new shell and the others go on. |
 | SDK | `App::watch(fd)`: an application woken for its own files. `ui::look` (backdrop, rule, glass, chip) shared by all four. |
@@ -300,6 +300,166 @@ out of an opened folder onto the empty space (moved up); Left and Right closing 
 what had changed. With the storage service on an alias remote of a scratch folder: two folders opened
 and a file dragged from one onto the other (moved there on disk). **Not checked**: in glasses, the
 Beam Pro, the Mac, a real cloud remote (slow listings), a folder of thousands opened.
+
+## 2026-11-15: SpatiShelf's trash, folders that keep themselves up to date, renaming with the pointer, Open with
+
+The owner: "add trash in places, and allow to clear the trash. Trash mechanism is follow the operating
+system. On deck/linux, If there is no trash mechanism then make it"; "Operating between windows. May
+not update the other window ... something mechanism to auto refresh the folder. That being opened";
+"Renaming file. The pointer is useless. Cannot select, cannot unselect ... I want the pointer still
+useful"; "Open with Mac app, Or Android app or Deck app ... I wish I can select the application that
+will be used to open."
+
+**The trash** (`crates/spatishelf/src/trash.rs`, plain file work with its tests; `trash_mac.rs`).
+"Trash" is the last of the places along the side, on every platform. It lists what is in the trash,
+each by its own name, **from** where (its folder, `~` for home) and when it was **deleted**, as a
+list or tiles, and its pictures; a folder in it opens where it is and is counted whole. Its menu: Put
+back (to where it was; a folder it was in that has gone is made again; something there by its name
+already, it comes back beside it numbered "a 2.txt"), Open, Open with, Copy, Move to / Copy to (moved
+out, what the trash knew of it goes too), Delete for good. "Empty" in the head (and "Empty the
+Trash..." in the menus of the pane and of its place) asks first: "Empty the Trash? All 5 items in it
+(26 bytes) will be deleted for good. This cannot be undone." Delete and the menu's "Move to the
+Trash" put things in it (a drop onto Trash too); **Shift-Delete** (Shift- or Option-Command-Backspace
+on a Mac) and the menu's "Delete for good..." delete after asking, "This cannot be undone."; in the
+trash, Delete is for good, after asking. Nothing is pasted into it and nothing in it is renamed.
+- **Linux, the Deck**: the freedesktop.org Trash specification, which Dolphin and every Linux file
+  manager follow, so that it is one trash both ways: `$XDG_DATA_HOME/Trash` (`~/.local/share/Trash`)
+  with `files/` and `info/<name>.trashinfo` (Path URL-escaped, DeletionDate in local time); the name
+  claimed by making its info file first (`O_EXCL`), numbered on a clash. Another disk's things go into
+  that disk's own `$topdir/.Trash/$uid` (an administrator's, sticky, not a link) or `$topdir/.Trash-$uid`,
+  made when first wanted -- the spec's own rule for a machine with no trash yet; a disk where neither
+  can be made has its things copied into the home trash and taken off it. Every disk's trash is
+  listed (from `/proc/self/mounts`; network disks left alone, a look at one gone away can hang).
+  `directorysizes` is not written (a cache; readers check its dates).
+- **Android, the Beam Pro**: Android has no trash for files (MediaStore's is for its own media), so
+  SpatiShelf keeps one in the same format at the top of each storage volume,
+  **`/storage/emulated/0/.Trash-spatiand`** (what `/sdcard` is) and `/storage/XXXX-XXXX/.Trash-spatiand`
+  on a card: on the volume, so that putting something in it is a rename and not a copy; in shared
+  storage, so that it outlives the app being installed again (the app's own folders do not); named
+  for Spatiand rather than for the uid, which Android changes on a new install; hidden, with a
+  `.nomedia`, so that the gallery does not show what is in it. Paths in its info files are from the
+  volume's top, as the spec has a disk's.
+- **The Mac**: Finder's Trash. Put there by `NSFileManager trashItemAtURL` (what Finder does, so
+  Finder's Put Back works for it), listed from `~/.Trash` and each `/Volumes/*/.Trashes/<uid>`,
+  emptied by deleting what is in them. Where a thing came from Finder keeps in the Trash's
+  `.DS_Store`, which is not read: SpatiShelf remembers what it put there itself
+  (`~/.config/spatiand/local/spatishelf-trash.json`), and Put back works for those; for what Finder
+  put there SpatiShelf says it does not know, and Finder's Put Back does it. *Workaround: the proper
+  whole reads the `.DS_Store`'s `ptbL`/`ptbN` records.* macOS keeps `~/.Trash` from programs without
+  Full Disk Access: then the Trash says so ("Allow Spatiand in System Settings, Privacy & Security,
+  Full Disk Access") rather than looking empty.
+- **Remotes** have no trash here: Delete asks first, and says where it goes -- "It goes to Google
+  Drive's own trash, not to this machine's Trash." for the kinds rclone deletes into their own trash
+  by default (Drive, OneDrive, Box, pCloud, MEGA, Dropbox), "for good? This cannot be undone." for the
+  others. A remote's things dropped onto Trash are not deleted (said so): only from their menu.
+
+**Folders that keep themselves up to date** (`watch.rs`). The folder on show and every folder
+opened in place in the list are watched, by the tab's process, through one mechanism on every
+system, the `notify` crate (inotify on Linux and Android, FSEvents on the Mac), each folder by
+itself; a change from anywhere -- another SpatiShelf window, another program, the trash -- lists it
+again a quarter of a second after the last change of a burst, at most once a second while one goes
+on, keeping the cursor, what is chosen, the scroll and what is open, as any listing again does;
+pictures of what did not change stay (no flicker). Watches go when a folder is closed, goes off show
+or the tab goes elsewhere. The Trash place watches every trash's `files` and `info`. A remote cannot
+be watched: the remote folder on show is listed again **every 15 seconds** (not under a drag, a band
+or a name being typed), and at once after SpatiShelf itself did anything to it, as before.
+
+**Renaming with the pointer** -- in the SDK, so every application's text field has it
+(`spatiand_app::ui::Field`): a click puts the caret there and lets go of what was chosen, a drag
+chooses (either way), two clicks choose a word, three everything, Shift-click chooses from what was
+chosen (or the caret) to there. The click is put at its character when the field is next drawn
+(only the painter can measure text; the nearest boundary is found by halving, a few measurements
+for any length). `Input::Press` and `Event::Button` carry the keys held as the button went
+(`modifiers`), for Shift-click; every application's patterns were given `..`. In SpatiShelf a click
+outside the field ends the rename and keeps the name typed, as Finder does, and the click does what
+it does; Escape puts the name back. The fields of SpatiShelf's remote form, SpatiReel's sign-in,
+SpatiKey, SpatiPal and SpatiLoupe's find have it too, since they hand the field all their input;
+SpatiChoose's field is given keys only.
+
+**Open with** (`openwith.rs`, the menu `opening.rs`). "Open with..." in a thing's menu lists the
+applications of this machine that open its kind, with their icons and names: the one a double click
+uses first, marked "default" -- what was chosen to always open the kind, else Spatiand's own
+(SpatiLoupe, SpatiReel, SpatiQuill for folders), else the system's own choice -- then Spatiand's
+own, then the system's (its default first); "Other..." (every application); "Always open .jpg files
+with the one chosen" (on, the next one chosen is remembered for the kind, **on this machine only**:
+`~/.config/spatiand/local/spatishelf-open-with.json`; a double click and Enter then use it); and,
+when one is remembered, "Forget X for .jpg files". Several chosen are all opened with the one chosen.
+- **Linux, the Deck**: the freedesktop way (`openwith_linux.rs`): the MIME type from shared-mime-info's
+  `globs2` (heaviest, longest glob; a file it does not know is `text/plain` if it reads as text) and
+  its parents (`subclasses`, `aliases`, `text/*` is `text/plain`); the desktop entries under
+  `$XDG_DATA_HOME` and `$XDG_DATA_DIRS` **and Flatpak's exports** (`~/.local/share/flatpak/exports/share`,
+  `/var/lib/flatpak/exports/share`, where the Deck's apps are) listing it, minus Terminal ones and our
+  own (`X-Spatiand`), localised names; `mimeapps.list` in the spec's order for the default and the
+  added and removed. Started by the entry's `Exec` line **as written**, its field codes given the files
+  (`%f`/`%u` once a file, `%F`/`%U` all, `%i %c %k`; Flatpak's `@@u %U @@` kept, so the Flatpak gets the
+  file through its portal), Chromium and Electron programs given Wayland as the room gives them.
+  Icons from the icon theme the room reads (`spatiand_platform::icons`), then Flatpak's exported icons;
+  SVG by resvg.
+- **The Mac** (`openwith_mac.rs`): Launch Services through `NSWorkspace` --
+  `URLsForApplicationsToOpenURL`, `URLForApplicationToOpenURL` for the default, `iconForFile` for the
+  icon (its TIFF) -- started with `open -a <app> <files>`; "Other..." is what is in /Applications,
+  /Applications/Utilities, ~/Applications, /System/Applications(/Utilities). Remembered by the ending.
+- **Android, the Beam Pro** (`openwith_android.rs`): only the APK's Java may ask the PackageManager,
+  so the room is asked, over its protocol: **`spatiand_xr_v1.ask_system`** (version 11), JSON in, JSON
+  written into a descriptor -- `openers`, `all_openers`, `open_with` (the protocol's description says
+  what each answers). Elsewhere the room answers that the application asks the system itself. On the
+  Beam Pro `Shell.askSystem` queries `ACTION_VIEW` for the type (`queryIntentActivities`, the default by
+  `resolveActivity` unless that is the chooser), draws the icons into the cache, and for `open_with`
+  grants the app the file's `content://id.prasetya.spatiand.files/<path>` address to read
+  (`OpenFiles.java`, a read-only provider of shared storage and Spatiand's own folders, not exported);
+  the room then opens the app **in the room as from the launcher**, its display started with
+  `ACTION_VIEW` of that address (`ShellHelper.launch`, helper version 2), or, already open, hands it
+  the file where it is. Added to Chromium's copy of the protocol too (patch 0020).
+- **A remote's file**: to an application that takes addresses (Linux's `%u`/`%U`) its WebDAV
+  address; to any other, and always on the Mac and Android, it is fetched first into
+  `~/.cache/spatishelf/opened/<remote>/...` (a job of the tab's, with its progress) and that file is
+  opened.
+
+**Also fixed on the way**: dates were written in Greenwich's hours ("Today 09:52" for a file made at
+16:52 in Jakarta) -- now this machine's; a remote's dates written with their zone (a local disk's,
+`+07:00`) were read as Greenwich's -- now with it. A thing's picture arriving after its folder was
+listed again is put on the thing it is of (by its place, not its number).
+
+**Checked** on deepmagpie in the snapshot room (`SPATIAND_BACKEND=snapshot`, scratch HOME, XDG_* and
+`SPATIAND_APPS_CONFIG`, `SPATIAND_HMD=null SPATIAND_INPUT=off`), looking at each picture: Delete puts
+a file in the home trash (`.trashinfo` as the spec has it); Shift-Delete asks and deletes; the Trash
+place lists them with FROM and DELETED; Put back of a folder (back with what was in it) and of a file
+whose folder had been deleted meanwhile (made again); two of one name (`notes 2.txt` in the trash,
+both shown as `notes.txt`); Empty asks with the count and size and empties `files/` and `info/`. GLib
+agrees: `gio trash` from a shell put a file where SpatiShelf listed it, and `gio trash --list` (gvfs, in
+a private session bus) listed SpatiShelf's with their places. A file `gio trash`-ed from a shell
+appeared in the Trash on show by itself. Two SpatiShelf windows (two processes) on Work and on
+Work/Photos: a file dragged in the first into Photos showed in the second 1.5 s later; a file made by
+a shell command showed in both, in the first inside Photos opened in place. With the storage service
+on an alias remote: a file made in its folder showed by itself within the 15 s. Renaming: F2, a click
+in the field (caret there, the choice let go of), a drag (chose "liday.jp"), a double click (chose
+"jpeg"; `shaky:u,v,0,2`, as single steps are too slow apart to be a double click), Shift-click (from
+the choice's far end), typing over it, a click outside (renamed on disk), Escape (not renamed). Open
+with on Linux with made-up desktop entries (`%F`, `%u`, and a Flatpak-shaped `@@u %U @@` one in a
+scratch `flatpak/exports`) and a scratch `mimeapps.list`: the menu with the default marked and an
+entry's PNG icon, each started with the right arguments (`file://` addresses for `%U`, inside
+`@@u ... @@`), "always" remembered and then used by Enter, "Other..." listing the machine's applications
+with their theme icons; a remote's file given to a `%u` application as its WebDAV address and to a
+`%F` one fetched first. Unit tests: the trash (escaping, info files, local times, clashes, restore to
+a folder gone, purge, empty, sizes with links, a disk's trash and its copy, the shared `.Trash`'s
+sticky rule, mounts, Android volumes), watching (bursts, which folder a change is news for, a real
+inotify run: made, moved both ends, unwatched), the field (boundaries by halving, words, click,
+drag, double and triple, Shift, a click and a drag that come whole before a draw), Open with (globs,
+lineage, text sniffing, desktop entries, Exec field codes, a made-up machine's apps and defaults,
+the menu's order, what is remembered). Built: `cargo build --release -p spatishelf`; the room and
+every application that uses the SDK (`cargo check`); for Android with cargo-ndk (`spatiand-android`
+and the apps; the Java with `javac` against android.jar, the manifest with aapt2); the Mac pieces
+(`trash.rs`, `trash_mac.rs`, `openwith.rs`, `openwith_mac.rs`) type-checked for
+`aarch64-apple-darwin` in a scratch crate with a stand-in for the SDK.
+
+**Not checked**: anything in glasses; **the Mac at all** (Finder's trash and its Full Disk Access
+question, Launch Services, `open -a`, the icons' TIFF; the rest of SpatiShelf and the room were not
+compiled for macOS); **the Beam Pro at all** (the `.Trash-spatiand` trash, `ask_system` and
+`Shell.askSystem`, the content provider, the helper's `ACTION_VIEW`, an app opening in the room
+with a file, the room's apps window brought forward with a new file); Dolphin itself (GLib's
+reading was checked, KDE's not); a disk's own `.Trash-$uid` on a real second disk (unit-tested on
+scratch folders only); a real cloud remote's own trash; FSEvents (the Mac's watching); a folder
+changing thousands of times a second.
 
 ## 2026-10-15: from the owner's first look
 
