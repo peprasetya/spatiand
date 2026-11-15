@@ -44,7 +44,14 @@ for own in $OWN; do
       MACOSX_DEPLOYMENT_TARGET=14.0 cargo build --release -p "$own"); then
     cp "../target/release/$own" "$app/Contents/MacOS/$own"
   else
-    echo "warning: $own did not build; the app is made without it"
+    # An app without one of its programs looks whole and lacks it (as one lacked the storage
+    # service, 2026-11-14): stop, unless asked to go on without them.
+    if [ -n "${SPATIAND_PARTIAL_APP:-}" ]; then
+      echo "warning: $own did not build; the app is made without it, as asked"
+    else
+      echo "$own did not build; SPATIAND_PARTIAL_APP=1 makes the app without it" >&2
+      exit 1
+    fi
   fi
 done
 # SpatiKey's second program, built with it: the host Chrome and Firefox start for the SpatiKey
