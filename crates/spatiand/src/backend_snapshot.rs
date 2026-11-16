@@ -750,6 +750,7 @@ pub fn run(
                             match &step {
                                 Scripted::Wait(seconds) => settle = *seconds,
                                 Scripted::Thumbs(_, seconds, _) => settle = *seconds as f32 + 0.6,
+                                Scripted::Resize(.., seconds) => settle = *seconds as f32,
                                 Scripted::Window(_) | Scripted::Dump(_) => settle = 0.0,
                                 _ => {}
                             }
@@ -813,9 +814,21 @@ pub fn run(
                                 Scripted::Thumbs(dy, seconds, hover) => Some(ThumbsScroll::new(pointer_at, *dy, *seconds, *hover)),
                                 _ => None,
                             };
+                            let resize_began = std::time::Instant::now();
+                            let mut resize_last = (0, 0);
                             loop {
                                 if let Some(thumbs) = thumbs.as_mut() {
                                     thumbs.frame(&mut runtime.state, &windows);
+                                }
+                                if let Scripted::Resize(a, b, c, d, t) = &step {
+                                    let k = (resize_began.elapsed().as_secs_f64() / t.max(0.01)).min(1.0);
+                                    let size = ((a + (c - a) * k).round() as i32, (b + (d - b) * k).round() as i32);
+                                    if size != resize_last {
+                                        resize_last = size;
+                                        if let Some(window) = chosen_window(&runtime.state, &windows).map(|w| w.window.clone()) {
+                                            runtime.state.request_size(&window, size.into());
+                                        }
+                                    }
                                 }
                                 // The assistant's questions, answered as the session answers them.
                                 crate::spatikey::serve(&mut runtime.state, 0);
@@ -1795,6 +1808,9 @@ enum Scripted {
     Pad(u8, bool),
     /// The room's clipboard, read and logged.
     Clipboard,
+    /// `resize:w0,h0,w1,h1,seconds`: the window asked for a new size on every frame, from the
+    /// first to the second over that time, as the room's edge drag asks for it.
+    Resize(f64, f64, f64, f64, f64),
 }
 
 fn scripted_steps() -> Vec<Scripted> {
@@ -1822,6 +1838,7 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("pinch", [scale]) => Scripted::Pinch(*scale),
                 ("wait", [seconds]) => Scripted::Wait(*seconds as f32),
                 ("size", [w, h]) => Scripted::Size(*w as i32, *h as i32),
+                ("resize", [a, b, c, d, t]) => Scripted::Resize(*a, *b, *c, *d, *t),
                 ("key", _) => {
                     let mut held = Vec::new();
                     let mut code = None;
@@ -2223,7 +2240,7 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
         Scripted::Hold(code, down) => key_event(state, *code, *down),
         Scripted::Pad(fingers, deep) => pad_press(state, windows, *at, *fingers, *deep),
         Scripted::Clipboard => crate::control::read_clipboard(state, |line| log::info!("clipboard: {line}")),
-        Scripted::Wait(_) | Scripted::Dump(_) | Scripted::Window(_) => {}
+        Scripted::Wait(_) | Scripted::Dump(_) | Scripted::Window(_) | Scripted::Resize(..) => {}
     }
 }
 

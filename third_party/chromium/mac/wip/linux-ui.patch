@@ -25168,6 +25168,32 @@ index 337f5260b5..6fe87985b4 100644
    show_mnemonics = false;
  #endif
    return show_mnemonics;
+diff --git a/ui/views/controls/native/native_view_host.cc b/ui/views/controls/native/native_view_host.cc
+index 9a8c18843c..36719f59d2 100644
+--- a/ui/views/controls/native/native_view_host.cc
++++ b/ui/views/controls/native/native_view_host.cc
+@@ -7,6 +7,7 @@
+ #include <utility>
+ 
+ #include "base/check.h"
++#include "build/build_config.h"
+ #include "build/buildflag.h"
+ #include "ui/accessibility/ax_enums.mojom.h"
+ #include "ui/base/cursor/cursor.h"
+@@ -156,7 +157,12 @@ void NativeViewHost::Layout(PassKey) {
+   gfx::Rect vis_bounds = GetVisibleBounds();
+   bool visible = !vis_bounds.IsEmpty();
+ 
+-#if !BUILDFLAG(IS_MAC)
++// Spatiand: the Linux UI on macOS hosts web contents in Aura windows
++// (NativeViewHostAura), which clip themselves as on Linux. Without this, the
++// clip installed while the contents are resized fast (a toolbar, bookmark bar
++// or infobar animating: NativeViewHostAura::ShowWidget) was never taken off,
++// and every page of that window stayed cut to the size it had then.
++#if !BUILDFLAG(IS_MAC) || BUILDFLAG(IS_MAC_LINUX_UI)
+   if (visible && !fast_resize_) {
+     if (vis_bounds.size() != size()) {
+       // Only a portion of the Widget is really visible.
 diff --git a/ui/views/controls/native/native_view_host_aura.cc b/ui/views/controls/native/native_view_host_aura.cc
 index 369b4b05a8..9f4eb1ab51 100644
 --- a/ui/views/controls/native/native_view_host_aura.cc
