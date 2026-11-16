@@ -35,6 +35,7 @@ struct SoftGuard {
     enrolls: AtomicUsize,
     reasons: Mutex<Vec<String>>,
     notices: Mutex<Vec<String>>,
+    briefs: Mutex<Vec<String>>,
     lingers: Mutex<Vec<u64>>,
     /// No Touch ID now (the lid shut).
     no_touch: AtomicBool,
@@ -107,6 +108,10 @@ impl Guard for SoftGuard {
 
     fn notice(&self, text: &str) {
         self.notices.lock().unwrap().push(text.to_string());
+    }
+
+    fn notice_briefly(&self, text: &str) {
+        self.briefs.lock().unwrap().push(text.to_string());
     }
 }
 
@@ -574,12 +579,18 @@ fn prompts_say_what_for_and_who_asks() {
     let conn = next_conn();
     let session = open(&service, conn);
     assert_eq!(guard.last_reason(), "open SpatiKey");
+    // A card in the Mac's room while the finger is wanted, for this Mac's own asking too: macOS's
+    // panel is on its screen, which the glasses do not show.
+    assert_eq!(std::mem::take(&mut *guard.notices.lock().unwrap()), ["Touch ID on your Mac to open SpatiKey", ""]);
 
-    // From a browser on another device: both named, and a card on the Mac while the finger is wanted.
+    // From a browser on another device: both named, on the card too.
     let deck = Who { app: "Chrome".into(), device: "Steam Deck".into() };
     ask_from(&service, next_conn(), deck.clone(), Request::Open).unwrap();
     assert_eq!(guard.last_reason(), "open SpatiKey in Chrome on Steam Deck");
-    assert_eq!(*guard.notices.lock().unwrap(), vec!["open SpatiKey in Chrome on Steam Deck".to_string(), String::new()]);
+    assert_eq!(
+        std::mem::take(&mut *guard.notices.lock().unwrap()),
+        ["Touch ID on your Mac to open SpatiKey in Chrome on Steam Deck", ""]
+    );
     // SpatiMesh is Spatiand's own: not named.
     let mesh = Who { app: "SpatiMesh".into(), device: String::new() };
     ask_from(&service, next_conn(), mesh, Request::Open).unwrap();
@@ -616,12 +627,24 @@ fn prompts_say_what_for_and_who_asks() {
     open(&service, next_conn());
     assert_eq!(guard.lingers.lock().unwrap().last(), Some(&60));
 
-    // The person saying no, or no Touch ID now, opens nothing.
+    // The person saying no, or no Touch ID now, opens nothing, and the card says so as it goes.
+    guard.notices.lock().unwrap().clear();
     guard.refuse.store(true, SeqCst);
     assert_eq!(code(ask(&service, next_conn(), Request::Open)), Code::Denied);
     guard.refuse.store(false, SeqCst);
     guard.no_touch.store(true, SeqCst);
     assert_eq!(code(ask(&service, next_conn(), Request::Open)), Code::TouchIdUnavailable);
+    assert_eq!(
+        *guard.notices.lock().unwrap(),
+        ["Touch ID on your Mac to open SpatiKey", "", "Touch ID on your Mac to open SpatiKey", ""]
+    );
+    assert_eq!(*guard.briefs.lock().unwrap(), ["Did not open SpatiKey: the person said no", "Did not open SpatiKey: the lid is shut"]);
+    // What wants no finger puts no card up.
+    guard.no_touch.store(false, SeqCst);
+    guard.notices.lock().unwrap().clear();
+    answer::<ListAnswer>(ask(&service, conn, Request::List { session: session.clone() }));
+    answer::<StatusAnswer>(ask(&service, conn, Request::Status));
+    assert!(guard.notices.lock().unwrap().is_empty());
 }
 
 #[test]

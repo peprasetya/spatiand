@@ -609,6 +609,9 @@ pub fn run(
     runtime
         .state
         .set_display_stereo(std::env::var("SPATIAND_SNAPSHOT_MODE").as_deref() != Ok("flat"));
+    // Dictation's card as the steps leave it, for the frame's card.
+    let mut dictation_card = String::new();
+    stand_in_touch();
     if let Ok(command) = std::env::var("SPATIAND_CLIENT") {
         let seconds: f32 = std::env::var("SPATIAND_CLIENT_WAIT")
             .ok()
@@ -784,7 +787,13 @@ pub fn run(
                                 describing = asked;
                                 settle = settle.max(1.5);
                             }
-                            let pressed_the_card = matches!(step, Scripted::Notice) && dictation.owns_notice();
+                            // SpatiKey's card, over the others while a finger is wanted: pressed,
+                            // nothing, and nothing reaches the card under it -- as in a session.
+                            let on_spatikey = matches!(step, Scripted::Notice) && crate::spatikey::owns_notice();
+                            if on_spatikey {
+                                log::info!("notice: SpatiKey's card pressed; it does nothing");
+                            }
+                            let pressed_the_card = matches!(step, Scripted::Notice) && !on_spatikey && dictation.owns_notice();
                             if pressed_the_card {
                                 if let Some(said) = dictation.take_review() {
                                     act_scripted(&mut runtime.state, &windows, &Scripted::Type(crate::dictate::typeable(&said)), &mut pointer_at);
@@ -802,7 +811,7 @@ pub fn run(
                                     log::warn!("no window to dump to {path}");
                                 }
                             }
-                            if !pressed_the_card && !dictating {
+                            if !pressed_the_card && !dictating && !on_spatikey {
                                 act_scripted(&mut runtime.state, &windows, &step, &mut pointer_at);
                             }
                             let answered = std::time::Instant::now() + std::time::Duration::from_secs_f32(settle);
@@ -883,6 +892,7 @@ pub fn run(
                             }
                             windows = crate::scene::collect_windows(&mut renderer, &runtime.state);
                         }
+                        dictation_card = dictation.notice();
                         // Said either way, because a window still standing looks exactly like
                         // one that was never asked -- and the answer is the point of asking.
                         if asked_to_close {
@@ -1047,8 +1057,17 @@ pub fn run(
         &crate::status::line(),
         ppd,
     )?;
-    // What a drop into the room offered for installing, or what became of it.
-    scene.sync_notice(&mut renderer, &mut text, &crate::install::notice(), ppd)?;
+    // The card, chosen as a session chooses it: SpatiKey's while a finger is wanted on the Mac,
+    // else dictation's as the steps left it, the assistant's, or what a drop into the room
+    // offered for installing (or what became of it).
+    let card = crate::spatikey::notice();
+    let card = if card.is_empty() { dictation_card } else { card };
+    let card = if card.is_empty() { crate::assist::notice() } else { card };
+    let card = if card.is_empty() { crate::install::notice() } else { card };
+    if !card.is_empty() {
+        log::info!("the card says {card:?}");
+    }
+    scene.sync_notice(&mut renderer, &mut text, &card, ppd)?;
     if crate::install::take_changed() {
         crate::own::adopt(&mut shell);
     }
@@ -2347,6 +2366,86 @@ fn dump_texture(renderer: &mut GlesRenderer, tex: u32, size: (u32, u32), path: &
     image::save_buffer(path, &raw, tw as u32, th as u32, image::ColorType::Rgba8)?;
     log::info!("dumped the window ({tw}x{th}) to {path}");
     Ok(())
+}
+
+/// `SPATIAND_SNAPSHOT_TOUCH=<seconds>[,no]`: SpatiKey's service answering at the room's own
+/// socket (`SPATIKEY_SOCKET`, which then must be set) as the Mac's does -- in the room's process,
+/// its cards in this room, by the hook the Mac's guard uses -- with Touch ID stood in for by a
+/// wait of that many seconds, then a yes (or a no). The vault is a new one, in a folder of its own
+/// beside the socket, its key only in this process's memory. How the card SpatiKey shows while
+/// a finger is wanted is looked at with neither a finger nor a Mac: a program on the socket asks
+/// (`save`, `fill`, `open`), and the frame is taken while it waits, or after.
+fn stand_in_touch() {
+    use spatikey_core::service::{Guard, Me, Mode, Service};
+    use spatikey_core::vault::{TouchId, VaultKey};
+    use spatikey_core::wire::{Code, Envelope, Refusal, Request, Who};
+    use std::sync::{Arc, Mutex};
+
+    struct StandIn {
+        wait: std::time::Duration,
+        yes: bool,
+        key: Mutex<Option<VaultKey>>,
+    }
+
+    impl Guard for StandIn {
+        fn unlock(&self, reason: &str, _touch: &TouchId, _linger_secs: u64) -> Result<VaultKey, Refusal> {
+            log::info!("touch (stood in for): {reason}; answered in {:?}", self.wait);
+            std::thread::sleep(self.wait);
+            if !self.yes {
+                return Err(Refusal::new(Code::Denied, "Touch ID was cancelled"));
+            }
+            self.key.lock().unwrap().clone().ok_or_else(|| Refusal::new(Code::TouchIdUnavailable, "no key"))
+        }
+
+        fn enroll(&self, key: &VaultKey) -> Result<TouchId, Refusal> {
+            *self.key.lock().unwrap() = Some(key.clone());
+            Ok(TouchId { vault: String::new(), public: "c3RhbmQ=".into(), blob: "c3RhbmQ=".into(), wrapped: "c3RhbmQ=".into() })
+        }
+
+        fn can_touch(&self) -> bool {
+            true
+        }
+
+        fn allow_device(&self, _name: &str, _fp: &str, _code: &str) -> bool {
+            false
+        }
+
+        // As the Mac's guard says it: into the room.
+        fn notice(&self, text: &str) {
+            if let Some(room) = spatikey_core::hooks::room() {
+                room.notice(text);
+            }
+        }
+
+        fn notice_briefly(&self, text: &str) {
+            if let Some(room) = spatikey_core::hooks::room() {
+                room.notice_briefly(text);
+            }
+        }
+    }
+
+    let Ok(asked) = std::env::var("SPATIAND_SNAPSHOT_TOUCH") else { return };
+    let Some(socket) = std::env::var_os("SPATIKEY_SOCKET").map(PathBuf::from) else {
+        log::warn!("SPATIAND_SNAPSHOT_TOUCH: set SPATIKEY_SOCKET too; never the real service's socket");
+        return;
+    };
+    let mut parts = asked.split(',');
+    let seconds: f32 = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(10.0);
+    let yes = parts.next().map(str::trim) != Some("no");
+    let folder = PathBuf::from(format!("{}.vault-{}", socket.display(), std::process::id()));
+    let guard = Arc::new(StandIn { wait: std::time::Duration::from_secs_f32(seconds.max(0.0)), yes, key: Mutex::new(None) });
+    let me = Me { fp: "5e".repeat(32), name: "stand-in".into() };
+    let service = Service::new(Mode::Approver(guard), me, folder.join("apps"), folder.join("local"));
+    let setup = service.handle(1, Envelope { id: 1, who: Who::default(), request: Request::Setup { name: "stand-in".into() } });
+    if let Some(e) = setup.err {
+        log::warn!("SPATIAND_SNAPSHOT_TOUCH: no vault in {}: {}", folder.display(), e.message);
+        return;
+    }
+    // Before the room's own service is started: it leaves a socket that answers to its owner.
+    match spatikey_core::socket::serve(&socket, service) {
+        Ok(_) => log::info!("SpatiKey stood in for at {}: a touch answers {} after {seconds}s", socket.display(), if yes { "yes" } else { "no" }),
+        Err(e) => log::warn!("SPATIAND_SNAPSHOT_TOUCH: {}: {e}", socket.display()),
+    }
 }
 
 /// Two computers to draw when there is no real one to ask: one there, one asleep.

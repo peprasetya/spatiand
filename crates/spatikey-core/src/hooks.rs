@@ -15,9 +15,16 @@ pub trait Room: Send + Sync {
     /// Type into `window`. Refuses before sending any key if it cannot type all of it, or if the
     /// keyboard focus did not land on that window.
     fn type_into(&self, window: u64, steps: &[Step]) -> Result<(), String>;
-    /// A card in the room ("Touch ID on darkPhoenix to sign in to github.com"); an empty text
-    /// takes it away.
+    /// A card in the room for as long as a finger is wanted on the Mac ("Touch ID on your Mac to
+    /// sign in to github.com"), over whatever card was there; an empty text takes it away and
+    /// gives that one back.
     fn notice(&self, text: &str);
+    /// The card's last word when no finger came ("Did not save a password for github.com: Touch
+    /// ID was cancelled"): shown a few seconds, then gone by itself. Said after the card was
+    /// taken away; a room with nothing of the kind says nothing.
+    fn notice_briefly(&self, text: &str) {
+        let _ = text;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

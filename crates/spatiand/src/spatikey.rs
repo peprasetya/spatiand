@@ -20,6 +20,11 @@ const APP_ID: &str = "id.prasetya.spatiand.spatikey";
 
 /// A card says a Mac is being asked for this long at most, unless the service takes it away.
 const CARD: Duration = Duration::from_secs(120);
+/// It shows once the asking has gone on this long: a touch still covered by the one before (the
+/// setting's 60 or 300 seconds) is answered at once, and a card for one frame says nothing.
+const SHOW_AFTER: Duration = Duration::from_millis(300);
+/// The card's last word, when the finger did not come, stays this long.
+const BRIEF: Duration = Duration::from_secs(4);
 
 /// How long the service waits for the room to type what it asked.
 const ROOM_WAIT: Duration = Duration::from_secs(10);
@@ -38,7 +43,26 @@ struct TypeAsked {
 static ASKED: Mutex<Vec<TypeAsked>> = Mutex::new(Vec::new());
 /// The window the wearer was in last that is not SpatiKey's own.
 static TARGET: Mutex<Option<Target>> = Mutex::new(None);
-static NOTICE: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+static NOTICE: Mutex<Option<Card>> = Mutex::new(None);
+
+/// SpatiKey's card: a finger wanted on the Mac, or the last word when none came.
+struct Card {
+    text: String,
+    since: Instant,
+    brief: bool,
+}
+
+impl Card {
+    /// What it says `shown` after it was put up: None while it waits to show, or once it is over.
+    fn says(&self, shown: Duration) -> Option<String> {
+        let (from, until) = if self.brief { (Duration::ZERO, BRIEF) } else { (SHOW_AFTER, CARD) };
+        (shown >= from && shown < until).then(|| format!("SpatiKey\n{}", self.text))
+    }
+
+    fn over(&self, shown: Duration) -> bool {
+        shown >= if self.brief { BRIEF } else { CARD }
+    }
+}
 
 struct TheRoom;
 
@@ -54,7 +78,16 @@ impl Room for TheRoom {
     }
 
     fn notice(&self, text: &str) {
-        *NOTICE.lock().unwrap() = (!text.is_empty()).then(|| (text.to_string(), Instant::now()));
+        let mut notice = NOTICE.lock().unwrap();
+        // Taking a card away leaves the last word of another alone.
+        if text.is_empty() && notice.as_ref().is_some_and(|card| card.brief) {
+            return;
+        }
+        *notice = (!text.is_empty()).then(|| Card { text: text.to_string(), since: Instant::now(), brief: false });
+    }
+
+    fn notice_briefly(&self, text: &str) {
+        *NOTICE.lock().unwrap() = (!text.is_empty()).then(|| Card { text: text.to_string(), since: Instant::now(), brief: true });
     }
 }
 
@@ -121,6 +154,10 @@ impl Room for Desktop {
             let _ = std::process::Command::new("notify-send").args(["-a", "SpatiKey", "SpatiKey", &text]).status();
         });
     }
+
+    fn notice_briefly(&self, text: &str) {
+        self.notice(text);
+    }
 }
 
 /// The Deck's and the Beam Pro's service: everything to a paired Mac on this network, with the
@@ -153,17 +190,30 @@ fn forward() {
     }
 }
 
-/// SpatiKey's card, while a Mac is being asked.
+/// SpatiKey's card, while a finger is wanted on the Mac, and for a few seconds after one did not
+/// come; empty otherwise. **It goes over every other card** -- dictation's, the assistant's, a
+/// notification -- since someone is to touch the Mac now: each frame asks this first and the
+/// others only when it is empty, so the card it covered is back as it was once this one goes,
+/// and a press on it is nobody's ([`owns_notice`]).
+///
+/// The same in every room, the Mac's included. Never on the Mac's desktop (2D), whose screen
+/// shows macOS's own Touch ID panel: no card is drawn there.
 pub fn notice() -> String {
     let mut notice = NOTICE.lock().unwrap();
-    match notice.as_ref() {
-        Some((text, at)) if at.elapsed() < CARD => text.clone(),
-        Some(_) => {
-            *notice = None;
-            String::new()
-        }
-        None => String::new(),
+    let Some(card) = notice.as_ref() else { return String::new() };
+    let shown = card.since.elapsed();
+    if card.over(shown) {
+        *notice = None;
+        return String::new();
     }
+    card.says(shown).unwrap_or_default()
+}
+
+/// Whether the card in view is SpatiKey's. Pressed, it does nothing -- it asks for a finger on
+/// the Mac, not here -- and above all does not reach the card it covers (dictation's text typed
+/// into a terminal, a notification opened).
+pub fn owns_notice() -> bool {
+    !notice().is_empty()
 }
 
 /// Each frame: the window SpatiKey would type into kept up to date, and what it asked done.
@@ -278,6 +328,81 @@ fn describe(c: char) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn card(text: &str, brief: bool) -> Card {
+        Card { text: text.into(), since: Instant::now(), brief }
+    }
+
+    /// A finger wanted: shown only once the asking has gone on a moment, then until the service
+    /// takes it away, or two minutes at most.
+    #[test]
+    fn the_card_while_a_finger_is_wanted() {
+        let wanted = card("Touch ID on your Mac to save a password for github.com", false);
+        assert_eq!(wanted.says(Duration::from_millis(100)), None);
+        assert!(!wanted.over(Duration::from_millis(100)));
+        let says = "SpatiKey\nTouch ID on your Mac to save a password for github.com";
+        assert_eq!(wanted.says(SHOW_AFTER).as_deref(), Some(says));
+        assert_eq!(wanted.says(Duration::from_secs(119)).as_deref(), Some(says));
+        assert_eq!(wanted.says(CARD), None);
+        assert!(wanted.over(CARD));
+    }
+
+    /// The last word: at once, for a few seconds.
+    #[test]
+    fn the_last_word_when_no_finger_came() {
+        let missed = card("Did not save a password for github.com: Touch ID was cancelled", true);
+        assert!(missed.says(Duration::ZERO).is_some());
+        assert!(missed.says(BRIEF - Duration::from_millis(1)).is_some());
+        assert_eq!(missed.says(BRIEF), None);
+        assert!(missed.over(BRIEF));
+    }
+
+    /// Put up, taken away, the last word kept when the card goes after it; and over the card it
+    /// covers only while it is there. One test: the card is the process's.
+    #[test]
+    fn the_card_goes_over_the_others_and_gives_them_back() {
+        let room = TheRoom;
+        let under = || "Dictation \u{2014} type into the terminal?\nls -la".to_string();
+        // As every frame loop does: SpatiKey's first, the others only when it is empty.
+        let in_view = || {
+            let ours = notice();
+            if ours.is_empty() {
+                under()
+            } else {
+                ours
+            }
+        };
+        let back = |by: Duration| NOTICE.lock().unwrap().as_mut().unwrap().since -= by;
+        assert_eq!(in_view(), under());
+        assert!(!owns_notice());
+        room.notice("Touch ID on your Mac to open SpatiKey");
+        // Not yet: answered within the moment, it would never have shown.
+        assert_eq!(in_view(), under());
+        back(SHOW_AFTER);
+        assert_eq!(in_view(), "SpatiKey\nTouch ID on your Mac to open SpatiKey");
+        assert!(owns_notice());
+        room.notice("");
+        assert_eq!(in_view(), under());
+        assert!(!owns_notice());
+        // Refused: the card goes and the last word comes, which another card's going leaves alone.
+        room.notice("Touch ID on your Mac to open SpatiKey");
+        room.notice("");
+        room.notice_briefly("Did not open SpatiKey: Touch ID was cancelled");
+        room.notice("");
+        assert_eq!(in_view(), "SpatiKey\nDid not open SpatiKey: Touch ID was cancelled");
+        assert!(owns_notice());
+        back(BRIEF);
+        assert_eq!(in_view(), under());
+        assert!(NOTICE.lock().unwrap().is_none());
+        // A new asking takes the last word's place at once; and a card nobody took away goes by
+        // itself after two minutes.
+        room.notice_briefly("Did not open SpatiKey: Touch ID was cancelled");
+        room.notice("Touch ID on your Mac to get a code");
+        assert!(!NOTICE.lock().unwrap().as_ref().unwrap().brief);
+        back(CARD);
+        assert_eq!(in_view(), under());
+        assert!(NOTICE.lock().unwrap().is_none());
+    }
 
     /// What the room starts typing, it starts before the service stops waiting for it.
     #[test]

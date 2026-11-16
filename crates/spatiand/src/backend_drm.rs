@@ -2131,7 +2131,8 @@ pub fn run(
             // room is listening); then an application dropped into the room, offered for
             // installing; then a notification from a host's own screen, which the wearer cannot
             // see.
-            // SpatiKey's before them all while it asks a Mac: someone is to touch its sensor now.
+            // SpatiKey's before them all while a finger is wanted on the Mac: someone is to touch
+            // its sensor now. The card it covers is back as it was when it goes.
             let notice = crate::spatikey::notice();
             let notice = if notice.is_empty() { dictation.notice() } else { notice };
             let notice = if notice.is_empty() { crate::assist::notice() } else { notice };
@@ -3262,6 +3263,11 @@ pub fn run(
                             pointers.dismiss_popups(&mut runtime.state);
                         }
                         match right_aim.as_ref() {
+                            // SpatiKey's card, over the others while a finger is wanted on the
+                            // Mac: pressed, it does nothing, and nothing reaches the card under it.
+                            Some(a)
+                                if crate::spatikey::owns_notice()
+                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) => {}
                             // Dictation's card: a terminal's text waiting there is typed by
                             // pressing it (without Enter). It floats in front of everything.
                             Some(a)

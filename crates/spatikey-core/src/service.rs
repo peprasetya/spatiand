@@ -66,8 +66,13 @@ pub trait Guard: Send + Sync {
     fn can_touch(&self) -> bool;
     /// The owner's yes or no to a device that wants to ask this Mac, with the six digits both show.
     fn allow_device(&self, name: &str, fp: &str, code: &str) -> bool;
-    /// Tell the owner something (a card in the room, on the Mac's screen).
+    /// A card in the room while a finger is wanted ([`Room::notice`]); an empty text takes it
+    /// away.
     fn notice(&self, text: &str);
+    /// The card's last word when no finger came ([`Room::notice_briefly`]).
+    fn notice_briefly(&self, text: &str) {
+        let _ = text;
+    }
 }
 
 /// This machine.
@@ -122,6 +127,9 @@ pub struct Service {
     /// The titles of the entries this service has opened, by id: the prompt for an entry asked
     /// for outside a session names it before the touch that would open it.
     titles: Mutex<HashMap<String, String>>,
+    /// The cards up while a finger is wanted, oldest first, by number: the room shows the
+    /// newest, and when it goes, the one before it again. See [`Service::with_card`].
+    cards: Mutex<Vec<(u64, String)>>,
 }
 
 impl Service {
@@ -138,6 +146,7 @@ impl Service {
             host_paired: Mutex::default(),
             writing: Mutex::default(),
             titles: Mutex::default(),
+            cards: Mutex::default(),
         });
         if approver {
             sweep_in_background(Arc::downgrade(&service));
@@ -322,7 +331,7 @@ impl Service {
         }
         // Touch ID takes the key before anything is written: a cancelled panel leaves no vault.
         let key = VaultKey::random();
-        let touch = guard.enroll(&key)?;
+        let touch = self.with_card(&ByGuard(guard), "set SpatiKey up", || guard.enroll(&key), |touch| touch.as_ref().err())?;
         let vault = Vault::create_with(&self.shared, &self.local, &self.short(), &key).map_err(failed)?;
         self.enrolled(&vault, touch, name)?;
         let recovery_code = vault.set_recovery(&key).map_err(failed)?;
@@ -722,7 +731,8 @@ impl Service {
         }
         let key = vault.recover(&code).map_err(|e| refuse(Code::Denied, e))?;
         let _prompt = lock(&self.prompt);
-        let touch = guard.enroll(&key)?;
+        let touch =
+            self.with_card(&ByGuard(guard), "set Touch ID up again", || guard.enroll(&key), |touch| touch.as_ref().err())?;
         self.enrolled(&vault, touch, "")?;
         log::info!("spatikey: Touch ID set up again for vault {} from the recovery code", vault.id());
         nothing()
@@ -801,16 +811,9 @@ impl Service {
         };
         let reason = format!("{what}{}", asking(who));
         let _prompt = lock(&self.prompt);
-        // Someone asking from another device sees a card here too: the finger is wanted on this Mac.
-        let elsewhere = !who.device.is_empty();
-        if elsewhere {
-            guard.notice(&reason);
-        }
-        let key = guard.unlock(&reason, &touch, linger);
-        if elsewhere {
-            guard.notice("");
-        }
-        let key = key?;
+        // A card in the room, whoever asks: macOS's panel is on the Mac's own screen, which a
+        // wearer of the glasses does not see, whether the asking is this Mac's or another device's.
+        let key = self.with_card(&ByGuard(guard), &reason, || guard.unlock(&reason, &touch, linger), |key| key.as_ref().err())?;
         if !vault.check(&key) {
             return Err(refuse(Code::Failed, "Touch ID gave a key that does not open this vault"));
         }
@@ -985,7 +988,7 @@ impl Service {
         let opening = matches!(env.request, Request::Open);
         let closing = matches!(env.request, Request::Close { .. });
         let id = env.id;
-        let mut reply = call_showing_wait(asker, env);
+        let mut reply = self.call_showing_wait(asker, env);
         reply.id = id;
         let answered = reply.into_result();
         match &answered {
@@ -1019,7 +1022,7 @@ impl Service {
         let (room, window, _) = typing_target(window)?;
         let steps = if fields.iter().any(|&field| needs_secret(field)) {
             let reveal = Envelope { id, who, request: Request::Reveal { session, id: entry, fields: fields.clone() } };
-            let value = call_showing_wait(asker, reveal).into_result()?;
+            let value = self.call_showing_wait(asker, reveal).into_result()?;
             // Never the parser's message: it can quote what it could not read.
             let mut got: RevealAnswer =
                 serde_json::from_value(value).map_err(|_| refuse(Code::Failed, "the Mac's answer could not be read"))?;
@@ -1111,18 +1114,103 @@ fn typing_target(window: Option<u64>) -> Result<(Arc<dyn Room>, u64, String), Re
     Ok((room, window, into))
 }
 
-/// A request to the Mac, with a card in this room for as long as a finger may be wanted there:
-/// macOS asks on the Mac's own screen, which the wearer may not be looking at.
-fn call_showing_wait(asker: &Asker, env: Envelope) -> Reply {
-    let room = finger_wanted(&env.request).and_then(|what| Some((crate::hooks::room()?, what)));
-    if let Some((room, what)) = &room {
-        room.notice(&format!("Touch ID on your Mac to {what}"));
+impl Service {
+    /// A request to the Mac, with a card in this room for as long as a finger may be wanted there:
+    /// macOS asks on the Mac's own screen, which the wearer may not be looking at.
+    fn call_showing_wait(&self, asker: &Asker, env: Envelope) -> Reply {
+        match finger_wanted(&env.request) {
+            Some(what) => self.with_card(&ByRoom, &what, || asker.call(env), |reply| reply.err.as_ref()),
+            None => asker.call(env),
+        }
     }
-    let reply = asker.call(env);
-    if let Some((room, _)) = &room {
-        room.notice("");
+
+    /// `ask`, which may want a finger on the Mac for `what`, with a card saying so up while it
+    /// runs; then the card of another still waiting, if there is one, or the card taken away --
+    /// with a few seconds' word on why, when the finger did not come.
+    ///
+    /// The one way a card is put up, on every platform: on the Mac by its guard, into its own room,
+    /// for its own requests and other devices' alike; on the Deck and the Beam Pro into theirs,
+    /// for as long as the Mac is asked.
+    fn with_card<T>(&self, shows: &dyn Shows, what: &str, ask: impl FnOnce() -> T, refusal: impl FnOnce(&T) -> Option<&Refusal>) -> T {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let card = touch_card(what);
+        {
+            // Said under the lock, so that what the room shows is always the newest still waiting.
+            let mut cards = lock(&self.cards);
+            cards.push((n, card.clone()));
+            shows.show(&card);
+        }
+        let result = ask();
+        let mut cards = lock(&self.cards);
+        cards.retain(|(m, _)| *m != n);
+        match (cards.last(), refusal(&result)) {
+            (Some((_, waiting)), _) => shows.show(waiting),
+            (None, Some(refused)) if touch_missed(refused.code) => {
+                shows.show("");
+                shows.brief(&missed_card(what, &refused.message));
+            }
+            (None, _) => shows.show(""),
+        }
+        result
     }
-    reply
+}
+
+/// Who puts the card up: the Mac's guard, or this device's room.
+trait Shows {
+    fn show(&self, text: &str);
+    fn brief(&self, text: &str);
+}
+
+struct ByGuard<'a>(&'a dyn Guard);
+
+impl Shows for ByGuard<'_> {
+    fn show(&self, text: &str) {
+        self.0.notice(text);
+    }
+
+    fn brief(&self, text: &str) {
+        self.0.notice_briefly(text);
+    }
+}
+
+/// The room as it is at each word: one may come or go while the Mac is asked.
+struct ByRoom;
+
+impl Shows for ByRoom {
+    fn show(&self, text: &str) {
+        if let Some(room) = hooks::room() {
+            room.notice(text);
+        }
+    }
+
+    fn brief(&self, text: &str) {
+        if let Some(room) = hooks::room() {
+            room.notice_briefly(text);
+        }
+    }
+}
+
+/// The card while a finger is wanted for `what` ("save a password for github.com").
+pub fn touch_card(what: &str) -> String {
+    format!("Touch ID on your Mac to {what}")
+}
+
+/// Whether a refusal is the finger not coming -- cancelled, not in time, Touch ID not there --
+/// which the card's last word says; anything else is the asking program's to say.
+fn touch_missed(code: Code) -> bool {
+    matches!(code, Code::Denied | Code::Timeout | Code::TouchIdUnavailable | Code::FingerprintsChanged)
+}
+
+/// The card's last word when the finger did not come, in the refusal's own words for why.
+pub fn missed_card(what: &str, why: &str) -> String {
+    let why = shown(why);
+    if why.is_empty() {
+        format!("Did not {what}")
+    } else {
+        format!("Did not {what}: {why}")
+    }
 }
 
 /// What a request asks a finger for, in the Mac's words, if it does.
@@ -1302,6 +1390,124 @@ fn no_entry() -> Refusal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A room that writes down each word: `show:` and `brief:`.
+    #[derive(Default)]
+    struct Said(Mutex<Vec<String>>);
+
+    impl Shows for Said {
+        fn show(&self, text: &str) {
+            lock(&self.0).push(format!("show:{text}"));
+        }
+
+        fn brief(&self, text: &str) {
+            lock(&self.0).push(format!("brief:{text}"));
+        }
+    }
+
+    impl Said {
+        fn take(&self) -> Vec<String> {
+            std::mem::take(&mut *lock(&self.0))
+        }
+    }
+
+    fn service() -> Arc<Service> {
+        let place = std::env::temp_dir().join(format!("sk-cards-{}", std::process::id()));
+        let me = Me { fp: "ab".repeat(32), name: "Mac".into() };
+        let asker = Asker::new(spatiand_stream::Identity::new().unwrap(), place.join("local"), "Mac".into());
+        Service::new(Mode::Forwarder(Arc::new(asker)), me, place.join("shared"), place.join("local"))
+    }
+
+    fn refused(code: Code, why: &str) -> Result<(), Refusal> {
+        Err(Refusal::new(code, why))
+    }
+
+    #[test]
+    fn a_card_is_up_while_the_finger_is_wanted_and_then_gone() {
+        let service = service();
+        let room = Said::default();
+        let during = service.with_card(&room, "save a password for github.com", || room.take(), |_| None);
+        assert_eq!(during, ["show:Touch ID on your Mac to save a password for github.com"]);
+        assert_eq!(room.take(), ["show:"]);
+        // Answered: gone, with nothing more said.
+        let _ = service.with_card(&room, "open SpatiKey", || Ok::<_, Refusal>(()), |r| r.as_ref().err());
+        assert_eq!(room.take(), ["show:Touch ID on your Mac to open SpatiKey", "show:"]);
+    }
+
+    #[test]
+    fn a_finger_that_did_not_come_is_said_briefly_and_other_refusals_are_not() {
+        let service = service();
+        let room = Said::default();
+        let ask = |code, why: &str| {
+            let _ = service.with_card(&room, "save a password for github.com", || refused(code, why), |r| r.as_ref().err());
+            room.take()
+        };
+        assert_eq!(
+            ask(Code::Denied, "Touch ID was cancelled"),
+            [
+                "show:Touch ID on your Mac to save a password for github.com",
+                "show:",
+                "brief:Did not save a password for github.com: Touch ID was cancelled"
+            ]
+        );
+        assert_eq!(ask(Code::Timeout, "no finger was put on Touch ID in time")[2], "brief:Did not save a password for github.com: no finger was put on Touch ID in time");
+        assert_eq!(ask(Code::TouchIdUnavailable, "")[2], "brief:Did not save a password for github.com");
+        assert_eq!(ask(Code::FingerprintsChanged, "the fingers changed").len(), 3);
+        // Not the finger: the asking program says it, and the card just goes.
+        for code in [Code::NoMatch, Code::NoApprover, Code::NotReachable, Code::Failed, Code::BadRequest] {
+            assert_eq!(ask(code, "something")[1..], ["show:".to_string()], "{code:?}");
+        }
+    }
+
+    #[test]
+    fn a_card_still_waiting_comes_back_when_a_newer_one_goes() {
+        let service = service();
+        let room = Said::default();
+        // One inside the other, as two programs asking at once on a device would be.
+        service.with_card(&room, "open SpatiKey", || service.with_card(&room, "get a code", || (), |_| None), |_| None);
+        assert_eq!(
+            room.take(),
+            [
+                "show:Touch ID on your Mac to open SpatiKey",
+                "show:Touch ID on your Mac to get a code",
+                "show:Touch ID on your Mac to open SpatiKey",
+                "show:"
+            ]
+        );
+        // The older answered first: the newer's card stays up, and when it goes unanswered, that
+        // is said.
+        let (finish, finished) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|scope| {
+            let mut newer = None;
+            fn wait(finished: std::sync::mpsc::Receiver<()>) -> Result<(), Refusal> {
+                let _ = finished.recv();
+                refused(Code::Timeout, "no finger was put on Touch ID in time")
+            }
+            service.with_card(
+                &room,
+                "open SpatiKey",
+                || {
+                    newer = Some(scope.spawn(|| service.with_card(&room, "get a code", || wait(finished), |r| r.as_ref().err())));
+                    while lock(&service.cards).len() < 2 {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                },
+                |_| None,
+            );
+            assert_eq!(
+                room.take(),
+                [
+                    "show:Touch ID on your Mac to open SpatiKey",
+                    "show:Touch ID on your Mac to get a code",
+                    "show:Touch ID on your Mac to get a code"
+                ]
+            );
+            finish.send(()).unwrap();
+            let _ = newer.unwrap().join();
+        });
+        assert_eq!(room.take(), ["show:", "brief:Did not get a code: no finger was put on Touch ID in time"]);
+        assert!(lock(&service.cards).is_empty());
+    }
 
     #[test]
     fn a_prompt_names_who_asks_but_not_spatiands_own() {

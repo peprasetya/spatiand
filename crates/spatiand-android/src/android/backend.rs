@@ -1208,7 +1208,9 @@ pub fn run(
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
             // Dictation's card first (a terminal's text waiting to be typed, or that the room is
             // listening), then this machine's own notification, or failing one, a host's.
-            // SpatiKey's first while it asks a Mac: someone is to touch its sensor now.
+            // SpatiKey's first while a finger is wanted on the Mac (this Mac's own asking too, in
+            // its room): someone is to touch its sensor now. The card it covers is back as it was
+            // when it goes.
             let said = crate::spatikey::notice();
             let said = if said.is_empty() { dictation.notice() } else { said };
             let said = if said.is_empty() { crate::assist::notice() } else { said };
@@ -1798,7 +1800,10 @@ pub fn run(
                     // is its alone.
                     if right_click && !right_was_down && !shell.menu_is_open() {
                         if right_aim.as_ref().is_some_and(|a| scene.notice_hit(&a.ray, orientation)) {
-                            if dictation.owns_notice() {
+                            if crate::spatikey::owns_notice() {
+                                // SpatiKey's card, over the others while a finger is wanted on
+                                // the Mac: pressed, nothing, and nothing reaches the card under it.
+                            } else if dictation.owns_notice() {
                                 if let Some(said) = dictation.take_review() {
                                     type_text(&mut runtime.state, &mut shell, &said, time_ms);
                                 }

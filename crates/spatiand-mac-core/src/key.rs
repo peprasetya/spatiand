@@ -139,13 +139,23 @@ impl Guard for MacGuard {
         }
     }
 
-    /// A card in the room when it is up. Not the app's: a notice asks nothing, and on the Mac's
-    /// own screen the Touch ID panel already says what is asked.
+    /// A card in the room, for this Mac's own asking and other devices' alike: in the glasses the
+    /// Mac's screens are not seen, and macOS's Touch ID panel is on one of them. Not the app's
+    /// banner: a notice asks nothing, and on the Mac's own desktop (2D) the panel already says
+    /// what is asked -- the room draws its card only in the glasses. The room is there once the
+    /// glasses have been on in this run of the app.
     fn notice(&self, text: &str) {
         match hooks::room() {
             Some(room) => room.notice(text),
             None if !text.is_empty() => log::info!("spatikey: {text}"),
             None => {}
+        }
+    }
+
+    fn notice_briefly(&self, text: &str) {
+        match hooks::room() {
+            Some(room) => room.notice_briefly(text),
+            None => log::info!("spatikey: {text}"),
         }
     }
 }
@@ -489,14 +499,81 @@ mod tests {
             fn notice(&self, text: &str) {
                 self.0.lock().unwrap().push(text.into());
             }
+            fn notice_briefly(&self, text: &str) {
+                self.0.lock().unwrap().push(format!("briefly: {text}"));
+            }
         }
         let _one = lock(&ONE_AT_A_TIME);
         let room = Arc::new(Room(Mutex::new(Vec::new())));
         hooks::set_room(Some(room.clone()));
-        MacGuard.notice("Touch ID on darkPhoenix to sign in to github.com");
+        MacGuard.notice("Touch ID on your Mac to sign in to github.com");
+        MacGuard.notice_briefly("Did not sign in to github.com: Touch ID was cancelled");
         hooks::set_room(None);
         MacGuard.notice("only logged");
-        assert_eq!(*room.0.lock().unwrap(), ["Touch ID on darkPhoenix to sign in to github.com"]);
+        MacGuard.notice_briefly("only logged");
+        assert_eq!(
+            *room.0.lock().unwrap(),
+            ["Touch ID on your Mac to sign in to github.com", "briefly: Did not sign in to github.com: Touch ID was cancelled"]
+        );
+    }
+
+    /// The whole way on this Mac: its own program asks, the service asks the app for a finger,
+    /// and the room's card is up for as long as the app takes to answer, then taken away -- or,
+    /// with no finger, the last word said.
+    #[test]
+    fn this_macs_own_asking_shows_a_card_in_the_room() {
+        struct Room(Mutex<Vec<String>>);
+        impl hooks::Room for Room {
+            fn target(&self) -> Option<hooks::Target> {
+                None
+            }
+            fn type_into(&self, _window: u64, _steps: &[hooks::Step]) -> Result<(), String> {
+                Err("no".into())
+            }
+            fn notice(&self, text: &str) {
+                self.0.lock().unwrap().push(text.into());
+            }
+            fn notice_briefly(&self, text: &str) {
+                self.0.lock().unwrap().push(format!("briefly: {text}"));
+            }
+        }
+        /// Touch ID that says no, after the room has been looked at: the card is up meanwhile.
+        extern "C" fn refusing(_user: *mut c_void, id: u64, what: i32, _json: *const c_char) {
+            let answer = match what {
+                3 => json!({ "ok": true }),
+                _ => json!({ "error": "denied", "message": "Touch ID was cancelled" }),
+            };
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                let text = CString::new(answer.to_string()).unwrap();
+                unsafe { sp_key_answer(id, text.as_ptr()) };
+            });
+        }
+        let place = std::env::temp_dir().join(format!("sk-mac-card-{}", std::process::id()));
+        let (shared, local) = (place.join("apps/spatikey"), place.join("local/spatikey"));
+        let (vault, _key) = spatikey_core::vault::Vault::create(&shared, &local, "0b8dfc23").unwrap();
+        vault.set_touch_id(&touch()).unwrap();
+        let me = Me { fp: "ab".repeat(32), name: "darkPhoenix".into() };
+        let service = Service::new(Mode::Approver(Arc::new(MacGuard)), me, shared, local);
+        let room = Arc::new(Room(Mutex::new(Vec::new())));
+        let asked = with_app(Some(refusing), || {
+            hooks::set_room(Some(room.clone()));
+            let who = spatikey_core::wire::Who { app: "SpatiMesh".into(), device: String::new() };
+            let request = spatikey_core::wire::Request::Fill { origin: "https://github.com".into() };
+            let reply = service.handle(1, spatikey_core::wire::Envelope { id: 1, who, request });
+            hooks::set_room(None);
+            reply
+        });
+        let _ = std::fs::remove_dir_all(&place);
+        assert_eq!(asked.err.map(|e| e.code), Some(Code::Denied));
+        assert_eq!(
+            *room.0.lock().unwrap(),
+            [
+                "Touch ID on your Mac to fill in your password for github.com",
+                "",
+                "briefly: Did not fill in your password for github.com: Touch ID was cancelled"
+            ]
+        );
     }
 }
 

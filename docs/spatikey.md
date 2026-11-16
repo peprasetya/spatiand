@@ -301,12 +301,60 @@ first piece and before each one after, and types nothing more when it is not.
 
 `SpatiKeyGuard.swift` holds the Secure Enclave key and asks for Touch ID; the service in
 `spatiand-mac-core` calls it through one callback and takes the answer back (`sp_key_start`,
-`sp_key_answer`), the pattern of `SP_DESCRIBE`. A request from another device shows a card in the
-Mac's room ("Touch ID on darkPhoenix to sign in to github.com"), and the device that asked shows
-its own card for as long as its request is out ("Touch ID on your Mac to add a passkey for
-github.com"), whoever on it asked: the browser, SpatiKey's window or the room's typing. When the
-glasses are on the Mac, macOS's own Touch ID panel is brought into the room as a "macOS asks"
-window.
+`sp_key_answer`), the pattern of `SP_DESCRIBE`. When the glasses are on the Mac, macOS's own
+Touch ID panel is meant to be brought into the room as a "macOS asks" window; the owner found it
+staying on the Mac's virtual screen, out of sight (2026-11-16), which is why the card below is
+there whoever asks.
+
+## The card while a finger is wanted
+
+Asked for on 2026-11-16: "I do not see the dialog that needs the Touch ID. It shows in the virtual
+screen, out of my awareness... such a dialog should be shown in the glasses... even if I use
+Deck/Beam Pro... But I do not want it to conflict with other features."
+
+**Whenever SpatiKey waits for a finger on the Mac, the room the wearer is in shows a card saying
+so**: "SpatiKey / Touch ID on your Mac to save a password for github.com". The same on every
+platform, from one piece of code:
+
+* **What it says, and when** is spatikey-core's (`Service::with_card`): the Mac's service puts it
+  up through its guard around every Touch ID prompt -- unlocking and enrolling, for this Mac's own
+  programs and for other devices' ("... to open SpatiKey in Chrome on Steam Deck") -- and the Deck's
+  and the Beam Pro's forwarding service around every request to the Mac that may want a finger
+  (`finger_wanted`). It goes when the answer comes. If the finger did not come -- cancelled, not in
+  time, Touch ID not there, the fingers changed -- the card's last word says so for four seconds
+  ("Did not save a password for github.com: Touch ID was cancelled"); any other refusal is the
+  asking program's to say. Two requests waiting at once on a device: the newer's card, then the
+  older's again when the newer is answered.
+* **How it is shown** is the room's (`crates/spatiand/src/spatikey.rs`, compiled into the Deck's,
+  the Beam Pro's and the Mac's room alike): it shows once the asking has gone on 0.3 s (a touch
+  still covered by the one before is answered at once, and a card for a frame says nothing), for
+  two minutes at most. **It goes over every other card** -- dictation's, the assistant's, the
+  Mac's or the phone's notifications, a host's -- and, since each frame asks SpatiKey first and
+  the others only when it is empty, the card it covered is back as it was once it goes. A press on
+  it does nothing and reaches nothing under it (`owns_notice`): dictation's text is not typed into
+  a terminal, a notification is not opened. It takes no focus and no input.
+* **The Mac's desktop (2D) shows no card**: the room draws it only in the glasses, and on the
+  desktop macOS's own panel is in view. The Mac's room has the card once the glasses have been on
+  in that run of the app (the room sets the hook on its first frame). On the Deck's desktop session
+  (`desktop_service`) the card and its last word are the desktop's notifications.
+
+**Why the Mac's room showed nothing before**: the Mac's service put a card up only for a request
+*from another device* (`unlock_lingering`'s `elsewhere`). A request from the Mac itself -- SpatiMesh
+saving a password, SpatiKey's window opening -- was taken to be seen in macOS's panel on the Mac's
+screen, which in the glasses is not seen.
+
+Looked at in the snapshot room with `SPATIAND_SNAPSHOT_TOUCH=<seconds>[,no]`: SpatiKey's service in
+the room's process as the Mac runs it, at `SPATIKEY_SOCKET`, with a new vault and Touch ID stood in
+for by a wait that then says yes (or no); a program on the socket asks, and the frame is taken while
+it waits or after.
+
+Checked on 2026-11-16, in deepmagpie's (the Deck's) and littleotter's (the Mac's) snapshot rooms with
+SpatiQuill and dictation into it: the card over dictation's waiting text, a press on it typing
+nothing; dictation's card back once the touch was answered, and a press then typing its text; the
+last word after a "no". Unit tests for what the card says and when, two cards at once, the Mac's
+own asking through the app's callback, and the room's timing. Not checked: a real Touch ID panel,
+the glasses themselves, the Deck and the Beam Pro asking a real Mac (the Beam Pro's room is the same
+code, type-checked).
 
 ## What was built, and what was checked (2026-10-29)
 
