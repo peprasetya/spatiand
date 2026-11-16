@@ -19,7 +19,7 @@ mod widgets;
 
 pub use icons::{coverage as icon_coverage, draw as draw_icon, Icon};
 pub use paint::{Painter, Texture};
-pub use widgets::{Button, Field, Grid, List, Row, Shape, Strip, Tabs, Tile, Typed};
+pub use widgets::{Button, Confirm, Field, Grid, List, Row, Shape, Strip, Tabs, Tile, Typed};
 
 use crate::{Event, Key, Modifiers};
 

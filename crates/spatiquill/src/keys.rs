@@ -5,7 +5,9 @@ use spatiand_app::{Key, Modifiers};
 
 /// The right Control key's evdev code. On a Mac the room tells either Command key to its
 /// clients as this key (`crates/spatiand-mac/src/mac/ffi.rs`, `Command`), so a chord made with
-/// it is a Mac's Command chord; elsewhere it is simply the right Control.
+/// it is a Mac's Command chord; elsewhere it is simply the right Control. The SDK says it is
+/// held as `Modifiers::command`, which is what the chords here are read with.
+#[cfg(test)]
 pub const RIGHT_CONTROL: u32 = 97;
 
 /// What a key chord does with the clipboard (the owner, 2026-11-14: "use the cmd/ctrl c / v
@@ -46,6 +48,39 @@ pub fn clip(letter: Option<char>, m: Modifiers, right_control: bool, alternate: 
         ('c', false, true) => Clip::CopyElseKey,
         ('v', false, true) if !alternate => Clip::Paste,
         _ => Clip::Key,
+    }
+}
+
+/// A chord for SpatiQuill's tabs (the owner, 2026-11-16: "add cmd/ctrl T and W for new tab
+/// and close tab").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabChord {
+    New,
+    Close,
+}
+
+/// Which tab chord a key is, if any. `alternate` is a full-screen program on the terminal's
+/// other screen. Quitting is the SDK's (`Event::Quit`; SpatiQuill keeps the left Control-Q).
+///
+/// * Command-T and -W (the right Control's, as a Mac's Command reaches the terminal),
+///   Control-Shift-T and -W, and the logo key's: always the tab's -- never the program's.
+/// * The left Control's T: a new tab at a shell's prompt and whatever runs on the main screen;
+///   a full-screen program (nano's ^T, vim's tag stack) gets its Control-T, as it gets its
+///   Control-V. Readline's transpose (and fzf's file finder) on Control-T are given up for it.
+/// * The left Control's W is the program's: readline's and every shell's word rubout, vim's
+///   window chord. A tab is closed with Command-W or Control-Shift-W.
+/// * Alt held with any of them: the program's chord.
+pub fn tab_chord(letter: Option<char>, m: Modifiers, alternate: bool) -> Option<TabChord> {
+    let letter @ ('t' | 'w') = letter?.to_ascii_lowercase() else { return None };
+    if m.alt {
+        return None;
+    }
+    let command = m.logo || m.command || (m.control && m.shift);
+    match (letter, command, m.control) {
+        ('t', true, _) => Some(TabChord::New),
+        ('w', true, _) => Some(TabChord::Close),
+        ('t', false, true) if !alternate => Some(TabChord::New),
+        _ => None,
     }
 }
 
@@ -200,7 +235,51 @@ mod tests {
     }
 
     fn held(shift: bool, control: bool, alt: bool, logo: bool) -> Modifiers {
-        Modifiers { shift, control, alt, logo }
+        Modifiers { shift, control, alt, logo, command: false }
+    }
+
+    /// Control held by the right Control key: a Mac's Command.
+    fn command() -> Modifiers {
+        Modifiers { control: true, command: true, ..Modifiers::default() }
+    }
+
+    #[test]
+    fn command_t_and_w_are_always_the_tabs() {
+        for alternate in [false, true] {
+            assert_eq!(tab_chord(Some('t'), command(), alternate), Some(TabChord::New));
+            assert_eq!(tab_chord(Some('w'), command(), alternate), Some(TabChord::Close));
+            assert_eq!(tab_chord(Some('T'), held(true, true, false, false), alternate), Some(TabChord::New));
+            assert_eq!(tab_chord(Some('w'), held(true, true, false, false), alternate), Some(TabChord::Close));
+            assert_eq!(tab_chord(Some('w'), held(false, false, false, true), alternate), Some(TabChord::Close));
+        }
+    }
+
+    #[test]
+    fn the_left_control_w_rubs_out_a_word() {
+        let ctrl = held(false, true, false, false);
+        for alternate in [false, true] {
+            assert_eq!(tab_chord(Some('w'), ctrl, alternate), None);
+        }
+        // What the program is sent for it: 0x17, readline's unix-word-rubout.
+        assert_eq!(bytes(15, 17, "w", false, true, false, false), [0x17]);
+    }
+
+    #[test]
+    fn the_left_control_t_opens_a_tab_but_not_over_a_full_screen_program() {
+        let ctrl = held(false, true, false, false);
+        assert_eq!(tab_chord(Some('t'), ctrl, false), Some(TabChord::New));
+        assert_eq!(tab_chord(Some('t'), ctrl, true), None);
+        assert_eq!(bytes(15, 20, "t", false, true, false, false), [0x14]);
+    }
+
+    #[test]
+    fn what_is_no_tab_chord_goes_on() {
+        assert_eq!(tab_chord(Some('t'), Modifiers::default(), false), None);
+        assert_eq!(tab_chord(Some('w'), held(true, false, false, false), false), None);
+        assert_eq!(tab_chord(Some('t'), held(false, true, true, false), false), None);
+        assert_eq!(tab_chord(Some('w'), Modifiers { alt: true, ..command() }, false), None);
+        assert_eq!(tab_chord(Some('q'), command(), false), None);
+        assert_eq!(tab_chord(None, command(), false), None);
     }
 
     #[test]

@@ -1105,9 +1105,12 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for Wire {
             wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
                 state.keyboard.keymap(fd, size);
             }
-            wl_keyboard::Event::Enter { surface, serial, .. } => {
+            wl_keyboard::Event::Enter { surface, serial, keys } => {
                 state.serial = serial;
                 state.keyboard_on = state.ids.get(&surface).copied();
+                // What is already down: a Command still held from the window before.
+                let down: Vec<u32> = keys.chunks_exact(4).map(|k| u32::from_ne_bytes([k[0], k[1], k[2], k[3]])).collect();
+                state.keyboard.entered(&down);
                 if let Some(window) = state.keyboard_on {
                     state.events.push(Event::Focus { window, focused: true });
                 }

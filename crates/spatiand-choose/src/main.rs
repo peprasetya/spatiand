@@ -470,7 +470,8 @@ fn run(ask: Ask) -> Result<Option<Vec<PathBuf>>, String> {
             // (which shows it) comes from the first, which is not input.
             dirty = true;
             match &event {
-                Event::CloseRequested { .. } => return Ok(None),
+                // Closed, or Command-Q or Control-Q (the SDK's): quitting a chooser is its Cancel.
+                Event::CloseRequested { .. } | Event::Quit { .. } => return Ok(None),
                 Event::Resized { width, height, .. } => app.resize(window, (*width, *height)),
                 _ => {}
             }

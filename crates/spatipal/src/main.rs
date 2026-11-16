@@ -591,7 +591,10 @@ impl Pal {
                 self.size = ((*width).max(900), (*height).max(600));
                 self.app.resize(id, self.size);
             }
-            Event::CloseRequested { .. } => {
+            // Closed, or Command-Q or Control-Q (the SDK's `Event::Quit`): the same. Quitting is
+            // the window's: the room's assistant, switched on in its settings, is not stopped by
+            // a key -- switching it off is.
+            Event::CloseRequested { .. } | Event::Quit { .. } => {
                 self.close_window();
                 // Switched on, it stays: its ears and reminders need no window. Otherwise closing
                 // its window is how it is shut down.

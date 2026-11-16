@@ -838,6 +838,12 @@ impl Edit {
         });
     }
 
+    /// Something typed that is not saved: a field that says other than it did when the editor
+    /// opened (a new login's fields were empty).
+    pub fn changed(&self) -> bool {
+        self.fields.iter().zip(&self.first).any(|(field, first)| field.text != *first)
+    }
+
     /// The entry as the fields have it, or why it cannot be kept.
     fn entry(&self) -> Result<Entry, String> {
         let mut entry = self.original.clone().unwrap_or_default();
@@ -1104,6 +1110,21 @@ fn next(choices: &[u64], now: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_edit_is_unsaved_once_a_field_says_otherwise() {
+        let mut edit = Edit::new();
+        assert!(!edit.changed());
+        edit.fields[TITLE].set("GitHub");
+        assert!(edit.changed());
+        let entry = Entry { title: "GitHub".into(), username: "me".into(), ..Entry::default() };
+        let mut edit = Edit::of(entry);
+        assert!(!edit.changed());
+        edit.fields[TITLE].set("GitHub!");
+        assert!(edit.changed());
+        edit.fields[TITLE].set("GitHub");
+        assert!(!edit.changed());
+    }
 
     fn summary(title: &str, kind: Kind) -> Summary {
         Summary { id: title.to_lowercase(), kind, title: title.into(), ..Summary::default() }

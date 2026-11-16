@@ -282,7 +282,9 @@ impl Loupe {
 
     fn handle(&mut self, event: Event) -> bool {
         match &event {
-            Event::CloseRequested { .. } => return false,
+            // Closed, or Command-Q or Control-Q (the SDK's `Event::Quit`): SpatiLoupe has nothing
+            // to keep, and goes.
+            Event::CloseRequested { .. } | Event::Quit { .. } => return false,
             Event::Ready { .. } => {
                 self.ready = true;
                 // A picture, a page or an object zooms when pinched; the window stays as it is.

@@ -136,6 +136,11 @@ pub struct Modifiers {
     pub control: bool,
     pub alt: bool,
     pub logo: bool,
+    /// Control held by the **right** Control key: a Mac's Command, which its room hands to its
+    /// clients as the right Control (evdev 97), and on any other keyboard the right Control.
+    /// `control` is set as well. An application's own chords (new tab, close tab) go on it
+    /// where the left Control's are a program's (a terminal's Control-W).
+    pub command: bool,
 }
 
 /// Something the compositor or the wearer did.
@@ -157,6 +162,12 @@ pub enum Event {
     Resized { window: WindowId, width: u32, height: u32 },
     /// The wearer closed a window. It stays until the application closes it.
     CloseRequested { window: WindowId },
+    /// The wearer asked the application to quit, in this window: Command-Q, Control-Q
+    /// (Control-Shift-Q where the application keeps Control-Q, [`App::keep_control_q`]). It
+    /// comes instead of the key. All of the application's windows close and it ends -- after
+    /// asking, in this window, where something would be lost (a program running, a copy not
+    /// done, an edit not saved); a chooser cancels. The same on every platform.
+    Quit { window: WindowId },
     /// The compositor would like the window's next picture: the answer to [`App::ask_frame`].
     Frame { window: WindowId, time_ms: u32 },
     /// Where the pointer is, in the window's own pixels from its top left.
@@ -206,6 +217,7 @@ impl Event {
             Event::Ready { window, .. }
             | Event::Resized { window, .. }
             | Event::CloseRequested { window }
+            | Event::Quit { window }
             | Event::Frame { window, .. }
             | Event::PointerMoved { window, .. }
             | Event::PointerLeft { window }
@@ -272,6 +284,13 @@ impl App {
 
     pub fn mode(&self) -> Mode {
         self.wire.mode
+    }
+
+    /// The left Control's Q is the application's own key and not [`Event::Quit`]: for a
+    /// terminal, whose programs have Control-Q (XON, readline's quoted-insert). Command-Q and
+    /// Control-Shift-Q quit still.
+    pub fn keep_control_q(&mut self, kept: bool) {
+        self.wire.keyboard.control_q_kept = kept;
     }
 
     /// Whether this is Spatiand's room at all, and not a desktop the application was started

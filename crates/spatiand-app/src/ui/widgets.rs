@@ -1275,6 +1275,97 @@ impl Button {
     }
 }
 
+// --- a question ---
+
+/// A question over a window, answered yes or no: "Close this tab? sleep is still running in
+/// it." The pane floats over everything, the window dimmed behind it; while it is up the
+/// application gives it all of the input. Return answers with the button lit (the yes, to
+/// begin with), Escape is no, the arrows and Tab go between the two, the pointer presses
+/// either.
+#[derive(Debug)]
+pub struct Confirm {
+    pub text: String,
+    yes_label: String,
+    no_label: String,
+    yes: Button,
+    no: Button,
+    on_yes: bool,
+}
+
+impl Confirm {
+    pub fn new(text: impl Into<String>, yes: impl Into<String>, no: impl Into<String>) -> Confirm {
+        Confirm { text: text.into(), yes_label: yes.into(), no_label: no.into(), yes: Button::default(), no: Button::default(), on_yes: true }
+    }
+
+    /// Drawn over `all`, the whole window.
+    pub fn draw(&mut self, p: &mut Painter, gl: &Gl, all: Rect) {
+        let em = theme::ROW_EM * 0.8;
+        let w = (all.w - 48.0).min(820.0);
+        let (_, text_h) = p.measure_left(gl, &self.text, em, w - 56.0);
+        let h = 28.0 + text_h + 28.0 + Button::HEIGHT + 28.0;
+        let pane = Rect::new(all.x + (all.w - w) * 0.5, all.y + (all.h * 0.36 - h * 0.5).max(24.0), w, h);
+        p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
+        p.fill(gl, pane, 24.0, theme::ground());
+        super::look::glass(p, gl, pane, 24.0, 1.0);
+        let mut inner = pane.inset(28.0);
+        p.text_left(gl, &self.text, inner.x, inner.y, em, inner.w, theme::ink());
+        let mut buttons = inner.take_bottom(Button::HEIGHT);
+        let bw = |p: &mut Painter, label: &str| Button::width(p, gl, label).max(180.0);
+        let (yes_w, no_w) = (bw(p, &self.yes_label), bw(p, &self.no_label));
+        self.yes.focused = self.on_yes;
+        self.no.focused = !self.on_yes;
+        self.yes.draw(p, gl, Rect { x: buttons.right() - yes_w, w: yes_w, ..buttons }, &self.yes_label);
+        buttons.w -= yes_w + 12.0;
+        self.no.draw(p, gl, Rect { x: buttons.right() - no_w, w: no_w, ..buttons }, &self.no_label);
+    }
+
+    /// `Some(true)` for yes, `Some(false)` for no, `None` while it is still being asked.
+    pub fn input(&mut self, input: &Input) -> Option<bool> {
+        if let Input::Key { key, .. } = input {
+            match key {
+                Key::Escape => return Some(false),
+                // Return only: a space typed on into a terminal as the question came up is no answer.
+                Key::Enter => return Some(self.on_yes),
+                // Two buttons: either way, and Tab or Shift-Tab, is the other one.
+                Key::Left | Key::Right | Key::Up | Key::Down | Key::Tab => self.on_yes = !self.on_yes,
+                _ => {}
+            }
+            return None;
+        }
+        if self.yes.input(input) {
+            return Some(true);
+        }
+        if self.no.input(input) {
+            return Some(false);
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod confirm_tests {
+    use super::*;
+    use crate::Modifiers;
+
+    fn key(key: Key) -> Input {
+        Input::Key { key, text: None, modifiers: Modifiers::default() }
+    }
+
+    #[test]
+    fn return_is_yes_escape_is_no() {
+        let mut c = Confirm::new("Close this tab?", "Close", "Cancel");
+        assert_eq!(c.input(&key(Key::Char('x'))), None);
+        assert_eq!(c.input(&key(Key::Space)), None);
+        assert_eq!(c.input(&key(Key::Enter)), Some(true));
+        assert_eq!(c.input(&key(Key::Escape)), Some(false));
+        // Over to the no: Return is no.
+        assert_eq!(c.input(&key(Key::Left)), None);
+        assert_eq!(c.input(&key(Key::Enter)), Some(false));
+        assert_eq!(c.input(&key(Key::Tab)), None);
+        assert_eq!(c.input(&key(Key::Enter)), Some(true));
+    }
+}
+
 #[cfg(test)]
 mod field_tests {
     use super::*;

@@ -33,7 +33,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use spatiand_app::ui::{draw_icon, look as room, theme, Button, Field, Icon, Input, List, Painter, Rect, Row, Texture, Typed};
+use spatiand_app::ui::{draw_icon, look as room, theme, Button, Confirm, Field, Icon, Input, List, Painter, Rect, Row, Texture, Typed};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 use spatiand_storage::{Remote, Storage};
 
@@ -175,6 +175,10 @@ struct ShelfTab {
     land_on: Option<String>,
     /// Things being done, by their number: what, how far.
     doing: HashMap<u64, (String, u64, u64)>,
+    /// What was asked of the tab that takes time (a copy, a move, a deletion), by its number,
+    /// until it is done -- from when it was asked, before the first word of how far it is:
+    /// closing the tab, or quitting, stops it part way, so asks first.
+    unfinished: HashMap<u64, &'static str>,
     stale: Vec<Texture>,
     /// The folders the tab was last told to watch: the one on show and those opened in it.
     watching: Vec<Place>,
@@ -219,6 +223,7 @@ impl ShelfTab {
             filter: String::new(),
             land_on: None,
             doing: HashMap::new(),
+            unfinished: HashMap::new(),
             stale: Vec::new(),
             watching: Vec::new(),
             polled: Instant::now(),
@@ -230,6 +235,21 @@ impl ShelfTab {
     fn tell(&mut self, m: &ToTab) {
         if self.crashed.is_none() {
             let _ = proto::send(&mut self.stdin, &proto::encode_to_tab(m));
+            if let ToTab::Do { id, op } = m {
+                let what = match op {
+                    Op::Copy { .. } => Some("a copy"),
+                    Op::Move { .. } => Some("a move"),
+                    Op::Trash(_) => Some("a move to the Trash"),
+                    Op::Delete(_) => Some("a deletion"),
+                    Op::Restore(_) => Some("a putting back from the Trash"),
+                    Op::EmptyTrash => Some("emptying the Trash"),
+                    Op::Fetch { .. } => Some("a download"),
+                    Op::Rename { .. } | Op::Mkdir { .. } => None,
+                };
+                if let Some(what) = what {
+                    self.unfinished.insert(*id, what);
+                }
+            }
         }
     }
 
@@ -387,7 +407,8 @@ enum Overlay {
     None,
     Menu { at: (f32, f32), list: List, entries: Vec<(Row, Action)> },
     Ask { what: Asking, field: Field, ok: Button, cancel: Button },
-    Confirm { text: String, action: Action, ok: Button, cancel: Button },
+    /// A question (the SDK's, as every Spatiand application asks), and what a yes does.
+    Confirm { confirm: Confirm, action: Action },
     Network { connect: Button, close: Button },
     About { close: Button },
     Setup(Box<Setup>),
@@ -442,6 +463,10 @@ enum Action {
     Sort(SortBy),
     SetView(View),
     TerminalHere,
+    /// The tab at this place on the bar closed (after asking, if something is being done in it).
+    CloseTab(usize),
+    /// SpatiShelf quits (after asking, if something is being done).
+    Quit,
 }
 
 struct Shelf {
@@ -498,6 +523,14 @@ struct Shelf {
     incoming: Option<hand::Incoming>,
     /// What "Open with" knows and remembers (`opening.rs`).
     opening: opening::Opening,
+    /// Quitting was asked for and agreed to: the loop ends.
+    quitting: bool,
+}
+
+/// "a copy" as a sentence begins it.
+fn capital(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
 }
 
 #[derive(Clone)]
@@ -607,8 +640,59 @@ impl Shelf {
         }
     }
 
-    fn close_tab(&mut self, at: usize) {
+    /// What is being done in these tabs that closing them would stop part way, as a sentence
+    /// begins: "A copy is", "A copy and a move are", "3 things are".
+    fn unfinished_in(tabs: &[&ShelfTab]) -> Option<String> {
+        let mut words: Vec<&str> = tabs.iter().flat_map(|t| t.unfinished.values().copied()).collect();
+        let count = words.len();
+        words.sort();
+        words.dedup();
+        let said = match (count, words.as_slice()) {
+            (0, _) => return None,
+            (1, [one]) => format!("{one} is"),
+            (2, [a, b]) => format!("{a} and {b} are"),
+            (n, _) => format!("{n} things are"),
+        };
+        Some(capital(&said))
+    }
+
+    /// Close the tab at `at` -- the last one closes the window, which is SpatiShelf -- asking
+    /// first when something is being done in it.
+    fn ask_close_tab(&mut self, at: usize) {
+        if at >= self.tabs.len() {
+            return;
+        }
         if self.tabs.len() <= 1 {
+            if !self.ask_quit() {
+                self.quitting = true;
+            }
+            return;
+        }
+        match Self::unfinished_in(&[&self.tabs[at]]) {
+            Some(what) => {
+                let text = format!("Close this tab? {what} still going in it, and closing the tab stops it part way.");
+                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Close", "Cancel"), action: Action::CloseTab(at) };
+            }
+            None => self.close_tab(at),
+        }
+    }
+
+    /// Command-Q, Control-Q, the window closed: SpatiShelf ends with all its tabs -- after
+    /// asking, when a copy or a move is still going. `true` while it asks.
+    fn ask_quit(&mut self) -> bool {
+        if matches!(self.overlay, Overlay::Confirm { action: Action::Quit, .. }) {
+            return true;
+        }
+        let tabs: Vec<&ShelfTab> = self.tabs.iter().collect();
+        let Some(what) = Self::unfinished_in(&tabs) else { return false };
+        let text = format!("Quit SpatiShelf? {what} still going, and quitting stops it part way.");
+        log::info!("asking before quitting: {what} still going");
+        self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Quit", "Cancel"), action: Action::Quit };
+        true
+    }
+
+    fn close_tab(&mut self, at: usize) {
+        if self.tabs.len() <= 1 || at >= self.tabs.len() {
             return;
         }
         let mut tab = self.tabs.remove(at);
@@ -715,6 +799,7 @@ impl Shelf {
                     }
                     FromTab::Done { id, error } => {
                         tab.doing.remove(&id);
+                        tab.unfinished.remove(&id);
                         finished.push((id, error));
                     }
                     _ => {}
@@ -730,6 +815,8 @@ impl Shelf {
                     Err(e) => e.to_string(),
                 };
                 tab.crashed = Some(why);
+                // Whatever it was doing went with it.
+                tab.unfinished.clear();
             }
         }
         for t in listed {
@@ -901,7 +988,7 @@ impl Shelf {
                     Some(bin) => format!("Delete {what}? It goes to {bin}, not to this machine's Trash."),
                     None => format!("Delete {what} for good? This cannot be undone."),
                 };
-                self.overlay = Overlay::Confirm { text, action: Action::Delete, ok: Button::default(), cancel: Button::default() };
+                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::Delete };
             }
             Action::Restore => {
                 let chosen: Vec<Place> = self.tab().chosen().into_iter().filter(|p| matches!(p, Place::Local(_))).collect();
@@ -933,7 +1020,7 @@ impl Shelf {
                 }
                 let items = if count == 1 { "the 1 item".to_string() } else { format!("all {count} items") };
                 let text = format!("Empty the Trash? {} in it ({}) will be deleted for good. This cannot be undone.", capitalised(&items), look::size(size));
-                self.overlay = Overlay::Confirm { text, action: Action::EmptyTrash, ok: Button::default(), cancel: Button::default() };
+                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::EmptyTrash };
             }
             Action::CopyPath => {
                 let text = self.tab().chosen().iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
@@ -1004,8 +1091,14 @@ impl Shelf {
                 }
             }
             Action::About => self.overlay = Overlay::About { close: Button::default() },
+            Action::CloseTab(at) => self.ask_close_tab(at),
+            Action::Quit => {
+                if !self.ask_quit() {
+                    self.quitting = true;
+                }
+            }
             Action::Forget(name) => {
-                self.overlay = Overlay::Confirm { text: format!("Forget the remote {name}? Its files are not touched; only SpatiShelf's way to them goes."), action: Action::Forget(name), ok: Button::default(), cancel: Button::default() };
+                self.overlay = Overlay::Confirm { confirm: Confirm::new(format!("Forget the remote {name}? Its files are not touched; only SpatiShelf's way to them goes."), "Yes", "No"), action: Action::Forget(name) };
             }
         }
     }
@@ -1025,6 +1118,8 @@ impl Shelf {
                 self.say("Emptying the Trash\u{2026}");
                 self.tab().tell(&ToTab::Do { id, op: Op::EmptyTrash });
             }
+            Action::CloseTab(at) => self.close_tab(at),
+            Action::Quit => self.quitting = true,
             Action::Forget(name) => {
                 if let Some(storage) = self.storage.clone() {
                     self.jobs.send(Box::new(move || {
@@ -1104,7 +1199,13 @@ impl Shelf {
     fn handle(&mut self, event: Event) -> bool {
         self.dirty = true;
         match &event {
-            Event::CloseRequested { .. } => return false,
+            // Closed, or Command-Q or Control-Q (`Event::Quit`, the SDK's): all of SpatiShelf
+            // goes, its tabs with it.
+            Event::CloseRequested { .. } | Event::Quit { .. } => {
+                self.drag = None;
+                self.press = None;
+                return self.ask_quit();
+            }
             Event::Describe { window } => {
                 let description = self.description();
                 self.app().describe(*window, &description);
@@ -1209,15 +1310,15 @@ impl Shelf {
                 }
                 return;
             }
-            Overlay::Confirm { action, ok, cancel, .. } => {
-                if cancel.input(&input) || matches!(input, Input::Key { key: Key::Escape, .. }) {
-                    self.overlay = Overlay::None;
-                    return;
-                }
-                if ok.input(&input) || matches!(input, Input::Key { key: Key::Enter, .. }) {
-                    let action = action.clone();
-                    self.overlay = Overlay::None;
-                    self.confirmed(action);
+            Overlay::Confirm { confirm, action } => {
+                match confirm.input(&input) {
+                    Some(true) => {
+                        let action = action.clone();
+                        self.overlay = Overlay::None;
+                        self.confirmed(action);
+                    }
+                    Some(false) => self.overlay = Overlay::None,
+                    None => {}
                 }
                 return;
             }
@@ -1336,7 +1437,7 @@ impl Shelf {
         if let Input::Press { pressed: true, .. } = input {
             if let Some(at) = self.placed_tabs.iter().position(|(r, _)| r.contains(x, y)) {
                 if self.placed_tabs[at].1.inset(-6.0).contains(x, y) && self.tabs.len() > 1 {
-                    self.close_tab(at);
+                    self.ask_close_tab(at);
                 } else {
                     self.active = at;
                 }
@@ -1466,7 +1567,7 @@ impl Shelf {
                 }
                 Some('w') => {
                     let at = self.active;
-                    self.close_tab(at);
+                    self.ask_close_tab(at);
                 }
                 Some('c') => self.act(Action::Copy),
                 Some('x') => self.act(Action::Cut),
@@ -2108,18 +2209,7 @@ impl Shelf {
                 buttons.w -= w + 12.0;
                 cancel.draw(p, gl, Rect { x: buttons.right() - w, w, ..buttons }, "Cancel");
             }
-            Overlay::Confirm { text, ok, cancel, .. } => {
-                let pane = Rect::new(all.w * 0.5 - 400.0, all.h * 0.32, 800.0, 240.0);
-                p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
-                room::glass(p, gl, pane, 24.0, 1.0);
-                let mut inner = pane.inset(28.0);
-                p.text(gl, text, inner.x, inner.y, theme::ROW_EM * 0.8, inner.w, theme::ink());
-                let mut buttons = inner.take_bottom(Button::HEIGHT);
-                let w = 200.0;
-                ok.draw(p, gl, Rect { x: buttons.right() - w, w, ..buttons }, "Yes");
-                buttons.w -= w + 12.0;
-                cancel.draw(p, gl, Rect { x: buttons.right() - w, w, ..buttons }, "No");
-            }
+            Overlay::Confirm { confirm, .. } => confirm.draw(p, gl, all),
             Overlay::Network { connect, close } => {
                 let pane = Rect::new(all.w * 0.5 - 460.0, all.h * 0.22, 920.0, 440.0);
                 p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
@@ -2175,7 +2265,8 @@ impl Shelf {
             let animating = self.tabs.iter().any(|t| matches!(t.state, State::Loading(_)) || !t.doing.is_empty()) || self.waiting();
             let wait = if animating { 33 } else { 250 };
             for event in self.app().wait(Some(Duration::from_millis(wait)))? {
-                if !self.handle(event) {
+                if !self.handle(event) || self.quitting {
+                    log::info!("quit");
                     return Ok(());
                 }
             }
@@ -2423,6 +2514,7 @@ fn main() {
             menu_at: (0.0, 0.0),
             incoming: None,
             opening: opening::Opening::new(),
+            quitting: false,
         };
         shelf.rebuild_side();
         let tab = ShelfTab::spawn(start)?;

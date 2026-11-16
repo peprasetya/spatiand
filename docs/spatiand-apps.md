@@ -691,3 +691,89 @@ sent nothing without one; Control-Shift-C/V; the right button opened the menu an
 its Copy, Paste and Select all did theirs; a program asking for the mouse got the right button as
 SGR reports. **Not checked**: Command on a real Mac (the room's mapping is unit-tested there, not
 driven here), the Beam Pro.
+
+## 2026-11-16: new tab, close tab and quit, in every Spatiand app
+
+The owner: "SpatiQuill... add cmd/ctrl T and W for new tab and close tab. and cmd/ctrl-Q to quit for
+all spatiand-app". The same code on the Deck, other Linux, the Beam Pro and the Mac; Command is the
+right Control there (evdev 97, as the Mac's room hands it to its clients), and on a Deck's or phone's
+keyboard the right Control is that Command.
+
+**In the SDK, once** (`crates/spatiand-app`): `Modifiers::command` -- Control held by the right
+Control key -- is tracked by the SDK's keyboard (its press and release, `wl_keyboard.enter`'s keys,
+cleared on leave), so an application no longer follows key 97 itself. **Quitting is the SDK's**:
+`keys::quits` turns the chord into `Event::Quit { window }`, which comes instead of the key and is
+not repeated when held:
+
+| Keys | Quits |
+|---|---|
+| Command-Q (right Control-Q), logo-Q | always |
+| Control-Q (left Control) | yes, unless the application keeps it (`App::keep_control_q`) |
+| Control-Shift-Q | always |
+| anything with Alt | never |
+
+Each application says what quitting is for it (all its windows and tabs go; it asks first where
+something would be lost). The question is the SDK's `ui::Confirm`: a pane over the dimmed window,
+Return answers the lit button (the yes, to begin with), Escape is no, the arrows and Tab go between
+them, the pointer presses either; Space does nothing (a space typed on into a terminal as the
+question appeared was a yes). Another Quit or close while it is up is ignored.
+
+| Application | Quit (and the window's close, the same) |
+|---|---|
+| SpatiQuill | Command-Q and Control-Shift-Q (its left Control-Q is the program's: XON, readline's quoted-insert). All windows and tabs; asks when a program runs in any tab |
+| SpatiShelf | all its tabs (each a process) go; asks when a copy, move, deletion, trash or download is not done ("A copy is still going, and quitting stops it part way") |
+| SpatiKey | locked and closed (the session ended with the service, as the window's close did); asks when the editor holds changes not saved |
+| SpatiPal | its window closes; switched on as the room's assistant, the process stays, listening, as when its window is closed -- quitting the assistant is switching it off in its settings. Off, it ends |
+| SpatiReel | ends; a film playing keeps its place first, as on closing |
+| SpatiLoupe | ends |
+| the chooser (`spatiand-choose`) | Quit is Cancel |
+
+**New tab and close tab** (`crates/spatiquill/src/keys.rs`, `keys::tab_chord`):
+
+| Keys | SpatiQuill |
+|---|---|
+| Command-T (right Control-T), Control-Shift-T, logo-T | a new tab, always |
+| Control-T (left Control) | a new tab at a shell's prompt and whatever runs on the main screen; a full-screen program (the other screen: nano's ^T, vim's tag stack) gets its Control-T, as it gets Control-V |
+| Command-W, Control-Shift-W, logo-W | closes the tab, always |
+| Control-W (left Control) | **the program's**: the shell's word rubout (0x17), used all the time; never closes a tab |
+| anything with Alt | the program's |
+
+The left Control-T was taken for a new tab, as asked, and costs readline's transpose-chars and fzf's
+Control-T file finder at a prompt; inside full-screen programs it stays theirs. Closing a tab -- by
+key or by its close mark -- with a program running in it beyond the idle shell asks first, as
+Terminal on a Mac does ("Close this tab? sleep is still running in it, and closing the tab ends
+it."); so does closing a window (the room's close) whose tabs run programs, and quitting. What counts
+is found from the processes under the tab's shell (`proc::running`: `/proc` on Linux and Android,
+`proc_listchildpids` on the Mac, where `login` stands between the tab and the shell): any child of
+the shell, or the shell replaced by a program (`exec`); a tmux or screen client and powerlevel10k's
+`gitstatusd` do not count (the session goes on without them). A question about a tab whose shell
+then exits goes with it. The last tab closed closes the window, and the last window SpatiQuill.
+
+SpatiShelf had Control-T and Control-W already (either Control, so Command too; its keys are no
+program's). Now Control-W asks when a job is still going in that tab, and on the last tab closes the
+window -- SpatiShelf -- with the quit's question, as Finder's Command-W does. Its questions (delete,
+empty the trash, forget a remote, and these) are the SDK's `Confirm` now: one look in every app.
+SpatiShelf counts an operation as unfinished from when it is asked, before its first word of how far
+it is, until the tab says it is done.
+
+**Checked** on deepmagpie in the snapshot room (scratch HOME, XDG_* and `SPATIAND_APPS_CONFIG`,
+`SPATIAND_HMD=null SPATIAND_INPUT=off`; every picture looked at): SpatiQuill -- Control-T,
+Command-T, Control-Shift-T made four tabs, Control-W did not close one, Command-W and
+Control-Shift-W closed two; `echo hello world` and Control-W at bash's prompt ran `echo hello`; a
+raw-mode reader on the main screen got 0x17 for Control-W and 0x11 for Control-Q, and on the other
+screen 0x14 for Control-T as well; Command-T opened a tab over it; an idle tab closed without asking;
+with `sleep 100` running Command-W asked, Escape kept it, the close mark asked, Control-Shift-W and
+Return closed it and, the last tab, the window and SpatiQuill, with no `sleep` left; Command-Q and
+Control-Shift-Q asked with `sleep` running in another tab, Return quit; idle, Command-Q and
+Control-Shift-Q quit at once and the left Control-Q did nothing. SpatiShelf -- Control-T, Command-T,
+Control-W, Command-W; Control-Q and Command-Q quit; a copy held open (from a FIFO) made Control-Q ask
+"A copy is still going", Control-W on its tab ask "Close this tab?" (an idle tab beside it closed
+without asking), and Command-W on it as the last tab ask the quit's question; Return quit.
+SpatiLoupe, SpatiReel, SpatiPal (assistant off) -- Control-Q and Command-Q each quit; SpatiPal
+switched on -- Command-Q closed the window and the process stayed until the room went. SpatiKey
+(`--demo`) -- in a new login with a title typed, Control-Q asked, Escape went back to the editor as
+it was, Command-Q and Return quit; with nothing typed Command-Q quit at once. The chooser --
+Control-Q and Command-Q each cancelled (exit status 1). **Not checked**: Command on a real Mac and
+the Beam Pro (the same code; the apps type-checked for Android, SpatiQuill -- whose `proc_listchildpids`
+is the Mac's own -- for aarch64-apple-darwin), a real copy of a large file (the FIFO stands in for one), SpatiKey
+against the real service (the demo stand-in answers `close`).

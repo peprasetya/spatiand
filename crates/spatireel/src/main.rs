@@ -441,6 +441,9 @@ impl Reel {
     fn handle(&mut self, event: Event) -> bool {
         match &event {
             Event::CloseRequested { window } if *window == self.window => return false,
+            // Command-Q or Control-Q (the SDK's), from the window or a film's sky: SpatiReel
+            // goes, keeping the film's place first as when it is closed (`run`).
+            Event::Quit { .. } => return false,
             // The film's own surface was closed: the film is over.
             Event::CloseRequested { .. } => self.stop(false),
             Event::Ready { window, .. } if *window == self.window => self.ready = true,

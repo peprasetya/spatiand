@@ -19,6 +19,12 @@ pub(crate) struct Keyboard {
     delay: Duration,
     /// The key being held, and when it next repeats.
     held: Option<(u32, Instant)>,
+    /// The right Control key is down: a Mac's Command, as its room hands either Command key to
+    /// its clients (`crates/spatiand-mac/src/mac/ffi.rs`), and the right Control elsewhere.
+    right_control: bool,
+    /// The left Control's Q is the application's, not a quit: a terminal's (XON, readline's
+    /// quoted-insert). See [`quits`].
+    pub(crate) control_q_kept: bool,
 }
 
 impl Default for Keyboard {
@@ -32,6 +38,8 @@ impl Default for Keyboard {
             rate: 25,
             delay: Duration::from_millis(400),
             held: None,
+            right_control: false,
+            control_q_kept: false,
         }
     }
 }
@@ -59,7 +67,8 @@ impl Keyboard {
     pub(crate) fn held_modifiers(&self) -> Modifiers {
         let Some(state) = self.state.as_ref() else { return Modifiers::default() };
         let on = |name: &str| state.mod_name_is_active(name, xkb::STATE_MODS_DEPRESSED) || state.mod_name_is_active(name, xkb::STATE_MODS_LATCHED);
-        Modifiers { shift: on(xkb::MOD_NAME_SHIFT), control: on(xkb::MOD_NAME_CTRL), alt: on(xkb::MOD_NAME_ALT), logo: on(xkb::MOD_NAME_LOGO) }
+        let control = on(xkb::MOD_NAME_CTRL);
+        Modifiers { shift: on(xkb::MOD_NAME_SHIFT), control, alt: on(xkb::MOD_NAME_ALT), logo: on(xkb::MOD_NAME_LOGO), command: control && self.right_control }
     }
 
     pub(crate) fn repeat_info(&mut self, rate: i32, delay: i32) {
@@ -70,6 +79,12 @@ impl Keyboard {
     /// Focus has gone: nothing is held any more, whatever the hand is doing.
     pub(crate) fn let_go(&mut self) {
         self.held = None;
+        self.right_control = false;
+    }
+
+    /// Focus has come, with these keys already down (`wl_keyboard.enter`).
+    pub(crate) fn entered(&mut self, down: &[u32]) {
+        self.right_control = down.contains(&RIGHT_CONTROL);
     }
 
     fn event(&self, code: u32, pressed: bool, repeat: bool, window: WindowId) -> Event {
@@ -80,11 +95,13 @@ impl Keyboard {
             // An evdev code, eight short of the keymap's own numbering.
             let keycode = xkb::Keycode::new(code + 8);
             let on = |name: &str| state.mod_name_is_active(name, xkb::STATE_MODS_EFFECTIVE);
+            let control = on(xkb::MOD_NAME_CTRL);
             modifiers = Modifiers {
                 shift: on(xkb::MOD_NAME_SHIFT),
-                control: on(xkb::MOD_NAME_CTRL),
+                control,
                 alt: on(xkb::MOD_NAME_ALT),
                 logo: on(xkb::MOD_NAME_LOGO),
+                command: control && self.right_control,
             };
             key = named(state.key_get_one_sym(keycode));
             if pressed && !modifiers.control && !modifiers.logo {
@@ -100,7 +117,20 @@ impl Keyboard {
     }
 
     pub(crate) fn key(&mut self, code: u32, pressed: bool, window: WindowId, events: &mut Vec<Event>) {
-        events.push(self.event(code, pressed, false, window));
+        if code == RIGHT_CONTROL {
+            self.right_control = pressed;
+        }
+        let event = self.event(code, pressed, false, window);
+        // Quitting is the room's one chord for every application (`quits`): it comes as
+        // `Event::Quit` and not as the key, and is not repeated for being held.
+        if let Event::Key { key, pressed: true, modifiers, .. } = &event {
+            if quits(*key, *modifiers, self.control_q_kept) {
+                events.push(Event::Quit { window });
+                self.held = None;
+                return;
+            }
+        }
+        events.push(event);
         let repeats = self
             .state
             .as_ref()
@@ -130,6 +160,26 @@ impl Keyboard {
     }
 }
 
+/// The right Control key's evdev code: the key a Mac's room hands either Command key to its
+/// clients as.
+pub(crate) const RIGHT_CONTROL: u32 = 97;
+
+/// Whether a key pressed with these held quits the application (the owner, 2026-11-16:
+/// "cmd/ctrl-Q to quit for all spatiand-app"):
+///
+/// * Command-Q -- the right Control's Q, as a Mac's Command reaches its clients -- always;
+///   the logo key's Q too, where a keyboard's Super reaches the application.
+/// * Control-Q (the left Control): unless the application keeps it for itself
+///   ([`crate::App::keep_control_q`]: a terminal, whose programs have it as XON or
+///   quoted-insert), and then Control-Shift-Q.
+/// * Never with Alt held: a chord of its own.
+pub(crate) fn quits(key: Key, m: Modifiers, control_q_kept: bool) -> bool {
+    if key != Key::Char('q') || m.alt {
+        return false;
+    }
+    m.command || m.logo || (m.control && (m.shift || !control_q_kept))
+}
+
 fn named(sym: xkb::Keysym) -> Key {
     use xkb::Keysym as S;
     match sym {
@@ -151,6 +201,58 @@ fn named(sym: xkb::Keysym) -> Key {
             Some(c) if !c.is_control() => Key::Char(c.to_lowercase().next().unwrap_or(c)),
             _ => Key::Other,
         },
+    }
+}
+
+#[cfg(test)]
+mod quit_tests {
+    use super::*;
+
+    fn held(shift: bool, control: bool, alt: bool, logo: bool, command: bool) -> Modifiers {
+        Modifiers { shift, control, alt, logo, command }
+    }
+
+    #[test]
+    fn control_q_and_command_q_quit() {
+        let q = Key::Char('q');
+        // The left Control, the right (a Mac's Command), Control-Shift, the logo key.
+        assert!(quits(q, held(false, true, false, false, false), false));
+        assert!(quits(q, held(false, true, false, false, true), false));
+        assert!(quits(q, held(true, true, false, false, false), false));
+        assert!(quits(q, held(false, false, false, true, false), false));
+        // A plain Q, a Shift-Q, an Alt chord, another letter: no.
+        assert!(!quits(q, Modifiers::default(), false));
+        assert!(!quits(q, held(true, false, false, false, false), false));
+        assert!(!quits(q, held(false, true, true, false, false), false));
+        assert!(!quits(q, held(false, true, true, false, true), false));
+        assert!(!quits(Key::Char('w'), held(false, true, false, false, true), false));
+    }
+
+    #[test]
+    fn a_terminal_keeps_the_left_control_q() {
+        let q = Key::Char('q');
+        // Its program has Control-Q (XON, quoted-insert) ...
+        assert!(!quits(q, held(false, true, false, false, false), true));
+        // ... and Command-Q, Control-Shift-Q and the logo key's Q still quit.
+        assert!(quits(q, held(false, true, false, false, true), true));
+        assert!(quits(q, held(true, true, false, false, false), true));
+        assert!(quits(q, held(false, false, false, true, false), true));
+    }
+
+    #[test]
+    fn the_quit_chord_comes_as_quit_and_once() {
+        let mut keyboard = Keyboard::default();
+        let mut events = Vec::new();
+        // No keymap: the keys have no letters, and nothing quits.
+        keyboard.key(16, true, WindowId(1), &mut events);
+        assert!(matches!(events[0], Event::Key { .. }));
+        assert!(!keyboard.right_control);
+        keyboard.key(RIGHT_CONTROL, true, WindowId(1), &mut events);
+        assert!(keyboard.right_control);
+        keyboard.let_go();
+        assert!(!keyboard.right_control);
+        keyboard.entered(&[RIGHT_CONTROL]);
+        assert!(keyboard.right_control);
     }
 }
 
@@ -203,5 +305,39 @@ mod tests {
         assert_eq!(typed(&keyboard, 16).1.as_deref(), Some("@"));
         keyboard.modifiers(0, 0, 0, 0);
         assert!(!keyboard.held_modifiers().shift);
+    }
+
+    #[test]
+    fn command_q_is_a_quit_and_the_right_control_is_command() {
+        let Some(mut keyboard) = keyboard() else {
+            eprintln!("no XKB data on this machine; nothing to check");
+            return;
+        };
+        let mut events = Vec::new();
+        // The right Control down (Control is mod index 2), then Q (evdev 16).
+        keyboard.key(RIGHT_CONTROL, true, WindowId(1), &mut events);
+        keyboard.modifiers(1 << 2, 0, 0, 0);
+        assert!(keyboard.held_modifiers().command);
+        events.clear();
+        keyboard.key(16, true, WindowId(1), &mut events);
+        assert_eq!(events, vec![Event::Quit { window: WindowId(1) }]);
+        // Held, it does not quit again and again.
+        assert!(keyboard.next_repeat().is_none());
+        keyboard.key(16, false, WindowId(1), &mut events);
+        // The right Control let go of, the left one's Q quits too -- unless it is kept.
+        keyboard.key(RIGHT_CONTROL, false, WindowId(1), &mut events);
+        assert!(!keyboard.held_modifiers().command);
+        events.clear();
+        keyboard.key(16, true, WindowId(1), &mut events);
+        assert_eq!(events, vec![Event::Quit { window: WindowId(1) }]);
+        keyboard.control_q_kept = true;
+        events.clear();
+        keyboard.key(16, true, WindowId(1), &mut events);
+        assert!(matches!(&events[..], [Event::Key { key: Key::Char('q'), modifiers: Modifiers { control: true, command: false, .. }, .. }]));
+        // Another letter with Command is the application's key, Command and all.
+        keyboard.key(RIGHT_CONTROL, true, WindowId(1), &mut events);
+        events.clear();
+        keyboard.key(17, true, WindowId(1), &mut events);
+        assert!(matches!(&events[..], [Event::Key { key: Key::Char('w'), modifiers: Modifiers { control: true, command: true, .. }, .. }]));
     }
 }

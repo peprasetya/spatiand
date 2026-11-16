@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{look, theme, Input, List, Painter, Rect, Row};
+use spatiand_app::ui::{look, theme, Confirm, Input, List, Painter, Rect, Row};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 
 use grid::Grid;
@@ -126,6 +126,17 @@ struct Win {
     plus: Rect,
     last_click: Option<(Instant, (u16, u16))>,
     menu: Option<Menu>,
+    /// A question over the window, and what a yes to it does: closing what has programs
+    /// running in it asks first, as Terminal on a Mac does.
+    asking: Option<(Confirm, Closing)>,
+}
+
+/// What is closed once a question is answered yes.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Closing {
+    Tab(u64),
+    Window,
+    Quit,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -150,8 +161,6 @@ struct Quill {
     /// on another SpatiQuill window straight after, it was dropped there; if not, it becomes
     /// a window of its own.
     in_flight: Option<(u64, WindowId, Instant)>,
-    /// The right Control key is held: on a Mac, a Command key (see `keys::clip`).
-    right_control: bool,
     typed_at: Instant,
     /// The text's size has changed: the cells are measured again before the next drawing.
     resize_text: bool,
@@ -241,6 +250,7 @@ impl Quill {
             plus: Rect::default(),
             last_click: None,
             menu: None,
+            asking: None,
         });
         id
     }
@@ -310,6 +320,52 @@ impl Quill {
             }
         }
         self.close_empty_windows();
+    }
+
+    /// The programs running in these tabs beyond their shells (`proc::running`).
+    fn running_in(&self, tabs: &[u64]) -> Vec<String> {
+        tabs.iter().filter_map(|t| self.tabs.get(t)).filter(|t| matches!(t.state, TabState::Running)).flat_map(|t| proc::running(t.child.id() as i32)).collect()
+    }
+
+    /// Close a tab, a window or everything -- asking first, in `window`, when a program is
+    /// running in what would close, as Terminal on a Mac does. `false` when SpatiQuill is to end.
+    fn ask_close(&mut self, window: WindowId, closing: Closing) -> bool {
+        let Some(w) = self.win_index(window) else { return true };
+        let tabs: Vec<u64> = match closing {
+            Closing::Tab(tab) => vec![tab],
+            Closing::Window => self.wins[w].tabs.clone(),
+            Closing::Quit => self.wins.iter().flat_map(|w| w.tabs.clone()).collect(),
+        };
+        let running = self.running_in(&tabs);
+        if running.is_empty() {
+            return self.close(window, closing);
+        }
+        let names = proc::listed(&running);
+        let (text, yes) = match closing {
+            Closing::Tab(_) => (format!("Close this tab? {names} is still running in it, and closing the tab ends it."), "Close"),
+            Closing::Window => (format!("Close this window? {names} is still running in its tabs, and closing the window ends it."), "Close"),
+            Closing::Quit => (format!("Quit SpatiQuill? {names} is still running, and quitting ends it."), "Quit"),
+        };
+        log::info!("asking before {closing:?}: {names} running");
+        self.wins[w].menu = None;
+        self.wins[w].asking = Some((Confirm::new(text, yes, "Cancel"), closing));
+        true
+    }
+
+    /// Close without asking. `false` when nothing is left and SpatiQuill is to end.
+    fn close(&mut self, window: WindowId, closing: Closing) -> bool {
+        match closing {
+            Closing::Tab(tab) => self.close_tab(tab),
+            Closing::Window => self.close_window(window),
+            Closing::Quit => {
+                log::info!("quit");
+                let all: Vec<WindowId> = self.wins.iter().map(|w| w.id).collect();
+                for id in all {
+                    self.close_window(id);
+                }
+            }
+        }
+        !self.wins.is_empty()
     }
 
     fn close_empty_windows(&mut self) {
@@ -413,9 +469,15 @@ impl Quill {
                 self.app.copy_text(text);
             }
         }
-        // A shell that has finished takes its tab with it, as in every terminal.
+        // A shell that has finished takes its tab with it, as in every terminal, and a question
+        // about closing that tab with it.
         for id in ended {
             self.close_tab(id);
+            for win in &mut self.wins {
+                if matches!(win.asking, Some((_, Closing::Tab(t))) if t == id) {
+                    win.asking = None;
+                }
+            }
         }
     }
 
@@ -457,13 +519,29 @@ impl Quill {
             self.wins.iter_mut().for_each(|w| w.dirty = true);
             return true;
         }
-        // The right Control, held or let go: on a Mac, a Command key (see `keys::clip`).
-        if let Event::Key { code: keys::RIGHT_CONTROL, pressed, .. } = event {
-            self.right_control = pressed;
-        }
         let Some(id) = event.window() else { return true };
         let Some(w) = self.win_index(id) else { return true };
         self.wins[w].dirty = true;
+        // A question over the window has its input until it is answered; it stays through
+        // another Quit, or another close.
+        if self.wins[w].asking.is_some() {
+            if matches!(event, Event::Quit { .. } | Event::CloseRequested { .. }) {
+                return true;
+            }
+            if matches!(event, Event::Key { .. } | Event::Button { .. } | Event::Scroll { .. } | Event::PointerMoved { .. } | Event::PointerLeft { .. } | Event::Pinch { .. }) {
+                if let Event::PointerMoved { x, y, .. } = event {
+                    self.wins[w].pointer = (x, y);
+                }
+                let answer = Input::of(&event, 1.0).and_then(|input| self.wins[w].asking.as_mut().and_then(|(c, _)| c.input(&input)));
+                if let Some(yes) = answer {
+                    let (_, closing) = self.wins[w].asking.take().unwrap();
+                    if yes {
+                        return self.close(id, closing);
+                    }
+                }
+                return true;
+            }
+        }
         if self.wins[w].menu.is_some() && self.menu_input(w, &event) {
             return true;
         }
@@ -478,17 +556,12 @@ impl Quill {
                 self.app.resize(id, size);
                 self.size_tabs();
             }
-            Event::CloseRequested { .. } => {
-                self.close_window(id);
-                if self.wins.is_empty() {
-                    return false;
-                }
-            }
+            Event::CloseRequested { .. } => return self.ask_close(id, Closing::Window),
+            // Command-Q, or Control-Shift-Q: the left Control-Q is the program's (`main`).
+            Event::Quit { .. } => return self.ask_close(id, Closing::Quit),
             Event::Focus { focused, .. } => {
                 self.wins[w].focused = focused;
                 if !focused {
-                    // The keys went elsewhere: nothing is held here any more.
-                    self.right_control = false;
                     self.wins[w].menu = None;
                 }
                 if let Some(tab) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
@@ -620,7 +693,10 @@ impl Quill {
                     }
                     self.wins[w].drag = Some(Drag { tab, from: (x, y), at: (x, y), moved: false, torn: false });
                 }
-                Hover::Close(tab) => self.close_tab(tab),
+                Hover::Close(tab) => {
+                    let id = self.wins[w].id;
+                    self.ask_close(id, Closing::Tab(tab));
+                }
                 Hover::Plus => {
                     if let Some(tab) = self.new_tab() {
                         let win = &mut self.wins[w];
@@ -764,7 +840,7 @@ impl Quill {
         // Mac (its Command comes as the right Control). See `keys::clip` for which is which.
         let alternate = self.active_tab(w).and_then(|t| self.tabs.get(&t)).is_some_and(|t| t.screen.alternate);
         let mut copy_first = false;
-        match keys::clip(letter, m, self.right_control, alternate) {
+        match keys::clip(letter, m, m.command, alternate) {
             keys::Clip::Copy => {
                 if let Some(t) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
                     t.tell(&ToTab::Copy);
@@ -780,23 +856,29 @@ impl Quill {
             keys::Clip::CopyElseKey => copy_first = true,
             keys::Clip::Key => {}
         }
+        // New tab and close tab: Command-T and -W, Control-Shift-T and -W, and the left
+        // Control-T where no full-screen program has it. See `keys::tab_chord`.
+        match keys::tab_chord(letter, m, alternate) {
+            Some(keys::TabChord::New) => {
+                if let Some(tab) = self.new_tab() {
+                    let win = &mut self.wins[w];
+                    let at = (win.active + 1).min(win.tabs.len());
+                    win.tabs.insert(at, tab);
+                    win.active = at;
+                    self.size_tabs();
+                }
+                return;
+            }
+            Some(keys::TabChord::Close) => {
+                if let Some(tab) = self.active_tab(w) {
+                    self.ask_close(id, Closing::Tab(tab));
+                }
+                return;
+            }
+            None => {}
+        }
         if command {
             match (letter, key) {
-                (Some('t'), _) => {
-                    if let Some(tab) = self.new_tab() {
-                        let win = &mut self.wins[w];
-                        win.tabs.insert(win.active + 1, tab);
-                        win.active += 1;
-                        self.size_tabs();
-                    }
-                    return;
-                }
-                (Some('w'), _) => {
-                    if let Some(tab) = self.active_tab(w) {
-                        self.close_tab(tab);
-                    }
-                    return;
-                }
                 (Some('n'), _) => {
                     self.new_window();
                     return;
@@ -1043,6 +1125,9 @@ impl Quill {
                     let rows: Vec<Row> = menu.items.iter().map(|(r, _)| r.clone()).collect();
                     menu.list.draw(p, gl, rect.inset(10.0), &rows);
                 }
+                if let Some((confirm, _)) = win.asking.as_mut() {
+                    confirm.draw(p, gl, all);
+                }
                 p.end(gl);
             })?;
         }
@@ -1194,7 +1279,10 @@ fn main() {
         (l, path.clone())
     });
     let run = || -> Result<(), String> {
-        let app = App::connect("id.prasetya.spatiand.spatiquill")?;
+        let mut app = App::connect("id.prasetya.spatiand.spatiquill")?;
+        // The left Control-Q is the program's (XON, readline's quoted-insert): SpatiQuill
+        // quits on Command-Q and Control-Shift-Q.
+        app.keep_control_q(true);
         let mut quill = Quill {
             app,
             painter: None,
@@ -1205,7 +1293,6 @@ fn main() {
             next_tab: 1,
             listener,
             in_flight: None,
-            right_control: false,
             typed_at: Instant::now(),
             resize_text: false,
         };

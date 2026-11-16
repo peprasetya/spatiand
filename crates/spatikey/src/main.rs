@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use spatiand_app::ui::{look, theme, Input, Painter};
+use spatiand_app::ui::{look, theme, Confirm, Input, Painter};
 use spatiand_app::{App, Description, Event, WindowId};
 use spatikey_core::entry::Summary;
 use spatikey_core::wire::{
@@ -112,6 +112,9 @@ struct SpatiKey {
     kept: Instant,
     /// When the paired Macs were last looked for, for the locked screen's line on a device.
     looked: Instant,
+    /// Quitting (Command-Q, Control-Q, the window closed) with an entry's changes not saved:
+    /// asked first, over the editor.
+    asking: Option<Confirm>,
 }
 
 /// What the screen is lent, from the fields themselves, so that the screen itself can be
@@ -232,6 +235,8 @@ impl SpatiKey {
 
     /// Close the session and show the locked screen.
     fn lock(&mut self) {
+        // What was being edited is gone with the session: there is nothing to ask about.
+        self.asking = None;
         if let Some(session) = self.session.clone() {
             self.ask(Asked::Close, Request::Close { session });
         }
@@ -626,26 +631,45 @@ impl SpatiKey {
             return Ok(());
         }
         let view = view!(self);
-        let (screen, painter) = (&mut self.screen, &mut self.painter);
+        let (screen, painter, asking) = (&mut self.screen, &mut self.painter, &mut self.asking);
         self.app.draw(self.window, |gl, size| {
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
             p.begin(gl, size, 1.0, theme::ground());
             look::backdrop(p, gl);
             screen.draw(p, gl, &view);
+            if let Some(confirm) = asking.as_mut() {
+                let all = p.bounds();
+                confirm.draw(p, gl, all);
+            }
             p.end(gl);
         })?;
         Ok(())
     }
 
+    /// SpatiKey goes: locked, the session ended with the window -- said to the service rather
+    /// than left to the connection's going. `false`, for `handle`.
+    fn quit(&mut self) -> bool {
+        log::info!("quit: locked and closed");
+        if let Some(session) = self.session.take() {
+            self.asker.finish(Asked::Close, Request::Close { session }, Duration::from_millis(1500));
+        }
+        false
+    }
+
     fn handle(&mut self, event: Event) -> bool {
         match &event {
-            Event::CloseRequested { window } if *window == self.window => {
-                // The session ends with the window, said to the service rather than left to the
-                // connection's going.
-                if let Some(session) = self.session.take() {
-                    self.asker.finish(Asked::Close, Request::Close { session }, Duration::from_millis(1500));
+            // Closed, or Command-Q or Control-Q (the SDK's `Event::Quit`): locked and closed --
+            // after asking, when an entry's changes are not saved.
+            Event::CloseRequested { window } | Event::Quit { window } if *window == self.window => {
+                if self.asking.is_some() {
+                    return true;
                 }
-                return false;
+                if matches!(&self.screen, Screen::Edit(edit) if edit.changed()) {
+                    self.asking = Some(Confirm::new("Quit SpatiKey? The changes to this entry are not saved, and quitting loses them.", "Quit", "Cancel"));
+                    self.dirty = true;
+                    return true;
+                }
+                return self.quit();
             }
             Event::Ready { window, .. } if *window == self.window => self.ready = true,
             Event::Resized { window, width, height } if *window == self.window => {
@@ -666,6 +690,15 @@ impl SpatiKey {
         let Some(input) = Input::of(&event, 1.0) else { return true };
         if matches!(input, Input::Key { .. } | Input::Press { .. } | Input::Scroll { .. }) {
             self.used = Instant::now();
+        }
+        // The question has the input while it is asked.
+        if let Some(confirm) = self.asking.as_mut() {
+            match confirm.input(&input) {
+                Some(true) => return self.quit(),
+                Some(false) => self.asking = None,
+                None => {}
+            }
+            return true;
         }
         let view = view!(self);
         let want = self.screen.input(&input, &view);
@@ -744,6 +777,7 @@ fn main() {
             used: Instant::now(),
             kept: Instant::now(),
             looked: Instant::now(),
+            asking: None,
         };
         key.run()
     };
