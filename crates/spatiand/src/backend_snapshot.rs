@@ -525,7 +525,7 @@ pub fn run(
                     Step::Close => close_the_window(&runtime.state, &windows),
                     Step::Thumbs { at, dy, seconds, hover } => {
                         pointer_event(&mut runtime.state, &windows, at, None);
-                        let mut thumbs = ThumbsScroll::new(at, dy, seconds, hover);
+                        let mut thumbs = ThumbsScroll::new(at, dy, seconds, hover, true);
                         while !thumbs.over() {
                             thumbs.frame(&mut runtime.state, &windows);
                             let screen = runtime.state.screen.clone();
@@ -749,7 +749,7 @@ pub fn run(
                             let mut settle = 0.5f32;
                             match &step {
                                 Scripted::Wait(seconds) => settle = *seconds,
-                                Scripted::Thumbs(_, seconds, _) => settle = *seconds as f32 + 0.6,
+                                Scripted::Thumbs(_, seconds, ..) => settle = *seconds as f32 + 0.6,
                                 Scripted::Resize(.., seconds) => settle = *seconds as f32,
                                 Scripted::Window(_) | Scripted::Dump(_) => settle = 0.0,
                                 _ => {}
@@ -811,7 +811,7 @@ pub fn run(
                             let mut stopped = false;
                             let gave_up = answered + std::time::Duration::from_secs(30);
                             let mut thumbs = match &step {
-                                Scripted::Thumbs(dy, seconds, hover) => Some(ThumbsScroll::new(pointer_at, *dy, *seconds, *hover)),
+                                Scripted::Thumbs(dy, seconds, hover, stop) => Some(ThumbsScroll::new(pointer_at, *dy, *seconds, *hover, *stop)),
                                 _ => None,
                             };
                             let resize_began = std::time::Instant::now();
@@ -1741,7 +1741,7 @@ fn swipe_on_the_window(state: &mut Spatiand, windows: &[crate::scene::WindowQuad
 ///
 /// ```text
 /// click:u,v  rclick:u,v  back:u,v  forward:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v
-/// scroll:dx,dy  thumbs:dy,seconds,hover  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
+/// scroll:dx,dy  thumbs:dy,seconds,hover[,stop]  axisstop  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
 /// roomup  notice  dictate:/tmp/said.wav  pad:3,1  clipboard  key:rctrl+46
 /// ```
 ///
@@ -1783,7 +1783,11 @@ enum Scripted {
     /// `thumbs:dy,seconds,hover`: the left pad as a session sends it, a scroll every frame and
     /// its end a quarter of a second after the last; `hover` 1 has a right thumb resting on its
     /// pad all the while, which moves the pointer a little every frame.
-    Thumbs(f64, f64, bool),
+    /// `thumbs:dy,seconds,hover,0`: the same with no end (`axis_stop`) after it -- what the Mac
+    /// room's trackpad gives a client for an up-and-down scroll; `axisstop` ends it later.
+    Thumbs(f64, f64, bool, bool),
+    /// `axisstop`: the finger's end of a scroll, `axis_stop` alone, where the pointer is.
+    AxisStop,
     /// Two fingers spreading by this factor over the chosen window, as the room hands a pinch:
     /// in Spatiand's own terms to a window that zooms itself, and as the standard pinch to any
     /// other (`zwp_pointer_gestures_v1`, which Chromium zooms its page by).
@@ -1834,7 +1838,9 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("shaky", [u, v, degrees]) => Scripted::Shaky(*u, *v, *degrees, 1),
                 ("shaky", [u, v, degrees, clicks]) => Scripted::Shaky(*u, *v, *degrees, *clicks as u32),
                 ("scroll", [dx, dy]) => Scripted::Scroll(*dx, *dy),
-                ("thumbs", [dy, seconds, hover]) => Scripted::Thumbs(*dy, *seconds, *hover != 0.0),
+                ("thumbs", [dy, seconds, hover]) => Scripted::Thumbs(*dy, *seconds, *hover != 0.0, true),
+                ("thumbs", [dy, seconds, hover, stop]) => Scripted::Thumbs(*dy, *seconds, *hover != 0.0, *stop != 0.0),
+                ("axisstop", []) => Scripted::AxisStop,
                 ("pinch", [scale]) => Scripted::Pinch(*scale),
                 ("wait", [seconds]) => Scripted::Wait(*seconds as f32),
                 ("size", [w, h]) => Scripted::Size(*w as i32, *h as i32),
@@ -2075,14 +2081,16 @@ struct ThumbsScroll {
     dy: f64,
     seconds: f64,
     hover: bool,
+    /// Whether its end is told (`axis_stop`) a quarter of a second after the last scroll.
+    stop: bool,
     began: std::time::Instant,
     last: f64,
     ended: bool,
 }
 
 impl ThumbsScroll {
-    fn new(at: (f64, f64), dy: f64, seconds: f64, hover: bool) -> Self {
-        ThumbsScroll { at, dy, seconds, hover, began: std::time::Instant::now(), last: 0.0, ended: false }
+    fn new(at: (f64, f64), dy: f64, seconds: f64, hover: bool, stop: bool) -> Self {
+        ThumbsScroll { at, dy, seconds, hover, stop, began: std::time::Instant::now(), last: 0.0, ended: false }
     }
 
     /// Its end has been sent, and a little more has gone by.
@@ -2119,8 +2127,10 @@ impl ThumbsScroll {
             pointer.frame(state);
         } else if elapsed >= self.seconds + 0.25 && !self.ended {
             self.ended = true;
-            pointer.axis(state, AxisFrame::new(time).source(AxisSource::Finger).stop(Axis::Vertical).stop(Axis::Horizontal));
-            pointer.frame(state);
+            if self.stop {
+                pointer.axis(state, AxisFrame::new(time).source(AxisSource::Finger).stop(Axis::Vertical).stop(Axis::Horizontal));
+                pointer.frame(state);
+            }
         }
         self.last = elapsed;
     }
@@ -2177,6 +2187,12 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
         }
         // Done frame by frame by the steps' loop, after the pointer is put there.
         Scripted::Thumbs(..) => pointer_event(state, windows, *at, None),
+        Scripted::AxisStop => {
+            pointer_event(state, windows, *at, None);
+            let Some(pointer) = state.seat.get_pointer() else { return };
+            pointer.axis(state, AxisFrame::new(120).source(AxisSource::Finger).stop(Axis::Vertical).stop(Axis::Horizontal));
+            pointer.frame(state);
+        }
         Scripted::Scroll(dx, dy) => {
             pointer_event(state, windows, *at, None);
             let Some(pointer) = state.seat.get_pointer() else { return };

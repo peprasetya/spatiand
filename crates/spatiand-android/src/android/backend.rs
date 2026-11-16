@@ -56,6 +56,10 @@ use crate::{Runtime, Spatiand};
 const PANEL_DISTANCE: f32 = 1.4;
 /// Scroll distance for a full sweep of the left pad, in wl_pointer units. The Deck's.
 const SCROLL_SCALE: f64 = 260.0;
+/// How long after the wheel last scrolled its gesture is ended (`axis_stop`), as `backend_drm`'s
+/// `GESTURE_ENDS_AFTER` ends the Deck's pad's: later than Chromium measures a fling from (200 ms),
+/// so the end throws nothing and the page stays where the scroll left it.
+const GESTURE_ENDS_AFTER: Duration = Duration::from_millis(250);
 /// How long the headset may stay silent before it is let go of.
 const IMU_SILENCE_TIMEOUT: Duration = Duration::from_secs(3);
 /// See `backend_drm`'s.
@@ -162,6 +166,8 @@ pub fn run(
     let mut right_was_down = false;
     let mut left_was_down = false;
     let mut left_scroll = spatiand_input::PadScroll::default();
+    // When the wheel (a Mac's trackpad or mouse) last scrolled a gesture not yet ended.
+    let mut wheel_scrolled_at: Option<Instant> = None;
     // Its steps, each spread over the frames after it, as on the Deck. See `spatiand_input::ScrollSpread`.
     let mut left_spread = spatiand_input::ScrollSpread::default();
     // The room's two thumbs, held still while they only wander. See `spatiand_input::steady`.
@@ -1669,11 +1675,22 @@ pub fn run(
                 let (wheel_right, wheel_up) = controller.take_wheel();
                 if (wheel_right, wheel_up) != (0.0, 0.0) && pointers.drag.is_none() {
                     pointers.scroll(&mut runtime.state, wheel_right as f64 * 15.0, -(wheel_up as f64) * 15.0, time_ms);
+                    wheel_scrolled_at = Some(Instant::now());
                 }
                 // A trackpad's fingers have lifted from a scroll (a Mac's): the gesture is ended
                 // for the client as the Deck's pad ends it, `axis_stop`, after its last movement.
                 if super::scroll_ended() {
                     pointers.scroll_fling(&mut runtime.state, time_ms);
+                    wheel_scrolled_at = None;
+                } else if wheel_scrolled_at.is_some_and(|at| at.elapsed() >= GESTURE_ENDS_AFTER) {
+                    // **Every other scroll is ended too, late**, as the Deck's pad ends one its
+                    // thumb left mid-pad: an up-and-down one, which the room carries on itself
+                    // (`RoomTap`'s glide), once that has stopped. Unended, Chromium keeps every
+                    // scroll after the first ended one (a sideways swipe) as one gesture, held to
+                    // the scroller it began on -- and a stretch past an edge never let go: the
+                    // owner's Gmail list pushed further down with every scroll up (2026-11-16).
+                    pointers.scroll_fling(&mut runtime.state, time_ms);
+                    wheel_scrolled_at = None;
                 }
 
                 if !shell.menu_is_open()
