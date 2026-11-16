@@ -8780,6 +8780,23 @@ index 72b79775c2..8d6280f37a 100644
  
    # Enables basic plugin support. This enables support for registering and
    # looking up plugins.
+diff --git a/content/renderer/render_thread_impl.cc b/content/renderer/render_thread_impl.cc
+index 2aa51df7d5..145168e2d3 100644
+--- a/content/renderer/render_thread_impl.cc
++++ b/content/renderer/render_thread_impl.cc
+@@ -1475,8 +1475,12 @@ void RenderThreadImpl::UpdateScrollbarTheme(
+   blink::WebScrollbarTheme::UpdateScrollbarsWithNSDefaults(
+       params->initial_button_delay, params->autoscroll_button_delay,
+       params->redraw, params->jump_on_track_click);
++#if !BUILDFLAG(IS_MAC_LINUX_UI)
++  // Spatiand: the Linux UI on macOS keeps Linux's elastic overscroll (see
++  // ui/base/ui_base_switches_util.cc), whatever macOS's scroll views do.
+   is_elastic_overscroll_enabled_on_root_ = params->scroll_view_rubber_banding;
+   is_elastic_overscroll_supported_ = params->scroll_view_rubber_banding;
++#endif
+ }
+ 
+ void RenderThreadImpl::OnSystemColorsChanged(int32_t aqua_color_variant) {
 diff --git a/device/fido/BUILD.gn b/device/fido/BUILD.gn
 index b152232428..a121e1acc6 100644
 --- a/device/fido/BUILD.gn
@@ -20797,7 +20814,7 @@ index bbae01cedf..a362b76f8e 100644
  // not really available, the next time that ui_controls::SendMouseMove() or
  // ui_controls::SendMouseMoveNotifyWhenDone() is called, or some other method
 diff --git a/ui/base/ui_base_features.cc b/ui/base/ui_base_features.cc
-index ee7530553b..3c2344ee58 100644
+index ee7530553b..9559863aef 100644
 --- a/ui/base/ui_base_features.cc
 +++ b/ui/base/ui_base_features.cc
 @@ -147,7 +147,7 @@ BASE_FEATURE(kWaylandExternalBeginFrameSource,
@@ -20818,6 +20835,15 @@ index ee7530553b..3c2344ee58 100644
               base::FEATURE_ENABLED_BY_DEFAULT
  #else
               base::FEATURE_DISABLED_BY_DEFAULT
+@@ -229,7 +229,7 @@ BASE_FEATURE(kDesktopFlingCurveOnAndroid, base::FEATURE_DISABLED_BY_DEFAULT);
+ BASE_FEATURE(kSuppressOverscrollGlow, base::FEATURE_DISABLED_BY_DEFAULT);
+ #endif
+ 
+-#if !BUILDFLAG(IS_APPLE)
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)
+ // Cached in Java as well, make sure defaults are updated together.
+ BASE_FEATURE(kElasticOverscroll,
+ #if BUILDFLAG(IS_ANDROID)
 @@ -288,7 +288,7 @@ bool IsTouchTextEditingRedesignEnabled() {
  // This feature enables drag and drop using touch input devices.
  BASE_FEATURE(kTouchDragAndDrop,
@@ -20846,10 +20872,21 @@ index ee7530553b..3c2344ee58 100644
  #endif
  
 diff --git a/ui/base/ui_base_features.h b/ui/base/ui_base_features.h
-index f89f293c58..b12f3f4a78 100644
+index f89f293c58..7a2d1f6fea 100644
 --- a/ui/base/ui_base_features.h
 +++ b/ui/base/ui_base_features.h
-@@ -161,7 +161,7 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
+@@ -45,7 +45,9 @@ BASE_DECLARE_FEATURE(kUiCompositorUsesLayerLists);
+ 
+ COMPONENT_EXPORT(UI_BASE_FEATURES) bool IsUiGpuRasterizationEnabled();
+ 
+-#if !BUILDFLAG(IS_APPLE)
++// Spatiand: the Linux UI on macOS has Linux's elastic overscroll (see
++// ui_base_switches_util.cc).
++#if !BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_MAC_LINUX_UI)
+ COMPONENT_EXPORT(UI_BASE_FEATURES) BASE_DECLARE_FEATURE(kElasticOverscroll);
+ #endif
+ 
+@@ -161,7 +163,7 @@ COMPONENT_EXPORT(UI_BASE_FEATURES)
  BASE_DECLARE_FEATURE(kWaylandExternalBeginFrameSource);
  #endif  // BUILDFLAG(IS_OZONE)
  
@@ -20858,7 +20895,7 @@ index f89f293c58..b12f3f4a78 100644
  COMPONENT_EXPORT(UI_BASE_FEATURES)
  BASE_DECLARE_FEATURE(kGlobalShortcutsPortalPreferredTrigger);
  #endif
-@@ -355,7 +355,7 @@ BASE_DECLARE_FEATURE(kChromeDarkNeutrals26);
+@@ -355,7 +357,7 @@ BASE_DECLARE_FEATURE(kChromeDarkNeutrals26);
  COMPONENT_EXPORT(UI_BASE_FEATURES)
  BASE_DECLARE_FEATURE(kDarkModeSurfaceTokens);
  
@@ -20887,6 +20924,25 @@ index 78095269c8..4add7ee384 100644
  // Specify the toolkit used to construct the Linux GUI.
  inline constexpr char kUiToolkitFlag[] = "ui-toolkit";
  // Specify the GTK version to be loaded.
+diff --git a/ui/base/ui_base_switches_util.cc b/ui/base/ui_base_switches_util.cc
+index a5b4d17bcb..1bab75ee21 100644
+--- a/ui/base/ui_base_switches_util.cc
++++ b/ui/base/ui_base_switches_util.cc
+@@ -28,7 +28,13 @@ bool IsElasticOverscrollEnabledOnRoot() {
+ bool IsElasticOverscrollSupported() {
+ // On macOS and iOS this value is adjusted in `UpdateScrollbarTheme()`,
+ // but the system default is true.
+-#if BUILDFLAG(IS_APPLE)
++// Spatiand: not for the Linux UI on macOS, which has Linux's (off unless
++// the ElasticOverscroll feature is on). macOS's rubber-band is let go at the
++// real end of a trackpad's scroll (NSEvent's phases), which the Linux UI's
++// input -- Aura and Ozone/Wayland, as on Linux -- never gives it: a fling's
++// end is synthetic, so the stretch stayed, and grew with every scroll past
++// the edge.
++#if BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_MAC_LINUX_UI)
+   return true;
+ #elif BUILDFLAG(IS_ANDROID)
+   return base::android::android_info::sdk_int() >=
 diff --git a/ui/base/webui/web_ui_util.cc b/ui/base/webui/web_ui_util.cc
 index 46ca6525b0..83b271176c 100644
 --- a/ui/base/webui/web_ui_util.cc
