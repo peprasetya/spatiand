@@ -104,9 +104,74 @@ pub fn held_direction(buttons: spatiand_input::Buttons) -> Option<Control> {
         .find(|c| buttons.is_down(*c))
 }
 
+/// Move the open menu's cursor as far as a wheel turning its list says
+/// (`spatiand_input::MenuWheel`): a pad's or the phone's touch area, the same on every platform.
+///
+/// Up and down in every menu; sideways only in the launcher, the one laid out as a grid.
+/// Sideways in a list is the D-pad's left and right, which in the window list pin a window and
+/// let it go, and a swipe a little off level must do neither. A step that moved nothing has
+/// reached the end of the list, and a glide stops there. Returns whether the cursor moved, for
+/// the tick a hand feels at each row.
+pub fn turn_menu(
+    shell: &mut Shell,
+    wheel: &mut spatiand_input::MenuWheel,
+    steps: spatiand_input::menu_wheel::Steps,
+    events: &mut Vec<ShellEvent>,
+) -> bool {
+    let across = if shell.mode() == Mode::Launcher { steps.right } else { 0 };
+    let mut moved = false;
+    for (count, forward, back) in [
+        (steps.down, NavDirection::Down, NavDirection::Up),
+        (across, NavDirection::Right, NavDirection::Left),
+    ] {
+        for _ in 0..count.unsigned_abs() {
+            let before = shell.menu_cursor();
+            if let Some(event) = shell.handle(Intent::Navigate(if count > 0 { forward } else { back })) {
+                events.push(event);
+            }
+            // The layout editor keeps its own cursor and hears the step as an event.
+            if before.is_some() && shell.menu_cursor() == before {
+                wheel.stop();
+                break;
+            }
+            moved = true;
+        }
+    }
+    moved
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wheel_walks_a_list_and_stops_its_glide_at_the_end() {
+        use spatiand_input::{menu_wheel::Steps, MenuWheel, Scroll};
+        let mut shell = Shell::new(vec![], spatiand_shell::DesktopPanels::ALL, true);
+        shell.handle(Intent::ToggleHud);
+        let mut wheel = MenuWheel::touchscreen(0.18);
+        let mut events = Vec::new();
+        assert!(turn_menu(&mut shell, &mut wheel, Steps { down: 2, right: 0, by_hand: true }, &mut events));
+        assert_eq!(shell.hud().cursor(), 2);
+        // Sideways in a list is nothing, not the D-pad's left and right.
+        assert!(!turn_menu(&mut shell, &mut wheel, Steps { down: 0, right: 3, by_hand: true }, &mut events));
+        assert_eq!(shell.hud().cursor(), 2);
+        // A flick: the glide runs into the end of the list and stops there.
+        let mut t = std::time::Instant::now();
+        let mut finger = spatiand_input::Pad { touched: true, y: -0.6, ..Default::default() };
+        for _ in 0..8 {
+            t += std::time::Duration::from_millis(16);
+            finger.y += 0.08;
+            wheel.update(Scroll::By { dx: 0.0, dy: 0.08 }, &finger, t);
+        }
+        t += std::time::Duration::from_millis(16);
+        wheel.update(Scroll::Idle, &spatiand_input::Pad::default(), t);
+        assert!(wheel.turning());
+        let rows = shell.hud().items().len() as i32;
+        turn_menu(&mut shell, &mut wheel, Steps { down: rows + 5, right: 0, by_hand: false }, &mut events);
+        assert_eq!(shell.hud().cursor() as i32, rows - 1);
+        assert!(!wheel.turning(), "stopped at the end");
+    }
 
     fn window_list() -> Shell {
         let window = |id, title: &str| spatiand_shell::WindowEntry {

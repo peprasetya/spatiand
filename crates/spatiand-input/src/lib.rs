@@ -14,6 +14,8 @@
 //! * [`scroll`] — an absolute pad read as a wheel, including what to do about the thumb
 //!   leaving it. Also a pure state machine.
 //! * [`steady`] — a resting thumb's wander kept off the pointer and the page. Also pure.
+//! * [`menu_wheel`] — an open menu's list turned a row a step by a pad or the phone's touch
+//!   area, gliding on after a flick. Also pure.
 //! * [`trigger`] — an analogue trigger read as a button.
 //! * [`takeover`] — the feature reports that claim the device. The only part that must talk
 //!   to a real controller.
@@ -30,6 +32,7 @@ pub mod gamepad;
 pub mod gesture;
 pub mod haptics;
 pub mod layout;
+pub mod menu_wheel;
 pub mod pad_press;
 pub mod phone;
 pub mod press;
@@ -48,6 +51,7 @@ pub use spatiand_pad as virtual_pad;
 pub use gesture::{GestureDelta, TwoPadGesture};
 pub use haptics::{Feel, Pad as HapticPad};
 pub use layout::{Confidence, Control};
+pub use menu_wheel::MenuWheel;
 pub use pad_press::{PadPress, PressReader};
 pub use press::{PadClicks, Pressed, Sweep};
 pub use report::{Buttons, ControllerState, Pad};

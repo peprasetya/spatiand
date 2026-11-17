@@ -369,10 +369,10 @@ pub fn run(
     // worked out after this frame's shell events have already been handled, because it needs
     // this frame's head pose. One frame late is a click nobody can feel.
     let mut pointed_events: Vec<ShellEvent> = Vec::new();
-    // The left thumb's travel over an open menu, short of the next row, in pad units; and how
-    // much of it is a row.
-    let mut menu_scroll = 0.0f32;
+    // The left thumb turning an open menu's list, and how much of its travel, in pad units, is
+    // a row. See where it is used.
     const MENU_SCROLL_STEP: f32 = 0.16;
+    let mut menu_turn = spatiand_input::MenuWheel::pad(MENU_SCROLL_STEP);
     // Where the pointer's pad was last frame while a menu was open.
     let mut menu_pad_was: Option<(f32, f32)> = None;
     // Whether the right pad was clicked last frame, for a click's edge in a menu.
@@ -2521,11 +2521,14 @@ pub fn run(
                         scene.menu_target(&shell, &ray, (stereo.h_fov_deg, stereo.v_fov_deg()));
                     // **Only a pointer that has moved chooses the row it is on.** One at rest
                     // over the list chose its row again every frame, so the left pad moved
-                    // the highlight and had it put straight back.
+                    // the highlight and had it put straight back. **And none while the left
+                    // thumb is turning the list** (`MenuWheel::turning`): a right thumb shifting
+                    // on its pad meanwhile put it back too -- on the Beam Pro, where the phone is
+                    // both, at every frame of a swipe.
                     let here = (p.right_pad.x, p.right_pad.y);
                     let moved = menu_pad_was.map_or(true, |was: (f32, f32)| (here.0 - was.0).abs() + (here.1 - was.1).abs() > 0.003);
                     menu_pad_was = Some(here);
-                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target.filter(|_| moved) {
+                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target.filter(|_| moved && !menu_turn.turning()) {
                         // A tick per row crossed, as the D-pad's steps are felt as presses.
                         if shell.point(index) {
                             if let Some(c) = controller.as_ref() {
@@ -2555,11 +2558,14 @@ pub fn run(
             let pad_click = pad_clicked && !menu_click_was;
             menu_click_was = pad_clicked;
             if let Some(target) = menu_pointed {
-                if pad_click
-                    || controller.as_ref().is_some_and(|c| {
-                        c.just_pressed(spatiand_input::Control::RPadClick)
-                            || c.just_pressed(spatiand_input::Control::R2)
-                    })
+                // A tap that stopped a gliding list is that, and chooses nothing.
+                let caught = menu_turn.caught(std::time::Instant::now());
+                if !caught
+                    && (pad_click
+                        || controller.as_ref().is_some_and(|c| {
+                            c.just_pressed(spatiand_input::Control::RPadClick)
+                                || c.just_pressed(spatiand_input::Control::R2)
+                        }))
                 {
                     if let Some(c) = controller.as_ref() {
                         c.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Click);
@@ -2650,30 +2656,22 @@ pub fn run(
             // arrives as one scroll the moment the thumb is handed back.
             //
             // **In a menu it is the wheel still, and what it turns is the list**: a row for
-            // every step of the thumb's travel, up revealing what is below as a page does. The
-            // pointer reaches only the rows in view.
+            // every step of the thumb's travel, up revealing what is below as a page does, and
+            // on by itself after a thumb that left from the rim, slowing (`MenuWheel`, the same
+            // on the Beam Pro's touch area). The pointer reaches only the rows in view.
             if shell.menu_is_open() {
                 // The page's share still owed is not sent once a menu has the wheel.
                 left_spread.forget();
-                match deck_input.as_ref().map(|p| left_scroll.update(&p.left_pad)) {
-                    Some(spatiand_input::Scroll::By { dy, .. }) => {
-                        menu_scroll += dy;
-                        while menu_scroll.abs() >= MENU_SCROLL_STEP {
-                            let down = menu_scroll > 0.0;
-                            menu_scroll -= if down { MENU_SCROLL_STEP } else { -MENU_SCROLL_STEP };
-                            let direction = if down { spatiand_shell::grid::Direction::Down } else { spatiand_shell::grid::Direction::Up };
-                            if let Some(c) = controller.as_ref() {
-                                c.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Tick);
-                            }
-                            if let Some(event) = shell.handle(spatiand_shell::Intent::Navigate(direction)) {
-                                pointed_events.push(event);
-                            }
-                        }
+                let pad = deck_input.as_ref().map(|p| p.left_pad).unwrap_or_default();
+                let scroll = left_scroll.update(&pad);
+                let steps = menu_turn.update(scroll, &pad, std::time::Instant::now());
+                if crate::input_map::turn_menu(&mut shell, &mut menu_turn, steps, &mut pointed_events) && steps.by_hand {
+                    if let Some(c) = controller.as_ref() {
+                        c.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Tick);
                     }
-                    _ => {}
                 }
             } else {
-                menu_scroll = 0.0;
+                menu_turn.forget();
                 menu_pad_was = None;
                 if pointers.drag.is_some() {
                     left_scroll.forget();

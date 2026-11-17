@@ -453,6 +453,25 @@ impl Shell {
         }
     }
 
+    /// Where the cursor of the menu on show is, in [`Shell::point`]'s indices; `None` with no
+    /// menu, or the layout editor's. What tells a wheel turning the list that a step moved it,
+    /// or that it is at the end.
+    pub fn menu_cursor(&self) -> Option<usize> {
+        Some(match self.mode {
+            Mode::Hud => self.hud.cursor(),
+            Mode::Environment => self.environments.cursor(),
+            Mode::Files => self.files.cursor(),
+            Mode::Launcher => self.launcher.cursor(),
+            Mode::Switcher => self.switcher.cursor(),
+            Mode::Hosts => self.hosts.cursor(),
+            Mode::Bluetooth => self.bluetooth.cursor(),
+            Mode::Pinned => self.pinned.cursor(),
+            Mode::Audio => self.audio.cursor(),
+            Mode::AppMenu => self.app_menu.cursor(),
+            Mode::Controller | Mode::World => return None,
+        })
+    }
+
     /// Feed one intent in, get at most one event out.
     pub fn handle(&mut self, intent: Intent) -> Option<ShellEvent> {
         match intent {
@@ -1262,5 +1281,25 @@ mod tests {
             })
         );
         assert_eq!(s.mode(), Mode::World);
+    }
+
+    #[test]
+    fn the_menu_cursor_is_the_open_menus_and_says_when_a_step_moved_it() {
+        let mut s = Shell::new(vec![], DesktopPanels::ALL, true);
+        assert_eq!(s.menu_cursor(), None, "no menu in the world");
+        s.handle(Intent::ToggleHud);
+        assert_eq!(s.menu_cursor(), Some(s.hud().cursor()));
+        let before = s.menu_cursor();
+        s.handle(Intent::Navigate(Direction::Down));
+        assert_eq!(s.menu_cursor(), before.map(|c| c + 1));
+        // At the end of the list a step moves nothing, which is what stops a glide there.
+        for _ in 0..s.hud().items().len() {
+            s.handle(Intent::Navigate(Direction::Down));
+        }
+        let end = s.menu_cursor();
+        s.handle(Intent::Navigate(Direction::Down));
+        assert_eq!(s.menu_cursor(), end);
+        assert!(s.point(0));
+        assert_eq!(s.menu_cursor(), Some(0));
     }
 }

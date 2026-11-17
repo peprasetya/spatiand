@@ -229,8 +229,10 @@ pub fn run(
     // A pinch over what a window shows, passed on as Wayland's own pinch gesture: how far the
     // fingers have spread since it began, and when its last step came.
     let mut content_pinch: Option<(f64, std::time::Instant)> = None;
-    // Where a finger was when an open menu last moved a row for it. See the menus above.
-    let mut menu_swipe: Option<(f32, f32)> = None;
+    // The touch area turning an open menu's list: its travel, filtered as a page's is, and the
+    // rows that makes. See where they are used.
+    let mut menu_pad = spatiand_input::PadScroll::default();
+    let mut menu_turn = spatiand_input::MenuWheel::touchscreen(MENU_SWIPE_STEP);
     // A window's speaker button held: the window, where the pointer was and the volume then,
     // whether it has been slid, and whether it was muted.
     let mut speaker_slide: Option<(usize, f32, f32, bool, bool)> = None;
@@ -576,33 +578,6 @@ pub fn run(
                             shell_events.push(event);
                         }
                     }
-                    // **A finger sliding on the touch area moves through an open menu**, a row
-                    // for every step of travel, the way a phone's list follows the thumb: up
-                    // reveals what is below. The pointer alone could reach only the rows in
-                    // view, and a turned phone is a clumsy way to get to the bottom of the HUD.
-                    use spatiand_shell::grid::Direction;
-                    let pad = c.state().left_pad;
-                    match (shell.menu_is_open() && pad.touched, menu_swipe) {
-                        (true, Some((x0, y0))) => {
-                            let (dx, dy) = (pad.x - x0, pad.y - y0);
-                            let step = if dy.abs() >= dx.abs() && dy.abs() >= MENU_SWIPE_STEP {
-                                Some(if dy > 0.0 { Direction::Down } else { Direction::Up })
-                            } else if dx.abs() > dy.abs() && dx.abs() >= MENU_SWIPE_STEP {
-                                Some(if dx > 0.0 { Direction::Left } else { Direction::Right })
-                            } else {
-                                None
-                            };
-                            if let Some(direction) = step {
-                                menu_swipe = Some((pad.x, pad.y));
-                                c.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Tick);
-                                if let Some(event) = shell.handle(spatiand_shell::Intent::Navigate(direction)) {
-                                    shell_events.push(event);
-                                }
-                            }
-                        }
-                        (true, None) => menu_swipe = Some((pad.x, pad.y)),
-                        (false, _) => menu_swipe = None,
-                    }
                     let input = *c.state();
                     let _two_handed = gesture.update(&input.left_pad, &input.right_pad);
                 }
@@ -677,6 +652,24 @@ pub fn run(
                 let now = Instant::now();
                 state.left_pad = steady_left.update(&state.left_pad, now);
                 state.right_pad = steady_right.update(&state.right_pad, now);
+            }
+            // **A finger sliding on the touch area turns an open menu's list**, a row for every
+            // step of travel, up revealing what is below, as the Deck's left thumb turns it: the
+            // same filtered travel a page is scrolled by (`PadScroll`), the same rows
+            // (`MenuWheel`, `input_map::turn_menu`). A flick carries the list on by itself and
+            // slows, as a phone's list does, and a finger landing on it stops it. The pointer
+            // alone could reach only the rows in view. (A Mac's left pad is never touched: its
+            // wheel turns menus above.)
+            if shell.menu_is_open() && missing.is_none() {
+                let pad = deck_input.map(|p| p.left_pad).unwrap_or_default();
+                let scroll = menu_pad.update(&pad);
+                let steps = menu_turn.update(scroll, &pad, Instant::now());
+                if crate::input_map::turn_menu(&mut shell, &mut menu_turn, steps, &mut shell_events) && steps.by_hand {
+                    controller.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Tick);
+                }
+            } else {
+                menu_pad.forget();
+                menu_turn.forget();
             }
             let layout_resting = shell.menu_is_open() || missing.is_some() || calibration.is_some();
             let delivery = controls.step(&snapshot, layout_resting);
@@ -1416,10 +1409,16 @@ pub fn run(
                     // over the list chose its row again every frame, so a wheel or a swipe
                     // moved the highlight and had it put straight back: the list would not
                     // scroll for as long as the pointer was anywhere on it.
+                    //
+                    // **And none while the touch area is turning the list.** The phone is the
+                    // pointer as well as the touch area: a thumb swiping on it tilts it, and the
+                    // pointer, moving with it, chose its row again at every frame, so a swipe
+                    // could not get past the rows in view (the owner, 2026-11-17: "Swipe on
+                    // screen on the settings window does not scroll the menu").
                     let here = (p.right_pad.x, p.right_pad.y);
                     let moved = menu_pad_was.map_or(true, |was: (f32, f32)| (here.0 - was.0).abs() + (here.1 - was.1).abs() > 0.003);
                     menu_pad_was = Some(here);
-                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target.filter(|_| moved) {
+                    if let Some((crate::scene::MenuTarget::Row(index), _)) = target.filter(|_| moved && !menu_turn.turning()) {
                         // A tick per row crossed, as on the Deck.
                         if shell.point(index) {
                             controller.pulse(spatiand_input::HapticPad::Right, spatiand_input::Feel::Tick);
@@ -1437,7 +1436,8 @@ pub fn run(
             let menu_pointed = menu_aim.as_ref().and_then(|(_, target)| *target);
             let menu_aim = menu_aim.map(|(aim, _)| aim);
             let pad_clicked = deck_input.is_some_and(|p| p.right_pad.clicked);
-            let pad_click = pad_clicked && !menu_click_was;
+            // A tap that stopped a gliding list is that, and chooses nothing.
+            let pad_click = pad_clicked && !menu_click_was && !menu_turn.caught(Instant::now());
             menu_click_was = pad_clicked;
             if let Some(target) = menu_pointed {
                 if pad_click {
