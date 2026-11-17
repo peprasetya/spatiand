@@ -984,7 +984,11 @@ enum Line {
     Touch,
     Open,
     Device { fp: String, name: String },
-    Mac,
+    /// A device that opens the vault with its biometrics: this one (`fp` empty) or another.
+    Holder { fp: String, name: String },
+    /// A device asking to be added to them.
+    Asking { fp: String, name: String, code: String },
+    TurnDown { fp: String, name: String },
     NewCode,
     Recover,
 }
@@ -992,6 +996,8 @@ enum Line {
 /// What a yes on the question over the page goes on to do.
 enum Then {
     Forget(String),
+    Approve { fp: String, code: String },
+    TurnDown(String),
     NewCode,
 }
 
@@ -1015,7 +1021,11 @@ impl SettingsPage {
         let heading = |text: String| (Line::Heading, Row::heading(text));
         let settings = view.settings;
         let mut lines = vec![
-            heading(if view.on_mac() { "Touch ID".into() } else { format!("Touch ID on {}", view.mac) }),
+            heading(match (view.on_mac(), view.sensor()) {
+                (true, "Touch ID") => "Touch ID".into(),
+                (true, _) => "Fingerprint".into(),
+                (false, _) => format!("Touch ID on {}", view.mac),
+            }),
             (Line::Touch, Row::with("A touch lasts", ui::span(settings.touch_secs)).icon(Icon::Lock)),
             (Line::Open, Row::with("SpatiKey stays open", format!("{} unused", ui::span(settings.open_secs).to_lowercase())).icon(Icon::SortRecent)),
             heading(format!("Devices that may ask {}", view.mac)),
@@ -1029,10 +1039,27 @@ impl SettingsPage {
                 }
             }
         }
-        if let Some(devices) = view.devices.filter(|d| !d.touch_ids.is_empty()) {
-            lines.push(heading("Macs that open SpatiKey with Touch ID".into()));
-            for mac in &devices.touch_ids {
-                lines.push((Line::Mac, Row::with(mac.name.clone(), format!("since {}", ui::date(mac.added))).icon(Icon::Lock)));
+        if let Some(devices) = view.devices {
+            // Every device that opens the vault with its own biometrics; any other can be removed
+            // from here, with a touch.
+            if !devices.holders.is_empty() {
+                lines.push(heading("Devices that open SpatiKey with their own finger".into()));
+            }
+            for holder in &devices.holders {
+                let here = holder.fp.eq_ignore_ascii_case(&view.status.fp);
+                let since = format!("{}, since {}", ui::sensor(&holder.kind), ui::date(holder.added));
+                let (fp, said) = if here { (String::new(), format!("{since} (this device)")) } else { (holder.fp.clone(), format!("{since} \u{2022} Remove")) };
+                lines.push((Line::Holder { fp, name: holder.name.clone() }, Row::with(holder.name.clone(), said).icon(Icon::Lock)));
+            }
+            if !devices.requests.is_empty() {
+                lines.push(heading("Asking to open SpatiKey".into()));
+            }
+            for asking in &devices.requests {
+                let (fp, name, code) = (asking.fp.clone(), asking.name.clone(), asking.code.clone());
+                let row = Row::with(name.clone(), format!("shows {code} \u{2022} Add")).icon(Icon::Link);
+                lines.push((Line::Asking { fp: fp.clone(), name: name.clone(), code }, row));
+                let row = Row::with(format!("Turn {name} down"), String::new()).icon(Icon::Back);
+                lines.push((Line::TurnDown { fp, name }, row));
             }
         }
         lines.push(heading("Recovery code".into()));
@@ -1060,6 +1087,8 @@ impl SettingsPage {
             let answer = confirm.input(input);
             let want = match (answer, then) {
                 (Some(true), Then::Forget(fp)) => Want::Forget(fp.clone()),
+                (Some(true), Then::Approve { fp, code }) => Want::Approve { fp: fp.clone(), code: code.clone() },
+                (Some(true), Then::TurnDown(fp)) => Want::TurnDown(fp.clone()),
                 (Some(true), Then::NewCode) => Want::NewCode,
                 _ => Want::Nothing,
             };
@@ -1086,6 +1115,27 @@ impl SettingsPage {
             Some(Line::Device { fp, name }) => {
                 let text = format!("Forget {name}? It can no longer ask {} to open SpatiKey, until it pairs again.", view.mac);
                 self.confirm = Some((Confirm::new(text, "Forget", "Keep it"), Then::Forget(fp)));
+                Want::Nothing
+            }
+            Some(Line::Holder { fp, name }) if !fp.is_empty() => {
+                let text = format!(
+                    "Remove {name}? It will no longer open SpatiKey with its own finger: to be added again it asks again, or is given the recovery code. {} here says yes.",
+                    view.sensor()
+                );
+                self.confirm = Some((Confirm::new(text, "Remove", "Keep it"), Then::Forget(fp)));
+                Want::Nothing
+            }
+            Some(Line::Asking { fp, name, code }) => {
+                let text = format!(
+                    "Add {name}? Only if {name} shows {code} right now. It will open every password here with its own finger. {} here says yes.",
+                    view.sensor()
+                );
+                self.confirm = Some((Confirm::new(text, "Add it", "Cancel"), Then::Approve { fp, code }));
+                Want::Nothing
+            }
+            Some(Line::TurnDown { fp, name }) => {
+                let text = format!("Turn {name} down? It is not added; it can ask again.");
+                self.confirm = Some((Confirm::new(text, "Turn down", "Cancel"), Then::TurnDown(fp)));
                 Want::Nothing
             }
             Some(Line::NewCode) => {

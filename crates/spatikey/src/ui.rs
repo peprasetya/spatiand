@@ -10,7 +10,7 @@ use spatikey_core::entry::{Entry, Summary};
 use spatikey_core::wire::{Code, DevicesAnswer, Field, Found, Refusal, Settings, StatusAnswer, TargetAnswer};
 use zeroize::Zeroizing;
 
-use crate::locked::{Away, Locked, Pair, Recover, SetUp, ShowCode};
+use crate::locked::{Away, Join, Locked, Pair, Recover, SetUp, ShowCode};
 use crate::open::{Edit, EntryPage, ListPage, SettingsPage};
 
 /// What the window knows, lent to the screen each time it is drawn or touched.
@@ -42,6 +42,38 @@ impl View<'_> {
     pub fn busy(&self) -> bool {
         self.waiting.is_some()
     }
+
+    /// What this device's own sensor is called: "Touch ID", "your fingerprint".
+    pub fn sensor(&self) -> &'static str {
+        sensor(&self.status.kind)
+    }
+
+    /// This device, by name.
+    pub fn me(&self) -> String {
+        if self.status.name.is_empty() {
+            "this device".into()
+        } else {
+            self.status.name.clone()
+        }
+    }
+}
+
+/// What a holder's sensor is called, by its kind (spatikey-core's `holders`).
+pub fn sensor(kind: &str) -> &'static str {
+    match kind {
+        "android-biometric" => "your fingerprint",
+        _ => "Touch ID",
+    }
+}
+
+/// The other holders of the vault by name, as a sentence: "darkPhoenix", "darkPhoenix or Pixel".
+pub fn holders_named(status: &StatusAnswer) -> String {
+    let names: Vec<&str> = status.holders.iter().filter(|h| h.fp != status.fp).map(|h| h.name.as_str()).collect();
+    match names.as_slice() {
+        [] => "a device that opens SpatiKey".into(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    }
 }
 
 /// What the wearer asked for, for the window to do.
@@ -72,6 +104,12 @@ pub enum Want {
     SetSettings(Settings),
     Forget(String),
     NewCode,
+    /// Ask a device that opens SpatiKey to add this one.
+    AskToHold,
+    /// Add the device `fp` that asked, which shows `code`.
+    Approve { fp: String, code: String },
+    /// Turn its request down.
+    TurnDown(String),
 }
 
 /// The screen being shown: one at a time.
@@ -82,6 +120,8 @@ pub enum Screen {
     SetUp(SetUp),
     Code(ShowCode),
     Recover(Recover),
+    /// A device with biometrics the vault has reached, which does not open it yet.
+    Join(Join),
     Pair(Pair),
     Locked(Locked),
     List(ListPage),
@@ -103,6 +143,7 @@ impl Screen {
             Screen::SetUp(screen) => screen.draw(p, gl, view),
             Screen::Code(screen) => screen.draw(p, gl, view),
             Screen::Recover(screen) => screen.draw(p, gl, view),
+            Screen::Join(screen) => screen.draw(p, gl, view),
             Screen::Pair(screen) => screen.draw(p, gl, view),
             Screen::Locked(screen) => screen.draw(p, gl, view),
             Screen::List(screen) => screen.draw(p, gl, view),
@@ -119,6 +160,7 @@ impl Screen {
             Screen::SetUp(screen) => screen.input(input, view),
             Screen::Code(screen) => screen.input(input),
             Screen::Recover(screen) => screen.input(input, view),
+            Screen::Join(screen) => screen.input(input, view),
             Screen::Pair(screen) => screen.input(input, view),
             Screen::Locked(screen) => screen.input(input, view),
             Screen::List(screen) => screen.input(input, view),

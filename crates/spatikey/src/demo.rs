@@ -19,8 +19,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use spatikey_core::entry::{Entry, Kind, Passkey, Totp};
 use spatikey_core::wire::{
-    Approver, Code, Device, DevicesAnswer, FindAnswer, Found, GetAnswer, IdAnswer, ListAnswer, OpenAnswer, PairAnswer, Refusal, Request,
-    SettingsAnswer, SetupAnswer, StatusAnswer, TargetAnswer, TotpAnswer,
+    Approver, Asking, Code, Device, DevicesAnswer, FindAnswer, Found, GetAnswer, Holder, IdAnswer, ListAnswer, OpenAnswer, PairAnswer, Refusal,
+    Request, SettingsAnswer, SetupAnswer, StatusAnswer, TargetAnswer, TotpAnswer,
 };
 
 use crate::ask::{Service, Trouble};
@@ -28,6 +28,12 @@ use crate::ask::{Service, Trouble};
 const MAC: (&str, &str) = ("darkPhoenix", "0b8dfc23a4e15b7790c2d6e81f3a5c4b9d0e7f6a5b4c3d2e1f0a9b8c7d6e5f40");
 const DECK: (&str, &str) = ("Steam Deck", "5c1e9a7b3d2f4e6a8b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a");
 const BEAM: (&str, &str) = ("Beam Pro", "9f8e7d6c5b4a39281706f5e4d3c2b1a0918273645546372819a0b1c2d3e4f5a6");
+/// A phone with a fingerprint sensor, asking to be added as a holder (`--demo`), and another Mac
+/// that holds the vault where this one does not yet (`--demo=new-mac`).
+const PHONE: (&str, &str) = ("Pixel 9", "3a6f1c8e2b4d7a9e0c5f3b1d8e6a2c4f7b9d1e3a5c7f9b2d4e6a8c0e2f4a6b8d");
+const STUDIO: (&str, &str) = ("studioMac", "e4b2c7a91d3f5e8b6a0c2d4f6e8a1b3c5d7f9e2a4c6b8d0f1e3a5c7b9d2f4e6a");
+/// The digits both show while a device is added.
+const ASKING_CODE: &str = "418 207";
 /// Shown at setting up, and taken back by "Set up Touch ID again": made up, of Crockford's
 /// alphabet, as a real one is.
 const FIRST_CODE: &str = "7KQ2M-X9D4F-H3TNB-W6PZR-0CJ8V";
@@ -50,6 +56,11 @@ pub struct Fake {
     fingers_changed: bool,
     /// Answers nothing, as when the service is not running.
     away: bool,
+    /// (A Mac) the phone asking to be added: until it is added or turned down.
+    phone_asking: bool,
+    phone_added: bool,
+    /// (A new Mac) it asked to be added.
+    requested: bool,
 }
 
 impl Fake {
@@ -70,6 +81,9 @@ impl Fake {
             made: 0,
             fingers_changed: scenario == "fingers",
             away: scenario == "away",
+            phone_asking: matches!(scenario, "" | "mac"),
+            phone_added: false,
+            requested: false,
         };
         if scenario == "setup" {
             fake.entries.clear();
@@ -88,7 +102,25 @@ impl Fake {
             approvers: self.approvers.clone(),
             name: self.me.0.into(),
             fp: self.me.1.into(),
+            holders: if self.vault { self.holders() } else { Vec::new() },
+            kind: if self.mac { "mac-touch-id".into() } else { String::new() },
+            request_code: if self.requested && !self.touch_here { ASKING_CODE.into() } else { String::new() },
         }
+    }
+
+    /// The devices that open the made-up vault.
+    fn holders(&self) -> Vec<Holder> {
+        let holder = |(name, fp): (&str, &str), kind: &str, days_ago: u64| Holder {
+            fp: fp.into(),
+            name: name.into(),
+            kind: kind.into(),
+            added: spatikey_core::now_ms().saturating_sub(days_ago * 86_400_000),
+        };
+        let mut holders = vec![holder(if self.touch_here { MAC } else { STUDIO }, "mac-touch-id", 19)];
+        if self.phone_added {
+            holders.push(holder(PHONE, "android-biometric", 0));
+        }
+        holders
     }
 
     fn session(&self, session: &str) -> Result<(), Trouble> {
@@ -216,7 +248,35 @@ impl Service for Fake {
             }
             Request::Devices { session } => {
                 self.session(&session)?;
-                ok(DevicesAnswer { allowed: self.allowed.clone(), touch_ids: vec![device(MAC, 9)] })
+                let requests = if self.phone_asking {
+                    vec![Asking { fp: PHONE.1.into(), name: PHONE.0.into(), kind: "android-biometric".into(), code: ASKING_CODE.into(), made: spatikey_core::now_ms() }]
+                } else {
+                    Vec::new()
+                };
+                ok(DevicesAnswer { allowed: self.allowed.clone(), touch_ids: vec![device(MAC, 9)], holders: self.holders(), requests })
+            }
+            Request::HolderRequest { .. } => {
+                std::thread::sleep(Duration::from_millis(400));
+                self.requested = true;
+                ok(json!({ "code": ASKING_CODE }))
+            }
+            Request::HolderApprove { session, fp, code } => {
+                self.session(&session)?;
+                if !self.phone_asking || fp != PHONE.1 {
+                    return Err(refused(Code::NoMatch, ""));
+                }
+                if code != ASKING_CODE {
+                    return Err(refused(Code::Denied, "that request changed since its digits were shown: look at it again"));
+                }
+                self.touch()?;
+                self.phone_asking = false;
+                self.phone_added = true;
+                ok(json!({}))
+            }
+            Request::HolderRefuse { session, .. } => {
+                self.session(&session)?;
+                self.phone_asking = false;
+                ok(json!({}))
             }
             Request::ForgetDevice { session, fp } => {
                 self.session(&session)?;

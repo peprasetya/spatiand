@@ -40,7 +40,7 @@ use spatikey_core::wire::{
 use zeroize::Zeroizing;
 
 use ask::{Answer, Asked, Asker, Trouble};
-use locked::{Away, Locked, Pair, Recover, SetUp, ShowCode, Stage};
+use locked::{Away, Join, Locked, Pair, Recover, SetUp, ShowCode, Stage};
 use open::{Current, Edit, EntryPage, ListPage, SettingsPage};
 use ui::{Screen, View, Want};
 
@@ -53,6 +53,8 @@ const TITLE: &str = "SpatiKey";
 const SAID_FOR: Duration = Duration::from_secs(6);
 /// How often a device looks again whether its Mac is on this network, while it is locked.
 const LOOK_FOR_MAC: Duration = Duration::from_secs(15);
+/// How often a device waiting to be added as a holder looks whether it has been.
+const LOOK_FOR_ADDED: Duration = Duration::from_secs(3);
 /// How often, at most, the service is told that an open SpatiKey is being used: well inside the
 /// shortest time it may be set to stay open.
 const KEEP_OPEN: Duration = Duration::from_secs(5);
@@ -154,7 +156,8 @@ fn start_asking(demo: &Option<String>, wake: Arc<std::fs::File>) -> Asker {
 /// The Mac that opens the vault, by name: this one on a Mac, else the paired Mac on this network
 /// (or the first paired).
 fn mac_of(status: &StatusAnswer) -> String {
-    if status.opens_here || status.can_set_up {
+    // A device with biometrics that does not open the vault yet asks a holder meanwhile, if it can.
+    if status.opens_here || (status.can_set_up && status.approvers.is_empty()) {
         return if status.name.is_empty() { "this Mac".into() } else { status.name.clone() };
     }
     status.approvers.iter().find(|a| a.near).or(status.approvers.first()).map_or_else(|| "your Mac".into(), |a| a.name.clone())
@@ -167,8 +170,9 @@ fn door(status: &StatusAnswer) -> Screen {
     } else if status.can_set_up && !status.vault {
         Screen::SetUp(SetUp::new())
     } else if status.can_set_up {
-        // A Mac the vault has reached whose Touch ID has no key to it.
-        Screen::Recover(Recover::new(false))
+        // A device with biometrics the vault has reached, whose sensor has no key to it: added by
+        // a device that opens it, or by the recovery code.
+        Screen::Join(Join::new())
     } else if !status.approvers.is_empty() {
         Screen::Locked(Locked::new())
     } else {
@@ -300,11 +304,38 @@ impl SpatiKey {
             }
             Want::Open => {
                 self.fingers_changed = false;
-                let words = if self.on_mac() { "Touch ID on this Mac".to_string() } else { format!("Touch ID on {}", self.mac) };
+                let words = if self.status.opens_here {
+                    format!("{} on this device", ui::sensor(&self.status.kind))
+                } else if self.on_mac() || !self.status.approvers.is_empty() {
+                    format!("Asking {}", self.mac)
+                } else {
+                    format!("Touch ID on {}", self.mac)
+                };
                 self.ask_waiting(Asked::Open, Request::Open, words);
             }
             Want::Lock => self.lock(),
-            Want::RecoverPage => self.set_screen(Screen::Recover(Recover::new(self.session.is_some()))),
+            Want::RecoverPage => {
+                let page = match &self.screen {
+                    Screen::Join(_) => Recover::from_join(),
+                    _ => Recover::new(self.session.is_some()),
+                };
+                self.set_screen(Screen::Recover(page));
+            }
+            Want::AskToHold => {
+                let name = self.status.name.clone();
+                self.ask_waiting(Asked::HolderRequest, Request::HolderRequest { name }, "Making this device\u{2019}s key");
+            }
+            Want::Approve { fp, code } => {
+                if let Some(session) = self.session.clone() {
+                    let words = format!("{} on this device", ui::sensor(&self.status.kind));
+                    self.ask_waiting(Asked::Approve, Request::HolderApprove { session, fp, code }, words);
+                }
+            }
+            Want::TurnDown(fp) => {
+                if let Some(session) = self.session.clone() {
+                    self.ask(Asked::TurnDown, Request::HolderRefuse { session, fp });
+                }
+            }
             Want::Recover(code) => {
                 self.ask_waiting(Asked::Recover, Request::Recover { code: code.to_string() }, "Touch ID on this Mac");
             }
@@ -395,8 +426,26 @@ impl SpatiKey {
                 self.status = status;
                 self.mac = mac_of(&self.status);
                 let unsettled = matches!(self.screen, Screen::Waiting(_) | Screen::Away(_));
-                if self.session.is_none() && (route || unsettled) {
+                // A device that asked to be added, and has been: it opens SpatiKey itself now.
+                let added = matches!(self.screen, Screen::Join(_)) && self.status.opens_here;
+                if added {
+                    self.say(format!("Added: {} on this device opens SpatiKey now.", ui::sensor(&self.status.kind)));
+                }
+                if self.session.is_none() && (route || unsettled || added) {
                     self.screen = door(&self.status);
+                }
+            }
+            Asked::HolderRequest => then.push((Asked::Status { route: false }, Request::Status)),
+            Asked::Approve => {
+                self.say("Added. It opens SpatiKey with its own finger from now on.");
+                if let Some(session) = self.session.clone() {
+                    then.push((Asked::Devices, Request::Devices { session }));
+                }
+            }
+            Asked::TurnDown => {
+                self.say("Turned down.");
+                if let Some(session) = self.session.clone() {
+                    then.push((Asked::Devices, Request::Devices { session }));
                 }
             }
             Asked::Setup => {
@@ -462,7 +511,7 @@ impl SpatiKey {
             }
             Asked::Recover => {
                 self.fingers_changed = false;
-                self.say("Touch ID is set up again on this Mac.");
+                self.say(format!("{} is set up for SpatiKey on this device.", ui::sensor(&self.status.kind)));
                 if self.session.is_some() {
                     self.show_settings();
                 } else {
@@ -610,6 +659,14 @@ impl SpatiKey {
                 self.ask(Asked::Totp(id.clone()), Request::Totp { session: Some(session), id });
             }
         } else if matches!(self.screen, Screen::Locked(_)) && !self.on_mac() && self.asker.out == 0 && self.looked.elapsed() >= LOOK_FOR_MAC {
+            self.looked = Instant::now();
+            self.ask(Asked::Status { route: false }, Request::Status);
+        } else if matches!(self.screen, Screen::Join(_))
+            && !self.status.request_code.is_empty()
+            && self.asker.out == 0
+            && self.looked.elapsed() >= LOOK_FOR_ADDED
+        {
+            // Waiting to be added: the record arrives through the synced folder.
             self.looked = Instant::now();
             self.ask(Asked::Status { route: false }, Request::Status);
         }

@@ -228,6 +228,8 @@ pub struct Recover {
     back: Button,
     /// Opened from settings, where Back leads; otherwise there is nowhere else to go.
     pub from_settings: bool,
+    /// Opened from the screen of a device not added yet, where Back leads.
+    pub from_join: bool,
     /// 0: the field; 1: the button.
     focus: usize,
     pointer: (f32, f32),
@@ -239,29 +241,42 @@ impl Recover {
         field.hint = "XXXXX-XXXXX-XXXXX-XXXXX-XXXXX".into();
         field.secret = true;
         field.focused = true;
-        Recover { field, go: Button::default(), back: Button::default(), from_settings, focus: 0, pointer: (0.0, 0.0) }
+        Recover { field, go: Button::default(), back: Button::default(), from_settings, from_join: false, focus: 0, pointer: (0.0, 0.0) }
+    }
+
+    /// From the screen of a device the vault has reached and no holder has added yet.
+    pub fn from_join() -> Recover {
+        let mut page = Recover::new(false);
+        page.from_join = true;
+        page
+    }
+
+    fn can_go_back(&self, view: &View) -> bool {
+        self.from_settings || self.from_join || view.fingers_changed
     }
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, view: &View) {
         let mut all = ui::page(p);
-        // A Mac the vault reached, whose Touch ID never had a key to it, is told so.
+        let (sensor, me) = (view.sensor(), view.me());
+        let set_up = if sensor == "Touch ID" { "Set up Touch ID" } else { "Set up the fingerprint" };
+        // A device the vault reached, whose sensor never had a key to it, is told so.
         let new_here = !view.status.opens_here && !view.fingers_changed && !self.from_settings;
-        let title = if new_here { "Open SpatiKey on this Mac" } else { "Set up Touch ID again" };
-        if self.from_settings || view.fingers_changed {
-            ui::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, title);
+        let title = if new_here { format!("Open SpatiKey on {me}") } else { format!("{set_up} again") };
+        if self.can_go_back(view) {
+            ui::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, &title);
         } else {
-            look::header(p, gl, &mut all, title, "");
+            look::header(p, gl, &mut all, &title, "");
         }
-        let hint = if self.from_settings || view.fingers_changed { "[Enter] Set up Touch ID  [Esc] Back" } else { "[Enter] Set up Touch ID" };
-        ui::foot(p, gl, &mut all, hint, view);
+        let hint = if self.can_go_back(view) { format!("[Enter] {set_up}  [Esc] Back") } else { format!("[Enter] {set_up}") };
+        ui::foot(p, gl, &mut all, &hint, view);
         let mut column = ui::column(all, ui::COLUMN);
         column.take_top(10.0);
         let said = if new_here {
-            "The vault has reached this Mac, but Touch ID here has no key to it yet. Enter the recovery code you saved in Apple Passwords as \u{201C}SpatiKey recovery\u{201D} to give it one."
+            format!("The vault has reached {me}, but {sensor} here has no key to it yet. Enter the recovery code you saved in Apple Passwords as \u{201C}SpatiKey recovery\u{201D} to give it one.")
         } else {
-            "Enter the recovery code you saved in Apple Passwords as \u{201C}SpatiKey recovery\u{201D}. SpatiKey then sets Touch ID up on this Mac again, with the fingers enrolled now."
+            format!("Enter the recovery code you saved in Apple Passwords as \u{201C}SpatiKey recovery\u{201D}. SpatiKey then sets {sensor} up on {me} again, with the fingers enrolled now.")
         };
-        ui::prose(p, gl, &mut column, said, theme::ink());
+        ui::prose(p, gl, &mut column, &said, theme::ink());
         column.take_top(6.0);
         let busy = view.busy();
         self.field.focused = self.focus == 0 && !busy;
@@ -272,8 +287,8 @@ impl Recover {
             Some((since, words)) => ui::waiting(p, gl, row, since, words),
             None => {
                 self.go.focused = self.focus == 1;
-                let width = Button::icon_width(p, gl, "Set up Touch ID");
-                self.go.draw_icon(p, gl, Rect { w: width, ..row }, Icon::Lock, "Set up Touch ID");
+                let width = Button::icon_width(p, gl, set_up);
+                self.go.draw_icon(p, gl, Rect { w: width, ..row }, Icon::Lock, set_up);
             }
         }
     }
@@ -291,8 +306,7 @@ impl Recover {
         if view.busy() {
             return Want::Nothing;
         }
-        let can_go_back = self.from_settings || view.fingers_changed;
-        if can_go_back && (self.back.input(input) || matches!(input, Input::Key { key: Key::Escape, .. })) {
+        if self.can_go_back(view) && (self.back.input(input) || matches!(input, Input::Key { key: Key::Escape, .. })) {
             return if self.from_settings { Want::Settings } else { Want::Status };
         }
         if let Input::Pointer { x, y } = input {
@@ -328,6 +342,124 @@ impl Recover {
 impl Drop for Recover {
     fn drop(&mut self) {
         self.field.text.zeroize();
+    }
+}
+
+// --- a device with biometrics, not added yet ---
+
+/// A device with its own biometrics that the vault has reached and that does not open it yet: a
+/// Mac, or a phone with a strong fingerprint sensor. A device that opens SpatiKey adds it -- it asks
+/// here, and is added there, both showing the same six digits -- or the recovery code does. Until
+/// then a phone may ask a holder on its network, as a device without biometrics does.
+pub struct Join {
+    ask: Button,
+    recover: Button,
+    open: Button,
+    focus: usize,
+}
+
+/// What [`Join`]'s buttons do.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JoinAction {
+    Ask,
+    Recover,
+    Open,
+}
+
+impl Join {
+    pub fn new() -> Join {
+        Join { ask: ui::keyed_button(), recover: Button::default(), open: Button::default(), focus: 0 }
+    }
+
+    fn actions(view: &View) -> Vec<JoinAction> {
+        let mut actions = Vec::new();
+        if view.status.request_code.is_empty() {
+            actions.push(JoinAction::Ask);
+        }
+        actions.push(JoinAction::Recover);
+        if !view.status.approvers.is_empty() {
+            actions.push(JoinAction::Open);
+        }
+        actions
+    }
+
+    pub fn draw(&mut self, p: &mut Painter, gl: &Gl, view: &View) {
+        let mut all = ui::page(p);
+        let (me, sensor, holders) = (view.me(), view.sensor(), ui::holders_named(view.status));
+        look::header(p, gl, &mut all, &format!("Open SpatiKey on {me}"), "");
+        ui::foot(p, gl, &mut all, "[\u{2190}] [\u{2192}] Choose  [Enter] Go", view);
+        let mut column = ui::column(all, ui::COLUMN);
+        column.take_top(10.0);
+        let code = &view.status.request_code;
+        if code.is_empty() {
+            ui::prose(
+                p,
+                gl,
+                &mut column,
+                &format!("The vault has reached {me}, but {sensor} here has no key to it yet. {holders} can give it one: ask here, then add {me} there, in SpatiKey\u{2019}s settings, with a touch. Or enter the recovery code."),
+                theme::ink(),
+            );
+        } else {
+            ui::digits(p, gl, &mut column, code);
+            ui::prose(
+                p,
+                gl,
+                &mut column,
+                &format!("{me} asked to be added. On {holders}, open SpatiKey, go to Settings, and add {me} there if it shows these six digits. This screen moves on by itself once it has been added."),
+                theme::ink(),
+            );
+        }
+        if !view.status.approvers.is_empty() {
+            ui::prose(p, gl, &mut column, &format!("Until then, SpatiKey here can ask {} each time.", view.mac), theme::ink_row());
+        }
+        column.take_top(12.0);
+        let mut row = column.take_top(Button::HEIGHT);
+        if let Some((since, words)) = view.waiting {
+            return ui::waiting(p, gl, row, since, words);
+        }
+        let actions = Self::actions(view);
+        self.focus = self.focus.min(actions.len() - 1);
+        let ask_mac = format!("Ask {}", view.mac);
+        for (at, action) in actions.iter().enumerate() {
+            let (button, icon, label) = match action {
+                JoinAction::Ask => (&mut self.ask, Icon::Link, "Ask to be added"),
+                JoinAction::Recover => (&mut self.recover, Icon::Pencil, "Use the recovery code"),
+                JoinAction::Open => (&mut self.open, Icon::Desktop, ask_mac.as_str()),
+            };
+            button.focused = self.focus == at;
+            let width = Button::icon_width(p, gl, label);
+            button.draw_icon(p, gl, row.take_left(width), icon, label);
+            row.take_left(16.0);
+        }
+    }
+
+    pub fn input(&mut self, input: &Input, view: &View) -> Want {
+        if view.busy() {
+            return Want::Nothing;
+        }
+        let actions = Self::actions(view);
+        self.focus = self.focus.min(actions.len() - 1);
+        if let Input::Key { key: Key::Left | Key::Right | Key::Tab, modifiers, .. } = input {
+            let back = matches!(input, Input::Key { key: Key::Left, .. }) || modifiers.shift;
+            self.focus = if back { (self.focus + actions.len() - 1) % actions.len() } else { (self.focus + 1) % actions.len() };
+            return Want::Nothing;
+        }
+        for (at, action) in actions.iter().enumerate() {
+            let button = match action {
+                JoinAction::Ask => &mut self.ask,
+                JoinAction::Recover => &mut self.recover,
+                JoinAction::Open => &mut self.open,
+            };
+            button.focused = self.focus == at;
+            if button.input(input) {
+                return match action {
+                    JoinAction::Ask => Want::AskToHold,
+                    JoinAction::Recover => Want::RecoverPage,
+                    JoinAction::Open => Want::Open,
+                };
+            }
+        }
+        Want::Nothing
     }
 }
 

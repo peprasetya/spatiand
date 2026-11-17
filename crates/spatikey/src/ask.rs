@@ -42,6 +42,12 @@ pub enum Asked {
     Find,
     PairWith(Found),
     PairConfirm(bool),
+    /// This device asking to be added as a holder.
+    HolderRequest,
+    /// Adding a device that asked.
+    Approve,
+    /// Turning its request down.
+    TurnDown,
 }
 
 /// Why there is no answer.
@@ -105,6 +111,8 @@ fn carries_session(request: &Request) -> bool {
         | Request::RecoveryNew { .. }
         | Request::Devices { .. }
         | Request::ForgetDevice { .. }
+        | Request::HolderApprove { .. }
+        | Request::HolderRefuse { .. }
         | Request::Settings { .. } => true,
         Request::Totp { session, .. } | Request::Reveal { session, .. } | Request::Type { session, .. } => session.is_some(),
         _ => false,
@@ -141,6 +149,9 @@ pub fn op(request: &Request) -> &'static str {
         Request::Find => "find",
         Request::PairWith { .. } => "pair_with",
         Request::PairConfirm { .. } => "pair_confirm",
+        Request::HolderRequest { .. } => "holder_request",
+        Request::HolderApprove { .. } => "holder_approve",
+        Request::HolderRefuse { .. } => "holder_refuse",
     }
 }
 
