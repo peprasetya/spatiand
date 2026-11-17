@@ -397,6 +397,19 @@ final class AdbStarter {
             out = "error: " + e;
         }
         if (out.startsWith("error: ")) {
+            // adbd refused the key (crates/spatiand-adb: the TLS handshake failed): Android forgets
+            // a pairing that has not connected for seven days, unless Developer options' "Disable
+            // adb authorization timeout" is on. Asked for at once, in the room and as the
+            // notification the code is typed into, rather than left for the wearer to find.
+            if (out.contains("has the phone paired with Spatiand?")) {
+                prefs(c).edit().putBoolean("paired", false).apply();
+                String why = "Android has forgotten Spatiand's pairing with Wireless debugging (it does after "
+                        + "seven days unless Developer options' \"Disable adb authorization timeout\" is on).";
+                Log.i(TAG, "pairing forgotten by adbd: " + out);
+                Native.appsSay("Android apps\n" + why + " Pair it again: the code goes into Spatiand's notification.");
+                askForCode(c, why);
+                return;
+            }
             cannot(c, quiet, "Spatiand's helper could not start: " + out.substring(7)
                     + ". If Spatiand is no longer under Wireless debugging's paired devices, pair it again.");
             return;
