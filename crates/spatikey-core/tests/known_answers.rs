@@ -128,3 +128,40 @@ fn both_base64s_are_what_they_were() {
     assert!(b64::decode_url("/+8").is_err(), "and URL-safe the standard one");
     assert!(b64::decode_url("YR").is_err());
 }
+
+/// A holder's wrap of the vault key (docs/spatikey.md, "Keys") as CryptoKit makes it: made by the
+/// Mac's `SpatiKeyWrap` (SpatiKeyGuard.swift) with a software P-256 key on 2026-11-17, and opened
+/// here as a holder's sensor would, by the ECDH with that key. The wrap the Rust side makes for a
+/// holder it adds was opened the other way, by CryptoKit and by Android's `KeyWrap` on a JVM, from
+/// a vector made by `holders::wrap` for the same key: one format on the Mac, Android and here.
+#[test]
+fn a_holders_wrap_made_by_cryptokit_opens_here() {
+    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use spatikey_core::holders;
+    fn hex(text: &str) -> Vec<u8> {
+        (0..text.len()).step_by(2).map(|i| u8::from_str_radix(&text[i..i + 2], 16).unwrap()).collect()
+    }
+    let secret = p256::SecretKey::from_slice(&hex("ccb1abda769f2420e22d6a274c5546e8f63d8eeac8f6a02d8e7d3d248ba590ba")).unwrap();
+    let public = secret.public_key().to_encoded_point(false).as_bytes().to_vec();
+    assert_eq!(
+        public,
+        hex("040bb173288790078287b1a8a643b906333ebfe5839ef706ab39c99ca342cc492f9f4e2278e5ccae421f707bae9adf2f33534c216ece96fd2bf3fa91f48393cb30")
+    );
+    let open = |wrapped: &[u8]| {
+        let ephemeral = p256::PublicKey::from_sec1_bytes(&wrapped[..holders::PUBLIC_LEN]).unwrap();
+        let shared = p256::ecdh::diffie_hellman(secret.to_nonzero_scalar(), ephemeral.as_affine());
+        holders::open_with_shared(shared.raw_secret_bytes(), &public, wrapped)
+    };
+    let swift = hex(
+        "045b926d568198c2b4fa5fcc73a5bb3c48beda9351c9a01d41352e02c2f467599e6efbc5b172b874e33f8d44abf6945f4a70a0406f34f7db5322870729e014cd4719b2fcb662aed2358056181f09c70b94142a3145da59c6d5ab393b1b46c89b37d08d90788f2b273ee1c81626dab023ad121a21330d59c8143f1a018c",
+    );
+    let rust = hex(
+        "04452b3e1d7c0d6521f9e3845ae135b410fe29a5a11a1aaf9f79b6d210b36c4a53bf4a326bbfa76ac81a99d1ebb6041c615579f35a8342be7632f9774066e0f6431fb05aa0bda51934e590ece044e07083a15eb8c1bbedd5100fefee0de3ac5f62147fb82b2a41a06df1bfd6310cfad9ccafe3c48caeee902b1f1f4594",
+    );
+    let vk: Vec<u8> = (0u8..32).collect();
+    assert_eq!(open(&swift).unwrap().bytes()[..], vk[..]);
+    assert_eq!(open(&rust).unwrap().bytes()[..], vk[..]);
+    let mut altered = swift.clone();
+    altered[100] ^= 1;
+    assert!(open(&altered).is_err());
+}

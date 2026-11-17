@@ -114,8 +114,10 @@ enum {
     SP_KEY_ENROLL = 2,    // {vk}: a new Secure Enclave key and the vault key wrapped to it: {public, blob, wrapped}
     SP_KEY_CAN_TOUCH = 3, // {}: whether Touch ID could be used now, asking nobody: {"ok": bool}
     SP_KEY_ALLOW = 4,     // {name, fp, code}: the owner's yes or no to a device: {"allow": bool}
+    SP_KEY_MAKE = 5,      // {}: a new Secure Enclave key, nothing wrapped to it yet: {public, blob}
+                          // (asking another device that opens the vault to add this Mac)
 };
-// Unlock and enroll answer {"error": code, "message": text} when they cannot; code is "denied",
+// Unlock, enroll and make answer {"error": code, "message": text} when they cannot; code is "denied",
 // "touch_id_unavailable", "fingerprints_changed", "timeout" or "failed".
 typedef void (*sp_key_ask_fn)(void *user, uint64_t id, int32_t what, const char *json);
 

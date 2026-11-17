@@ -171,6 +171,8 @@ final class SpatiKeyGuard {
             queue.async { self.answerUnlock(id, question, asked: asked) }
         case SP_KEY_ENROLL:
             queue.async { self.answerEnroll(id, question) }
+        case SP_KEY_MAKE:
+            queue.async { self.answerMake(id) }
         case SP_KEY_CAN_TOUCH:
             // Not behind a finger being waited for: it asks nobody, and the service wants it now.
             DispatchQueue.global(qos: .userInitiated).async { Self.answer(id, ["ok": Self.canTouch()]) }
@@ -222,6 +224,20 @@ final class SpatiKeyGuard {
             let refusal = error as? Refusal
                 ?? Refusal(code: "failed", message: "Touch ID could not be set up (\(Self.detail(error)))")
             print("SpatiKey: Touch ID was not set up: \(refusal.code)")
+            Self.answer(id, Self.refused(refusal))
+        }
+    }
+
+    /// A key for this Mac with nothing wrapped to it yet: SpatiKey asks a device that opens the vault
+    /// to add this Mac, and that device wraps the vault key to the public half.
+    private func answerMake(_ id: UInt64) {
+        do {
+            let made = try makeKey()
+            Self.answer(id, ["public": made.public.base64EncodedString(), "blob": made.blob.base64EncodedString()])
+        } catch {
+            let refusal = error as? Refusal
+                ?? Refusal(code: "failed", message: "the Secure Enclave would not make a key (\(Self.detail(error)))")
+            print("SpatiKey: no key was made to ask with: \(refusal.code)")
             Self.answer(id, Self.refused(refusal))
         }
     }
@@ -315,6 +331,15 @@ final class SpatiKeyGuard {
     /// Nothing is asked of anyone: the key is made, not used, and wrapping needs only its public
     /// half. Throws a `Refusal`.
     func enroll(vk: Data) throws -> (public: Data, blob: Data, wrapped: Data) {
+        let made = try makeKey()
+        let key = try P256.KeyAgreement.PublicKey(x963Representation: made.public)
+        let wrapped = try SpatiKeyWrap.wrap(vk, to: key)
+        return (made.public, made.blob, wrapped)
+    }
+
+    /// A new Secure Enclave key for this Mac, for the fingers enrolled now: its public half (X9.63)
+    /// and its blob. Nothing is asked of anyone. Throws a `Refusal`.
+    func makeKey() throws -> (public: Data, blob: Data) {
         guard SecureEnclave.isAvailable, Self.canTouch() else {
             throw Refusal(code: "touch_id_unavailable",
                           message: "Touch ID cannot be used now, so SpatiKey cannot be set up with it: is the lid shut, or no finger enrolled?")
@@ -337,8 +362,7 @@ final class SpatiKeyGuard {
             guard again.publicKey.x963Representation == key.publicKey.x963Representation else {
                 throw Refusal(code: "failed", message: "the Secure Enclave did not give its new key back")
             }
-            let wrapped = try SpatiKeyWrap.wrap(vk, to: key.publicKey)
-            return (key.publicKey.x963Representation, key.dataRepresentation, wrapped)
+            return (key.publicKey.x963Representation, key.dataRepresentation)
         } catch let refusal as Refusal {
             throw refusal
         } catch {
