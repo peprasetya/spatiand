@@ -45,6 +45,7 @@ mod keyboard_face;
 mod listen;
 mod menu;
 mod install;
+mod notifications;
 mod own;
 mod pip;
 mod pointer;
