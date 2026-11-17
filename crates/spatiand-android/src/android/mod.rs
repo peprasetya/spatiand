@@ -16,6 +16,7 @@ pub mod panel;
 pub mod phone;
 pub mod mkv;
 pub mod record;
+pub mod record_codec;
 pub mod remote_video;
 pub mod sound;
 

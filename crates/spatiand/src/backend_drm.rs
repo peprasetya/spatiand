@@ -1051,6 +1051,8 @@ pub fn run(
         // Reset per rebuild: a freshly opened headset has not sent anything yet, and counting
         // from before it existed would trip the watchdog immediately.
         let mut last_imu = std::time::Instant::now();
+        // Where the window is whose application's menu is open, for the menu to open over it.
+        let mut app_menu_at: Option<(f64, f64)> = None;
 
         while runtime.state.running {
             // --- input ---
@@ -1059,6 +1061,22 @@ pub fn run(
             // two-thumb gesture all see the same instant. Reading the device separately for
             // each would let them disagree about whether a thumb is down.
             let mut shell_events: Vec<ShellEvent> = std::mem::take(&mut pointed_events);
+            // A Mac window's application menus, a level at a time as its host reads them
+            // (`remote::menu`), as in the Beam Pro's and the Mac's room.
+            match crate::remote::menu::said() {
+                Some(crate::remote::menu::Said::Level { title, rows }) => {
+                    shell.open_app_menu(&title, &rows);
+                    // Over the window it is the menu of, not wherever the wearer happens to look.
+                    let (yaw, pitch) =
+                        app_menu_at.unwrap_or_else(|| crate::window::facing(tracker.recentred_orientation()));
+                    scene.anchor_menu_at(Mode::AppMenu, yaw, pitch);
+                }
+                Some(crate::remote::menu::Said::Done) => {
+                    shell.close_app_menu();
+                    scene.forget_anchor();
+                }
+                None => {}
+            }
             let mut pads: Option<spatiand_input::ControllerState> = None;
             // Hold the sound device open exactly while a keyboard is up and clicking is on.
             // The stream has to be fed without gaps to be reliable -- see `click` -- and that
@@ -1746,7 +1764,8 @@ pub fn run(
                                 audio.mark_default(direction, id);
                             }
                         }
-                        HudAction::ChooseAppMenu(_) | HudAction::AppMenuBack => {}
+                        HudAction::ChooseAppMenu(index) => crate::remote::menu::chosen(index),
+                        HudAction::AppMenuBack => crate::remote::menu::back(),
                         // The shell has opened the page; ask BlueZ now rather than at the tick.
                         HudAction::OpenBluetooth => bluetooth.refresh(),
                         HudAction::ReturnToDesktop => leaving = true,
@@ -2676,6 +2695,7 @@ pub fn run(
                     Some(Zone::Pin) => quad.pin_hot = true,
                     Some(Zone::Close) => quad.close_hot = true,
                     Some(Zone::Hide) => quad.hide_hot = true,
+                    Some(Zone::Menu) => quad.menu_hot = true,
                     Some(Zone::Mute) => {
                         quad.mute_hot = true;
                         // Scrolled over, the speaker is this window's own volume.
@@ -3361,7 +3381,15 @@ pub fn run(
                                     }
                                 }
                             }
-                            // Before the title bar, for the same reason as mute and close.
+                            // Its application's own menus, as a list: a Mac window's, from its
+                            // host. Before the title bar, for the same reason as mute and close.
+                            Some(a) if a.zone == Some(Zone::Menu) => {
+                                if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
+                                    runtime.state.focus_window(&quad.window);
+                                    app_menu_at = Some((quad.placement.yaw, quad.placement.pitch));
+                                    crate::remote::menu::open(&runtime.state, &quad.window);
+                                }
+                            }
                             // Pinned to the glass or let go, whichever the window is not.
                             Some(a) if a.zone == Some(Zone::Pin) => {
                                 if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {

@@ -30,6 +30,7 @@ pub(crate) mod client;
 /// A platform's own clipboard joined to the session's: the Beam Pro's.
 #[allow(dead_code)]
 pub mod local_board;
+pub mod menu;
 mod microphone;
 mod pairing;
 mod session;
@@ -205,6 +206,8 @@ pub enum Command {
     Glasses(bool),
     /// Show a window the host has offered.
     Show(u32),
+    /// The wearer is using a window's application menus. See [`menu`].
+    Menu(spatiand_stream::MenuAsk),
 }
 
 /// Windows that hosts have open and are not showing: which host, its number there, what it is
@@ -312,6 +315,7 @@ impl Remote {
                 })
                 .map_err(|e| format!("could not start the remote thread: {e}"))?;
         }
+        menu::host_up(&host, commands.clone());
         Ok(Remote {
             stop,
             host,
@@ -863,6 +867,7 @@ impl Remotes {
 impl Drop for Remote {
     fn drop(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        menu::host_down(&self.host, &self.commands);
     }
 }
 

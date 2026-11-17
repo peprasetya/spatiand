@@ -4165,10 +4165,8 @@ pub fn collect_windows(
             // Both filled in by the backend, which is where the audio engine lives.
             sound: None,
             mute_hot: false,
-            #[cfg(target_os = "macos")]
-            has_menu: !placement.pip && crate::mac::has_app_menu(state, &window),
-            #[cfg(not(target_os = "macos"))]
-            has_menu: false,
+            // A Mac application's, on every platform: see `remote::menu`.
+            has_menu: !placement.pip && crate::remote::menu::window_has_menu(state, &window),
             menu_hot: false,
             popups,
             xr,

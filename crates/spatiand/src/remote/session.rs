@@ -368,6 +368,8 @@ async fn serve(
     let mut heads: std::collections::VecDeque<(u32, [f32; 4])> = Default::default();
     let mut windows: HashMap<u32, Reassembler> = HashMap::new();
     let mut apps: HashMap<u32, String> = HashMap::new();
+    // Windows whose menus the host offered before it opened them here.
+    let mut menus_early: std::collections::HashSet<u32> = Default::default();
     // How each window's pictures are packed and what it is in the room, as its host last said.
     // Two messages carry the two halves -- the eyes with the stream, the layer on its own --
     // and the compositor is only told when the pair changes.
@@ -413,6 +415,8 @@ async fn serve(
         // started as flat windows. Said before anything is launched.
         // What the host was offering last time is asked for afresh.
         super::offered_gone(&config.host, None);
+        // And what it offered of its windows' menus: it says again, window by window.
+        super::menu::forget_host(&config.host);
         say(&out, ClientMessage::Glasses { on: super::GLASSES_ON.load(std::sync::atomic::Ordering::Relaxed) });
         // Spatiand's applications' settings, the same here and there: what this machine has,
         // said first; a host that knows of it answers, one that does not ignores it.
@@ -476,6 +480,13 @@ async fn serve(
                                         &super::app_id(&config.host, &info.app),
                                         &title,
                                     );
+                                    // Its menus, if the host offered them before the window
+                                    // was here to have them.
+                                    if menus_early.remove(&info.window.0) {
+                                        if let Some(surface) = client.surface_id(info.window.0) {
+                                            super::menu::offered(&config.host, &super::app_id(&config.host, &info.app), surface, info.window.0);
+                                        }
+                                    }
                                 }
                                 HostMessage::Retitled { window, title } => {
                                     if let Some(app) = apps.get(&window.0) {
@@ -555,6 +566,8 @@ async fn serve(
                                 }
                                 HostMessage::Closed { window } => {
                                     super::offered_gone(&config.host, Some(window.0));
+                                    super::menu::window_gone(&config.host, window.0);
+                                    menus_early.remove(&window.0);
                                     client.close(window.0);
                                     streams.remove(&window.0);
                                     windows.remove(&window.0);
@@ -573,6 +586,19 @@ async fn serve(
                                     }
                                 }
                                 HostMessage::Notice { text } => super::host_notice_said(text),
+                                // A window's application menus: offered (its title bar gets
+                                // the button), and the levels of the one that is open.
+                                HostMessage::Menu(spatiand_stream::MenuSaid::Offered { window }) => {
+                                    match (apps.get(&window.0), client.surface_id(window.0)) {
+                                        (Some(app), Some(surface)) => {
+                                            super::menu::offered(&config.host, &super::app_id(&config.host, app), surface, window.0);
+                                        }
+                                        _ => {
+                                            menus_early.insert(window.0);
+                                        }
+                                    }
+                                }
+                                HostMessage::Menu(said) => super::menu::host_said(&config.host, said),
                                 HostMessage::Density { pixels_per_point, .. } => {
                                     super::density_said(&config.host, pixels_per_point);
                                 }
@@ -735,6 +761,9 @@ async fn serve(
                         }
                         Some(Command::Show(window)) => {
                             say(&out, ClientMessage::Show { window: spatiand_stream::WindowId(window) });
+                        }
+                        Some(Command::Menu(ask)) => {
+                            say(&out, ClientMessage::Menu(ask));
                         }
                         Some(Command::Glasses(on)) => {
                             say(&out, ClientMessage::Glasses { on });

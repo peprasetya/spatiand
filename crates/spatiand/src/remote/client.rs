@@ -200,6 +200,12 @@ impl Client {
         Ok((client, queue))
     }
 
+    /// The number of remote window `id`'s surface on this connection: the compositor's number
+    /// for it too, which is how the room tells which host's window it is looking at.
+    pub fn surface_id(&self, id: u32) -> Option<u32> {
+        self.windows.get(&id).map(|w| wayland_client::Proxy::id(&w.surface).protocol_id())
+    }
+
     /// Open a window for a remote one.
     pub fn open(&mut self, id: u32, app_id: &str, title: &str) {
         let surface = self.compositor.create_surface(&self.handle, ());

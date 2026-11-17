@@ -498,23 +498,24 @@ pub fn run(
             };
             let two_handed: Option<spatiand_input::GestureDelta> = None;
             let mut screenshot = super::screenshot_requested().swap(false, std::sync::atomic::Ordering::SeqCst);
-            let mut record_toggle = false;
+            // The settings' Record row below, or a platform's own asking (the Mac's `sp_record`).
+            let mut record_toggle = super::record::toggle_asked().swap(false, std::sync::atomic::Ordering::SeqCst);
 
             // --- input ---
             controller.poll(tracker.orientation());
             if let Some(devices) = super::audio_devices_changed() {
                 shell.set_audio(&devices);
             }
-            // An application's own menus, a level at a time as the app reads them.
-            #[cfg(target_os = "macos")]
-            match crate::mac::app_menu_said() {
-                Some(crate::mac::AppMenuSaid::Level { title, rows }) => {
+            // An application's own menus, a level at a time as they are read: this Mac's own
+            // windows' by the app, a host's Mac windows' by that host (`remote::menu`).
+            match crate::remote::menu::said() {
+                Some(crate::remote::menu::Said::Level { title, rows }) => {
                     shell.open_app_menu(&title, &rows);
                     // Over the window it is the menu of, not wherever the wearer happens to look.
                     let (yaw, pitch) = app_menu_at.unwrap_or_else(|| crate::window::facing(tracker.recentred_orientation()));
                     scene.anchor_menu_at(Mode::AppMenu, yaw, pitch);
                 }
-                Some(crate::mac::AppMenuSaid::Done) => {
+                Some(crate::remote::menu::Said::Done) => {
                     shell.close_app_menu();
                     scene.forget_anchor();
                 }
@@ -1008,14 +1009,8 @@ pub fn run(
                         HudAction::OpenHosts | HudAction::OpenPinned => {}
                         HudAction::OpenAudio => super::audio_devices_wanted(),
                         HudAction::ChooseAudio(index) => super::audio_device_chosen(index),
-                        HudAction::ChooseAppMenu(_index) => {
-                            #[cfg(target_os = "macos")]
-                            crate::mac::app_menu_chosen(_index);
-                        }
-                        HudAction::AppMenuBack => {
-                            #[cfg(target_os = "macos")]
-                            crate::mac::app_menu_back();
-                        }
+                        HudAction::ChooseAppMenu(index) => crate::remote::menu::chosen(index),
+                        HudAction::AppMenuBack => crate::remote::menu::back(),
                         // The page has opened: asked now rather than at the tick, as on the Deck.
                         HudAction::OpenBluetooth => {
                             bluetooth.refresh();
@@ -1906,11 +1901,10 @@ pub fn run(
                             }
                             // Its application's own menus, as a list.
                             Some(a) if a.zone == Some(Zone::Menu) => {
-                                #[cfg(target_os = "macos")]
                                 if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
                                     runtime.state.focus_window(&quad.window);
                                     app_menu_at = Some((quad.placement.yaw, quad.placement.pitch));
-                                    crate::mac::app_menu_wanted(&quad.window);
+                                    crate::remote::menu::open(&runtime.state, &quad.window);
                                 }
                             }
                             // Pinned to the glass or let go, whichever the window is not.

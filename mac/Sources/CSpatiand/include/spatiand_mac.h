@@ -36,8 +36,8 @@ enum {
     SP_WINDOW_CLOSE = 17,     // window id should close
     SP_WINDOW_SHOWN = 18,     // window id is on show in the room: its picture is wanted
     SP_WINDOW_HIDDEN = 19,
-    SP_RECORD_START = 20,     // film what the glasses show, from now
-    SP_RECORD_STOP = 21,      // and stop, and save it
+    SP_RECORD_START = 20,     // no longer said: the room records itself (sp_record)
+    SP_RECORD_STOP = 21,      // no longer said
     SP_AUDIO_LIST = 22,       // say what sound devices there are (sp_audio_devices_begin...)
     SP_AUDIO_CHOOSE = 23,     // use device id: the microphone if a is 1, else the output    // window id has been put away: no picture is needed
     SP_MENU_OPEN = 24,        // say the menus of window id's application, from the top (sp_menu_begin...)
@@ -103,6 +103,8 @@ void sp_recentre(void);
 // Close the window that has the keyboard.
 void sp_close_window(void);
 void sp_screenshot(void);
+// Start recording what the glasses show and hear (~/Movies/Spatiand), or stop.
+void sp_record(void);
 
 // Game controllers. Buttons: 0 A, 1 B, 2 X, 3 Y, 4 L1, 5 R1, 6 L2, 7 R2, 8 select, 9 start,
 // 10 guide, 11 left stick, 12 right stick, 13 up, 14 down, 15 left, 16 right. Sticks and the

@@ -7,7 +7,7 @@
 //! frames reassemble from their pieces, and that what comes out is a video file that plays.
 //!
 //! ```text
-//! probe-session <host:port> <fingerprint> [--launch chrome] [--out /tmp/seen.hevc] [--seconds 20]
+//! probe-session <host:port> <fingerprint> [--launch chrome] [--out /tmp/seen.hevc] [--seconds 20] [--menu [--menu-window n]]
 //! ```
 //!
 //! The fingerprint is the host's, from `spatiand-host --fingerprint`. This probe's own
@@ -99,6 +99,7 @@ async fn main() {
         Some((w.parse().ok()?, h.parse().ok()?))
     });
     let mut asked_resize = false;
+    let mut menu_step = 0;
     let mut said = Instant::now();
     // Sound, counted per application as it arrives on its own streams.
     let sound: std::sync::Arc<std::sync::Mutex<HashMap<String, u64>>> = Default::default();
@@ -116,6 +117,31 @@ async fn main() {
                         // can be had: its pictures are then counted with the rest.
                         if let (HostMessage::OfferedScreen { window, .. }, true) = (&message, args.iter().any(|a| a == "--show-screens")) {
                             say(&connection, ClientMessage::Show { window: *window }).await;
+                        }
+                        // `--menu` walks the first offered window's application menus as the
+                        // room's list does -- open, into the first, back, back out -- and
+                        // presses nothing.
+                        if args.iter().any(|a| a == "--menu") {
+                            use spatiand_stream::{MenuAsk, MenuSaid};
+                            let next = match (&message, menu_step) {
+                                (HostMessage::Menu(MenuSaid::Offered { window }), 0) => Some(MenuAsk::Open { window: *window }),
+                                // `--menu-window n`: asked of window n straight away, offered or not.
+                                (HostMessage::Welcome { .. }, 0) => value("--menu-window")
+                                    .and_then(|n| n.parse().ok())
+                                    .map(|n| MenuAsk::Open { window: spatiand_stream::WindowId(n) }),
+                                (HostMessage::Menu(MenuSaid::Level { .. }), 1) => Some(MenuAsk::Choose { row: 0 }),
+                                (HostMessage::Menu(MenuSaid::Level { .. }), 2 | 3) => Some(MenuAsk::Back),
+                                (HostMessage::Menu(MenuSaid::Done), step) => {
+                                    println!("menu: done after {step} step(s)");
+                                    None
+                                }
+                                _ => None,
+                            };
+                            if let Some(ask) = next {
+                                menu_step += 1;
+                                println!("menu: {ask:?}");
+                                say(&connection, ClientMessage::Menu(ask)).await;
+                            }
                         }
                         control = Box::pin(read_control(rest));
                     }

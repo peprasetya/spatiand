@@ -1329,16 +1329,18 @@ if let at = CommandLine.arguments.firstIndex(of: "--selftest-app-sound") {
 }
 
 if CommandLine.arguments.contains("--selftest-record") {
-    // The room in a window, filmed for four seconds: says where the film is and how big.
+    // The room in a window, recorded for five seconds by the room's own recorder, as the
+    // settings' Record row does: the log says where the file is (~/Movies/Spatiand, or
+    // SPATIAND_RECORDINGS) and how long.
     setenv("SPATIAND_HMD", "null", 1)
     setenv("XDG_CONFIG_HOME", NSTemporaryDirectory() + "spatiand-preview", 0)
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
     DispatchQueue.main.async {
         Room.shared.start(preview: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { if #available(macOS 15.0, *) { RoomRecorder.shared.start(screen: Room.shared.screen) } else { print("recording: needs macOS 15") } }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { if #available(macOS 15.0, *) { RoomRecorder.shared.stop() } else { print("recording: needs macOS 15") } }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 11) { Room.shared.stop(); exit(0) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { sp_record() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { sp_record() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { Room.shared.stop(); exit(0) }
     }
     application.run()
 }

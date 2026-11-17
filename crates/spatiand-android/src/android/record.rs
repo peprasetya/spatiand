@@ -1,169 +1,57 @@
-//! Recording a video of the session on the Beam Pro: what the glasses show, and what the
-//! wearer hears.
+//! Recording a video of the session on the Beam Pro and the Mac: what the glasses show, and what
+//! the wearer hears.
 //!
-//! The Deck's recorder (`crates/spatiand/src/record.rs`) with Android's parts, and the same
-//! file: Matroska, with
+//! The Deck's recorder (`crates/spatiand/src/record.rs`) with these platforms' parts, and the
+//! same file: Matroska, with
 //!
 //! * **the picture** -- the frame sent to the glasses, both eyes side by side, H.264 at
-//!   [`FPS`] and 40 Mbit/s from the phone's hardware encoder. The frame is copied once on the
-//!   GPU while it is still in the glasses' window, and the copy drawn into the encoder's input
-//!   surface after the glasses have theirs.
+//!   [`FPS`] and 40 Mbit/s from the platform's hardware encoder: MediaCodec on the Beam Pro,
+//!   VideoToolbox on the Mac (`super::record_codec`, the one piece that differs). The frame is
+//!   copied on the GPU while it is still in the glasses' window, and handed to the encoder after
+//!   the glasses have theirs.
 //! * **"What you heard"** -- stereo, after the HRTF: exactly what the session's one output was
 //!   given (`spatiand_audio::server::record_heard`).
 //! * **"Surround 7.1.4"** -- before the HRTF: every window's channels on the speakers they
 //!   point at from the wearer's head, unplaced sound on the front pair as it is
 //!   (`spatiand_audio::server::record_surround`).
-//! * **"Microphone"** -- the phone's microphone.
+//! * **"Microphone"** -- the microphone the room records from.
 //!
 //! The sound is 24-bit PCM, as on the Deck. Android's own muxer writes MP4, which takes sound
 //! only as AAC, and this phone's AAC encoder stops at six channels; so the file is written
-//! here (`super::mkv`), on the recorder's thread. It goes in the app's own storage and is
-//! handed to the app when finished, which puts it in the phone's `Movies/Spatiand`: Android
-//! lets an app write there only through its media store.
+//! here (`super::mkv`), on the recorder's thread, on both platforms. Where it goes is the
+//! platform's: on the Beam Pro the app's own storage, handed to the app when finished, which
+//! puts it in the phone's `Movies/Spatiand` (Android lets an app write there only through its
+//! media store); on the Mac `~/Movies/Spatiand`, the Mac's own place for films.
 
-use std::ffi::{c_void, CString};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ndk_sys as ndk;
-use smithay::backend::egl::{EGLContext, EGLDisplay, EGLSurface};
+use smithay::backend::egl::{EGLContext, EGLDisplay};
 use smithay::backend::renderer::gles::{ffi, GlesRenderer};
-use smithay::backend::renderer::{Bind, Frame, Renderer};
-use smithay::utils::Transform;
 use spatiand_audio::ring::Ring;
 
-use super::egl::AndroidWindow;
+use super::record_codec::{self as codec, Coded};
+
+pub use codec::{publish, publish_leftovers};
+#[cfg(target_os = "android")]
+pub use codec::take_finished;
 
 /// Pictures a second: a video's rate, as on the Deck.
 pub const FPS: u32 = 36;
-const BITS_PER_SECOND: i32 = 40_000_000;
+pub const BITS_PER_SECOND: u32 = 40_000_000;
 const RATE: u32 = 48_000;
 /// Two seconds of sound waiting in each track, at most.
 const RING_SECONDS: usize = 2;
 /// How far a track may lag the clock before the gap is written as silence.
 const LAG: Duration = Duration::from_millis(150);
-/// What Android calls an encoder's input surface, as a colour format.
-const COLOR_FORMAT_SURFACE: i32 = 0x7F00_0789;
 
-/// Recordings finished and waiting for the app to move them to `Movies/Spatiand`.
-fn finished() -> &'static Mutex<Vec<String>> {
-    static FINISHED: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    &FINISHED
-}
-
-/// The next finished recording or screenshot, for the app to publish.
-pub fn take_finished() -> Option<String> {
-    finished().lock().ok()?.pop()
-}
-
-/// Hand a finished file to the app to publish: a video to `Movies/Spatiand`, a picture to
-/// `Pictures/Spatiand`.
-pub fn publish(path: String) {
-    if let Ok(mut done) = finished().lock() {
-        done.push(path);
-    }
-}
-
-/// Screenshots saved before they were published -- by a build that kept them to itself -- are
-/// handed over now; and so is every recording still in the app's own storage, where no gallery
-/// shows it: one cut short when the app was killed or the storage ran full (it plays as far as
-/// it was written: its segment has no size until it is finished), and one the media store would
-/// not take last time. At the session's start, before anything is recorded.
-pub fn publish_leftovers() {
-    let dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())).join("screenshots");
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "png") {
-            publish(path.display().to_string());
-        }
-    }
-    for entry in std::fs::read_dir(directory()).into_iter().flatten().flatten() {
-        let path = entry.path();
-        let ours = path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("spatiand-"));
-        if ours && path.extension().is_some_and(|e| e == "mkv") {
-            hand_over_unfinished(&path);
-        }
-    }
-}
-
-/// A recording that was not finished: handed to the app as it is if anything was written, and
-/// removed if nothing was.
-fn hand_over_unfinished(path: &std::path::Path) {
-    if std::fs::metadata(path).is_ok_and(|m| m.len() > 0) {
-        log::info!("recording: {} is handed over as far as it was written", path.display());
-        publish(path.display().to_string());
-    } else {
-        let _ = std::fs::remove_file(path);
-    }
-}
-
-struct Codec(*mut ndk::AMediaCodec);
-
-unsafe impl Send for Codec {}
-
-impl Drop for Codec {
-    fn drop(&mut self) {
-        unsafe {
-            ndk::AMediaCodec_stop(self.0);
-            ndk::AMediaCodec_delete(self.0);
-        }
-    }
-}
-
-struct Format(*mut ndk::AMediaFormat);
-
-impl Format {
-    fn new(mime: &str) -> Format {
-        let format = Format(unsafe { ndk::AMediaFormat_new() });
-        format.string("mime", mime);
-        format
-    }
-
-    fn int(&self, key: &str, value: i32) {
-        let key = CString::new(key).unwrap();
-        unsafe { ndk::AMediaFormat_setInt32(self.0, key.as_ptr(), value) };
-    }
-
-    fn float(&self, key: &str, value: f32) {
-        let key = CString::new(key).unwrap();
-        unsafe { ndk::AMediaFormat_setFloat(self.0, key.as_ptr(), value) };
-    }
-
-    fn string(&self, key: &str, value: &str) {
-        let key = CString::new(key).unwrap();
-        let value = CString::new(value).unwrap();
-        unsafe { ndk::AMediaFormat_setString(self.0, key.as_ptr(), value.as_ptr()) };
-    }
-}
-
-impl Drop for Format {
-    fn drop(&mut self) {
-        unsafe { ndk::AMediaFormat_delete(self.0) };
-    }
-}
-
-fn encoder(mime: &str, format: &Format) -> Result<Codec, String> {
-    let name = CString::new(mime).unwrap();
-    let codec = unsafe { ndk::AMediaCodec_createEncoderByType(name.as_ptr()) };
-    if codec.is_null() {
-        return Err(format!("this phone has no {mime} encoder"));
-    }
-    let codec = Codec(codec);
-    let status = unsafe {
-        ndk::AMediaCodec_configure(
-            codec.0,
-            format.0,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            ndk::AMEDIACODEC_CONFIGURE_FLAG_ENCODE as u32,
-        )
-    };
-    if status != ndk::media_status_t::AMEDIA_OK {
-        return Err(format!("the {mime} encoder would not take its settings ({status:?})"));
-    }
-    Ok(codec)
+/// Start or stop a recording at the next frame, as the settings' Record row does: for a test,
+/// and for a platform's own way of asking.
+pub fn toggle_asked() -> &'static AtomicBool {
+    static ASKED: AtomicBool = AtomicBool::new(false);
+    &ASKED
 }
 
 /// One sound track: where it comes from, and how much of it has been written.
@@ -175,15 +63,11 @@ struct Sound {
     frames: u64,
 }
 
-type PresentationTime = unsafe extern "C" fn(*const c_void, *const c_void, i64) -> u32;
-
 /// A recording in progress.
 pub struct Recorder {
-    /// The encoder's input surface, as something to draw into. `None` once stopped.
-    surface: Option<EGLSurface>,
+    /// The encoder's way in, on the session's side. `None` once stopped.
+    input: Option<codec::Input>,
     size: (i32, i32),
-    /// The frame, copied out of the glasses' window, and the framebuffer that holds it.
-    copy: Option<(u32, u32)>,
     /// A copy was made this frame and is owed to the encoder.
     owed: bool,
     started: Instant,
@@ -192,8 +76,6 @@ pub struct Recorder {
     stop: Arc<AtomicBool>,
     /// The recorder's thread has ended in an error: no more pictures are made for it.
     failed: Arc<AtomicBool>,
-    present_time: Option<PresentationTime>,
-    display: *const c_void,
     _microphone: Option<spatiand_audio::server::Capture>,
 }
 
@@ -201,30 +83,7 @@ impl Recorder {
     /// Start recording a `size` frame, drawn with `context` on `display`.
     pub fn start(size: (i32, i32), display: &EGLDisplay, context: &EGLContext) -> Result<Recorder, String> {
         // --- the picture ---
-        let video_format = Format::new("video/avc");
-        video_format.int("width", size.0);
-        video_format.int("height", size.1);
-        video_format.int("color-format", COLOR_FORMAT_SURFACE);
-        video_format.int("bitrate", BITS_PER_SECOND);
-        video_format.int("bitrate-mode", 1); // variable
-        video_format.float("frame-rate", FPS as f32);
-        video_format.int("i-frame-interval", 1);
-        let video = encoder("video/avc", &video_format)?;
-        let mut window = std::ptr::null_mut();
-        if unsafe { ndk::AMediaCodec_createInputSurface(video.0, &mut window) } != ndk::media_status_t::AMEDIA_OK
-            || window.is_null()
-        {
-            return Err("the video encoder gave no surface to draw into".into());
-        }
-        let native = AndroidWindow::new(window.cast());
-        // Ours is held by `native` now; the one the codec handed over is let go of.
-        unsafe { ndk::ANativeWindow_release(window) };
-        let pixel_format = context.pixel_format().ok_or("the context has no pixel format")?;
-        let surface = unsafe { EGLSurface::new(display, pixel_format, context.config_id(), native) }
-            .map_err(|e| format!("could not draw into the encoder: {e}"))?;
-        if unsafe { ndk::AMediaCodec_start(video.0) } != ndk::media_status_t::AMEDIA_OK {
-            return Err("the video encoder would not start".into());
-        }
+        let (input, output) = codec::open(size, display, context, FPS, BITS_PER_SECOND)?;
 
         // --- the sound ---
         let ring = |channels: usize| Arc::new(Ring::new(RATE as usize * RING_SECONDS * channels));
@@ -258,7 +117,7 @@ impl Recorder {
         ];
 
         // --- the file ---
-        let dir = directory();
+        let dir = codec::directory();
         std::fs::create_dir_all(&dir).map_err(|e| format!("could not make {}: {e}", dir.display()))?;
         let path = dir.join(format!("spatiand-{}.mkv", stamp()));
         let file = std::fs::File::create(&path).map_err(|e| format!("could not write {}: {e}", path.display()))?;
@@ -275,43 +134,33 @@ impl Recorder {
         std::thread::Builder::new()
             .name("recorder".into())
             .spawn(move || {
-                let result = run(video, sounds, file, size_now, started, &stopping);
+                let result = run(output, sounds, file, size_now, started, &stopping);
                 match result {
                     Ok(seconds) => {
                         log::info!("recording: saved {seconds:.0} s to {}", shown.display());
-                        if let Ok(mut done) = finished().lock() {
-                            done.push(shown.display().to_string());
-                        }
+                        codec::finished(&shown);
                     }
                     // The storage full, most likely: what was written is still the wearer's,
-                    // and must not stay where nothing on the phone shows it.
+                    // and must not stay where nothing shows it.
                     Err(e) => {
                         log::warn!("recording: {} is incomplete: {e}", shown.display());
                         failing.store(true, Ordering::SeqCst);
-                        hand_over_unfinished(&shown);
+                        codec::unfinished(&shown);
                     }
                 }
             })
             .map_err(|e| format!("could not start the recorder: {e}"))?;
 
-        let present_time = unsafe {
-            let name = CString::new("eglPresentationTimeANDROID").unwrap();
-            let f = smithay::backend::egl::ffi::egl::GetProcAddress(name.as_ptr()) as *const c_void;
-            (!f.is_null()).then(|| std::mem::transmute::<*const c_void, PresentationTime>(f))
-        };
         log::info!("recording to {}", path.display());
         Ok(Recorder {
-            surface: Some(surface),
+            input: Some(input),
             size,
-            copy: None,
             owed: false,
             started,
             next_due: started,
             frames: 0,
             stop,
             failed,
-            present_time,
-            display: display.get_display_handle().handle as *const c_void,
             _microphone: microphone,
         })
     }
@@ -340,24 +189,9 @@ impl Recorder {
     /// # Safety
     /// The GL context must be current with the glasses' window bound as framebuffer 0.
     pub unsafe fn copy(&mut self, gl: &ffi::Gles2) {
-        let (w, h) = self.size;
-        let (_, fbo) = *self.copy.get_or_insert_with(|| {
-            let mut texture = 0;
-            gl.GenTextures(1, &mut texture);
-            gl.BindTexture(ffi::TEXTURE_2D, texture);
-            gl.TexStorage2D(ffi::TEXTURE_2D, 1, ffi::RGBA8, w, h);
-            let mut fbo = 0;
-            gl.GenFramebuffers(1, &mut fbo);
-            gl.BindFramebuffer(ffi::FRAMEBUFFER, fbo);
-            gl.FramebufferTexture2D(ffi::FRAMEBUFFER, ffi::COLOR_ATTACHMENT0, ffi::TEXTURE_2D, texture, 0);
-            gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
-            (texture, fbo)
-        });
-        gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, 0);
-        gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, fbo);
-        gl.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, ffi::COLOR_BUFFER_BIT, ffi::NEAREST);
-        gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
-        self.owed = true;
+        if let Some(input) = self.input.as_mut() {
+            self.owed = input.copy(gl, self.size);
+        }
     }
 
     /// Hand the copied frame to the encoder. After the glasses' own swap, so they never wait
@@ -366,47 +200,18 @@ impl Recorder {
         if !std::mem::take(&mut self.owed) {
             return;
         }
-        let (Some(surface), Some((_, fbo))) = (self.surface.as_mut(), self.copy) else { return };
-        let (w, h) = self.size;
-        let drawn = (|| -> Result<(), String> {
-            let mut target = renderer.bind(surface).map_err(|e| e.to_string())?;
-            let mut frame = renderer
-                .render(&mut target, (w, h).into(), Transform::Normal)
-                .map_err(|e| e.to_string())?;
-            frame
-                .with_context(|gl| unsafe {
-                    gl.BindFramebuffer(ffi::READ_FRAMEBUFFER, fbo);
-                    gl.BindFramebuffer(ffi::DRAW_FRAMEBUFFER, 0);
-                    gl.BlitFramebuffer(0, 0, w, h, 0, 0, w, h, ffi::COLOR_BUFFER_BIT, ffi::NEAREST);
-                    gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
-                })
-                .map_err(|e| e.to_string())?;
-            let _ = frame.finish().map_err(|e| e.to_string())?;
-            Ok(())
-        })();
-        if let Err(e) = drawn {
-            log::warn!("recording: could not hand a frame to the encoder: {e}");
-            return;
-        }
+        let Some(input) = self.input.as_mut() else { return };
         // Stamped with the recording's own clock, which the sound is written against too.
-        if let Some(present_time) = self.present_time {
-            let ns = self.started.elapsed().as_nanos() as i64;
-            unsafe { present_time(self.display, surface.get_surface_handle() as *const c_void, ns) };
+        match input.present(renderer, self.size, self.started.elapsed()) {
+            Ok(()) => self.frames += 1,
+            Err(e) => log::warn!("recording: could not hand a frame to the encoder: {e}"),
         }
-        if let Err(e) = surface.swap_buffers(None) {
-            log::warn!("recording: the encoder would not take a frame ({e:?})");
-            return;
-        }
-        self.frames += 1;
     }
 
     /// Stop, and let the recorder's thread finish the file. Gives back the copy's GL objects.
     pub fn stop(mut self, renderer: &mut GlesRenderer) {
-        if let Some((texture, fbo)) = self.copy.take() {
-            let _ = renderer.with_context(|gl| unsafe {
-                gl.DeleteFramebuffers(1, &fbo);
-                gl.DeleteTextures(1, &texture);
-            });
+        if let Some(input) = self.input.take() {
+            input.release(renderer);
         }
         log::info!(
             "recording stopped after {:.0} s: {} frame(s)",
@@ -420,9 +225,9 @@ impl Drop for Recorder {
     fn drop(&mut self) {
         spatiand_audio::server::record_heard(None);
         spatiand_audio::server::record_surround(None);
-        // Nothing more is drawn into the encoder once its surface is gone; then it is told the
+        // Nothing more is drawn for the encoder once its way in is gone; then it is told the
         // stream has ended, and the thread finishes the file.
-        self.surface = None;
+        self.input = None;
         self.stop.store(true, Ordering::SeqCst);
     }
 }
@@ -430,7 +235,7 @@ impl Drop for Recorder {
 /// The recorder's thread: take coded pictures out, write them and the sound as it comes,
 /// finish the file.
 fn run(
-    video: Codec,
+    mut video: codec::Output,
     mut sounds: Vec<Sound>,
     file: std::fs::File,
     size: (u32, u32),
@@ -450,30 +255,17 @@ fn run(
         if stopping && stopping_since.is_none() {
             stopping_since = Some(Instant::now());
             ended_at = started.elapsed();
-            unsafe { ndk::AMediaCodec_signalEndOfInputStream(video.0) };
+            video.end();
         }
 
         // --- pictures ---
-        loop {
-            let mut info = ndk::AMediaCodecBufferInfo { offset: 0, size: 0, presentationTimeUs: 0, flags: 0 };
-            let index = unsafe { ndk::AMediaCodec_dequeueOutputBuffer(video.0, &mut info, 0) };
-            if index == ndk::AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED as isize {
-                continue;
-            }
-            if index < 0 {
-                break;
-            }
-            let flags = info.flags;
-            if flags & ndk::AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM as u32 != 0 {
-                video_ended = true;
-            }
-            let mut capacity = 0usize;
-            let buffer = unsafe { ndk::AMediaCodec_getOutputBuffer(video.0, index as usize, &mut capacity) };
-            if info.size > 0 && !buffer.is_null() {
-                let bytes = unsafe { std::slice::from_raw_parts(buffer.add(info.offset as usize), info.size as usize) };
-                if flags & ndk::AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG as u32 != 0 {
+        let (coded, ended) = video.drain()?;
+        video_ended |= ended;
+        for coded in coded {
+            match coded {
+                Coded::Config(bytes) => {
                     if writer.is_none() {
-                        let private = super::mkv::avc_config(bytes).ok_or("the encoder's stream has no SPS and PPS")?;
+                        let private = super::mkv::avc_config(&bytes).ok_or("the encoder's stream has no SPS and PPS")?;
                         let mut tracks = vec![super::mkv::Track::Video { width: size.0, height: size.1, private }];
                         for (i, sound) in sounds.iter().enumerate() {
                             tracks.push(super::mkv::Track::Audio {
@@ -490,16 +282,12 @@ fn run(
                         }
                         writer = Some(w);
                     }
-                } else {
-                    let ms = info.presentationTimeUs / 1000;
-                    let key = flags & 1 != 0; // BUFFER_FLAG_KEY_FRAME
-                    match writer.as_mut() {
-                        Some(w) => w.video(1, ms, key, bytes).map_err(|e| e.to_string())?,
-                        None => held.push((ms, key, bytes.to_vec())),
-                    }
                 }
+                Coded::Picture { ms, key, data } => match writer.as_mut() {
+                    Some(w) => w.video(1, ms, key, &data).map_err(|e| e.to_string())?,
+                    None => held.push((ms, key, data)),
+                },
             }
-            unsafe { ndk::AMediaCodec_releaseOutputBuffer(video.0, index as usize, false) };
         }
 
         // --- sound ---
@@ -565,10 +353,7 @@ fn stamp() -> String {
         .to_string()
 }
 
-/// Where recordings are written before the app publishes them: `SPATIAND_RECORDINGS`, which the
-/// app sets to its own `Movies` directory.
-fn directory() -> PathBuf {
-    std::env::var("SPATIAND_RECORDINGS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())).join("Movies"))
+/// `SPATIAND_RECORDINGS`, where a platform or a test says recordings go.
+pub fn directory_asked() -> Option<PathBuf> {
+    std::env::var("SPATIAND_RECORDINGS").ok().map(PathBuf::from)
 }

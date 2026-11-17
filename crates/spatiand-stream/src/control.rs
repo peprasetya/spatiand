@@ -134,6 +134,12 @@ pub enum ClientMessage {
     ///
     /// These two last in this enum, and must stay so: see `crate::VERSION`.
     PairConfirm { confirm: Vec<u8> },
+    /// The wearer is using a window's application menus, which the host has offered
+    /// ([`MenuSaid::Offered`]). See [`MenuAsk`].
+    ///
+    /// After the pairing pair, so a host that predates it reads every other message as before
+    /// and this one as something it does not know; it is only said to a host that offered.
+    Menu(MenuAsk),
 }
 
 /// What the host sends.
@@ -234,6 +240,51 @@ pub enum HostMessage {
     ///
     /// Last, and must stay so: a session built before it reports it as unknown.
     PairReply { spake: Vec<u8>, confirm: Vec<u8> },
+    /// A window's application menus: offered, and a level of them at a time once opened. See
+    /// [`MenuSaid`]. After `PairReply`, so a session built before it reports it as unknown.
+    Menu(MenuSaid),
+}
+
+/// What the wearer does with a window's application menus.
+///
+/// **A Mac application's menus are not in its window**: they are on the Mac's menu bar, at the
+/// top of the Mac's screen, which no window shows -- not in the Mac's own room, and not on a Deck
+/// or a Beam Pro the window is streamed to. So the host reads them (on a Mac through
+/// Accessibility) and says them a level at a time ([`MenuSaid::Level`]), the room shows them as
+/// one of its own lists -- the same list on every platform -- and what is chosen there is
+/// pressed in the real menu on the host. Nothing drops down on the host's screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MenuAsk {
+    /// The menu button on this window's title bar was pressed: say its application's menus,
+    /// from the top (the menu bar's own items).
+    Open { window: WindowId },
+    /// Row `row` of the level last said was chosen: say the level it opens, or press it and say
+    /// [`MenuSaid::Done`].
+    Choose { row: u32 },
+    /// Up a level: say that one, or `Done` if this was the top.
+    Back,
+}
+
+/// What the host says of a window's application menus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MenuSaid {
+    /// This window's application has menus the session can open ([`MenuAsk::Open`]): its title
+    /// bar gets a menu button. Said after the window's `Opened`.
+    Offered { window: WindowId },
+    /// The level of the menu that is open: what it is called, and its rows.
+    Level { title: String, rows: Vec<MenuRow> },
+    /// The menu is done with: something was chosen and pressed, it was backed out of, or the
+    /// application would not say.
+    Done,
+}
+
+/// One row of a menu: its words as shown -- a tick, an arrow for a row that opens more and the
+/// keys that do the same are already in them -- and what is said under them ("Opens more",
+/// "Not available now").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MenuRow {
+    pub label: String,
+    pub detail: String,
 }
 
 /// A window the host has.
@@ -577,6 +628,9 @@ mod tests {
             ClientMessage::Detach,
             ClientMessage::PairStart { spake: vec![0x41; 33] },
             ClientMessage::PairConfirm { confirm: vec![7; 32] },
+            ClientMessage::Menu(MenuAsk::Open { window: WindowId(4) }),
+            ClientMessage::Menu(MenuAsk::Choose { row: 2 }),
+            ClientMessage::Menu(MenuAsk::Back),
         ];
         for message in client {
             let bytes = crate::to_bytes(&message).expect("encodes");
@@ -630,12 +684,52 @@ mod tests {
                 drawn: true,
             },
             HostMessage::PairReply { spake: vec![0x42; 33], confirm: vec![9; 32] },
+            HostMessage::Menu(MenuSaid::Offered { window: WindowId(4) }),
+            HostMessage::Menu(MenuSaid::Level {
+                title: "TextEdit".into(),
+                rows: vec![MenuRow { label: "File  \u{203A}".into(), detail: "Opens more".into() }],
+            }),
+            HostMessage::Menu(MenuSaid::Done),
         ];
         for message in host {
             let bytes = crate::to_bytes(&message).expect("encodes");
             let back: HostMessage = crate::from_bytes(&bytes).expect("decodes");
             assert_eq!(back, message);
         }
+    }
+
+    #[test]
+    fn menus_cross_as_the_mac_host_writes_and_reads_them() {
+        // The Mac's host speaks JSON (serde's) to its app, both ways.
+        let json = r#"{"Menu":{"Level":{"title":"TextEdit \u2014 File","rows":[{"label":"New    \u2318N","detail":"Also \u2318N on the keyboard"},{"label":"Open Recent  \u203a","detail":"Opens more"}]}}}"#;
+        let said: HostMessage = serde_json::from_str(json).unwrap();
+        match said {
+            HostMessage::Menu(MenuSaid::Level { title, rows }) => {
+                assert_eq!(title, "TextEdit \u{2014} File");
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[1].detail, "Opens more");
+            }
+            other => panic!("{other:?}"),
+        }
+        let offered: HostMessage = serde_json::from_str(r#"{"Menu":{"Offered":{"window":3}}}"#).unwrap();
+        assert_eq!(offered, HostMessage::Menu(MenuSaid::Offered { window: WindowId(3) }));
+        assert_eq!(serde_json::from_str::<HostMessage>(r#"{"Menu":"Done"}"#).unwrap(), HostMessage::Menu(MenuSaid::Done));
+        // What the app is handed of what a session says.
+        assert_eq!(serde_json::to_string(&ClientMessage::Menu(MenuAsk::Open { window: WindowId(3) })).unwrap(), r#"{"Menu":{"Open":{"window":3}}}"#);
+        assert_eq!(serde_json::to_string(&ClientMessage::Menu(MenuAsk::Choose { row: 1 })).unwrap(), r#"{"Menu":{"Choose":{"row":1}}}"#);
+        assert_eq!(serde_json::to_string(&ClientMessage::Menu(MenuAsk::Back)).unwrap(), r#"{"Menu":"Back"}"#);
+    }
+
+    #[test]
+    fn a_menu_is_a_message_an_older_peer_passes_over() {
+        // The new messages are new variants at the end: their tag is one no older build has,
+        // so it reads them as unknown rather than as something else.
+        let bytes = crate::to_bytes(&ClientMessage::Menu(MenuAsk::Back)).unwrap();
+        let pair = crate::to_bytes(&ClientMessage::PairConfirm { confirm: vec![] }).unwrap();
+        assert_eq!(bytes[0], pair[0] + 1);
+        let bytes = crate::to_bytes(&HostMessage::Menu(MenuSaid::Done)).unwrap();
+        let reply = crate::to_bytes(&HostMessage::PairReply { spake: vec![], confirm: vec![] }).unwrap();
+        assert_eq!(bytes[0], reply[0] + 1);
     }
 
     #[test]

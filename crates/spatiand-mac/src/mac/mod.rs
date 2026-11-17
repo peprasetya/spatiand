@@ -34,7 +34,13 @@ mod logging;
 pub mod pads;
 pub mod panel;
 pub mod pasteboard;
+/// The recorder: the Beam Pro's, with the Mac's encoder ([`record_codec`]) and the same file.
+#[path = "../../../spatiand-android/src/android/record.rs"]
 pub mod record;
+pub mod record_codec;
+/// The recording's Matroska file: the Beam Pro's writer.
+#[path = "../../../spatiand-android/src/android/mkv.rs"]
+pub mod mkv;
 pub mod remote_video;
 
 use std::ffi::c_void;
@@ -574,19 +580,9 @@ pub fn shape_while_resizing(
 }
 
 // --- an application's own menus, as a list in the room ---
-
-/// What the app last said of the menu that is open.
-pub enum AppMenuSaid {
-    /// A level of it: what it is called, and each row's words and what is said under them.
-    Level { title: String, rows: Vec<(String, String)> },
-    Done,
-}
-
-pub static APP_MENU: Mutex<Option<AppMenuSaid>> = Mutex::new(None);
-
-pub fn app_menu_said() -> Option<AppMenuSaid> {
-    APP_MENU.lock().unwrap().take()
-}
+//
+// This Mac's own windows' half of `remote::menu`, which the room asks; a Mac window streamed
+// from a host has the other half. What the app says comes back through `sp_menu_*`.
 
 /// Whether a window is one of this Mac's own, whose menus are on the Mac's menu bar.
 pub fn has_app_menu(state: &crate::Spatiand, window: &smithay::desktop::Window) -> bool {

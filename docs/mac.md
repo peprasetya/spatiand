@@ -131,7 +131,9 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   its picture, and the corners that are neither are seen through.
 * **A menu button** at the left of a Mac window's bar opens its application's own menus as one of
   the room's lists, read and pressed through Accessibility (`RoomMenus.swift`): the Mac's menu
-  bar is on the Mac's screen, out of sight.
+  bar is on the Mac's screen, out of sight. The room asks through `remote::menu`, which is also
+  how a Mac window streamed from a host gets the same button and list on a Deck, a Beam Pro or
+  another Mac (below).
 * **Sound.** An application with a window in the room is tapped (a Core Audio process tap) and
   heard from where its window is; the speaker on the bar mutes it, and scrolled or slid it is that
   window's own volume, shown as a ring. A screen on show has the sound of everything else.
@@ -149,8 +151,13 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   a room command; unbound they are the clicks they always were. A two-finger deep click, which
   macOS does not make, is read from the pressure with a tap of the pad, behind its own setting
   (off). `docs/input-mapper.md` section 8.
-* *Sound devices* in the settings chooses the output and the microphone; *Record a video* films
-  the glasses' view (macOS 15) to `~/Movies/Spatiand`.
+* *Sound devices* in the settings chooses the output and the microphone; *Record a video* is the
+  Beam Pro's recorder (`spatiand-android/.../record.rs`, shared) with VideoToolbox's hardware
+  H.264 in place of MediaCodec (`mac/record_codec.rs`, `spatiand_video::mac::Encoder`): the same
+  Matroska file as the Deck's and the Beam Pro's -- both eyes side by side, "What you heard",
+  "Surround 7.1.4" and "Microphone" -- as `~/Movies/Spatiand/spatiand-<time>.mkv`
+  (`SPATIAND_RECORDINGS` to put it elsewhere). The frame is copied into one of the encoder's
+  `IOSurface`s on the GPU and fenced; the recorder's thread waits on the fence and encodes.
 * The view is held steady against the wearer's pulse (`spatiand_track::Steady`,
   `SPATIAND_STEADY=0` to compare).
 * From a Mac, Command is sent to a host as Control.
@@ -210,6 +217,12 @@ Pro it is a host like the Linux one, with these differences, which are a Mac's:
 * A screen is sent at the size it looks, not at the size macOS draws it before scaling it down,
   and with the sound of everything that has no stream of its own.
 * The Mac's notifications are sent to the device and shown under its clock.
+* **A window's application menus are offered** (`MenuSaid::Offered`, after `Opened`, for an
+  application with a menu bar): its title bar on the device gets the menu button, and the
+  device's room shows the menus as its own list, a level at a time (`ClientMessage::Menu` --
+  open, choose a row, back; `HostMessage::Menu` -- a level, done). The host reads and presses
+  them through Accessibility with a `RoomMenus` of its own, the window brought forward first so
+  that what is chosen is done to it.
 
 ## Tests that need no glasses
 
@@ -222,6 +235,7 @@ when run from the bundle. **The ones marked ✋ move the Mac's real pointer.**
 | `--selftest-child [--goes] [--tab]` | a window with something beside it, which then goes; or with a second tab chosen |
 | `--selftest-terminal-tabs <title>` | switches the tabs of a real Terminal window |
 | `--selftest-menu <App>` | opens an application's menus as a list, and one level of them |
+| `--selftest-record` | the room in a window, recorded for five seconds by the room's recorder (`sp_record`, as the settings' Record row); `SPATIAND_RECORDINGS=<dir>` to keep it out of `~/Movies` |
 | `--selftest-desk <App> [folder]` | 2D mode: one of Spatiand's own applications as a Mac window (SpatiQuill unless named; the Mac has no SpatiMesh until its Chromium port), in a process of its own (the running Spatiand is not touched). SpatiMesh (the Rust window, removed 2026-11-10): an address typed (Command-L), resized, scrolled, then a click and a search typed as AppKit events; the others: opened, resized; then each closed by its close button. The window as the window server shows it is saved after each step |
 | `--selftest-app-sound <App>` | takes a playing application's sound for the room; with `SPATIAND_TEST_TURN=1` turns the head it is placed for and says how loud each ear is |
 | `--selftest-screen [--virtual]` | brings a screen into the room |

@@ -51,9 +51,9 @@ pub enum Asked {
     WindowShown = 18,
     /// Window `id` has been put away, and is only in the list: no picture is needed.
     WindowHidden = 19,
-    /// Film what the glasses show, from now.
+    /// No longer said: the room records itself now (`record`), as on the Deck and the Beam
+    /// Pro. The numbers are kept so the rest keep theirs.
     RecordStart = 20,
-    /// And stop, and save it.
     RecordStop = 21,
     /// Say what sound devices there are, with `sp_audio_devices_begin` and the rest.
     AudioList = 22,
@@ -508,6 +508,12 @@ pub extern "C" fn sp_screenshot() {
     super::screenshot_requested().store(true, Ordering::SeqCst);
 }
 
+/// Start recording what the glasses show and hear, or stop, as the settings' Record row does.
+#[no_mangle]
+pub extern "C" fn sp_record() {
+    super::record::toggle_asked().store(true, Ordering::SeqCst);
+}
+
 // --- game controllers ---
 
 /// A pad's button: see `pads::Button` for the numbers.
@@ -663,7 +669,7 @@ pub unsafe extern "C" fn sp_menu_row(label: *const c_char, detail: *const c_char
 #[no_mangle]
 pub extern "C" fn sp_menu_end() {
     let (title, rows) = MENU_BEING_SAID.with(|menu| std::mem::take(&mut *menu.borrow_mut()));
-    *super::APP_MENU.lock().unwrap() = Some(super::AppMenuSaid::Level { title, rows });
+    crate::remote::menu::local_said(crate::remote::menu::Said::Level { title, rows });
 }
 
 /// What an application of this Mac shows, in answer to [`Asked::Describe`] number `id`.
@@ -690,7 +696,7 @@ pub unsafe extern "C" fn sp_typed(id: u32, error: *const c_char) {
 /// The application's menu is done with: something was chosen, or it was backed out of.
 #[no_mangle]
 pub extern "C" fn sp_menu_close() {
-    *super::APP_MENU.lock().unwrap() = Some(super::AppMenuSaid::Done);
+    crate::remote::menu::local_said(crate::remote::menu::Said::Done);
 }
 
 thread_local! {

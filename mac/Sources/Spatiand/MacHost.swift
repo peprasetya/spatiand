@@ -18,7 +18,8 @@ import ScreenCaptureKit
 
 final class MacHost {
     static let shared = MacHost()
-    static let port: UInt16 = 47600
+    /// 47600; a test instance beside the real one says another (`SPATIAND_HOST_PORT`).
+    static var port: UInt16 { ProcessInfo.processInfo.environment["SPATIAND_HOST_PORT"].flatMap { UInt16($0) } ?? 47600 }
     /// The protocol's own version, which a session checks.
     private static let protocolVersion = 3
 
@@ -89,7 +90,8 @@ final class MacHost {
 
     func start() {
         guard link == nil else { return }
-        let dir = NSString("~/Library/Application Support/Spatiand/identity").expandingTildeInPath
+        // A test instance keeps an identity and a paired list of its own (`SPATIAND_HOST_DIR`).
+        let dir = ProcessInfo.processInfo.environment["SPATIAND_HOST_DIR"] ?? NSString("~/Library/Application Support/Spatiand/identity").expandingTildeInPath
         guard let l = HostLink(identityDir: dir, port: Self.port) else {
             status = "Could not listen on port \(Self.port)"
             onChange?()
@@ -480,6 +482,13 @@ final class MacHost {
         let scale = info.display != nil ? 1 : NSScreen.screens.first { $0.frame.intersects(info.frame) }?.backingScaleFactor ?? 2
         link.say(["Opened": ["window": Int(id), "app": info.bundle, "title": info.display != nil ? "Screen \u{2014} " + info.title : info.title,
                              "width": Int(info.frame.width * scale), "height": Int(info.frame.height * scale), "parent": NSNull()]])
+        // **Its application's menus are offered**: they are on this Mac's menu bar, which the
+        // session cannot see, so its title bar there gets a menu button that reads them out
+        // through this host (`menu(_:)`). A screen is no one application's; one with no menu
+        // bar of its own (an accessory) has none to offer.
+        if info.display == nil, NSRunningApplication(processIdentifier: info.pid)?.activationPolicy == .regular {
+            link.say(["Menu": ["Offered": ["window": Int(id)]]])
+        }
         s.capture.onFrame = { [weak self, weak s] pixels, micros in
             guard let self, let s else { return }
             self.frame(s, pixels, micros)
@@ -627,6 +636,8 @@ final class MacHost {
             if let id = windowNumber(fields), let s = shared[id], let input = fields["input"] { act(on: s, input) }
         case "Clipboard":
             clipboard.fromHost(fields)
+        case "Menu":
+            menu(body)
         case "Bandwidth":
             if let k = (fields["max_kbit"] as? NSNumber)?.intValue {
                 kbit = min(max(k, 2_000), 40_000)
@@ -638,6 +649,51 @@ final class MacHost {
             }
         default:
             break
+        }
+    }
+
+    // MARK: an application's menus
+
+    /// The menus of the session's windows' applications, read and pressed as in the room
+    /// (`RoomMenus`), each level said over the link. On a queue of their own: an application
+    /// answers Accessibility when it likes.
+    private let menuQueue = DispatchQueue(label: "host-menus")
+    private lazy var menus = RoomMenus(say: { [weak self] title, rows in
+        self?.link?.say(["Menu": ["Level": ["title": title, "rows": rows.map { ["label": $0.label, "detail": $0.detail] }]]])
+    }, done: { [weak self] in
+        self?.link?.say(["Menu": "Done"])
+    })
+
+    /// What the session said of a window's menus: open them (`{"Open": {"window": n}}`), choose a
+    /// row (`{"Choose": {"row": n}}`) or go back up (`"Back"`).
+    private func menu(_ body: Any) {
+        let menus = self.menus
+        if let ask = body as? [String: Any], let (name, value) = ask.first {
+            let fields = value as? [String: Any] ?? [:]
+            switch name {
+            case "Open":
+                guard let id = windowNumber(fields), let s = shared[id], s.info.display == nil else {
+                    link?.say(["Menu": "Done"])
+                    return
+                }
+                let info = s.info
+                print("host: the session opened the menus of \(info.app)")
+                // What is chosen is done to this window, not to whichever of the app's is in
+                // front: it is brought forward, as the room does with its own (`RoomWindows.menu`).
+                NSRunningApplication(processIdentifier: info.pid)?.activate()
+                menuQueue.async {
+                    if let window = MacWindows.axWindow(info) { AXUIElementPerformAction(window, kAXRaiseAction as CFString) }
+                    menus.onChosen = { [weak self] in DispatchQueue.main.async { self?.reconcile() } }
+                    menus.open(pid: info.pid, name: info.app)
+                }
+            case "Choose":
+                let row = (fields["row"] as? NSNumber)?.intValue ?? -1
+                menuQueue.async { menus.choose(row) }
+            default:
+                break
+            }
+        } else if body as? String == "Back" {
+            menuQueue.async { menus.back() }
         }
     }
 

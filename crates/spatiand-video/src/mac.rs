@@ -23,6 +23,11 @@ use spatiand_stream::Codec;
 mod decode;
 pub use decode::{can_decode, Decoder};
 
+/// A recording's encoder: the room's picture to H.264 on the hardware.
+#[path = "mac_encode.rs"]
+pub mod encode;
+pub use encode::{Encoded, Encoder};
+
 #[derive(Debug)]
 pub struct VideoError(String);
 

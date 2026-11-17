@@ -8,13 +8,33 @@
 //
 //  Read and pressed, never drawn by the Mac: nothing drops down on the Mac's screen, and it does
 //  not matter which application the Mac has in front.
+//
+//  The same for a Mac window streamed to a Deck, a Beam Pro or another Mac: this Mac as a host
+//  (`MacHost`) has a reader of its own whose levels go over the link (`HostMessage::Menu`), and
+//  the room there shows the same list (`remote::menu` in the compositor).
 
 import AppKit
 import ApplicationServices
 import CSpatiand
 
 final class RoomMenus {
-    static let shared = RoomMenus()
+    /// The Mac's own room's: what it reads is said to the compositor here.
+    static let shared = RoomMenus(say: { title, rows in
+        sp_menu_begin(title)
+        for row in rows { sp_menu_row(row.label, row.detail) }
+        sp_menu_end()
+    }, done: { sp_menu_close() })
+
+    /// A level read, said: its title and each row's words and what is said under them.
+    typealias Say = (_ title: String, _ rows: [(label: String, detail: String)]) -> Void
+    private let sayLevel: Say
+    /// The menu is done with.
+    private let sayDone: () -> Void
+
+    init(say: @escaping Say, done: @escaping () -> Void) {
+        sayLevel = say
+        sayDone = done
+    }
 
     /// One row of the level on show: the real item, and whether choosing it opens another level.
     private struct Row {
@@ -58,17 +78,17 @@ final class RoomMenus {
 
     /// Say the level on top to the room.
     private func say() {
-        guard let level = levels.last else { sp_menu_close(); return }
-        sp_menu_begin(level.title)
+        guard let level = levels.last else { sayDone(); return }
+        var said: [(label: String, detail: String)] = []
         for row in level.rows {
             let title: String = Self.value(row.element, kAXTitleAttribute as String) ?? ""
             let enabled: Bool = Self.value(row.element, kAXEnabledAttribute as String) ?? true
             let mark: String = Self.value(row.element, kAXMenuItemMarkCharAttribute as String) ?? ""
             let keys = Self.shortcut(row.element)
             let label = (mark.isEmpty ? "" : "\u{2713} ") + title + (row.opens ? "  \u{203A}" : "") + (keys.isEmpty ? "" : "    " + keys)
-            sp_menu_row(label, !enabled ? "Not available now" : row.opens ? "Opens more" : keys.isEmpty ? "" : "Also \(keys) on the keyboard")
+            said.append((label, !enabled ? "Not available now" : row.opens ? "Opens more" : keys.isEmpty ? "" : "Also \(keys) on the keyboard"))
         }
-        sp_menu_end()
+        sayLevel(level.title, said)
     }
 
     private func rows(_ items: [AXUIElement]) -> [Row] {
@@ -87,7 +107,7 @@ final class RoomMenus {
         var bar: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXMenuBarAttribute as CFString, &bar) == .success, let bar else {
             print("menus: \(name) would not say what its menus are")
-            sp_menu_close()
+            sayDone()
             return
         }
         application = name
@@ -102,7 +122,7 @@ final class RoomMenus {
     }
 
     func choose(_ index: Int) {
-        guard let level = levels.last, index >= 0, index < level.rows.count else { sp_menu_close(); return }
+        guard let level = levels.last, index >= 0, index < level.rows.count else { sayDone(); return }
         let row = level.rows[index]
         if row.opens {
             let title: String = Self.value(row.element, kAXTitleAttribute as String) ?? ""
@@ -114,7 +134,7 @@ final class RoomMenus {
         let result = AXUIElementPerformAction(row.element, kAXPressAction as CFString)
         if result != .success { print("menus: \(application) would not do that (\(result.rawValue))") }
         levels = []
-        sp_menu_close()
+        sayDone()
         onChosen?()
     }
 

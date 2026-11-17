@@ -289,10 +289,6 @@ final class Room {
             DispatchQueue.main.async { RoomBluetooth.say() }
         case SP_BLUETOOTH_DO:
             DispatchQueue.main.async { RoomBluetooth.act(text) }
-        case SP_RECORD_START:
-            DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.start(screen: self.screen) } else { print("recording: needs macOS 15") } }
-        case SP_RECORD_STOP:
-            DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.stop() } else { print("recording: needs macOS 15") } }
         case SP_SAVED:
             print("saved \(text)")
         case SP_CLIPBOARD:
