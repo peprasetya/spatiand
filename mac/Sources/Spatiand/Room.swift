@@ -246,8 +246,20 @@ final class Room {
         case SP_SYSTEM_SETTINGS:
             DispatchQueue.main.async { self.systemSettings(text) }
         case SP_HAPTIC:
+            // The trackpad has three patterns and no strength of its own; .alignment, the
+            // lightest, was too soft for crossing into an app (the owner, 2026-11-17: "too soft,
+            // make it more"): a tick is the strongest, .levelChange, and an alert is two of them.
             DispatchQueue.main.async {
-                NSHapticFeedbackManager.defaultPerformer.perform(a == 2 ? .levelChange : (a == 1 ? .alignment : .generic), performanceTime: .now)
+                let performer = NSHapticFeedbackManager.defaultPerformer
+                switch a {
+                case 1: performer.perform(.levelChange, performanceTime: .now)
+                case 2:
+                    performer.perform(.levelChange, performanceTime: .now)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                        performer.perform(.levelChange, performanceTime: .now)
+                    }
+                default: performer.perform(.generic, performanceTime: .now)
+                }
             }
         case SP_NOTICE_PRESSED:
             DispatchQueue.main.async { Notices.shared.pressed() }
