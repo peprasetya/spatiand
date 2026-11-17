@@ -1024,7 +1024,9 @@ impl Shelf {
             }
             Action::CopyPath => {
                 let text = self.tab().chosen().iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
-                copy_text(&text);
+                // The room's clipboard, through the SDK, as every Spatiand application's copies go
+                // (wl-copy/pbcopy are not on the Beam Pro, where the path silently stayed behind).
+                spatiand_app::clipboard::copy(text);
                 self.say("The path is copied.");
             }
             Action::Refresh => self.tab().tell(&ToTab::Refresh),
@@ -2399,19 +2401,6 @@ fn kind_word(kind: &str) -> String {
         other => other,
     }
     .to_string()
-}
-
-fn copy_text(text: &str) {
-    let program = if cfg!(target_os = "macos") { "pbcopy" } else { "wl-copy" };
-    // `pbcopy` takes what text is from the locale, which a Mac application started from the
-    // Finder has not got: MacRoman, then, and a name past ASCII turned to mojibake.
-    let utf8 = [("LANG", "en_US.UTF-8"), ("LC_CTYPE", "en_US.UTF-8")];
-    if let Ok(mut child) = Command::new(program).envs(utf8).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = std::io::Write::write_all(&mut stdin, text.as_bytes());
-        }
-        let _ = child.wait();
-    }
 }
 
 /// Open with whatever this machine opens it with.
