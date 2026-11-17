@@ -108,6 +108,9 @@ final class Native {
      */
     static native void battery(int level, int scale, int status);
 
+    /** The network's bytes so far, from TrafficStats, for the monitors under the thumb. */
+    static native void traffic(long received, long sent);
+
     /**
      * The phone's apps, for the room's launcher (Shell.listApps): a JSON list of objects with
      * "name", "exec" ("package/activity") and "icon" (a PNG's path).
