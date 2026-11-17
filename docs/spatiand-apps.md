@@ -879,3 +879,63 @@ examples draw and read back as it does, with no window); deepmagpie's VCN 5 with
 is the machine everything runs on); a raw stream with no times plays as fast as it decodes, in
 software as well (a separate fault); ten-bit through the Beam Pro's reader; MPEG-2 and MPEG-4
 Part 2 through MediaCodec.
+
+## 2026-11-18: a raw stream plays at its own pace
+
+A film with no container round it -- a bare `.h264`, `.hevc`, `.m2v`, `.m4v`, `.mjpeg` -- played
+as fast as it decoded: ten seconds in a third of one, most of its pictures never shown. FFmpeg's
+demuxers for such files give packets with no times (`AVFMT_NOTIMESTAMPS`), the decoders gave
+pictures with none, and the player took a picture with no time to be due at nought. The fix is
+in the shared player (`crates/spatiand-media/src/timing.rs`, used by `player.rs`), so it is the
+same for the software decoders, VA-API, VideoToolbox and MediaCodec:
+
+* **The rate** is the stream's own statement -- the codec's (an H.264 SPS's VUI, an HEVC VPS, an
+  MPEG sequence header: FFmpeg's `framerate` for the stream) -- and 25 a second where it states
+  none, which is what `ffplay` takes such a file to be.
+* **The reader numbers every packet** of such a file in the order it reads them (so MediaCodec,
+  which knows a picture by its packet's time, can tell them apart, and how much is in hand is
+  known), and **the pictures' times are counted** as the decoder gives them: a decoder gives its
+  pictures in the order they are shown, so the n-th since the reader last moved is n pictures
+  after where it moved to. (The packets' numbers are in decode order and are not used as the
+  pictures' times: with B-frames they are not in the order of showing.) A picture the stream asks
+  to be held longer (`repeat_pict`) puts the next one later.
+* **The length** is learnt as the file is read: until its end has been read it is judged from the
+  file's size and the bytes a second of what has been read, changes a little as more is read, and
+  SpatiReel says "about" before it; once the file has been read from start to end it is exact.
+* **Seeking**: the reader keeps every key frame it passes, with its place in the file and its
+  time. Going to a moment already read goes to its key frame and decodes on to the moment, exactly
+  as in a file with times. Going to a moment not read yet goes by bytes -- as far through the file
+  as the moment is through the film at the pace read so far -- and the first key frame found there
+  is taken to be the moment asked for (so the clock shows what was asked for, and the picture is
+  near it, not exactly at it, in a film whose bit rate varies). A stream with no times and no end
+  (a pipe) cannot be moved in, and a seek there does nothing.
+
+| a 10 s raw clip (1280x720, software), `examples/rate` | before | after |
+|---|---|---|
+| H.264 at 24 a second (240 pictures) | 0.3 s, 60 shown | 10.0 s, 239 shown after the first, 24.0/s |
+| H.264 at 25 | 0.3 s, 63 shown | 10.0 s, 249, 25.0/s |
+| H.264 at 30 | 0.3 s, 75 shown | 10.0 s, 299, 30.0/s |
+| H.264 at 60 | 0.7 s, 150 shown | 10.0 s, 599, 60.0/s |
+| HEVC at 30 | 0.3 s, 75 shown | 10.0 s, 299, 30.0/s |
+| HEVC made at 30 with no timing stated (300 pictures) | as fast as decoded | 12.0 s, 299, 25.0/s |
+
+Also at their rates after: HEVC at 24, 25 and 60, H.264 without B-frames, MPEG-2 at 24, MPEG-4 at
+30, MJPEG at 25, and H.264 at 24 and 60 through VA-API on deepmagpie; in SpatiReel in the snapshot
+room the picture's own clock read 6.000 s six seconds in. `examples/seeks` moves about in a file
+and says where each move landed.
+
+Found on the way, in every film, not only these: **a move backwards in a film with no sound**
+could take a picture still in hand from before the move for the first one after it (the reader
+had not yet thrown them away), set the clock by it, and then run through everything from where it
+had gone back to as fast as it decoded -- pictures are not taken now until the reader has made
+the move; **a seek that fails** no longer throws away what the decoders have in hand; and **a
+film of unknown length** (a stream still being made) was held to nought by every seek, so
+choosing a sound track or skipping ten seconds started it again from the beginning.
+
+**Not checked**: the Deck's VA-API, the Mac's VideoToolbox and the Beam Pro's MediaCodec with a
+raw stream (the code is the shared player's and was type-checked for Android; nothing was run on
+those three); raw AV1 (`.obu`: FFmpeg's demuxer for it allows no seeking by bytes, so it plays at
+its rate and cannot be moved in; no software AV1 to try it with here); an H.264 stream with no
+timing in its SPS (none could be made with the encoders here; HEVC with none takes the same
+path); H.264 coded as separate fields. SpatiShelf does not yet take `.h264`/`.hevc` for films
+(its list of endings is its own); SpatiReel's own library does.

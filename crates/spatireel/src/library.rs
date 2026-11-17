@@ -21,6 +21,9 @@ pub struct Entry {
 /// What FFmpeg will play that is a film rather than a song or a picture, by how it is named.
 const FILMS: &[&str] = &[
     "mp4", "m4v", "mkv", "webm", "mov", "avi", "ts", "m2ts", "mts", "mpg", "mpeg", "wmv", "flv", "ogv", "3gp", "vob", "strm",
+    // Pictures with no container round them, as a camera or an encoder leaves them: played at
+    // the rate the stream states (`spatiand_media::timing`).
+    "h264", "264", "h265", "265", "hevc", "m2v", "ivf",
 ];
 
 pub fn is_film(path: &Path) -> bool {
@@ -134,6 +137,7 @@ mod tests {
     fn a_film_is_known_by_its_ending_whatever_its_case() {
         assert!(is_film(Path::new("/films/Arrival.MKV")));
         assert!(is_film(Path::new("a.mp4")));
+        assert!(is_film(Path::new("camera.h264")) && is_film(Path::new("clip.HEVC")));
         assert!(!is_film(Path::new("cover.jpg")));
         assert!(!is_film(Path::new("README")));
     }

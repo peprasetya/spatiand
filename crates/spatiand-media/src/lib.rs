@@ -15,6 +15,7 @@ pub mod mediacodec;
 pub mod mesh;
 pub mod stretch;
 pub mod subs;
+pub mod timing;
 
 #[cfg(feature = "engine")]
 pub mod fetch;

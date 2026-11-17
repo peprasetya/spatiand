@@ -27,6 +27,7 @@ use rsmpeg::ffi;
 use crate::hints::{ContainerHints, ContainerStereo};
 use crate::sound::{Block, Sound};
 use crate::subs::{self, Cue, Words};
+use crate::timing::{self, Landing};
 
 /// How many decoded pictures wait to be shown. Each is a frame of GPU or main memory, and a
 /// 4K one is not small: enough to ride out an uneven decode, no more.
@@ -219,6 +220,9 @@ pub struct Track {
 #[derive(Debug, Clone, Default)]
 pub struct Info {
     pub duration: f64,
+    /// `duration` is judged from the file's size and what has been read of it, and changes as
+    /// more is read: a file that keeps no times (`crate::timing`).
+    pub duration_guessed: bool,
     pub width: u32,
     pub height: u32,
     pub frame_rate: f64,
@@ -351,6 +355,21 @@ struct Shared {
     video_generation: AtomicU64,
     /// When the picture decoder last got anywhere: see `Player::watch_decoder`.
     video_alive: Mutex<Instant>,
+    /// The file keeps no times: the reader numbers its packets and the pictures' times are
+    /// counted (`crate::timing`). Set by the reader before its first picture packet is given.
+    counted: AtomicBool,
+    /// Such a film's length as the reader has learnt it so far (an `f64`'s bits; 0 while it is
+    /// not known), and whether that is still a guess.
+    length: AtomicU64,
+    length_guessed: AtomicBool,
+    /// The film cannot be moved in: no times, and nowhere to jump to by bytes.
+    fixed: AtomicBool,
+    /// How many seeks have been asked for, and how many of them the reader has made (or given
+    /// up on). Between the two, what is in hand is from before the move and is not shown.
+    asked: AtomicU64,
+    moved: AtomicU64,
+    /// The picture stream's rate as the container has it, for where the codec states none.
+    container_rate: (i32, i32),
 }
 
 const NO_STREAM: u64 = u64::MAX;
@@ -686,6 +705,16 @@ impl Player {
                 audio_out: AtomicBool::new(audio_stream.is_none()),
                 video_generation: AtomicU64::new(0),
                 video_alive: Mutex::new(Instant::now()),
+                counted: AtomicBool::new(false),
+                length: AtomicU64::new(0),
+                length_guessed: AtomicBool::new(false),
+                fixed: AtomicBool::new(false),
+                asked: AtomicU64::new(0),
+                moved: AtomicU64::new(0),
+                container_rate: video_stream.map_or((0, 0), |index| {
+                    let rate = (*streams[index]).avg_frame_rate;
+                    (rate.num, rate.den)
+                }),
             });
 
             let mut threads = Vec::new();
@@ -698,6 +727,12 @@ impl Player {
                 info.video_codec = text(ffi::avcodec_get_name((*parameters).codec_id)).unwrap_or_default();
                 let rate = ffi::av_guess_frame_rate(format, stream, ptr::null_mut());
                 info.frame_rate = if rate.den > 0 { rate.num as f64 / rate.den as f64 } else { 0.0 };
+                // A container that keeps no times has no rate of its own to guess from: the
+                // codec's statement, or what such a stream is taken to be (`timing`).
+                if !(*format).iformat.is_null() && (*(*format).iformat).flags & ffi::AVFMT_NOTIMESTAMPS as c_int != 0 {
+                    let stated = (*parameters).framerate;
+                    info.frame_rate = timing::frame_rate(&[(stated.num, stated.den), shared.container_rate]);
+                }
                 (info.hints, info.eyes_swapped) = read_hints(stream);
                 let wanted = std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() != Ok("0");
                 let (decoder, on_gpu) = open_decoder(stream, wanted).or_else(|e| {
@@ -745,6 +780,15 @@ impl Player {
         &self.info
     }
 
+    /// What the reader has learnt of the length of a film whose file keeps no times, taken up.
+    fn learn_length(&mut self) {
+        let length = f64::from_bits(self.shared.length.load(Ordering::Relaxed));
+        if length > 0.0 {
+            self.info.duration = length;
+            self.info.duration_guessed = self.shared.length_guessed.load(Ordering::Relaxed);
+        }
+    }
+
     pub fn paused(&self) -> bool {
         self.shared.paused.load(Ordering::Relaxed)
     }
@@ -780,14 +824,27 @@ impl Player {
                 }
             }
         };
-        position.clamp(0.0, if self.info.duration > 0.0 { self.info.duration } else { f64::MAX })
+        // Never past the end -- where the end is known: one only guessed at may be short of it.
+        position.clamp(0.0, if self.info.duration > 0.0 && !self.info.duration_guessed { self.info.duration } else { f64::MAX })
     }
 
     pub fn seek(&mut self, seconds: f64) {
-        let seconds = seconds.clamp(0.0, (self.info.duration - 0.25).max(0.0));
+        self.learn_length();
+        // A stream with no times and nowhere to jump to plays on as it is.
+        if self.shared.fixed.load(Ordering::Relaxed) || !seconds.is_finite() {
+            return;
+        }
+        // No further than the end, where the end is known. Where it is not (a stream still
+        // being made, a file with no times not yet read far enough to judge) the reader is
+        // asked for what was asked for: held to nought, as this was, a track chosen or ten
+        // seconds skipped started such a film again from its beginning.
+        let most = if self.info.duration > 0.0 { (self.info.duration - 0.25).max(0.0) } else { f64::MAX };
+        let seconds = seconds.clamp(0.0, most);
         *self.shared.target.lock().unwrap() = (seconds, false);
         *self.shared.wall.lock().unwrap() = Wall { time: seconds, since: Instant::now() };
-        *self.shared.seek.lock().unwrap() = Some(seconds);
+        let mut seek = self.shared.seek.lock().unwrap();
+        self.shared.asked.fetch_add(1, Ordering::Relaxed);
+        *seek = Some(seconds);
     }
 
     /// Play another of the file's sound tracks, by its place in [`Info::audio`].
@@ -859,6 +916,7 @@ impl Player {
             && shared.video_out.load(Ordering::Relaxed)
             && shared.pictures.lock().unwrap().is_empty()
             && shared.seek.lock().unwrap().is_none()
+            && shared.moved.load(Ordering::Relaxed) == shared.asked.load(Ordering::Relaxed)
             && (shared.sound.as_ref().is_none_or(|s| !s.alive()) || shared.audio_out.load(Ordering::Relaxed) && shared.sound.as_ref().is_some_and(|s| s.empty()))
     }
 
@@ -901,11 +959,18 @@ impl Player {
 
     pub fn picture(&mut self) -> (Option<Arc<Picture>>, bool) {
         self.watch_decoder();
+        self.learn_length();
         let shared = &self.shared;
-        let serial = shared.serial.load(Ordering::Relaxed);
         let now = self.position() - self.lip;
         let mut fresh = None;
-        {
+        // Until the reader has made a seek asked for, every picture in hand is from before
+        // it. One of them at or after where the seek was going (a move backwards) was taken
+        // for the first picture after it: the clock was set by it, and the film then ran
+        // through everything from where it had gone back to, as fast as it decoded.
+        let moving = shared.moved.load(Ordering::Relaxed) != shared.asked.load(Ordering::Relaxed);
+        // Read after that: a seek just made has its number by now.
+        let serial = shared.serial.load(Ordering::Relaxed);
+        if !moving {
             let mut target = shared.target.lock().unwrap();
             let mut pictures = shared.pictures.lock().unwrap();
             while let Some(next) = pictures.front() {
@@ -995,34 +1060,141 @@ fn enough(shared: &Shared, video: bool) -> bool {
     video_done && audio_done
 }
 
+/// How many packets are passed over after a jump by bytes, looking for a key frame to start
+/// from, before whatever comes is taken: a stream that marks none must still play.
+const LOOKED_FOR: u32 = 300;
+
+/// The reader's part of a film whose file keeps no times (`crate::timing`).
+struct Counted {
+    index: timing::Index,
+    /// The film's time of the next packet.
+    clock: f64,
+    /// Packets passed over since a jump, looking for a key frame; none when not looking.
+    looking: Option<u32>,
+    /// Nothing has been read yet: the first packet starts the film, key frame or not.
+    beginning: bool,
+    /// The picture stream's unit of time, in seconds.
+    unit: f64,
+    /// How long a packet lasts that does not say.
+    step: f64,
+    /// The whole second of the film the length was last told at.
+    told: i64,
+}
+
+impl Counted {
+    /// What is known of the film's length, told to whoever is watching.
+    fn tell(&self, shared: &Shared) {
+        if let Some((length, guessed)) = self.index.length() {
+            shared.length_guessed.store(guessed, Ordering::Relaxed);
+            shared.length.store(length.to_bits(), Ordering::Relaxed);
+        }
+    }
+}
+
+/// Everything in hand is from before a seek, wherever it has got to.
+fn start_afresh(shared: &Shared, video: bool) {
+    shared.serial.fetch_add(1, Ordering::Relaxed);
+    shared.video.clear();
+    shared.audio.clear();
+    shared.subtitle.clear();
+    shared.cues.lock().unwrap().clear();
+    shared.pictures.lock().unwrap().clear();
+    shared.room.notify_all();
+    if let Some(sound) = shared.sound.as_ref() {
+        sound.clear();
+    }
+    shared.read_out.store(false, Ordering::Relaxed);
+    shared.video_out.store(!video, Ordering::Relaxed);
+    shared.audio_out.store(shared.audio_stream.load(Ordering::Relaxed) == NO_STREAM, Ordering::Relaxed);
+}
+
+/// A seek that could not be made: the film plays on from where it is, the next picture to
+/// come being where it is.
+fn stay(shared: &Shared) {
+    *shared.target.lock().unwrap() = (0.0, false);
+}
+
 /// The reader: the file's packets, sorted into the two queues, and seeks.
 fn read(source: Source, shared: Arc<Shared>) {
     let Source { mut format, video_stream, start, io } = source;
     unsafe {
         let mut packet = ffi::av_packet_alloc();
+        // A file that keeps no times: found out at its first picture packet.
+        let mut counted: Option<Counted> = None;
+        let mut first_picture = true;
+        // A seek in such a file that waits until enough has been read to judge where to go.
+        let mut waiting: Option<f64> = None;
+        let flags = if (*format).iformat.is_null() { 0 } else { (*(*format).iformat).flags };
         while !shared.stop.load(Ordering::Relaxed) {
-            if let Some(seconds) = shared.seek.lock().unwrap().take() {
-                let to = ((seconds + start) * ffi::AV_TIME_BASE as f64) as i64;
-                let sought = ffi::av_seek_frame(format, -1, to, ffi::AVSEEK_FLAG_BACKWARD as c_int);
-                if sought < 0 {
-                    log::warn!("could not seek to {seconds:.1}: {}", error_text(sought));
+            let (asked, number) = {
+                let mut seek = shared.seek.lock().unwrap();
+                (seek.take(), shared.asked.load(Ordering::Relaxed))
+            };
+            if let Some(seconds) = asked.or(waiting.take()) {
+                match counted.as_mut() {
+                    // Before the first picture packet it is not known whether the file keeps
+                    // times (a film taken up where it was left is moved in at once): the seek
+                    // waits for that packet. Asked of FFmpeg, a seek by time in a file with none
+                    // reads the whole file looking for the time, finds none, and leaves the
+                    // reader at its end.
+                    None if first_picture && video_stream.is_some() && !shared.read_out.load(Ordering::Relaxed) => waiting = Some(seconds),
+                    None => {
+                        let to = ((seconds + start) * ffi::AV_TIME_BASE as f64) as i64;
+                        let sought = ffi::av_seek_frame(format, -1, to, ffi::AVSEEK_FLAG_BACKWARD as c_int);
+                        if sought < 0 {
+                            // Nothing has moved: what is in hand is still what comes next. Thrown
+                            // away, as it was, the decoders lost their place for nothing.
+                            log::warn!("could not seek to {seconds:.1}: {}", error_text(sought));
+                            stay(&shared);
+                        } else {
+                            start_afresh(&shared, video_stream.is_some());
+                        }
+                    }
+                    Some(film) => match film.index.seek(seconds) {
+                        Some(landing) => {
+                            let pos = match landing {
+                                Landing::Key { pos, .. } | Landing::Bytes { pos } => pos,
+                            };
+                            let sought = ffi::av_seek_frame(format, -1, pos as i64, ffi::AVSEEK_FLAG_BYTE as c_int);
+                            if sought < 0 {
+                                log::warn!("could not go to byte {pos} for {seconds:.1} s: {}; the film cannot be moved in", error_text(sought));
+                                shared.fixed.store(true, Ordering::Relaxed);
+                                stay(&shared);
+                            } else {
+                                match landing {
+                                    Landing::Key { time, .. } => {
+                                        film.clock = time;
+                                        film.looking = None;
+                                        film.index.went_to(pos);
+                                    }
+                                    Landing::Bytes { .. } => {
+                                        film.clock = seconds;
+                                        film.looking = Some(0);
+                                        film.index.jumped();
+                                    }
+                                }
+                                film.beginning = false;
+                                start_afresh(&shared, video_stream.is_some());
+                            }
+                        }
+                        None if film.index.size() == 0 => {
+                            log::warn!("a stream with no times and no end cannot be moved in");
+                            shared.fixed.store(true, Ordering::Relaxed);
+                            stay(&shared);
+                        }
+                        // Not enough read yet to judge where that is: read on, and ask again.
+                        // What is decoded meanwhile is from before it, and is not shown.
+                        None => waiting = Some(seconds),
+                    },
                 }
-                // Everything in hand is from before, wherever it has got to.
-                shared.serial.fetch_add(1, Ordering::Relaxed);
-                shared.video.clear();
-                shared.audio.clear();
-                shared.subtitle.clear();
-                shared.cues.lock().unwrap().clear();
-                shared.pictures.lock().unwrap().clear();
-                shared.room.notify_all();
-                if let Some(sound) = shared.sound.as_ref() {
-                    sound.clear();
+                // Made, or not to be made: what comes now is where the film is.
+                if waiting.is_none() {
+                    shared.moved.store(number, Ordering::Relaxed);
                 }
-                shared.read_out.store(false, Ordering::Relaxed);
-                shared.video_out.store(video_stream.is_none(), Ordering::Relaxed);
-                shared.audio_out.store(shared.audio_stream.load(Ordering::Relaxed) == NO_STREAM, Ordering::Relaxed);
             }
-            if shared.read_out.load(Ordering::Relaxed) || enough(&shared, video_stream.is_some()) {
+            // Waiting to judge a seek, more is wanted whatever is in hand.
+            let held = waiting.is_none() && enough(&shared, video_stream.is_some());
+            if shared.read_out.load(Ordering::Relaxed) || held {
                 std::thread::sleep(Duration::from_millis(8));
                 continue;
             }
@@ -1033,12 +1205,69 @@ fn read(source: Source, shared: Arc<Shared>) {
                 if got != ffi::AVERROR_EOF {
                     log::warn!("reading stopped: {}", error_text(got));
                 }
+                if let Some(film) = counted.as_mut() {
+                    film.index.ended();
+                    film.tell(&shared);
+                }
                 shared.video.push(None, serial);
                 shared.audio.push(None, serial);
                 shared.read_out.store(true, Ordering::Relaxed);
                 continue;
             }
             let stream = (*packet).stream_index as usize;
+            let base = (**(*format).streams.add(stream)).time_base;
+            let unit = base.num as f64 / base.den.max(1) as f64;
+            if Some(stream) == video_stream {
+                let unstamped = (*packet).pts == ffi::AV_NOPTS_VALUE && (*packet).dts == ffi::AV_NOPTS_VALUE;
+                if std::mem::take(&mut first_picture) && unstamped && (flags & ffi::AVFMT_NOTIMESTAMPS as c_int != 0 || (*format).nb_streams == 1) {
+                    let parameters = (**(*format).streams.add(stream)).codecpar;
+                    let stated = (*parameters).framerate;
+                    let rate = timing::frame_rate(&[(stated.num, stated.den), shared.container_rate]);
+                    let size = if (*format).pb.is_null() { 0 } else { ffi::avio_size((*format).pb).max(0) as u64 };
+                    log::info!("the file keeps no times: its pictures are counted at {rate:.3} a second (the stream's own rate, or 25 where it states none)");
+                    if size == 0 || flags & ffi::AVFMT_NO_BYTE_SEEK as c_int != 0 {
+                        shared.fixed.store(true, Ordering::Relaxed);
+                    }
+                    shared.counted.store(true, Ordering::Relaxed);
+                    counted = Some(Counted { index: timing::Index::new(size), clock: 0.0, looking: None, beginning: true, unit, step: 1.0 / rate, told: -1 });
+                }
+                if let Some(film) = counted.as_mut() {
+                    let mut key = (*packet).flags & ffi::AV_PKT_FLAG_KEY as c_int != 0 || std::mem::take(&mut film.beginning);
+                    let pos = if (*packet).pos >= 0 { (*packet).pos as u64 } else { ffi::avio_seek((*format).pb, 0, 1).max(0) as u64 };
+                    if let Some(passed) = film.looking {
+                        if !key && passed < LOOKED_FOR {
+                            // Between key frames after a jump: nothing a decoder can start from.
+                            film.looking = Some(passed + 1);
+                            ffi::av_packet_unref(packet);
+                            continue;
+                        }
+                        film.looking = None;
+                        key = true;
+                        // A key frame passed before keeps the time it had.
+                        if let Some(known) = film.index.key_time(pos) {
+                            film.clock = known;
+                            film.index.went_to(pos);
+                        }
+                    }
+                    // How long it lasts is the packet's own word where that is a length a picture
+                    // can have. FFmpeg, having found no rate, gives the packets of such a stream
+                    // one tick each after the first two seconds (HEVC with no timing in it: a
+                    // 1 200 000th of a second), which is not one.
+                    let said = (*packet).duration as f64 * film.unit;
+                    let lasts = if said >= 0.001 { said } else { film.step };
+                    film.index.passed(pos, (*packet).size.max(0) as u64, film.clock, lasts, key);
+                    // Numbered in the order read: told apart by every decoder, and how much is
+                    // in hand known. Not when its picture is shown: see `timing`.
+                    let stamp = (film.clock / film.unit).round() as i64;
+                    (*packet).pts = stamp;
+                    (*packet).dts = stamp;
+                    film.clock += lasts;
+                    if film.clock as i64 != film.told {
+                        film.told = film.clock as i64;
+                        film.tell(&shared);
+                    }
+                }
+            }
             let queue = if Some(stream) == video_stream {
                 Some(&shared.video)
             } else if stream as u64 == shared.audio_stream.load(Ordering::Relaxed) && shared.sound.is_some() {
@@ -1051,12 +1280,7 @@ fn read(source: Source, shared: Arc<Shared>) {
             match queue {
                 Some(queue) => {
                     let stamp = if (*packet).pts != ffi::AV_NOPTS_VALUE { (*packet).pts } else { (*packet).dts };
-                    let time = if stamp == ffi::AV_NOPTS_VALUE {
-                        f64::NAN
-                    } else {
-                        let base = (**(*format).streams.add(stream)).time_base;
-                        stamp as f64 * base.num as f64 / base.den.max(1) as f64
-                    };
+                    let time = if stamp == ffi::AV_NOPTS_VALUE { f64::NAN } else { stamp as f64 * unit };
                     queue.push_at(Some(Packet(packet)), serial, time);
                     packet = ffi::av_packet_alloc();
                 }
@@ -1213,6 +1437,8 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
         let mut scaler: *mut ffi::SwsContext = ptr::null_mut();
         let mut serial = shared.serial.load(Ordering::Relaxed);
         let mut complained = false;
+        // The pictures' times, where the file keeps none or a picture comes without its own.
+        let mut count = timing::Count::default();
         #[cfg(target_os = "android")]
         let mut lost = false;
         let mine = || shared.video_generation.load(Ordering::Relaxed) == generation;
@@ -1225,8 +1451,16 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
             if packet_serial != serial {
                 ffi::avcodec_flush_buffers(decoder.context);
                 serial = packet_serial;
+                count.restart();
             }
             let ending = packet.is_none();
+            if let Some(packet) = packet.as_ref() {
+                // Where the reader is: the first packet since it moved is where counting starts.
+                let stamp = if (*packet.0).dts != ffi::AV_NOPTS_VALUE { (*packet.0).dts } else { (*packet.0).pts };
+                if stamp != ffi::AV_NOPTS_VALUE {
+                    count.begin(stamp as f64 * decoder.time_base - start);
+                }
+            }
             let sent = ffi::avcodec_send_packet(decoder.context, packet.as_ref().map_or(ptr::null(), |p| p.0));
             if sent < 0 && !ending && !std::mem::replace(&mut complained, true) {
                 log::warn!("a picture would not decode: {}", error_text(sent));
@@ -1239,8 +1473,15 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                     ffi::av_frame_unref(frame);
                     break;
                 }
+                // Its own time, where the file keeps times. Where it keeps none the packets were
+                // only numbered in the order they were read, and the pictures are counted, at
+                // the rate the stream states (`timing`). A picture with no time in a film that
+                // has them is a frame after the one before: it was "at nought", and shown at once.
                 let stamp = (*frame).best_effort_timestamp;
-                let time = if stamp == ffi::AV_NOPTS_VALUE { 0.0 } else { stamp as f64 * decoder.time_base - start };
+                let own = (stamp != ffi::AV_NOPTS_VALUE && !shared.counted.load(Ordering::Relaxed)).then(|| stamp as f64 * decoder.time_base - start);
+                let stated = (*decoder.context).framerate;
+                let rate = timing::frame_rate(&[(stated.num, stated.den), shared.container_rate]);
+                let time = count.time(own, rate, (*frame).repeat_pict);
                 // Pictures from before where a seek was aimed are decoded only to get to the
                 // ones after: a seek lands on the key frame before its target.
                 let target = shared.target.lock().unwrap().0;

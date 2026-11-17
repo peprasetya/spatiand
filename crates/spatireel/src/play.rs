@@ -185,6 +185,22 @@ fn clock(seconds: f64) -> String {
     }
 }
 
+/// Where the film is and how long it is, for the controls: the length said to be "about" that
+/// where it is only judged from the file's size (a file that keeps no times), and left out
+/// where nothing is known of it yet (it was "0:00").
+fn times(position: f64, duration: f64, guessed: bool) -> String {
+    // The length to the nearest second: ten seconds counted up in twenty-fourths come to a
+    // hair under ten, and were "0:09".
+    let length = clock(duration.round());
+    if duration <= 0.0 {
+        clock(position)
+    } else if guessed {
+        format!("{} / about {length}", clock(position))
+    } else {
+        format!("{} / {length}", clock(position))
+    }
+}
+
 /// What the wearer did that the caller has to act on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Outcome {
@@ -657,7 +673,7 @@ impl Playing {
         }
         panel = panel.inset(theme::PAD * 0.6);
         let mut top = panel.take_top(theme::ROW_EM * 1.5);
-        let time = format!("{} / {}", clock(position), clock(duration));
+        let time = times(position, duration, self.player.info().duration_guessed);
         let taken = p.label(gl, &time, top, theme::ROW_EM * 0.8, theme::ink_detail(), 1.0);
         top.w -= taken + 24.0;
         p.label(gl, name, top, theme::ROW_EM * 0.9, theme::ink(), 0.0);
@@ -1053,5 +1069,14 @@ mod tests {
         assert_eq!(clock(75.4), "1:15");
         assert_eq!(clock(3675.0), "1:01:15");
         assert_eq!(clock(-3.0), "0:00");
+    }
+
+    #[test]
+    fn a_length_only_judged_is_said_to_be_about_that_and_one_not_known_is_not_said() {
+        assert_eq!(times(75.4, 600.0, false), "1:15 / 10:00");
+        assert_eq!(times(75.4, 598.2, true), "1:15 / about 9:58");
+        assert_eq!(times(6.0, 9.999_999, false), "0:06 / 0:10");
+        assert_eq!(times(3.0, 0.0, false), "0:03");
+        assert_eq!(times(3.0, 0.0, true), "0:03");
     }
 }
