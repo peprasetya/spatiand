@@ -304,6 +304,8 @@ locked profile's windows out of sight and hushes their tabs until it is given; "
 no profile is left hidden with nothing asking for it. The lock window also offers "Open with a fingerprint" where
 SpatiKey is usable: `profile_unlock`, always a new touch, even with a touch set to last.
 
+**History is one source of truth (patch 0030; the owner, 2026-11-17).** Each machine's history converges to the shared folder: every visit file, its own included, is read when its size, time and SHA-256 say it changed (`local/.../history-seen.json`; the first start of this build reads them all), and what history lacks is added, matched by address and millisecond, doubles of imported visits taken out. A clearing no person made (bounce tracking's, from the start of time) writes no forget-record and history is refilled from the folder; a person's "All time" is written as from 0 and clears every machine; removing single visits from the history page is written per address. Restored visits come back as plain link visits.
+
 **A start never opens a locked profile (patch 0012; the owner, 2026-11-14).** A profile with a lock is not recorded
 as last used or as open at exit, also when it was unlocked in that run (`profile_manager.cc`), and what was recorded
 before, or locked since on another machine, is forgotten at the start (`ProfilesSync::ForgetLockedAsLastUsed`): a

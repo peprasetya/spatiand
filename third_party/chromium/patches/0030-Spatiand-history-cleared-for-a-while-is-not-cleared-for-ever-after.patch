@@ -16,15 +16,74 @@ an entry of it before; and a list found shorter than what was read of it (an
 older build's) is read from its start. A batch of visits across the turn of a
 month no longer loses the old month's.
 ---
- chrome/browser/spatiand/history_sync.cc | 40 ++++++++++++++++++++++---
- chrome/browser/spatiand/history_sync.h  |  3 ++
- 2 files changed, 39 insertions(+), 4 deletions(-)
+ chrome/browser/spatiand/history_sync.cc | 655 +++++++++++++++++++-----
+ chrome/browser/spatiand/history_sync.h  |  16 +-
+ 2 files changed, 553 insertions(+), 118 deletions(-)
 
 diff --git a/chrome/browser/spatiand/history_sync.cc b/chrome/browser/spatiand/history_sync.cc
-index 8d13080019..b8859896e1 100644
+index 8d13080019..069da43e15 100644
 --- a/chrome/browser/spatiand/history_sync.cc
 +++ b/chrome/browser/spatiand/history_sync.cc
-@@ -112,6 +112,7 @@ std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file
+@@ -6,12 +6,17 @@
+ #include <map>
+ #include <functional>
+ #include <algorithm>
++#include <cmath>
+ #include <set>
+ #include <utility>
+ 
+ #include "base/auto_reset.h"
++#include "base/types/optional_util.h"
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
++#include "base/json/json_reader.h"
++#include "base/logging.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/stringprintf.h"
+ #include "base/strings/utf_string_conversions.h"
+@@ -20,11 +25,14 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/spatiand/shared_folder.h"
+ #include "base/files/file_util.h"
++#include "components/history/core/browser/history_backend.h"
+ #include "components/history/core/browser/history_database.h"
+ #include "components/history/core/browser/history_db_task.h"
+ #include "components/history/core/browser/history_service.h"
+ #include "components/history/core/browser/history_types.h"
+ #include "components/history/core/browser/url_row.h"
++#include "crypto/hash.h"
++#include "ui/base/page_transition_types.h"
+ #include "url/gurl.h"
+ 
+ namespace spatiand {
+@@ -64,9 +72,8 @@ base::ListValue VisitsToList(const std::vector<HistorySync::Visit>& visits) {
+   return list;
+ }
+ 
+-std::vector<HistorySync::Visit> VisitsFromFile(const base::FilePath& file) {
++std::vector<HistorySync::Visit> VisitsFromValue(const std::optional<base::Value>& value) {
+   std::vector<HistorySync::Visit> visits;
+-  std::optional<base::Value> value = ReadJson(file);
+   if (!value || !value->is_list()) {
+     return visits;
+   }
+@@ -96,9 +103,12 @@ std::vector<HistorySync::Visit> VisitsFromFile(const base::FilePath& file) {
+   return visits;
+ }
+ 
+-std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file) {
++std::vector<HistorySync::Visit> VisitsFromFile(const base::FilePath& file) {
++  return VisitsFromValue(ReadJson(file));
++}
++
++std::vector<HistorySync::Forgotten> ForgottenFromValue(const base::Value* value) {
+   std::vector<HistorySync::Forgotten> forgotten;
+-  std::optional<base::Value> value = ReadJson(file);
+   if (!value || !value->is_list()) {
+     return forgotten;
+   }
+@@ -112,16 +122,96 @@ std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file
      }
      entry.from = item.GetDict().FindDouble("from").value_or(0);
      entry.until = item.GetDict().FindDouble("until").value_or(0);
@@ -32,27 +91,364 @@ index 8d13080019..b8859896e1 100644
      forgotten.push_back(std::move(entry));
    }
    return forgotten;
-@@ -264,6 +265,10 @@ class HistorySync::Files {
+ }
+ 
++std::vector<HistorySync::Forgotten> ForgottenFromFile(const base::FilePath& file) {
++  const std::optional<base::Value> value = ReadJson(file);
++  return ForgottenFromValue(base::OptionalToPtr(value));
++}
++
++// A forget-record as its file has it: what tells it from the others there.
++std::string KeyOf(const HistorySync::Forgotten& forgotten) {
++  return base::StringPrintf("%s|%.17g|%.17g|%.17g", forgotten.url ? forgotten.url->c_str() : "",
++                            forgotten.from, forgotten.until, forgotten.at);
++}
++
++// No person's: from the beginning of time itself, every address. Bounce tracking cleared all
++// history so at most hourly until 2026-11-17 (base/0152's DATA_TYPE_SKIP_SSL_HOST_STATE was
++// DATA_TYPE_HISTORY, patch 0016), and builds of before then wrote it for every machine. A person
++// clearing all time, or everything older than 30 days, begins at 0.
++bool NoPersons(const HistorySync::Forgotten& forgotten) {
++  return !forgotten.url && forgotten.from < 0;
++}
++
++std::string HashOf(const std::string& bytes) {
++  return base::HexEncode(crypto::hash::Sha256(bytes));
++}
++
++// What a file is as the folder lists it: a file whose size and time are as they were is as it was.
++struct Stat {
++  double size = -1;
++  // Microseconds since 1970.
++  double modified = 0;
++  bool operator==(const Stat&) const = default;
++};
++
++Stat StatOf(const base::FilePath& file) {
++  Stat stat;
++  base::File::Info info;
++  if (base::GetFileInfo(file, &info)) {
++    stat.size = static_cast<double>(info.size);
++    stat.modified =
++        static_cast<double>((info.last_modified - base::Time::UnixEpoch()).InMicroseconds());
++  }
++  return stat;
++}
++
+ bool Hides(const HistorySync::Forgotten& forgotten, const HistorySync::Visit& visit) {
+   return visit.at <= forgotten.until && visit.at >= forgotten.from &&
+          (!forgotten.url || *forgotten.url == visit.url);
+ }
+ 
++// A forgotten file's records, each with its key, none hiding what was visited after it was
++// written. A build of before 2026-11-13 wrote "the last hour" as from then until the end of time
++// (Chromium gives the end of a cleared range so), and reading it took out every later visit here
++// too, from history and from this machine's shared files. Such a record says not when it was
++// written: no later than its file was last, then.
++std::vector<std::pair<std::string, HistorySync::Forgotten>> RecordsOf(
++    const base::FilePath& file,
++    const std::optional<base::Value>& value) {
++  base::File::Info info;
++  const double written = base::GetFileInfo(file, &info) && !info.last_modified.is_null()
++                             ? MsOfTime(info.last_modified)
++                             : static_cast<double>(NowMs());
++  std::vector<std::pair<std::string, HistorySync::Forgotten>> records;
++  for (HistorySync::Forgotten& entry : ForgottenFromValue(base::OptionalToPtr(value))) {
++    std::string key = KeyOf(entry);
++    entry.until = std::min(entry.until, entry.at > 0 ? entry.at : written);
++    records.emplace_back(std::move(key), std::move(entry));
++  }
++  return records;
++}
++
++// The millisecond of a visit in history, as the files have it.
++int64_t MsOf(base::Time time) {
++  return static_cast<int64_t>(MsOfTime(time));
++}
++
++// A visit put into history from the folder, as AddPagesWithDetails makes it: a link followed from
++// nowhere. A visit made here comes from a page, or was typed, or opened something.
++bool TakenIn(const history::VisitRow& visit) {
++  return visit.referring_visit == 0 && visit.opener_visit == 0 &&
++         ui::PageTransitionTypeIncludingQualifiersIs(
++             visit.transition,
++             ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
++                                       ui::PAGE_TRANSITION_CHAIN_START |
++                                       ui::PAGE_TRANSITION_CHAIN_END));
++}
++
+ }  // namespace
+ 
+ // Where a visit's link counts as visited: under the page it was followed on, when that came with
+@@ -142,9 +232,28 @@ std::optional<HistorySync::Link> LinkOf(const HistorySync::Visit& visit) {
+   return link;
+ }
+ 
++// On the history thread: the rows of the VisitedLinkDatabase for links whose addresses are in
++// history already; the links that have one now.
++std::vector<HistorySync::Link> MakeLinkRows(history::HistoryDatabase* db,
++                                            std::vector<HistorySync::Link> links) {
++  std::vector<HistorySync::Link> made;
++  for (HistorySync::Link& link : links) {
++    const history::URLID id = db->GetRowForURL(link.url, nullptr);
++    if (!id) {
++      continue;
++    }
++    history::VisitedLinkRow row;
++    if (db->GetRowForVisitedLink(id, link.top, link.frame, row) ||
++        db->AddVisitedLink(id, link.top, link.frame, 1)) {
++      made.push_back(std::move(link));
++    }
++  }
++  return made;
++}
++
+ // On the history thread: the rows of the VisitedLinkDatabase for links whose addresses are in
+ // history already. `everything` is the pass made once for what was in history before this was
+-// done (visits taken in from other machines earlier, whose files are not read again): every
++// done (visits taken in from other machines by builds that made no links for them): every
+ // address there, on its own site.
+ class MakeLinks : public history::HistoryDBTask {
+  public:
+@@ -175,28 +284,138 @@ class MakeLinks : public history::HistoryDBTask {
+       base::CreateDirectory(marker_.DirName());
+       base::WriteFile(marker_, "1");
+     }
+-    std::vector<HistorySync::Link> made;
+-    for (HistorySync::Link& link : links_) {
+-      const history::URLID id = db->GetRowForURL(link.url, nullptr);
+-      if (!id) {
++    links_ = MakeLinkRows(db, std::move(links_));
++    return true;
++  }
++
++  void DoneRunOnMainThread() override { std::move(done_).Run(std::move(links_)); }
++
++ private:
++  std::vector<HistorySync::Link> links_;
++  const base::FilePath marker_;
++  base::OnceCallback<void(std::vector<HistorySync::Link>)> done_;
++};
++
++// On the history thread: history made to hold every visit the folder has, each once. A visit is
++// in history when its address has a visit there of the same millisecond (the files keep
++// milliseconds, history microseconds; one either side is taken as the same, for files written by
++// other builds). Two of one visit, from an earlier build that read a file again after it had
++// changed, become one; a visit made here is never the one taken out.
++class Converge : public history::HistoryDBTask {
++ public:
++  Converge(std::vector<HistorySync::Visit> visits,
++           base::OnceCallback<void(bool, std::vector<HistorySync::Link>)> done)
++      : visits_(std::move(visits)), done_(std::move(done)) {}
++
++  bool RunOnDBThread(history::HistoryBackend* backend, history::HistoryDatabase* db) override {
++    if (!backend || !db) {
++      return true;
++    }
++    ok_ = true;
++    std::map<std::string, std::vector<const HistorySync::Visit*>> by_address;
++    for (const HistorySync::Visit& visit : visits_) {
++      by_address[visit.url].push_back(&visit);
++    }
++    history::URLRows rows;
++    history::VisitVector doubles;
++    size_t added = 0;
++    for (auto& [spec, visits] : by_address) {
++      const GURL url(spec);
++      if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
+         continue;
+       }
+-      history::VisitedLinkRow row;
+-      if (db->GetRowForVisitedLink(id, link.top, link.frame, row) ||
+-          db->AddVisitedLink(id, link.top, link.frame, 1)) {
+-        made.push_back(std::move(link));
++      std::set<int64_t> there;
++      history::URLRow row;
++      const history::URLID id = db->GetRowForURL(url, &row);
++      if (id) {
++        history::VisitVector in_history;
++        db->GetVisitsForURL(id, &in_history);
++        std::map<int64_t, size_t> kept;
++        for (size_t i = 0; i < in_history.size(); ++i) {
++          const auto [it, first] = kept.emplace(MsOf(in_history[i].visit_time), i);
++          if (first) {
++            continue;
++          }
++          if (TakenIn(in_history[i])) {
++            doubles.push_back(in_history[i]);
++          } else if (TakenIn(in_history[it->second])) {
++            doubles.push_back(in_history[it->second]);
++            it->second = i;
++          }
++        }
++        for (const auto& [ms, index] : kept) {
++          there.insert(ms);
++        }
++      }
++      // Newest first: an address's first row is the one its entry is made from, counting all of
++      // its visits.
++      std::ranges::stable_sort(visits, std::greater<>(), &HistorySync::Visit::at);
++      std::vector<const HistorySync::Visit*> missing;
++      for (const HistorySync::Visit* visit : visits) {
++        const int64_t ms = static_cast<int64_t>(std::floor(visit->at));
++        if (there.contains(ms) || there.contains(ms - 1) || there.contains(ms + 1)) {
++          continue;
++        }
++        there.insert(ms);
++        missing.push_back(visit);
++      }
++      if (missing.empty()) {
++        continue;
++      }
++      const HistorySync::Visit& newest = *missing.front();
++      if (id) {
++        // AddPagesWithDetails adds only a visit to an address history has: its entry counts them.
++        row.set_visit_count(row.visit_count() + static_cast<int>(missing.size()));
++        if (TimeOfMs(newest.at) > row.last_visit()) {
++          row.set_last_visit(TimeOfMs(newest.at));
++          if (!newest.title.empty()) {
++            row.set_title(newest.title);
++          }
++        } else if (row.title().empty()) {
++          row.set_title(newest.title);
++        }
++        db->UpdateURLRow(id, row);
+       }
++      for (const HistorySync::Visit* visit : missing) {
++        history::URLRow add(url);
++        add.set_title(visit->title);
++        add.set_visit_count(static_cast<int>(missing.size()));
++        add.set_typed_count(0);
++        add.set_last_visit(TimeOfMs(visit->at));
++        add.set_hidden(false);
++        rows.push_back(std::move(add));
++        // A link is coloured as visited by its row in the VisitedLinkDatabase and the table
++        // made from it, which only a navigation here makes: made for these, once they are in.
++        if (std::optional<HistorySync::Link> link = LinkOf(*visit)) {
++          links_.push_back(std::move(*link));
++        }
++      }
++      added += missing.size();
++    }
++    if (!doubles.empty()) {
++      backend->RemoveVisits(doubles, history::DeletionInfo::Reason::kOther);
++    }
++    if (!rows.empty()) {
++      // These were browsed, on this machine or another; Chromium's own source for the latter
++      // (SOURCE_SYNCED) makes no visit, so the history page would not show them.
++      backend->AddPagesWithDetails(rows, history::SOURCE_BROWSED);
++    }
++    links_ = MakeLinkRows(db, std::move(links_));
++    if (added || !doubles.empty()) {
++      LOG(WARNING) << "SpatiMesh: of " << visits_.size() << " visit(s) read from the shared "
++                   << "folder, " << added << " put into history; " << doubles.size()
++                   << " double(s) taken out of it";
+     }
+-    links_ = std::move(made);
+     return true;
+   }
+ 
+-  void DoneRunOnMainThread() override { std::move(done_).Run(std::move(links_)); }
++  void DoneRunOnMainThread() override { std::move(done_).Run(ok_, std::move(links_)); }
+ 
+  private:
++  const std::vector<HistorySync::Visit> visits_;
++  bool ok_ = false;
+   std::vector<HistorySync::Link> links_;
+-  const base::FilePath marker_;
+-  base::OnceCallback<void(std::vector<HistorySync::Link>)> done_;
++  base::OnceCallback<void(bool, std::vector<HistorySync::Link>)> done_;
+ };
+ 
+ // On the history thread: the page a visit's link was followed on, from the row Chromium made.
+@@ -228,13 +447,18 @@ HistorySync::News::News(News&&) = default;
+ HistorySync::News& HistorySync::News::operator=(News&&) = default;
+ HistorySync::News::~News() = default;
+ 
+-// The folder's side, on its own sequence: this machine's month, and how far each other file has
+-// been read.
++// The folder's side, on its own sequence: this machine's month, and what of each file has been
++// read. A file is read again whenever its content changed (its size or time first, then the hash
++// of what it holds), whoever changed it and however: its visits are compared with history's, not
++// counted, so a file rewritten, put in order or made longer anywhere is taken in rightly.
+ class HistorySync::Files {
+  public:
+   explicit Files(const std::string& id)
+       : dir_(SharedProfileDir(id).Append("history")),
+-        progress_file_(LocalProfileDir(id).Append("history-read.json")) {
++        // Builds of before 2026-11-17 kept how many entries of each file they had read, in
++        // history-read.json; a file rewritten longer or in another order was read wrongly so.
++        // Every file is read once more, from this new record.
++        seen_file_(LocalProfileDir(id).Append("history-seen.json")) {
+     const base::FilePath machine_file = LocalDir().Append("machine.json");
+     if (std::optional<base::Value> value = ReadJson(machine_file); value && value->is_string()) {
+       machine_ = value->GetString();
+@@ -242,10 +466,23 @@ class HistorySync::Files {
+       machine_ = NewId();
+       WriteJson(machine_file, base::Value(machine_));
+     }
+-    if (std::optional<base::Value> value = ReadJson(progress_file_); value && value->is_dict()) {
+-      for (const auto [name, count] : value->GetDict()) {
+-        if (count.is_int()) {
+-          read_[name] = count.GetInt();
++    if (std::optional<base::Value> value = ReadJson(seen_file_); value && value->is_dict()) {
++      for (const auto [name, item] : value->GetDict()) {
++        if (!item.is_dict()) {
++          continue;
++        }
++        Seen& seen = seen_[name];
++        seen.stat.size = item.GetDict().FindDouble("size").value_or(-1);
++        seen.stat.modified = item.GetDict().FindDouble("modified").value_or(0);
++        if (const std::string* hash = item.GetDict().FindString("hash")) {
++          seen.hash = *hash;
++        }
++        if (const base::ListValue* records = item.GetDict().FindList("records")) {
++          for (const base::Value& record : *records) {
++            if (record.is_string()) {
++              seen.records.insert(record.GetString());
++            }
++          }
+         }
+       }
+     }
+@@ -261,9 +498,18 @@ class HistorySync::Files {
+ 
+   // Visits made here, written to this month's file.
+   void Save(std::vector<Visit> visits) {
++    // The month's file as it is now, if it changed since this machine last wrote it (put right
++    // elsewhere, or come back from another machine's copy): what it has is kept.
++    if (!month_.empty() && StatOf(FileOf(month_)) != month_stat_) {
++      visits_ = VisitsFromFile(FileOf(month_));
++    }
      for (Visit& visit : visits) {
        const std::string month = MonthOf(visit.at);
        if (month != month_) {
 +        // The month before, with what this batch added to it, before its list is let go.
 +        if (!month_.empty()) {
-+          WriteJson(FileOf(month_), base::Value(VisitsToList(visits_)));
++          WriteMonth();
 +        }
          month_ = month;
          visits_ = VisitsFromFile(FileOf(month_));
        }
-@@ -285,9 +290,14 @@ class HistorySync::Files {
+@@ -277,17 +523,21 @@ class HistorySync::Files {
+       }
+     }
+     if (!month_.empty()) {
+-      WriteJson(FileOf(month_), base::Value(VisitsToList(visits_)));
++      WriteMonth();
+     }
+   }
+ 
+   // What was taken out here, for every machine; this machine's own files, without it.
    void Forget(Forgotten forgotten) {
-     const base::FilePath list_file = dir_.Append("forgotten-" + machine_ + ".json");
+-    const base::FilePath list_file = dir_.Append("forgotten-" + machine_ + ".json");
++    const std::string name = "forgotten-" + machine_;
++    const base::FilePath list_file = dir_.Append(name + ".json");
      std::vector<Forgotten> mine = ForgottenFromFile(list_file);
 -    if (!forgotten.url && forgotten.from == 0) {
 -      mine.clear();  // Everything makes every earlier entry needless.
-+    // The list only grows: the other machines go on from how many entries they have read, and
-+    // one that had read more than a shortened list holds would never hear of what came after
-+    // (it was emptied when all history was cleared, and that clearing reached no machine that
-+    // had read an entry before).
++    // The list only grows: a machine with a build of before 2026-11-17 goes on from how many
++    // entries it has read.
 +    if (forgotten.at == 0) {
 +      forgotten.at = static_cast<double>(NowMs());
      }
@@ -60,7 +456,7 @@ index 8d13080019..b8859896e1 100644
      mine.push_back(forgotten);
      base::ListValue list;
      for (const Forgotten& entry : mine) {
-@@ -297,6 +307,9 @@ class HistorySync::Files {
+@@ -297,70 +547,232 @@ class HistorySync::Files {
        }
        dict.Set("from", entry.from);
        dict.Set("until", entry.until);
@@ -69,49 +465,454 @@ index 8d13080019..b8859896e1 100644
 +      }
        list.Append(std::move(dict));
      }
-     WriteJson(list_file, base::Value(std::move(list)));
-@@ -323,7 +336,25 @@ class HistorySync::Files {
+-    WriteJson(list_file, base::Value(std::move(list)));
+-    read_["forgotten-" + machine_] = static_cast<int>(mine.size());
+-    SaveProgress();
++    WriteOwn(name, base::Value(std::move(list)));
++    Cache(name, list_file, ReadJson(list_file));
+     RemoveFromOwnFiles(forgotten);
+   }
+ 
+-  // What the other machines' files have that was not read yet.
+-  News ReadNews(base::Time last) {
++  // Every file whose content changed since it was last read, this machine's own too: the
++  // forget-records not applied yet, and the visits of the last 90 days that no forget-record
++  // hides, for history to be given those it lacks. Everything, with `again`: history lost visits
++  // that no person took out.
++  News ReadNews(base::Time last, bool again) {
+     News news;
+     news.changed = FolderChanged(dir_);
+-    if (!last.is_null() && news.changed == last) {
++    if (!again && !last.is_null() && news.changed == last) {
+       news.unchanged = true;
+       return news;
+     }
+-    const double oldest = static_cast<double>(NowMs()) - kImportMs;
+-    const std::string mine = machine_ + "-";
+-    const std::string my_forgotten = "forgotten-" + machine_;
+-    bool moved = false;
+-    for (const std::string& name : ListJson(dir_)) {
+-      if (name.starts_with(mine) || name == my_forgotten) {
++    pending_.clear();
++    const std::vector<std::string> names = ListJson(dir_);
++    const std::set<std::string> present(names.begin(), names.end());
++    // Forget-records first: what they hide is not taken in.
++    for (const std::string& name : names) {
++      if (!name.starts_with("forgotten-")) {
+         continue;
        }
-       int& done = read_[name];
-       if (name.starts_with("forgotten-")) {
+-      int& done = read_[name];
+-      if (name.starts_with("forgotten-")) {
 -        std::vector<Forgotten> forgotten = ForgottenFromFile(dir_.Append(name + ".json"));
-+        const base::FilePath file = dir_.Append(name + ".json");
-+        std::vector<Forgotten> forgotten = ForgottenFromFile(file);
-+        // An entry hides nothing visited after it was written. A build of before 2026-11-13
-+        // wrote "the last hour" as from then until the end of time (Chromium gives the end of a
-+        // cleared range so), and reading it took out every later visit here too, from history
-+        // and from this machine's shared files. Such an entry says not when it was written: no
-+        // later than its file was last, then.
-+        base::File::Info info;
-+        const double written = base::GetFileInfo(file, &info) && !info.last_modified.is_null()
-+                                   ? MsOfTime(info.last_modified)
-+                                   : static_cast<double>(NowMs());
-+        for (Forgotten& entry : forgotten) {
-+          entry.until = std::min(entry.until, entry.at > 0 ? entry.at : written);
+-        for (size_t i = static_cast<size_t>(done) < forgotten.size() ? done : forgotten.size();
+-             i < forgotten.size(); ++i) {
+-          RemoveFromOwnFiles(forgotten[i]);
+-          news.forgotten.push_back(std::move(forgotten[i]));
++      const base::FilePath file = dir_.Append(name + ".json");
++      std::string bytes;
++      Seen now;
++      const bool changed = Changed(name, file, &bytes, &now);
++      if (!changed && forgotten_.contains(name)) {
++        continue;
++      }
++      if (!changed && !base::ReadFileToString(file, &bytes)) {
++        continue;
++      }
++      const std::vector<std::pair<std::string, Forgotten>> records =
++          Cache(name, file, base::JSONReader::Read(bytes, base::JSON_PARSE_RFC));
++      if (!changed) {
++        continue;
++      }
++      const auto before = seen_.find(name);
++      for (const auto& [key, entry] : records) {
++        now.records.insert(key);
++        if (NoPersons(entry) ||
++            (before != seen_.end() && before->second.records.contains(key))) {
++          continue;
+         }
+-        moved |= done != static_cast<int>(forgotten.size());
+-        done = static_cast<int>(forgotten.size());
++        RemoveFromOwnFiles(entry);
++        news.forgotten.push_back(entry);
++      }
++      // A record taken back hides nothing any more: every file is read again.
++      if (before != seen_.end() &&
++          !std::ranges::includes(now.records, before->second.records)) {
++        again = true;
++      }
++      pending_[name] = std::move(now);
++    }
++    for (auto it = forgotten_.begin(); it != forgotten_.end();) {
++      it = present.contains(it->first) ? std::next(it) : forgotten_.erase(it);
++    }
++    for (auto it = seen_.begin(); it != seen_.end();) {
++      if (present.contains(it->first)) {
++        ++it;
+         continue;
+       }
+-      std::vector<Visit> visits = VisitsFromFile(dir_.Append(name + ".json"));
+-      // A file only grows at its end, unless its machine took something out of it.
+-      for (size_t i = static_cast<size_t>(done) < visits.size() ? done : visits.size();
+-           i < visits.size(); ++i) {
+-        if (visits[i].at >= oldest) {
+-          news.visits.push_back(std::move(visits[i]));
++      again |= !it->second.records.empty();
++      it = seen_.erase(it);
++      dirty_ = true;
++    }
++    if (again) {
++      std::erase_if(seen_, [](const auto& item) { return !item.first.starts_with("forgotten-"); });
++      dirty_ = true;
++    }
++    const double oldest = static_cast<double>(NowMs()) - kImportMs;
++    for (const std::string& name : names) {
++      if (name.starts_with("forgotten-")) {
++        continue;
++      }
++      const base::FilePath file = dir_.Append(name + ".json");
++      std::string bytes;
++      Seen now;
++      if (!Changed(name, file, &bytes, &now)) {
++        continue;
++      }
++      for (Visit& visit :
++           VisitsFromValue(base::JSONReader::Read(bytes, base::JSON_PARSE_RFC))) {
++        if (visit.at >= oldest && !Hidden(visit)) {
++          news.visits.push_back(std::move(visit));
+         }
+       }
+-      moved |= done != static_cast<int>(visits.size());
+-      done = static_cast<int>(visits.size());
++      pending_[name] = std::move(now);
+     }
+-    if (moved) {
+-      SaveProgress();
++    if (dirty_) {
++      SaveSeen();
+     }
++    news.pending = !pending_.empty();
+     return news;
+   }
+ 
++  // What ReadNews read is in history now (`ok`), and counts as read; else it is read again.
++  void Imported(bool ok) {
++    if (ok) {
++      for (auto& [name, seen] : pending_) {
++        seen_[name] = std::move(seen);
++      }
++      dirty_ = true;
++    }
++    pending_.clear();
++    if (dirty_) {
++      SaveSeen();
++    }
++  }
++
+  private:
++  struct Seen {
++    Stat stat;
++    std::string hash;
++    // A forgotten file's records when it was read, by KeyOf.
++    std::set<std::string> records;
++  };
++
+   base::FilePath FileOf(const std::string& month) const {
+     return dir_.Append(machine_ + "-" + month + ".json");
+   }
+ 
+-  void SaveProgress() {
++  // Whether a file is other than when it was last read; with what it holds and what it is now if
++  // it is.
++  bool Changed(const std::string& name, const base::FilePath& file, std::string* bytes,
++               Seen* now) {
++    now->stat = StatOf(file);
++    const auto it = seen_.find(name);
++    if (it != seen_.end() && it->second.stat == now->stat) {
++      return false;
++    }
++    if (!base::ReadFileToString(file, bytes)) {
++      return false;
++    }
++    now->hash = HashOf(*bytes);
++    if (it != seen_.end() && it->second.hash == now->hash) {
++      // Written again as it was (the same file come from another machine).
++      it->second.stat = now->stat;
++      dirty_ = true;
++      return false;
++    }
++    return true;
++  }
++
++  // A forgotten file's records, kept to leave out what they hide.
++  std::vector<std::pair<std::string, Forgotten>> Cache(const std::string& name,
++                                                       const base::FilePath& file,
++                                                       const std::optional<base::Value>& value) {
++    std::vector<std::pair<std::string, Forgotten>> records = RecordsOf(file, value);
++    std::vector<Forgotten>& kept = forgotten_[name];
++    kept.clear();
++    for (const auto& [key, entry] : records) {
++      if (!NoPersons(entry)) {
++        kept.push_back(entry);
++      }
++    }
++    return records;
++  }
++
++  bool Hidden(const Visit& visit) const {
++    for (const auto& [name, records] : forgotten_) {
++      for (const Forgotten& forgotten : records) {
++        if (Hides(forgotten, visit)) {
++          return true;
 +        }
-+        // A list shorter than what was read of it was begun again by its machine (an older
-+        // build, clearing all history): all of it is news.
-+        if (static_cast<size_t>(done) > forgotten.size()) {
-+          done = 0;
++      }
++    }
++    return false;
++  }
++
++  // One of this machine's files written. If it had been read as it was, it is read as it is
++  // now: what this machine changed in it is in its history already.
++  void WriteOwn(const std::string& name, const base::Value& value) {
++    const base::FilePath file = dir_.Append(name + ".json");
++    const auto it = seen_.find(name);
++    const bool was_read =
++        it != seen_.end() && !pending_.contains(name) && it->second.stat == StatOf(file);
++    WriteJson(file, value);
++    if (!was_read) {
++      return;
++    }
++    std::string bytes;
++    if (!base::ReadFileToString(file, &bytes)) {
++      return;
++    }
++    it->second.stat = StatOf(file);
++    it->second.hash = HashOf(bytes);
++    if (name.starts_with("forgotten-")) {
++      it->second.records.clear();
++      for (const Forgotten& entry : ForgottenFromValue(&value)) {
++        it->second.records.insert(KeyOf(entry));
++      }
++    }
++    SaveSeen();
++  }
++
++  void WriteMonth() {
++    WriteOwn(machine_ + "-" + month_, base::Value(VisitsToList(visits_)));
++    month_stat_ = StatOf(FileOf(month_));
++  }
++
++  void SaveSeen() {
+     base::DictValue dict;
+-    for (const auto& [name, count] : read_) {
+-      dict.Set(name, count);
++    for (const auto& [name, seen] : seen_) {
++      base::DictValue item;
++      item.Set("size", seen.stat.size);
++      item.Set("modified", seen.stat.modified);
++      item.Set("hash", seen.hash);
++      if (!seen.records.empty()) {
++        base::ListValue records;
++        for (const std::string& record : seen.records) {
++          records.Append(record);
 +        }
-         for (size_t i = static_cast<size_t>(done) < forgotten.size() ? done : forgotten.size();
-              i < forgotten.size(); ++i) {
-           RemoveFromOwnFiles(forgotten[i]);
-@@ -593,7 +624,8 @@ void HistorySync::OnHistoryDeletions(history::HistoryService* history_service,
-   if (range.IsValid() && !deletion_info.restrict_urls().has_value()) {
-     Forgotten forgotten;
-     forgotten.from = range.begin().is_null() ? 0 : MsOfTime(range.begin());
--    forgotten.until = range.end().is_null() ? now : MsOfTime(range.end());
-+    // Chromium gives "the last hour" as from then until the end of time: until now, here.
-+    forgotten.until = range.end().is_null() ? now : std::min(now, MsOfTime(range.end()));
-     files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
++        item.Set("records", std::move(records));
++      }
++      dict.Set(name, std::move(item));
+     }
+-    WriteJson(progress_file_, base::Value(std::move(dict)));
++    WriteJson(seen_file_, base::Value(std::move(dict)));
++    dirty_ = false;
+   }
+ 
+   void RemoveFromOwnFiles(const Forgotten& forgotten) {
+@@ -379,18 +791,27 @@ class HistorySync::Files {
+       if (visits.empty()) {
+         RemovePath(file);
+       } else {
+-        WriteJson(file, base::Value(VisitsToList(visits)));
++        WriteOwn(name, base::Value(VisitsToList(visits)));
+       }
+     }
+     std::erase_if(visits_, [&forgotten](const Visit& visit) { return Hides(forgotten, visit); });
++    if (!month_.empty()) {
++      month_stat_ = StatOf(FileOf(month_));
++    }
+   }
+ 
+   const base::FilePath dir_;
+-  const base::FilePath progress_file_;
++  const base::FilePath seen_file_;
+   std::string machine_;
+   std::string month_;
++  Stat month_stat_;
+   std::vector<Visit> visits_;
+-  std::map<std::string, int> read_;
++  std::map<std::string, Seen> seen_;
++  // Read, waiting for history to have it.
++  std::map<std::string, Seen> pending_;
++  // Every forgotten file's records, but no person's.
++  std::map<std::string, std::vector<Forgotten>> forgotten_;
++  bool dirty_ = false;
+ };
+ 
+ HistorySync::HistorySync(Profile* profile,
+@@ -424,59 +845,16 @@ void HistorySync::Poll() {
+   }
+   reading_ = true;
+   files_.AsyncCall(&Files::ReadNews)
+-      .WithArgs(last_read_)
++      .WithArgs(last_read_, std::exchange(reread_, false))
+       .Then(base::BindOnce(&HistorySync::OnNews, weak_factory_.GetWeakPtr()));
+ }
+ 
+ void HistorySync::OnNews(News news) {
+-  reading_ = false;
+   if (news.unchanged) {
++    reading_ = false;
      return;
    }
+   last_read_ = news.changed;
+-  if (!news.visits.empty()) {
+-    // Newest first, each address's first row counting all its visits here: the first row of an
+-    // address is the one its entry is made from. These were browsed, on another machine; Chromium's
+-    // own source for that (SOURCE_SYNCED) makes no visit, so the history page would not show them.
+-    std::vector<const Visit*> visits;
+-    visits.reserve(news.visits.size());
+-    std::map<std::string, int> counts;
+-    for (const Visit& visit : news.visits) {
+-      visits.push_back(&visit);
+-      ++counts[visit.url];
+-    }
+-    std::ranges::stable_sort(visits, std::greater<>(), &Visit::at);
+-    history::URLRows rows;
+-    rows.reserve(visits.size());
+-    for (const Visit* visit : visits) {
+-      GURL url(visit->url);
+-      if (!url.is_valid()) {
+-        continue;
+-      }
+-      history::URLRow row(url);
+-      row.set_title(visit->title);
+-      row.set_visit_count(counts[visit->url]);
+-      row.set_typed_count(0);
+-      row.set_last_visit(TimeOfMs(visit->at));
+-      row.set_hidden(false);
+-      rows.push_back(std::move(row));
+-    }
+-    history_->AddPagesWithDetails(rows, history::SOURCE_BROWSED);
+-    // A link is coloured as visited by its row in the VisitedLinkDatabase and the table made
+-    // from it, which only a navigation here makes: made for these, after their addresses are in.
+-    std::vector<Link> links;
+-    for (const Visit* visit : visits) {
+-      if (std::optional<Link> link = LinkOf(*visit)) {
+-        links.push_back(std::move(*link));
+-      }
+-    }
+-    history_->ScheduleDBTask(
+-        FROM_HERE,
+-        std::make_unique<MakeLinks>(
+-            std::move(links), base::FilePath(),
+-            base::BindOnce(&HistorySync::OnLinksMade, weak_factory_.GetWeakPtr())),
+-        &tracker_);
+-  }
+   for (const Forgotten& forgotten : news.forgotten) {
+     std::set<GURL> urls;
+     if (forgotten.url) {
+@@ -493,6 +871,27 @@ void HistorySync::OnNews(News news) {
+         }, weak_factory_.GetWeakPtr()),
+         &tracker_);
+   }
++  if (!news.pending) {
++    reading_ = false;
++    return;
++  }
++  // After the forget-records just applied: the history thread takes its tasks in turn.
++  history_->ScheduleDBTask(
++      FROM_HERE,
++      std::make_unique<Converge>(
++          std::move(news.visits),
++          base::BindOnce(&HistorySync::OnConverged, weak_factory_.GetWeakPtr())),
++      &tracker_);
++}
++
++void HistorySync::OnConverged(bool ok, std::vector<Link> links) {
++  OnLinksMade(std::move(links));
++  files_.AsyncCall(&Files::Imported).WithArgs(ok);
++  if (!ok) {
++    // Read again when history is there.
++    last_read_ = base::Time();
++  }
++  reading_ = false;
+ }
+ 
+ void HistorySync::OnLinksMade(std::vector<Link> links) {
+@@ -583,6 +982,7 @@ void HistorySync::OnHistoryDeletions(history::HistoryService* history_service,
+     return;
+   }
+   const double now = static_cast<double>(NowMs());
++  // Chrome's "Clear browsing data" for all time, and an extension's deleteAll.
+   if (deletion_info.IsAllHistory()) {
+     Forgotten forgotten;
+     forgotten.until = now;
+@@ -590,11 +990,36 @@ void HistorySync::OnHistoryDeletions(history::HistoryService* history_service,
+     return;
+   }
+   const history::DeletionTimeRange& range = deletion_info.time_range();
+-  if (range.IsValid() && !deletion_info.restrict_urls().has_value()) {
++  if (range.IsValid()) {
++    // A person's clearing begins at a time, or at none ("Older than 30 days"). One from the
++    // beginning of time itself, base::Time::Min(), is a clearing of all history no person asked
++    // for: bounce tracking's, which wiped history hourly until patch 0016 (base/0152's
++    // DATA_TYPE_SKIP_SSL_HOST_STATE was DATA_TYPE_HISTORY). Not told to the other machines; the
++    // folder fills history again.
++    const bool from_min = !range.begin().is_null() && range.begin() < base::Time::UnixEpoch();
+     Forgotten forgotten;
+-    forgotten.from = range.begin().is_null() ? 0 : MsOfTime(range.begin());
+-    forgotten.until = range.end().is_null() ? now : MsOfTime(range.end());
+-    files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
++    forgotten.from = range.begin().is_null() || from_min ? 0 : MsOfTime(range.begin());
++    // Chromium gives "the last hour" as from then until the end of time: until now, here.
++    forgotten.until = range.end().is_null() ? now : std::min(now, MsOfTime(range.end()));
++    if (!deletion_info.restrict_urls()) {
++      if (from_min) {
++        LOG(WARNING) << "SpatiMesh: history was cleared from the beginning of time, by no "
++                     << "person: not taken out on the other machines, and filled again from "
++                     << "the shared folder";
++        reread_ = true;
++        return;
++      }
++      files_.AsyncCall(&Files::Forget).WithArgs(std::move(forgotten));
++      return;
++    }
++    // Some addresses' visits of that time, as the history page takes out an entry: those alone.
++    for (const GURL& url : *deletion_info.restrict_urls()) {
++      if (Remembered(url)) {
++        Forgotten entry = forgotten;
++        entry.url = url.spec();
++        files_.AsyncCall(&Files::Forget).WithArgs(std::move(entry));
++      }
++    }
+     return;
+   }
+   for (const history::URLRow& row : deletion_info.deleted_rows()) {
 diff --git a/chrome/browser/spatiand/history_sync.h b/chrome/browser/spatiand/history_sync.h
-index 9d76dcccfb..149077114d 100644
+index 9d76dcccfb..368830425b 100644
 --- a/chrome/browser/spatiand/history_sync.h
 +++ b/chrome/browser/spatiand/history_sync.h
-@@ -61,6 +61,9 @@ class HistorySync : public history::HistoryServiceObserver {
+@@ -27,9 +27,10 @@ namespace spatiand {
+ 
+ // A profile's history on every machine: `apps/spatimesh/profiles/<id>/history/`. Each machine
+ // writes only its own files, a month to a file (`<machine>-<YYYY-MM>.json`), and says what was
+-// taken out in `forgotten-<machine>.json`; every machine reads all of them. A visit made elsewhere
+-// is put into Chromium's own history as a synced one, so that the address bar, the history page
+-// and visited links all know it.
++// taken out in `forgotten-<machine>.json`. The folder is the one source of truth: every machine
++// reads all of them, its own too, and its history comes to hold every visit of the last 90 days
++// they have that no forget-record hides, each once. A file is read again whenever its content
++// changed, and only then.
+ class HistorySync : public history::HistoryServiceObserver {
+  public:
+   HistorySync(Profile* profile,
+@@ -61,6 +62,9 @@ class HistorySync : public history::HistoryServiceObserver {
      std::optional<std::string> url;
      double from = 0;
      double until = 0;
@@ -121,3 +922,30 @@ index 9d76dcccfb..149077114d 100644
    };
    struct News {
      News();
+@@ -69,6 +73,8 @@ class HistorySync : public history::HistoryServiceObserver {
+     ~News();
+     base::Time changed;
+     bool unchanged = false;
++    // Files were read whose visits are to be put into history before they count as read.
++    bool pending = false;
+     std::vector<Visit> visits;
+     std::vector<Forgotten> forgotten;
+   };
+@@ -77,6 +83,8 @@ class HistorySync : public history::HistoryServiceObserver {
+ 
+  private:
+   void OnNews(News news);
++  // What the folder has put into history (`ok`: history was there to put it into).
++  void OnConverged(bool ok, std::vector<Link> links);
+   void SaveSoon();
+   // A visit made here, with the page it was followed on if there was one.
+   void Record(Visit visit);
+@@ -100,6 +108,8 @@ class HistorySync : public history::HistoryServiceObserver {
+   std::vector<Visit> unsaved_;
+   bool reading_ = false;
+   base::Time last_read_;
++  // History lost visits no person took out: every file is read again.
++  bool reread_ = false;
+   // Taking out what another machine took out is not this machine taking it out.
+   int applying_forgotten_ = 0;
+   base::CancelableTaskTracker tracker_;
