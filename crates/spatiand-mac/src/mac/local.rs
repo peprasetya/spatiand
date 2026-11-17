@@ -42,13 +42,27 @@ fn listed() -> &'static Mutex<Vec<AppEntry>> {
     APPS.get_or_init(Default::default)
 }
 
-/// The app's list of what is installed, replaced whole.
+/// Whether the list has changed since the session last took it.
+static CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The app's list of what is installed, replaced whole: before the session starts, and again
+/// whenever an application folder changes (`Room.swift`'s watch on them).
 pub fn set_apps(apps: Vec<AppEntry>) {
-    *listed().lock().unwrap() = apps;
+    let mut listed = listed().lock().unwrap();
+    if *listed != apps {
+        log::info!("launcher: {} applications of this Mac", apps.len());
+        *listed = apps;
+        CHANGED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 pub fn apps() -> Vec<AppEntry> {
     listed().lock().unwrap().clone()
+}
+
+/// The list, if it has changed since this was last asked.
+pub fn apps_changed() -> Option<Vec<AppEntry>> {
+    CHANGED.swap(false, std::sync::atomic::Ordering::SeqCst).then(apps)
 }
 
 /// Open an application, and bring its windows into the room: the app's to do.

@@ -9,6 +9,10 @@
 //!
 //! The list is only refreshed while the page is open — every two seconds, which is how a
 //! keyboard that wakes up shows up as connected without anyone pressing anything.
+//!
+//! **On the Mac** the page and this worker are the same; what it asks is IOBluetooth's, through
+//! the app (`crates/spatiand-mac/src/mac/bluetooth.rs`), and adding a device is System Settings'
+//! Bluetooth pane in the room where the Deck's is the desktop's wizard.
 
 use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -24,6 +28,9 @@ const CONNECT_TIMEOUT_S: u32 = 15;
 
 /// Is there anything here to ask?
 pub fn available() -> bool {
+    #[cfg(target_os = "macos")]
+    return crate::mac::bluetooth::available();
+    #[allow(unreachable_code)]
     Command::new(TOOL)
         .arg("--version")
         .output()
@@ -113,6 +120,15 @@ impl Devices {
     }
 
     fn open_wizard(&mut self) {
+        // The Mac's wizard is System Settings' Bluetooth pane, which its app brings into the
+        // room itself.
+        #[cfg(target_os = "macos")]
+        {
+            self.view.note = crate::mac::bluetooth::add();
+            self.changed = true;
+            return;
+        }
+        #[allow(unreachable_code)]
         match spatiand_platform::settings_command("bluetooth") {
             Some(command) => {
                 log::info!("bluetooth: {command}");
@@ -234,6 +250,26 @@ fn perform(action: &BluetoothAction, label: &str) -> String {
         ),
         BluetoothAction::Add | BluetoothAction::None => return String::new(),
     };
+    // The Mac's: the same page, with IOBluetooth through the app in place of BlueZ.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = args;
+        if let Err(e) = crate::mac::bluetooth::act(action) {
+            log::info!("bluetooth: {e}");
+        }
+        // Judged by what the Mac says afterwards, as BlueZ's is below.
+        let (powered, devices) = crate::mac::bluetooth::read_state();
+        let device = |a: &str| devices.iter().find(|d| d.address == *a).cloned();
+        let worked = match action {
+            BluetoothAction::Connect(a) => device(a).is_some_and(|d| d.connected),
+            BluetoothAction::Disconnect(a) => !device(a).is_some_and(|d| d.connected),
+            BluetoothAction::Forget(a) => device(a).is_none(),
+            BluetoothAction::Power(on) => powered == Some(*on),
+            _ => true,
+        };
+        return if worked { did } else { failed };
+    }
+    #[allow(unreachable_code)]
     if let Err(e) = Command::new(TOOL).args(&args).output() {
         return format!("Could not run {TOOL}: {e}");
     }
@@ -265,6 +301,9 @@ fn run(args: &[&str]) -> Option<String> {
 }
 
 fn read_state() -> (Option<bool>, Vec<DeviceRow>) {
+    #[cfg(target_os = "macos")]
+    return crate::mac::bluetooth::read_state();
+    #[allow(unreachable_code)]
     let powered = run(&["show"]).and_then(|s| field(&s, "Powered").map(|v| v == "yes"));
     // `devices Paired` is BlueZ 5.65 and later; `paired-devices` is what came before it.
     let listing = run(&["devices", "Paired"])

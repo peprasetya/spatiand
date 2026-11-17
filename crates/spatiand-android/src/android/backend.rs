@@ -266,6 +266,10 @@ pub fn run(
     // On a Mac the menu bar that chooses where sound comes out is out of sight in the glasses.
     #[cfg(target_os = "macos")]
     shell.offer_audio();
+    // The settings' Bluetooth page, the Deck's (`crate::bluetooth`), on the Mac through
+    // IOBluetooth. Android's is the Beam Pro's own work, not here yet.
+    #[cfg(target_os = "macos")]
+    let mut bluetooth = crate::bluetooth::Devices::start();
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
@@ -820,6 +824,10 @@ pub fn run(
             remotes.tick(&mut runtime.display_handle, &mut prefs, &mut shell);
             runtime.state.quiet_hosts = remotes.quiet();
             crate::clipboard::exchange(&mut remotes, &mut runtime.state);
+            // The Bluetooth page kept filled while it is open. Adding a device opens System
+            // Settings' pane itself, so there is no wizard to start here.
+            #[cfg(target_os = "macos")]
+            let _ = bluetooth.tick(&mut shell);
             if shell.wants_text() && !keyboard.open {
                 keyboard.open = true;
                 keyboard_for_shell = true;
@@ -834,7 +842,10 @@ pub fn run(
                     ShellEvent::PairHost { address, code } => remotes.pair(address, code),
                     ShellEvent::CancelPairing => remotes.cancel(),
                     ShellEvent::ForgetHost(address) => remotes.forget(&address, &mut prefs),
-                    ShellEvent::Bluetooth(_) => {}
+                    ShellEvent::Bluetooth(_action) => {
+                        #[cfg(target_os = "macos")]
+                        bluetooth.act(_action);
+                    }
                     ShellEvent::ModeChanged(mode) => {
                         if mode == Mode::Launcher {
                             // As on the Deck: what has come since is there (SpatiMesh's
@@ -1012,7 +1023,11 @@ pub fn run(
                             #[cfg(target_os = "macos")]
                             crate::mac::app_menu_back();
                         }
-                        HudAction::OpenBluetooth => {}
+                        // The page has opened: asked now rather than at the tick, as on the Deck.
+                        HudAction::OpenBluetooth => {
+                            #[cfg(target_os = "macos")]
+                            bluetooth.refresh();
+                        }
                         HudAction::ReturnToDesktop => super::return_to_desktop(),
                         HudAction::OpenSystemSettings(panel) => super::system_settings(panel),
                         HudAction::Dismiss => {}

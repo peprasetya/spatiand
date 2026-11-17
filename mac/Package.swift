@@ -31,6 +31,8 @@ let package = Package(
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("VideoToolbox"),
                 .linkedFramework("IOKit"),
+                // The room's Bluetooth page (RoomBluetooth.swift).
+                .linkedFramework("IOBluetooth"),
                 .linkedFramework("IOSurface"),
                 .linkedFramework("QuartzCore"),
                 .linkedFramework("Metal"),

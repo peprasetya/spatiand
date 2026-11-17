@@ -90,6 +90,12 @@ pub enum Asked {
     TypeText = 37,
     /// Force an application of this Mac to quit. `text` is its bundle id.
     ForceQuit = 38,
+    /// Say what Bluetooth devices this Mac has paired with, with `sp_bluetooth_begin` and the
+    /// rest (`bluetooth`).
+    BluetoothList = 39,
+    /// Do this to a Bluetooth device, answering with `sp_bluetooth_done`: `text` is
+    /// `connect AA:BB:..`, `disconnect AA:BB:..`, `forget AA:BB:..`, `power on` or `power off`.
+    BluetoothDo = 40,
 }
 
 pub type Callback =
@@ -709,6 +715,49 @@ pub unsafe extern "C" fn sp_audio_device(id: u32, name: *const c_char, input: bo
 pub extern "C" fn sp_audio_devices_end() {
     let said = AUDIO_BEING_SAID.with(|list| std::mem::take(&mut *list.borrow_mut()));
     *super::AUDIO_DEVICES.lock().unwrap() = (said, true);
+}
+
+/// The Bluetooth devices, said from one thread: begin with whether Bluetooth is on (1), off (0)
+/// or there is no controller (-1), each device, end. See `bluetooth`.
+#[no_mangle]
+pub extern "C" fn sp_bluetooth_begin(powered: i32) {
+    super::bluetooth::list_begin(match powered {
+        1 => Some(true),
+        0 => Some(false),
+        _ => None,
+    });
+}
+
+/// One paired device: its address as IOBluetooth writes it, its name, its class of device's
+/// major and minor parts, and whether it is connected.
+///
+/// # Safety
+/// `address` and `name` must be valid C strings or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_bluetooth_device(address: *const c_char, name: *const c_char, major: u32, minor: u32, connected: bool) {
+    let address = super::bluetooth::address(&text(address));
+    let name = text(name);
+    super::bluetooth::list_device(spatiand_shell::DeviceRow {
+        label: if name.trim().is_empty() { address.clone() } else { name },
+        address,
+        kind: super::bluetooth::kind(major, minor).to_string(),
+        connected,
+        battery: None,
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn sp_bluetooth_end() {
+    super::bluetooth::list_end();
+}
+
+/// What [`Asked::BluetoothDo`] came to: `error` null for done, or why not.
+///
+/// # Safety
+/// `error` must be a valid C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_bluetooth_done(error: *const c_char) {
+    super::bluetooth::done((!error.is_null()).then(|| text(error)));
 }
 
 /// How many pixels a point of this Mac's screen is: 2 on a Retina display.

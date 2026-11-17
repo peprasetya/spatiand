@@ -16,9 +16,11 @@
 //! | [`local_apps`], [`launch_local`] | this Mac's applications, whose windows come into the room |
 //! | [`record`] | the glasses' view to a file |
 //! | [`desk_tick`] | 2D mode: the session's windows as the Mac's own ([`desk`]) |
+//! | `crate::bluetooth` | IOBluetooth, through the app ([`bluetooth`]) |
 
 #[path = "../../../spatiand-android/src/android/backend.rs"]
 pub mod backend;
+pub mod bluetooth;
 pub mod controller;
 pub mod desk;
 pub mod egl;
@@ -193,9 +195,12 @@ pub fn launch_local(app: &spatiand_shell::AppEntry) {
     local::launch(app);
 }
 
-/// The Mac's list is complete before the session starts, and read then.
+/// The Mac's list is given before the session starts, and again whenever an application is
+/// installed, removed or updated in /Applications, /System/Applications or ~/Applications: the
+/// app watches them (FSEvents) and lists them anew, as the Beam Pro's list follows the phone's
+/// installs and the Deck's launcher re-reads its entries.
 pub fn local_apps_changed() -> Option<Vec<spatiand_shell::AppEntry>> {
-    None
+    local::apps_changed()
 }
 
 pub fn return_to_desktop() {

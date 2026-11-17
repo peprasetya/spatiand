@@ -88,6 +88,21 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   room has the mouse the Mac's own pointer is hidden.
 * The launcher lists this Mac (by name) and each paired computer; a machine opens to all its
   applications by name, and typing narrows them. Opening a Mac application brings its windows in.
+  An application installed, removed or updated while the room runs is in the launcher a few
+  seconds later: the app watches /Applications, /System/Applications and ~/Applications
+  (FSEvents) and lists them again (2026-11-17; before, only at the start).
+* **The settings' Bluetooth page** is the Deck's (2026-11-17): the paired devices, connected or
+  not and what kind of thing each is; A connects or disconnects, Y twice forgets, the last row
+  turns Bluetooth on or off -- IOBluetooth through the app (`RoomBluetooth.swift`,
+  `crates/spatiand-mac/src/mac/bluetooth.rs`). *Add a device* brings System Settings' Bluetooth
+  pane into the room, as the Deck's opens its desktop's wizard: it finds LE keyboards and mice,
+  which IOBluetooth's own search does not, and takes a passkey. Not public macOS interface, and
+  so named: forgetting is IOBluetoothDevice's `remove`, switching is
+  `IOBluetoothPreferenceSetControllerPowerState` (blueutil's way). No battery levels: IOBluetooth
+  has no public way to read them. macOS asks once for Bluetooth permission
+  (`NSBluetoothAlwaysUsageDescription`).
+* **An application dropped into the room** as a `.spatiapp` is offered on the card and installed
+  by pressing it, as on the Deck (`crates/spatiand/src/install.rs`; docs/spatiand-apps.md).
 * **The settings' Windows list** has every window open on the Mac, put away, under
   *Applications*; choosing one brings it out. Only windows on show are captured. A window opened
   while the room is going comes out at once. A tab is not a window: a new tab, or another tab

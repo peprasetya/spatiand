@@ -16,6 +16,7 @@
 
 import AppKit
 import CoreAudio
+import CoreServices
 import AVFoundation
 import CSpatiand
 
@@ -78,6 +79,7 @@ final class Room {
         sp_display_scale(Double(NSScreen.main?.backingScaleFactor ?? 2))
         sp_microphone_allowed(AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
         listApplications()
+        watchApplications()
         if let uid = Settings.audioOutputUID, let device = AudioDevices.outputs().first(where: { $0.uid == uid }) {
             sp_audio_output(Int32(bitPattern: device.id))
         }
@@ -218,6 +220,7 @@ final class Room {
         stopping = true
         defer { stopping = false }
         soundTimer?.invalidate()
+        unwatchApplications()
         Notices.shared.stop()
         soundQueue.sync { sound.stopAll() }
         RoomTap.shared.remove()
@@ -282,6 +285,10 @@ final class Room {
             DispatchQueue.main.async { RoomSoundDevices.say() }
         case SP_AUDIO_CHOOSE:
             DispatchQueue.main.async { RoomSoundDevices.use(AudioDeviceID(id), input: a == 1) }
+        case SP_BLUETOOTH_LIST:
+            DispatchQueue.main.async { RoomBluetooth.say() }
+        case SP_BLUETOOTH_DO:
+            DispatchQueue.main.async { RoomBluetooth.act(text) }
         case SP_RECORD_START:
             DispatchQueue.main.async { if #available(macOS 15.0, *) { RoomRecorder.shared.start(screen: self.screen) } else { print("recording: needs macOS 15") } }
         case SP_RECORD_STOP:
@@ -336,6 +343,41 @@ final class Room {
         }
     }
 
+    /// Where this Mac's applications are, for the launcher.
+    private static let applicationRoots = ["/Applications", "/System/Applications", NSString("~/Applications").expandingTildeInPath]
+
+    /// The application folders, watched while the session runs, so one installed, removed or
+    /// updated meanwhile is in the launcher (the compositor's `local_apps_changed`), as the
+    /// Beam Pro's list follows the phone's installs. FSEvents, recursively; what comes within
+    /// three seconds -- an installer writes thousands of files -- is one listing, and a listing
+    /// that is the same as the last changes nothing in the room.
+    private var applicationWatch: FSEventStreamRef?
+
+    private func watchApplications() {
+        guard applicationWatch == nil else { return }
+        let changed: FSEventStreamCallback = { _, _, _, _, _, _ in
+            // On the main queue, where the stream is scheduled.
+            if Room.shared.running { Room.shared.listApplications() }
+        }
+        guard let stream = FSEventStreamCreate(kCFAllocatorDefault, changed, nil, Self.applicationRoots as CFArray,
+                                               FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 3.0,
+                                               FSEventStreamCreateFlags(kFSEventStreamCreateFlagNone)) else {
+            print("launcher: the application folders cannot be watched; what is installed now shows at the next start")
+            return
+        }
+        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
+        FSEventStreamStart(stream)
+        applicationWatch = stream
+    }
+
+    private func unwatchApplications() {
+        guard let stream = applicationWatch else { return }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        applicationWatch = nil
+    }
+
     /// Every application on this Mac, for the launcher: its name, its bundle, and its icon as a
     /// picture in a file, made once.
     private func listApplications() {
@@ -343,7 +385,7 @@ final class Room {
         try? FileManager.default.createDirectory(atPath: cache, withIntermediateDirectories: true)
         var found: [(String, String)] = []
         var seen: Set<String> = []
-        let roots = ["/Applications", "/System/Applications", NSString("~/Applications").expandingTildeInPath]
+        let roots = Self.applicationRoots
         func look(_ dir: String, depth: Int) {
             guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
             for name in names.sorted() where !name.hasPrefix(".") {

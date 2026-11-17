@@ -53,6 +53,8 @@ enum {
     SP_DESCRIBE = 36,         // say what the application with bundle id text shows, with sp_described(id, json)
     SP_TYPE_TEXT = 37,        // SpatiKey: type {"window", "steps"} into that window (its number as in SP_WINDOW_*) as Unicode; answer sp_typed(id, error)
     SP_FORCE_QUIT = 38,       // force the application with bundle id text to quit
+    SP_BLUETOOTH_LIST = 39,   // say the paired Bluetooth devices (sp_bluetooth_begin...)
+    SP_BLUETOOTH_DO = 40,     // text is "connect|disconnect|forget AA:BB:.." or "power on|off"; answer sp_bluetooth_done
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -128,6 +130,14 @@ void sp_pointer_where(float *x, float *y);
 void sp_audio_devices_begin(void);
 void sp_audio_device(uint32_t id, const char *name, bool input, bool current);
 void sp_audio_devices_end(void);
+// This Mac's Bluetooth, for the room's Bluetooth page, from one thread: begin with whether it is
+// on (1), off (0) or there is no controller (-1), each paired device (its address as IOBluetooth
+// writes it, its name, its class of device's major and minor parts), end.
+void sp_bluetooth_begin(int32_t powered);
+void sp_bluetooth_device(const char *address, const char *name, uint32_t major, uint32_t minor, bool connected);
+void sp_bluetooth_end(void);
+/// SP_BLUETOOTH_DO done: error NULL, or why not.
+void sp_bluetooth_done(const char *error);
 void sp_display_scale(double scale);
 /// Whether macOS has allowed the microphone: it is not opened for a host until it has.
 void sp_microphone_allowed(bool allowed);

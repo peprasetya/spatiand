@@ -124,6 +124,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
     <key>NSHighResolutionCapable</key><true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <key>NSAudioCaptureUsageDescription</key><string>Spatiand places a Mac application's sound where its window is in the glasses, which needs to take that sound from the speakers.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>The room's Bluetooth page lists the devices this Mac has paired with, and connects and disconnects them while you wear the glasses.</string>
     <key>NSLocalNetworkUsageDescription</key><string>Spatiand's applications reach your own servers on this network, such as the film library SpatiReel plays from.</string>
     <key>NSMicrophoneUsageDescription</key><string>Spatiand listens when you dictate with the keyboard's mic key, and sends your voice to an application on another computer when that application asks for the microphone.</string>
 </dict>
