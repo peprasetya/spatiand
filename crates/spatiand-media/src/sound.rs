@@ -65,11 +65,11 @@ pub(crate) struct Sound {
     bus: std::sync::Arc<Bus>,
 }
 
-/// Sounds that go out as one: a web page's films, its `<audio>` and its Web Audio are one
-/// stream into the room -- one output, mixed here -- rather than one each. Every sound in it
-/// keeps its own clock (what of *it* is being heard), so a film still keeps time.
+/// Sounds that go out as one: one stream into the room -- one output, mixed here -- rather than
+/// one each. Every sound in it keeps its own clock (what of *it* is being heard), so a film
+/// still keeps time.
 ///
-/// A sound opened on its own ([`Stream::open`], a player's own) has a group of its own.
+/// A film's sound (a player's own) has a group of its own.
 #[derive(Clone, Default)]
 pub struct SoundGroup(std::sync::Arc<Bus>);
 
@@ -85,27 +85,6 @@ impl SoundGroup {
         *group.0.key.lock().unwrap() = Some(key.to_string());
         group
     }
-
-    /// Nothing of it heard while `on` (a locked window's pages), though it plays on.
-    pub fn set_hushed(&self, on: bool) {
-        self.0.hushed.store(on, Ordering::Relaxed);
-    }
-
-    /// Hand it over under another name from now on: what it belongs to has moved (a page to
-    /// another window). The output is opened again under the new name, if it is open.
-    pub fn set_key(&self, key: &str) {
-        let bus = &self.0;
-        let mut out = bus.out.lock().unwrap();
-        if bus.key.lock().unwrap().as_deref() == Some(key) {
-            return;
-        }
-        *bus.key.lock().unwrap() = Some(key.to_string());
-        if let Some((_, _, channels)) = out.take() {
-            if let Ok(again) = Sound::open_output(bus, channels) {
-                *out = Some(again);
-            }
-        }
-    }
 }
 
 #[derive(Default)]
@@ -116,7 +95,6 @@ struct Bus {
     dead: std::sync::Arc<AtomicBool>,
     /// The name it is handed to the room under, if not the application's.
     key: Mutex<Option<String>>,
-    hushed: AtomicBool,
 }
 
 /// Each count of channels the room and the Deck's sink place, by name, in order.
@@ -176,10 +154,6 @@ impl Bus {
                     }
                 }
             }
-        }
-        // Hushed: every voice still goes on (its film keeps time), and nothing is heard.
-        if self.hushed.load(Ordering::Relaxed) {
-            out.fill(0.0);
         }
     }
 
@@ -592,10 +566,10 @@ impl Inner {
     }
 }
 
-/// Sound made by something other than a film -- a web page's own, its Web Audio -- played as a
-/// film's is: into the room at this application's window, or the machine's speakers where there
-/// is no room. Pushed as it is made; what would wait more than a third of a second is dropped,
-/// so a source that runs ahead never builds up a delay.
+/// Sound made by something other than a film -- the assistant's voice -- played as a film's is:
+/// into the room at the window its group names, or the machine's speakers where there is no
+/// room. Pushed as it is made; what would wait more than a third of a second is dropped, so a
+/// source that runs ahead never builds up a delay.
 pub struct Stream {
     sound: Sound,
     /// Resampling from the source's rate, carried from one push to the next.
@@ -604,11 +578,6 @@ pub struct Stream {
 }
 
 impl Stream {
-    /// Open for sound of `channels` channels.
-    pub fn open(channels: u16) -> Result<Stream, String> {
-        Stream::open_in(&SoundGroup::new(), channels)
-    }
-
     /// Open for sound of `channels` channels, mixed into `group`'s output.
     pub fn open_in(group: &SoundGroup, channels: u16) -> Result<Stream, String> {
         let sound = Sound::open_in(group, channels.max(1))?;

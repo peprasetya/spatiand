@@ -9,7 +9,6 @@
 //! had libmpv; [`screen`] draws what it decodes.
 
 pub mod audio;
-pub mod hardware;
 pub mod hints;
 pub mod layout;
 pub mod mediacodec;
@@ -19,8 +18,6 @@ pub mod subs;
 
 #[cfg(feature = "engine")]
 pub mod fetch;
-#[cfg(feature = "engine")]
-pub mod mse;
 #[cfg(feature = "engine")]
 pub mod player;
 #[cfg(feature = "engine")]

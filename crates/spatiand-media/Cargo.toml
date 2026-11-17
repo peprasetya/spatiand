@@ -55,3 +55,7 @@ required-features = ["engine"]
 [[example]]
 name = "rate"
 required-features = ["engine"]
+
+[[example]]
+name = "still"
+required-features = ["engine"]

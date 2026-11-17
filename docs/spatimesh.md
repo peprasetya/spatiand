@@ -40,7 +40,8 @@ StrictFFmpegCodecs a decode error at the first frame), an MPEG program stream (V
 defined"), MP2 sound, and a film's own subtitle tracks. Firefox add-ons (`.xpi`), which the Rust
 window's own extension runtime took, Chrome does not (the owner: not wanted). The Mac has no
 SpatiMesh until its Chromium port; `tools/spatiand-dnd-e2e.py` drops onto Chromium only where one is
-named. `crates/spatiand-media`'s MediaSource (`mse.rs`) was the Rust window's alone and is unused now.
+named. `crates/spatiand-media`'s MediaSource (`mse.rs`, `Player::open_source`) was the Rust window's alone and was
+removed on 2026-11-17, with what else only its pages used there (`hardware.rs`'s list of codecs for pages, a sound group's hush and change of name).
 The Beam Pro's Chromium had been built without Dolby (`enable_platform_ac3_eac3_audio`, the Deck's);
 it is built with it since. The sections below on the window program, its processes and its engine
 interface are the record of what it was.
