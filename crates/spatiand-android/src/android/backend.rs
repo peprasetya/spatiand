@@ -1192,9 +1192,15 @@ pub fn run(
             let said = crate::spatikey::notice();
             let said = if said.is_empty() { dictation.notice() } else { said };
             let said = if said.is_empty() { crate::assist::notice() } else { said };
+            // An application dropped into the room, offered for installing, as on the Deck
+            // (`crate::install`).
+            let said = if said.is_empty() { crate::install::notice() } else { said };
             let said = if said.is_empty() { super::notice() } else { said };
             let said = if said.is_empty() { crate::remote::host_notice() } else { said };
             scene.sync_notice(&mut renderer, &mut text, &said, ppd)?;
+            if crate::install::take_changed() {
+                crate::own::adopt(&mut shell);
+            }
             keyboard.dictating = dictation.look();
             if keyboard.open {
                 scene.sync_keyboard(&mut renderer, &mut text, &keyboard, ppd)?;
@@ -1803,7 +1809,13 @@ pub fn run(
                                     type_text(&mut runtime.state, &mut shell, &said, time_ms);
                                 }
                             } else if !crate::assist::notice_pressed() {
-                                super::notice_pressed();
+                                if crate::install::asking() {
+                                    // The card asking whether to install what was dropped into
+                                    // the room: pressing it is "yes", as on the Deck.
+                                    crate::install::accept();
+                                } else if crate::install::notice().is_empty() {
+                                    super::notice_pressed();
+                                }
                             }
                             typed = true;
                         }

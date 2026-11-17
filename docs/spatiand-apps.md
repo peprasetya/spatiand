@@ -617,6 +617,15 @@ bubble with its icon. Unit tests for the package rules (good package, one top fo
 install replacing the first, seven kinds of wrong package refused leaving nothing behind) and the
 `text/uri-list` reading.
 
+**On every platform** (2026-11-17): the card and its press were the Deck's frame loop's alone; the
+Mac's and the Beam Pro's (`crates/spatiand-android/src/android/backend.rs`) show and take them the
+same way now. On the Mac a package is installed as on the Deck (its program must be a Mac
+program). On the Beam Pro it is read and named, and the card says it cannot be installed: an app's
+own files may not be run on Android 10 and later, and the programs Spatiand runs there are the
+ones inside its APK. What would make it possible is the shell helper running such a program
+(its uid may run files under /data/local/tmp) with a way into the room's socket, and packages
+built for Android's libc -- not done.
+
 **Not done**: SpatiShelf drags files as `text/uri-list` (since the drag and drop between windows
 landed on master), so a `.spatiapp` dragged out of it onto the room should be offered the same way;
 that was merged, not tried. A drag from an X11 application (Xwayland) is not bridged. There is no way to remove an installed application in the room yet

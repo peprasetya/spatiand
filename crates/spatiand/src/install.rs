@@ -18,6 +18,18 @@ use std::time::{Duration, Instant};
 
 use spatiand_platform::installed;
 
+/// Whether a program unpacked into the installed applications' folder can be started at all.
+/// On the Deck, other Linux and the Mac it can. On Android it cannot: an app's own files may not
+/// be executed (W^X, Android 10 and later, for an app built for them as Spatiand's is), and the
+/// only programs Spatiand runs there are the ones inside its APK's library folder -- which a
+/// package cannot add to. So the package is read and named, and the card says why it is not
+/// installed, rather than installing something the launcher would then fail to start. What would
+/// lift it is running such a program through the shell helper (its uid may run files under
+/// /data/local/tmp) with a socket into the room it can reach; and the package being built for
+/// Android's libc and the phone's arm64, which a Linux one is not.
+const CAN_RUN_INSTALLED: bool = !cfg!(target_os = "android");
+const CANNOT_RUN_INSTALLED: &str = "on this phone Spatiand can only run the programs that come inside its own app.";
+
 /// How long an offer, or what became of one, stays on the card.
 const OFFER_FOR: Duration = Duration::from_secs(30);
 const RESULT_FOR: Duration = Duration::from_secs(9);
@@ -144,6 +156,10 @@ fn percent_decode(text: &str) -> String {
 pub fn offer(path: PathBuf) {
     set(Card::Busy(format!("Reading {}…", path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default())));
     std::thread::spawn(move || match installed::inspect(&path) {
+        Ok(manifest) if !CAN_RUN_INSTALLED => {
+            log::warn!("{} ({}) dropped into the room; this system cannot run it", manifest.name, path.display());
+            set(Card::Said(format!("{} cannot be installed here: {}", manifest.name, CANNOT_RUN_INSTALLED)));
+        }
         Ok(manifest) => {
             log::info!("offering to install {} from {}", manifest.name, path.display());
             set(Card::Offer { path, name: manifest.name, version: manifest.version });
