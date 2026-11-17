@@ -484,6 +484,9 @@ pub fn run(
     );
     // The gyro offset and the magnetometer's own field, from last time and for next time.
     let mut sensor_memory = spatiand_track::SensorMemory::new();
+    // The view held steady against the wearer's pulse, as on the Mac and the Beam Pro: see
+    // `spatiand_track::SteadyView`.
+    let mut steady_view = spatiand_track::SteadyView::from_env();
     // Windows that arrived before their app id was set, still to be matched to a sink.
     let mut awaiting_app_id: Vec<(usize, Option<u32>, std::time::Instant)> = Vec::new();
     // Raw samples to a file, when the session environment asks: see `imu_record`.
@@ -2016,6 +2019,10 @@ pub fn run(
                 spatiand_track::DEFAULT_PREDICTION_SECONDS,
                 spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES,
             );
+            // Held steady against the wearer's own pulse: a heartbeat rocks the head a few
+            // hundredths of a degree, and text stared at shimmered with it. Before the pose is
+            // written for clients too, so they and the compositor draw with the same head.
+            let orientation = steady_view.filter(orientation);
 
             // --- is anyone paying attention ---
             //

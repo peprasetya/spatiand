@@ -280,6 +280,8 @@ pub fn run(
     let mut calibration: Option<Calibration> = None;
     let mut tracker = HeadTracker::new(stored.unwrap_or(AxisMap::XREAL_AIR), TrackerConfig::default());
     let mut sensor_memory = spatiand_track::SensorMemory::new();
+    // The view held steady against the wearer's pulse (`spatiand_track::SteadyView`).
+    let mut steady_view = spatiand_track::SteadyView::from_env();
     let mut awaiting_app_id: Vec<(usize, Instant, Option<u32>)> = Vec::new();
     // Asked once per pair of glasses, when they are opened: the display then goes away and
     // comes back double-width, which is a rebuild.
@@ -1120,26 +1122,9 @@ pub fn run(
             // Two frames ahead: this one through Android's compositor on its next tick, then
             // scanout -- the Beam Pro's latency, measured as smoothest.
             let orientation = tracker.predicted_orientation(super::PREDICT_AHEAD_S, spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES);
-            // Held steady against the wearer's own pulse; see `spatiand_track::Steady`. On the
-            // Mac, where it was asked for, and off with SPATIAND_STEADY=0.
-            #[cfg(target_os = "macos")]
-            let orientation = {
-                thread_local! {
-                    static STEADY: std::cell::RefCell<(spatiand_track::Steady, Instant)> =
-                        std::cell::RefCell::new((spatiand_track::Steady::default(), Instant::now()));
-                    static WANTED: bool = std::env::var("SPATIAND_STEADY").map_or(true, |v| v != "0");
-                }
-                if WANTED.with(|w| *w) {
-                    STEADY.with(|s| {
-                        let mut s = s.borrow_mut();
-                        let dt = s.1.elapsed().as_secs_f64();
-                        s.1 = Instant::now();
-                        s.0.filter(orientation, dt)
-                    })
-                } else {
-                    orientation
-                }
-            };
+            // Held steady against the wearer's own pulse, as on the Deck: see
+            // `spatiand_track::SteadyView` (off with SPATIAND_STEADY=0).
+            let orientation = steady_view.filter(orientation);
 
             {
                 let dt = last_tick.elapsed();

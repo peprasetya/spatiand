@@ -23,7 +23,13 @@ and shows a waiting screen; replugging hands back.
 three poses gives up = sensor +Z, left = +X, forward = −Y. That is `AxisMap::XREAL_AIR` and it
 is the default. Calibration exists in-world (never a terminal) with B to cancel; the HUD can
 cycle the four valid pitch/roll interpretations, since a wrong one is a valid rotation and
-nothing in the measurement can catch it.
+nothing in the measurement can catch it. **The view is held steady against the wearer's pulse**
+on every platform -- the Deck, the Beam Pro and the Mac (`spatiand_track::SteadyView`, applied
+to the orientation each frame draws and hands to clients with; `SPATIAND_STEADY=0` to compare):
+a nearly still head is followed slowly, a turn at once, never more than a fraction of a degree
+behind. It works in degrees and seconds, so the Deck's 72 frames a second and the others' 60 are
+the same to it (its tests run it at 60, 72 and 90 with and without sensor noise); the sensors are
+read at about 1000 Hz on all three (hidraw, Android's usbfs, IOKit).
 
 **Controller.** Raw hidraw, every button confirmed by pressing it. Both pads point; right pad
 click is left mouse, left pad right mouse, A/B/X duplicate them. The left pad scrolls up and down

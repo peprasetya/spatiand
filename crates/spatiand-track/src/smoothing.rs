@@ -212,6 +212,43 @@ impl Steady {
     }
 }
 
+/// [`Steady`] as a frame loop uses it: once a frame, on the orientation about to be drawn with,
+/// timed by the clock between frames. The same on every platform -- the Deck at 72 frames a
+/// second, the Mac and the Beam Pro at 60 -- since what it holds back is a pulse, which is in
+/// degrees and seconds, not in frames; `dt` carries the difference. The glasses' sensors are read
+/// at about a thousand samples a second on all three (hidraw, IOKit, Android's usbfs), well past
+/// the frame rate, so nothing in it depends on which path they came by.
+///
+/// Off with `SPATIAND_STEADY=0`, to compare.
+#[derive(Debug, Clone)]
+pub struct SteadyView {
+    steady: Steady,
+    last: Option<std::time::Instant>,
+    wanted: bool,
+}
+
+impl SteadyView {
+    /// On unless `SPATIAND_STEADY=0`.
+    pub fn from_env() -> Self {
+        Self::new(std::env::var("SPATIAND_STEADY").map_or(true, |v| v != "0"))
+    }
+
+    pub fn new(wanted: bool) -> Self {
+        Self { steady: Steady::default(), last: None, wanted }
+    }
+
+    /// The orientation to draw this frame with.
+    pub fn filter(&mut self, head: glam::DQuat) -> glam::DQuat {
+        if !self.wanted {
+            return head;
+        }
+        let now = std::time::Instant::now();
+        let dt = self.last.map_or(0.0, |last| now.duration_since(last).as_secs_f64());
+        self.last = Some(now);
+        self.steady.filter(head, dt)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,16 +316,30 @@ mod tests {
         assert_eq!(f.filter(2.0, 0.0), 1.0, "must not divide by zero");
     }
 
-    /// A head rocking as a pulse rocks it: how far the view moves, peak to peak, in degrees.
-    fn swing(amplitude: f64, hz: f64) -> f64 {
+    /// The frame rates the filter runs at: the Mac's and the Beam Pro's 60, the Deck's 72, and
+    /// 90 for glasses that run faster. What it does must not depend on which.
+    const RATES: [f64; 3] = [60.0, 72.0, 90.0];
+
+    /// A head rocking as a pulse rocks it: how far the view moves, peak to peak, in degrees,
+    /// with `noise` degrees of the sensors' own unsteadiness on every frame.
+    fn swing(amplitude: f64, hz: f64, rate: f64, noise: f64) -> f64 {
         let mut f = Steady::default();
-        let dt = 1.0 / 60.0;
+        let dt = 1.0 / rate;
         let (mut lo, mut hi) = (f64::MAX, f64::MIN);
-        for i in 0..600 {
+        // A fixed sequence, so the test says the same every time.
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut jitter = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed as f64 / u64::MAX as f64 - 0.5) * 2.0 * noise
+        };
+        let frames = (10.0 * rate) as usize;
+        for i in 0..frames {
             let t = i as f64 * dt;
-            let angle = amplitude * (2.0 * std::f64::consts::PI * hz * t).sin();
+            let angle = amplitude * (2.0 * std::f64::consts::PI * hz * t).sin() + jitter();
             let out = f.filter(glam::DQuat::from_rotation_z(angle.to_radians()), dt);
-            if i > 240 {
+            if t > 4.0 {
                 let yaw = out.to_euler(glam::EulerRot::ZYX).0.to_degrees();
                 lo = lo.min(yaw);
                 hi = hi.max(yaw);
@@ -299,41 +350,67 @@ mod tests {
 
     #[test]
     fn a_pulse_is_mostly_taken_out() {
-        // Six hundredths of a degree each way, 72 beats a minute.
-        let moved = swing(0.06, 1.2);
-        assert!(moved < 0.12 * 0.25, "the view still swings {moved:.4} of 0.12 degrees");
+        for rate in RATES {
+            // Six hundredths of a degree each way, 72 beats a minute.
+            let moved = swing(0.06, 1.2, rate, 0.0);
+            assert!(moved < 0.12 * 0.25, "at {rate} Hz the view still swings {moved:.4} of 0.12 degrees");
+        }
+    }
+
+    #[test]
+    fn the_sensors_own_unsteadiness_does_not_open_it() {
+        // The pulse with five thousandths of a degree of noise on every frame: more than the
+        // fused orientation shows still on a table, and its frame-to-frame speed is larger the
+        // more frames there are a second.
+        for rate in RATES {
+            let moved = swing(0.06, 1.2, rate, 0.005);
+            assert!(moved < 0.12 * 0.3, "at {rate} Hz the view swings {moved:.4} with noise");
+        }
     }
 
     #[test]
     fn a_turn_is_followed_closely_and_arrived_at() {
-        let mut f = Steady::default();
-        let dt = 1.0 / 60.0;
-        f.filter(glam::DQuat::IDENTITY, dt);
-        let mut worst: f64 = 0.0;
-        // 60 degrees a second for half a second, then still.
-        for i in 1..=90 {
-            let angle = (i.min(30) as f64) * 1.0;
-            let head = glam::DQuat::from_rotation_z(angle.to_radians());
-            let out = f.filter(head, dt);
-            worst = worst.max(out.angle_between(head).to_degrees());
-            if i == 90 {
-                assert!(out.angle_between(head).to_degrees() < 0.16, "left behind after the turn");
+        for rate in RATES {
+            let mut f = Steady::default();
+            let dt = 1.0 / rate;
+            f.filter(glam::DQuat::IDENTITY, dt);
+            let mut worst: f64 = 0.0;
+            // 60 degrees a second for half a second, then still for a second.
+            let frames = (1.5 * rate) as usize;
+            for i in 1..=frames {
+                let angle = (i as f64 * dt * 60.0).min(30.0);
+                let head = glam::DQuat::from_rotation_z(angle.to_radians());
+                let out = f.filter(head, dt);
+                worst = worst.max(out.angle_between(head).to_degrees());
+                if i == frames {
+                    assert!(out.angle_between(head).to_degrees() < 0.16, "at {rate} Hz left behind after the turn");
+                }
             }
+            assert!(worst < 0.7, "at {rate} Hz {worst:.3} degrees behind a turn");
         }
-        assert!(worst < 0.7, "{worst:.3} degrees behind a turn");
     }
 
     #[test]
     fn a_slow_look_across_is_never_far_behind() {
-        let mut f = Steady::default();
-        let dt = 1.0 / 60.0;
-        let mut worst: f64 = 0.0;
-        // Three degrees a second: reading along a line.
-        for i in 0..300 {
-            let head = glam::DQuat::from_rotation_z((i as f64 * dt * 3.0).to_radians());
-            let out = f.filter(head, dt);
-            worst = worst.max(out.angle_between(head).to_degrees());
+        for rate in RATES {
+            let mut f = Steady::default();
+            let dt = 1.0 / rate;
+            let mut worst: f64 = 0.0;
+            // Three degrees a second for five seconds: reading along a line.
+            for i in 0..(5.0 * rate) as usize {
+                let head = glam::DQuat::from_rotation_z((i as f64 * dt * 3.0).to_radians());
+                let out = f.filter(head, dt);
+                worst = worst.max(out.angle_between(head).to_degrees());
+            }
+            assert!(worst < 0.35, "at {rate} Hz {worst:.3} degrees behind a slow look");
         }
-        assert!(worst < 0.35, "{worst:.3} degrees behind a slow look");
+    }
+
+    #[test]
+    fn switched_off_the_view_is_the_head() {
+        let mut view = SteadyView::new(false);
+        let head = glam::DQuat::from_rotation_z(0.001);
+        view.filter(glam::DQuat::IDENTITY);
+        assert_eq!(view.filter(head), head);
     }
 }
