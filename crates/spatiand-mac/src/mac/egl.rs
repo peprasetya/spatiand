@@ -249,9 +249,27 @@ pub fn follow_display(display: u32) {
     }
 }
 
-/// Wait for the display's next refresh. Called with the glasses' window current, before a frame
-/// is drawn into it.
-pub fn pace() {
+/// **Wait until the glasses' window can take the next frame**: the frame clock, called before the
+/// room reads what its clients have committed (see the frame loop, which until 2026-11-17 waited
+/// inside the frame's drawing, after reading them: a client's frame that came during the wait was
+/// shown a refresh late). The wait is the display link's tick, below, with the window current.
+pub fn wait_for_refresh(
+    renderer: &mut GlesRenderer,
+    surface: &mut smithay::backend::egl::EGLSurface,
+    _size: (i32, i32),
+) {
+    // SAFETY: the renderer's own context, made current on this thread with the glasses' window,
+    // as its frames make it.
+    let current = unsafe { renderer.egl_context().make_current_with_surface(surface) };
+    if current.is_err() {
+        return;
+    }
+    pace();
+}
+
+/// Wait for the display's next refresh. Called with the glasses' window current, before what the
+/// clients have committed is read for the frame.
+fn pace() {
     use smithay::backend::egl::ffi::egl;
     let clock = clock();
     if !clock.set.swap(true, std::sync::atomic::Ordering::SeqCst) {

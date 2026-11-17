@@ -1242,12 +1242,22 @@ pub fn run(
             )?;
             scene.sync_radial(&mut renderer, &mut text, delivery.radial.as_ref(), ppd)?;
 
-            // What clients committed while the last frame waited for the display, taken now so
-            // that this frame shows it. Here that wait is inside eglSwapBuffers, where nothing
-            // is read (the Deck reads its clients every 4 ms while a page flip is pending,
-            // backend_drm.rs); read only after it, a window that takes most of a frame to draw
-            // -- SpatiMesh's Chromium on the Beam Pro, about 12 ms -- was shown every other
-            // frame, at 30 fps.
+            // **The display's refresh is waited for here, before the clients are read**, as the
+            // Deck reads them when its last page flip has completed (backend_drm.rs, which reads
+            // them every 4 ms while the flip is pending). What a client commits while the room
+            // waits is then in this frame, and its frame callback goes out when this frame is
+            // presented. Left to the driver, the wait came later, inside this frame's first draw
+            // into the glasses' window -- on Android that is where the next buffer is handed out,
+            // about 13.5 ms of each frame on the Beam Pro, while the swap itself took under one --
+            // so the clients were read some 15 ms before the refresh. A window whose frame arrived
+            // after that was shown a frame late and was told a frame late to draw the next:
+            // SpatiMesh's Chromium, which commits the moment its callback comes, made it only when
+            // it won a race of a third of a millisecond, and a 60 fps film in it dropped one frame
+            // in thirteen (2026-11-17). Read only once a frame, after the swap, as at first, a
+            // window that takes most of a frame to draw was shown every other frame, at 30 fps.
+            if let Some(output) = glasses.as_mut() {
+                super::egl::wait_for_refresh(&mut renderer, &mut output.surface, (w, h));
+            }
             display.dispatch_clients(&mut runtime.state)?;
             display.flush_clients()?;
 
@@ -2088,9 +2098,6 @@ pub fn run(
                 let mut target = renderer.bind(&mut output.surface)?;
                 let mut frame = renderer.render(&mut target, (w, h).into(), Transform::Normal)?;
                 frame.with_context(|gl| unsafe {
-                    // The glasses' window is current here, which is when a driver that has to be
-                    // told to wait for the display's refresh can be told.
-                    super::egl::pace();
                     gl.BindFramebuffer(ffi::FRAMEBUFFER, 0);
                     gl.Disable(ffi::SCISSOR_TEST);
                     gl.ClearColor(0.02, 0.02, 0.05, 1.0);
