@@ -2,9 +2,13 @@
 
 Asked for on 2026-10-29: a password and passkey manager of Spatiand's own. The vault is
 encrypted and kept the same on every machine, as the applications' settings are, and is opened
-only by a fingerprint. Only the Mac has a fingerprint reader today, so on the Deck and the Beam
-Pro every use is approved by a touch on the Mac, and only while the Mac is on the same network:
-never over Tailscale. An iPhone companion comes later, once there is an Apple developer account.
+only by a fingerprint. **Every device with biometrics can hold it** (the owner, 2026-11-17: "the
+password needs a device with biometrics, so ALL devices with biometrics can have the
+passwords"): each Mac with Touch ID, and an Android device with a strong fingerprint or face, once
+a device that holds it has added it (or the recovery code has). A device without biometrics -- the
+Deck, and the Beam Pro, which has no sensor -- has every use approved by a touch on whichever
+holder answers on the same network: never over Tailscale. Today the one holder is the owner's
+Mac. An iPhone companion comes later, once there is an Apple developer account.
 
 This is the design every part is built to. What was built, and what was checked, is at the end.
 
@@ -26,9 +30,10 @@ credential provider, and the iPhone companion.
 | | |
 |---|---|
 | Name | **SpatiKey** |
-| Opening the vault | **Touch ID only.** No Mac password standing in: with the lid shut nothing opens. |
-| Where it is kept | Encrypted, in the applications' synced folder, so it reaches every Spatiand machine and host. Reading it needs the vault key, which only Touch ID (or the recovery code) gives. |
-| Deck, Beam Pro | Ask the Mac. The Mac does the work and sends back only the answer. Same network only, proved per request. |
+| Opening the vault | **A finger only** -- Touch ID on a Mac, a strong (class 3) biometric on Android. No password or PIN standing in: with the lid shut nothing opens. |
+| Where it is kept | Encrypted, in the applications' synced folder, so it reaches every Spatiand machine and host. Reading it needs the vault key, which only a holder's finger (or the recovery code) gives. |
+| Who holds it (2026-11-17) | **Every device with biometrics**, each with the vault key wrapped to a key of its own behind its sensor. Added by a holder, with a touch there, or by the recovery code. |
+| Deck, Beam Pro | Ask a holder: any that answers on the same network. The holder does the work and sends back only the answer. Same network only, proved per request. |
 | Recovery | A recovery code shown once at setup. SpatiKey cannot save it into iCloud Keychain without a paid account, so the owner pastes it into Apple Passwords himself, which puts it in iCloud Keychain behind Face ID or Touch ID. |
 | First build | The manager; SpatiMesh sign-in (passkeys, filling and saving passwords); typing an entry into any window; 2FA codes (TOTP); Chrome and Firefox extensions, installed the developer way and not published. |
 | Not now | Importing from Apple Passwords' CSV (not asked for yet). |
@@ -44,9 +49,14 @@ mac/Sources/Spatiand/SpatiKeyGuard.swift
                        the Secure Enclave key and Touch ID, in Spatiand.app itself
 crates/spatiand-mac-core/src/key.rs
                        the service on the Mac, started with the app, behind sp_key_*
+android/src/id/prasetya/spatiand/KeyGuard.java, KeyWrap.java
+                       the Keystore key and BiometricPrompt, in the APK (a phone with a sensor)
+crates/spatiand-android/src/android/key.rs
+                       KeyGuard asked over JNI
 crates/spatiand/src/spatikey.rs
-                       the service on the Deck and the Beam Pro (it forwards), and the room's
-                       half on every platform: typing, the window to type into, the card
+                       the service on the Deck and on Android (it forwards, or holds the vault
+                       where there is a sensor), and the room's half on every platform: typing,
+                       the window to type into, the card
 third_party/chromium   SpatiMesh's half: patch 0010 (Chromium's password store and WebAuthn on the service);
                        the Rust window program's (crates/spatimesh) was removed on 2026-11-10, and
 extensions/spatikey    the Chrome and Firefox extension, built into dist/ by its build script
@@ -66,14 +76,20 @@ which `spatiand-sync` copies between every two linked Spatiands, newest file win
 ```text
 apps/spatikey/vault.json               who the vault is: {"v":1,"id":<16 hex>,"created":ms,"by":<fp8>}
 apps/spatikey/entries/<32 hex>.json    one entry each: {"v":1,"id":..,"n":<b64 nonce>,"c":<b64>}
-apps/spatikey/devices/<fp64>.json      each Mac that can open it: name, its Secure Enclave public
-                                       key, the vault key wrapped to it, when added
+apps/spatikey/devices/<fp64>.json      each holder, a device that opens it with its own biometrics:
+                                       name, kind (mac-touch-id, android-biometric), its key's
+                                       public half, the vault key wrapped to it, when added, by
+                                       which holder; a removed one is a tombstone ("removed": true)
+apps/spatikey/requests/<fp64>.json     a device with biometrics asking to be added: name, kind, its
+                                       new key's public half; buried ("closed") once answered
 apps/spatikey/recovery.json            the vault key wrapped by the recovery code
-local/spatikey/touch-id.json           this Mac's Secure Enclave key (an opaque blob only its own
-                                       Secure Enclave can use) and its wrap of the vault key
+local/spatikey/touch-id.json           this holder's key (a blob only its own Secure Enclave, or
+                                       the Keystore alias only this app, can use) and its wrap of
+                                       the vault key
+local/spatikey/asking.json             while this device waits to be added: its key's blob
 local/spatikey/settings.json           how long a touch lasts; how long an open SpatiKey stays open
-local/spatikey/allowed.json            (Mac) devices allowed to ask, by fingerprint and name
-local/spatikey/approvers.json          (Deck, Beam Pro) the Macs this device asks, likewise
+local/spatikey/allowed.json            (a holder) devices allowed to ask it, by fingerprint and name
+local/spatikey/approvers.json          (Deck, Beam Pro) the holders this device asks, likewise
 ```
 
 **One file per entry**, because the synchroniser keeps the newest *file*: two entries saved on
@@ -103,6 +119,11 @@ only moves forward (the previous time plus a millisecond if the clock says other
   AES-256-GCM with the associated data `spatikey touch-id v1`; stored as ephemeral public (65) ‖
   nonce (12) ‖ ciphertext (32) ‖ tag (16), base64. Unwrapping is an ECDH inside the Secure
   Enclave, which asks for the finger.
+* **Every holder's wrap is that one**, whatever its kind: an Android holder's key is a Keystore
+  P-256 key for key agreement, and the same ECIES is written three times -- `SpatiKeyWrap` in
+  Swift, `KeyWrap.java`, and `crates/spatikey-core/src/holders.rs` (wrapping only, which needs only
+  the public half: what a holder does when it adds another). `tests/known_answers.rs` opens a wrap
+  CryptoKit made; a wrap Rust made was opened by CryptoKit and by `KeyWrap` (2026-11-17).
 * **The recovery code** is 25 Crockford base32 characters (125 bits), shown as five groups of
   five. Argon2id (64 MiB, 3 passes, 1 lane, a random 16-byte salt) of the code, without dashes and
   in capitals, gives a key that wraps VK with ChaCha20-Poly1305 (associated data
@@ -150,7 +171,9 @@ uid is checked) and names the asking program in the prompt.
 | `type` | type an entry's fields into a window | alone: yes |
 | `target` | the window that had the focus before SpatiKey's own | no |
 | `recovery_new`, `recover` | a new recovery code; set Touch ID up again from the code | session / the code |
-| `devices`, `forget_device`, `pair` | devices that may ask this Mac; pairing | session / see below |
+| `devices`, `forget_device`, `pair` | devices that may ask this Mac, the holders and the requests; pairing | session (removing a holder: a new touch) / see below |
+| `holder_request` | (a device with biometrics that does not hold the vault) make its key, ask to be added; the six digits | no |
+| `holder_approve`, `holder_refuse` | (a holder) add a device that asked, if it shows the digits given; or turn it down | session and a new touch / session |
 | `settings` | how long a touch lasts (0, 60 or 300 s); how long SpatiKey stays open (default 300 s) | session |
 
 **A touch, and how long it lasts.** By default every use asks. The setting lets one touch cover
@@ -165,10 +188,84 @@ github.com on Steam Deck", "type your Steam password into Steam". The origin sho
 page's engine reported (SpatiMesh) or the browser reported (the extensions), never the page's own
 claim.
 
-## The Deck and the Beam Pro ask the Mac
+## Every device with biometrics holds the vault
 
-The rule the owner gave: the Mac's sensor must be within reach, so a request is answered only
-from the same network, and Tailscale is not that.
+Built 2026-11-17, before a second such device exists ("You can build now, although I have nothing
+to test"): the Beam Pro has no fingerprint or face sensor and the Deck none, so the owner's Mac is
+the one holder there is.
+
+**One vault, the key wrapped once per holder.** The vault, its entries and its recovery code are
+as they were. What makes a device a holder is its record in `devices/<fp>.json`: the vault key
+wrapped (the ECIES of "Keys") to a key of that device's own that only its sensor lets be used --
+
+| kind | key | used after |
+|---|---|---|
+| `mac-touch-id` | a Secure Enclave P-256 key, `.privateKeyUsage` + `.biometryCurrentSet` | Touch ID, per use (or the touch-lasts setting) |
+| `android-biometric` | an Android Keystore P-256 key for key agreement (StrongBox where it agrees keys, else the TEE), `setInvalidatedByBiometricEnrollment` | a class-3 biometric: per use on Android 15+ (the ECDH is BiometricPrompt's CryptoObject); before Android 15, for 5 s after it (see the workarounds) |
+
+-- and its own half in `local/spatikey/touch-id.json` (the key's blob, which nothing but that
+device can use). No device credential (password, PIN) stands in for the finger on either.
+Other platforms hold nothing.
+
+**Adding a holder** needs a touch on one that holds it already, or the recovery code:
+
+1. On the new device (a Mac with Touch ID, or an Android device with a strong biometric) SpatiKey
+   says the vault has reached it and offers *Ask to be added*: its key is made, asking nobody
+   (`holder_request`), its blob kept in `local/spatikey/asking.json`, and `requests/<fp>.json`
+   written to the synced folder with its name, kind and public key. It shows six digits.
+2. On a holder, in SpatiKey's settings, the request is listed with the same six digits. *Add it*
+   asks for a new touch there -- whatever an open SpatiKey or a lingering touch would cover --
+   and wraps the vault key to the request's public key (`holder_approve`), writing the new
+   record; the request is buried.
+3. The new device finds its record (its public key in it) when it next looks, and keeps its half:
+   it opens SpatiKey with its own finger from then on. SpatiKey's window there moves on by itself.
+
+The six digits are SHA-256 of the vault id, the device's fingerprint and its new public key: they
+are what keeps a request honest, since anyone who can write the synced folder (a host holds a copy)
+could leave one there with a key of their own. A holder refuses `holder_approve` before any touch
+when the digits it is given are not the request's now. Or, on the new device, the recovery code
+(`recover`) makes it a holder directly, as it always set a Mac up again.
+
+**Removing a holder** is done from any other holder, with a touch there (`forget_device`): its
+record becomes a tombstone (not a deleted file, so that the removal travels as the newest version
+through the synchroniser). The removed device sees the tombstone and lets its half go; it can be
+added again, or given the recovery code. A device cannot remove itself.
+
+**A device without biometrics asks any holder that answers.** It pairs with each holder it may
+ask, as it paired with the Mac (a holder pairs devices the same way, whatever its kind). For each
+request: the holder it asked last, if it answers the broadcast within 0.3 s of the first that
+does; else the first to answer. A holder that cannot ask anybody -- one that does not hold this
+vault, or whose sensor cannot be used now (a Mac with its lid shut) -- answers `not_here` or
+`touch_id_unavailable`, and the next is asked in its place: nobody was asked anything there. The
+card in the glasses names the holder being asked: "Touch ID on darkPhoenix to save a password for
+github.com", "Fingerprint on Pixel to ...".
+
+**A phone with biometrics that does not hold the vault yet** asks a holder meanwhile, as the Beam
+Pro does (`Mode::Both`): what it holds it answers itself, and until then it is a forwarder. A
+request that came from another device is answered there or refused, never passed on.
+
+**Nothing changed for the owner's setup.** The existing Mac is holder #1: its record has been in
+`devices/` since setup, the vault and the recovery code are untouched, and it opens as before. The
+one change in place: a holder whose record is missing from the synced folder (lost, or a vault from
+before records) writes it again from its own half the first time it looks
+(`a_vault_set_up_with_one_mac_is_taken_as_it_is_and_takes_a_second_holder`).
+
+**Security, unchanged:** every unlock still needs a fresh finger on a holder (or the touch-lasts
+window the owner chose); the vault key leaves a holder only wrapped to another holder's key, which
+needs that holder's finger to open; on Android it is never put in a Java string (Java makes the
+key, Rust wraps to it; an unlock hands the key back as a byte array that is then overwritten);
+devices without biometrics never see it.
+
+**What removing does not do**: the vault key stays the same, so a removed device that kept a copy
+of its own half and its wrap (it lets them go, but a stolen one would not) could still open what it
+held. The proper cure for a lost holder is a new vault key, every entry sealed again and wrapped to
+the remaining holders and a new recovery code: not built.
+
+## The Deck and the Beam Pro ask a holder
+
+The rule the owner gave: the holder's sensor must be within reach, so a request is answered only
+from the same network, and Tailscale is not that. Below, "the Mac" is any holder: what is said of
+it is done by an Android holder the same way.
 
 **An address is not proof.** Tailscale's subnet routes carry ordinary private ranges here: this
 Mac reaches 192.168.10.0/24 and 192.168.11.0/24 through `utun7`, and the home 192.168.1.0/24 is
@@ -297,11 +394,14 @@ room names the window itself (not only its application), the Swift half brings i
 asks Accessibility whether the frontmost application's focused window is that one, before the
 first piece and before each one after, and types nothing more when it is not.
 
-## The Mac's half
+## The holder's half
 
 `SpatiKeyGuard.swift` holds the Secure Enclave key and asks for Touch ID; the service in
 `spatiand-mac-core` calls it through one callback and takes the answer back (`sp_key_start`,
-`sp_key_answer`), the pattern of `SP_DESCRIBE`. When the glasses are on the Mac, macOS's own
+`sp_key_answer`), the pattern of `SP_DESCRIBE`. On Android `KeyGuard.java` is asked the same
+questions in the same JSON (`android/key.rs`, over JNI). Both go through spatikey-core's
+`platform` (`AppGuard`): unlock, enroll (the Mac's), can-touch, allow a device, and make a key
+with nothing wrapped to it (to ask to be added). When the glasses are on the Mac, macOS's own
 Touch ID panel is meant to be brought into the room as a "macOS asks" window; the owner found it
 staying on the Mac's virtual screen, out of sight (2026-11-16), which is why the card below is
 there whoever asks.
@@ -383,7 +483,25 @@ shows the recovery code); the Deck and the Beam Pro asking the Mac over the air;
 windows in the live room; the extensions against the real `spatikey-host`; the save question
 after a real login.
 
-**Workarounds, with the proper alternative.** The origin of a SpatiMesh request is the isolated
+**Every device with biometrics (2026-11-17): what was checked.** `tests/holders.rs`, with holders
+whose keys are software P-256 keys doing the very ECDH a Secure Enclave or a Keystore does: a phone
+asking, added by the Mac with a touch (refused before the touch for other digits, nothing added
+on a "no"), then opening the same vault with its own finger and what each saves the other reads; a
+holder removed with a touch, letting its half go, and made one again by the recovery code; a vault
+laid out as the single-Mac SpatiKey left it, taken as it is (no file rewritten, the same recovery
+code) and given a second holder; a Deck paired with both asking over QUIC on loopback, the card
+naming whichever answered, the one asked last asked again, the other asked when the first's sensor
+cannot be used, and the one left when the other leaves the network. The wrap format three ways
+(CryptoKit on littleotter, Android's `KeyWrap` on a JVM, Rust). The soft-service rig with two
+holders over one folder (`soft-service <folder> <socket> <name> android`), driven over their
+sockets: asked, added, both opening, removed. `cargo ndk check` of the Beam Pro's room, and the
+APK's Java compiled. **Not checked:** a real Touch ID or BiometricPrompt, any Android device with a
+sensor (none here), a second Mac, the window's new screens in the room.
+
+**Workarounds, with the proper alternative.** Before Android 15 a Keystore key agreement cannot be
+BiometricPrompt's CryptoObject, so a key made there is usable for 5 s after the finger rather than
+for that one use (the proper one, per-use, is what Android 15+ gets, and it is chosen when the key
+is made). Android's prompt has no "touch lasts" of its own: each unlock asks. The origin of a SpatiMesh request is the isolated
 world's stamp, not the engine's (a WebKit patch exposing the script message's frame); a Touch ID
 panel that got no answer is taken down by Swift at 110 s, before Rust gives up at 120 s (a cancel
 over the C interface); changed fingers are told from a finger that did not match by how long the

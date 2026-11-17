@@ -1,9 +1,12 @@
 //! The service: the only thing that reads the vault. docs/spatikey.md, "Asking for something".
 //!
-//! On a Mac with Touch ID it is an *approver*: it opens the vault with the [`Guard`] (the Swift
-//! half) and answers. On the Deck and the Beam Pro it is a *forwarder*: it sends each request to
-//! a Mac on the same network ([`crate::remote::Asker`]) and keeps for itself only what needs
-//! this machine -- typing into its windows, the window to type into, finding and pairing Macs.
+//! On a device with biometrics -- a Mac with Touch ID, an Android device with a strong sensor --
+//! it is an *approver*: it opens the vault with the [`Guard`] (the platform's half) once it holds
+//! it (docs/spatikey.md, "Every device with biometrics holds the vault"), and answers. On the Deck
+//! and the Beam Pro it is a *forwarder*: it sends each request to a holder on the same network
+//! ([`crate::remote::Asker`]) and keeps for itself only what needs this machine -- typing into its
+//! windows, the window to type into, finding and pairing holders. A phone with a sensor that does
+//! not hold the vault yet is both ([`Mode::Both`]).
 //!
 //! An open SpatiKey is a *session*: the touch that opened it gave the vault key, which the
 //! session keeps, for the one connection that opened it, until that connection closes it or goes

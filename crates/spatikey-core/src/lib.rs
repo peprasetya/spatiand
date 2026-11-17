@@ -1,11 +1,12 @@
 //! SpatiKey: Spatiand's passwords and passkeys. docs/spatikey.md is the design.
 //!
 //! The vault lives in the applications' synced folder, encrypted, one file per entry. Only the
-//! service reads it, and only with the vault key, which a finger on a Mac (or the recovery code)
-//! gives. Everything that wants a password or a passkey -- SpatiKey's window, SpatiMesh, the
-//! browser extensions, the room -- asks the service over one local socket, in the protocol of
-//! [`wire`]. On a machine with no fingerprint reader the service forwards each request to a Mac
-//! on the same network ([`remote`]).
+//! service reads it, and only with the vault key, which a finger on a holder -- any device with
+//! biometrics that has been added ([`holders`]) -- or the recovery code gives. Everything that
+//! wants a password or a passkey -- SpatiKey's window, SpatiMesh, the browser extensions, the
+//! room -- asks the service over one local socket, in the protocol of [`wire`]. On a machine with
+//! no fingerprint reader the service forwards each request to a holder on the same network
+//! ([`remote`]).
 
 pub mod b64;
 pub mod cbor;

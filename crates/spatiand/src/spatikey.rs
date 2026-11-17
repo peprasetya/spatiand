@@ -3,10 +3,11 @@
 //!
 //! SpatiKey's service runs on a thread of its own and asks the room through
 //! `spatikey_core::hooks::Room`; what it asks is queued here and done each frame, on the
-//! compositor's own thread ([`serve`]), as the assistant's requests are. On the Deck and the
-//! Beam Pro the service itself is started here too: with no fingerprint reader, it forwards every
-//! request to a paired Mac on the same network. On the Mac the service lives in the app, which
-//! is up whether or not the room is.
+//! compositor's own thread ([`serve`]), as the assistant's requests are. On the Deck and on
+//! Android the service itself is started here too: with no fingerprint reader (the Deck, the Beam
+//! Pro), it forwards every request to a paired holder on the same network; on an Android device
+//! with a strong biometric it holds the vault itself once added (docs/spatikey.md). On the Mac the
+//! service lives in the app, which is up whether or not the room is.
 
 use std::sync::{mpsc, Arc, Mutex, Once};
 use std::time::{Duration, Instant};
