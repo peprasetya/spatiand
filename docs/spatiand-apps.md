@@ -939,3 +939,66 @@ its rate and cannot be moved in; no software AV1 to try it with here); an H.264 
 timing in its SPS (none could be made with the encoders here; HEVC with none takes the same
 path); H.264 coded as separate fields. SpatiShelf does not yet take `.h264`/`.hevc` for films
 (its list of endings is its own); SpatiReel's own library does.
+
+## 2026-11-17: the head, for an application that draws its own eyes
+
+`spatiand_xr_v1` has always given a client the head and eye poses (`get_pose_channel`,
+`spatiand_xr_pose_channel_v1`: a ring in shared memory, read rather than sent) and let it say
+which pose a picture was drawn from (`set_frame_pose`); the room and the OpenXR runtime used
+them, and the SDK did not offer them. It does now, in `crates/spatiand-app/src/pose.rs`:
+
+| | |
+|---|---|
+| `App::ask_poses()` | Asks for the channel, once. For an application that draws its own eye views (`Layer::Projection` with an eye layout other than mono) and nothing else. |
+| `Event::Poses { available }` | The room's answer: the ring is mapped, or there are no poses to give (`App::poses()` is `Poses::Unavailable(why)`: no glasses tracked, a headless or nested room, somebody's desktop). Not final either way: a room that said no hands the ring over when glasses appear, and the application is told again. Meanwhile it is a flat window. |
+| `App::pose() -> Option<HeadPose>` | The newest pose, read from the room's memory at the call: nothing is sent, so it is called just before drawing. `HeadPose`: `orientation` and `position` of the head, `eyes: [Eye; 2]` (left first; each its `orientation`, `position` and `fov` as `XrFovf`), `sample_ns` and `predicted_ns` (`CLOCK_MONOTONIC`, `pose::now_ns()`), and `token`. OpenXR's frame, as the protocol's is. |
+| `App::pose_history()` | What the ring still holds (16 slots), oldest first. |
+| `App::set_frame_pose(window, Some(&pose))` | Before `App::draw`: the pose the picture is drawn from, its orientation and its `token`, taken up with that picture. The room turns the picture by however far the head has moved since; a host passes the token on to the headset. `None` takes it back. |
+| `Event::EyeSize`, `App::eye_size()` | The channel's `render_size` (version 2): the size a viewer across a network wants each eye drawn at. A room that drives the glasses never says. |
+| `App::stop_poses()` | The channel's `destroy`; the ring is unmapped. |
+| `Eye::view()`, `Eye::projection(near, far)`, `pose::multiply`, `pose::rotate` | The matrices to draw an eye with, column-major. The projection is for a picture drawn by `App::draw`, whose row 0 is the top. |
+
+The reading is the protocol's, to the letter: the header's version is checked (1), its count,
+stride and offset are used rather than assumed and must fit what was mapped (a count that is a
+power of two, slots no shorter than the known one and aligned, inside the mapping, and a
+descriptor no shorter than the size it was sent with: anything else is `Unavailable`, not a
+read past the end); the newest slot is `(write_index - 1) & (count - 1)`, its `seq` read
+before and after the body, and one that is odd or changed is stepped back from and then tried
+again. The memory is mapped read-only and shared with `memmap2`, as the SDK's buffers are,
+from the descriptor the room sends: a sealed memfd reopened read-only on the Deck and the Beam
+Pro, POSIX shared memory opened read-only on a Mac. Nothing in it is a platform's own.
+
+`examples/poses.rs` is such an application: a ring of posts and a floor that stay in the room,
+a cross that stays in front of the eyes, drawn side by side from each eye's pose, flat where
+there are none. With `POSES_CHECK=<seconds>` it checks what it read and asks the room what it
+was told.
+
+For that, two things in the room (`crates/spatiand`): the headless room hands out the poses of
+a head that is not there with `SPATIAND_HEADLESS_HEAD=<degrees a second>` -- turning on the
+spot, each slot numbered in `reserved` as a host's are; without it it says `unavailable` as
+before -- and the control socket answers `frame <window>` with the token and quaternion the
+window's last picture came with (`XrState::frame_token`: the room used to drop the token).
+
+**Checked** on deepmagpie (2026-11-17/18): eleven unit tests against the room's own writer
+(`spatiand_proto::pose::Ring`) -- nothing written, the newest, the ring going round, a slot
+the writer is in, both newest slots in its hands, a writer hammering the ring from another
+thread while it is read (never half a pose), six rings that are not the protocol's refused, a
+short descriptor refused, the descriptor not mappable for writing, the matrices. The example
+against the headless room, as two processes: at 20 degrees a second for 3 s, 100 pictures from
+99 poses of which 98 new, the head turned 58.8 degrees, eyes 63.0 mm apart and level with a
+20 by 11.6 degree half-view, times of now, numbers rising; the last picture drawn from number
+206 and `[0, 518319, 0, 855187]`, and the room told exactly that. The picture read back: the
+posts where a head turned 59 degrees left would see them, the cross in the middle of each eye
+with a metre's disparity. Against the headless room without a head: `unavailable` once, and a
+flat window drawn. `cargo ndk check` of the SDK and the example for the Beam Pro, and of its
+room. On littleotter (macOS 27, in a checkout of its own): the same eleven tests pass over the
+Mac's POSIX shared memory -- the read-only descriptor, its measured length, the writer on another
+thread -- and the example builds.
+
+**Not checked**: the example run against a Mac's or the Beam Pro's room (only built there:
+neither has a room without a display that hands out poses); in the glasses, on any of the three (the Deck's and the Beam Pro's and the
+Mac's rooms write the ring from their frame loops, which the headless one stands in for); a
+host's tokens end to end (the host keeps `token - 1` as the viewport a picture was drawn for,
+unchanged code; no session was streaming to one); `render_size`, which only a host sends; the
+ring being handed over after `unavailable` when glasses are plugged in (the room's `Waiting`,
+which needs glasses to appear).

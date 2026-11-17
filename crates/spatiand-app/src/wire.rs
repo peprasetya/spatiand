@@ -22,7 +22,7 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::decoration::zv1::client::{zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use spatiand_proto::client::{spatiand_assist_v1, spatiand_xr_surface_v1, spatiand_xr_v1};
+use spatiand_proto::client::{spatiand_assist_v1, spatiand_xr_pose_channel_v1, spatiand_xr_surface_v1, spatiand_xr_v1};
 
 use crate::keys::Keyboard;
 use crate::{Anchor, Button, Event, EyeLayout, Layer, Mode, WindowId};
@@ -140,6 +140,14 @@ pub(crate) struct Wire {
     pub(crate) describing: HashMap<WindowId, std::os::fd::OwnedFd>,
     /// The room's assistant protocol, for the one process given its key (`spatiand_assist_v1`).
     assist: Option<spatiand_assist_v1::SpatiandAssistV1>,
+    /// The room's pose channel, once asked for (`spatiand_xr_pose_channel_v1`), ...
+    poses: Option<spatiand_xr_pose_channel_v1::SpatiandXrPoseChannelV1>,
+    /// ... its ring, mapped, once the room has handed it over ...
+    pub(crate) pose_channel: Option<crate::pose::Channel>,
+    /// ... what the room last said of it ...
+    pub(crate) pose_state: crate::pose::Poses,
+    /// ... and the size a viewer that is not on this machine wants each eye drawn at.
+    pub(crate) eye_size: Option<(u32, u32)>,
 }
 
 /// Text's names, the best first.
@@ -232,6 +240,10 @@ impl Wire {
             over: None,
             describing: HashMap::new(),
             assist,
+            poses: None,
+            pose_channel: None,
+            pose_state: crate::pose::Poses::NotAsked,
+            eye_size: None,
         };
         Ok((wire, queue))
     }
@@ -423,6 +435,53 @@ impl Wire {
         if let Some(xr) = self.xr_of(id) {
             if xr.version() >= 4 {
                 xr.set_cursor_drawn(drawn as u32);
+            }
+        }
+    }
+
+    /// Ask the room for its pose channel, once. Its answer is an event: the ring, or that
+    /// there are no poses to give. Somebody's desktop has no room to ask, and is answered for.
+    pub(crate) fn ask_poses(&mut self) {
+        if self.poses.is_some() || self.pose_state != crate::pose::Poses::NotAsked {
+            return;
+        }
+        match &self.xr {
+            Some(xr) => {
+                self.poses = Some(xr.get_pose_channel(&self.handle, ()));
+                self.pose_state = crate::pose::Poses::Waiting;
+            }
+            None => {
+                self.pose_state = crate::pose::Poses::Unavailable("this is not Spatiand's room".into());
+                self.events.push(Event::Poses { available: false });
+            }
+        }
+    }
+
+    /// Stop receiving poses: the room is told, and the ring unmapped.
+    pub(crate) fn stop_poses(&mut self) {
+        if let Some(poses) = self.poses.take() {
+            poses.destroy();
+        }
+        self.pose_channel = None;
+        self.pose_state = crate::pose::Poses::NotAsked;
+        self.eye_size = None;
+    }
+
+    /// The head the window's next picture is drawn for (`set_frame_pose`, since 5): its
+    /// orientation in millionths, and the number its slot carried. None is said as nothing at
+    /// all -- no number, and a quaternion of nothing -- which a room shows as drawn for the
+    /// head as it is.
+    pub(crate) fn set_frame_pose(&mut self, id: WindowId, pose: Option<&crate::pose::HeadPose>) {
+        if let Some(xr) = self.xr_of(id) {
+            if xr.version() < 5 {
+                return;
+            }
+            match pose {
+                Some(pose) => {
+                    let [x, y, z, w] = pose.orientation.map(|c| (c * 1e6).round() as i32);
+                    xr.set_frame_pose(pose.token, x, y, z, w);
+                }
+                None => xr.set_frame_pose(0, 0, 0, 0, 0),
             }
         }
     }
@@ -917,6 +976,52 @@ impl Dispatch<spatiand_xr_v1::SpatiandXrV1, ()> for Wire {
             if std::mem::replace(&mut state.mode, mode) != mode {
                 state.events.push(Event::Mode(mode));
             }
+        }
+    }
+}
+
+impl Dispatch<spatiand_xr_pose_channel_v1::SpatiandXrPoseChannelV1, ()> for Wire {
+    fn event(
+        state: &mut Self,
+        channel: &spatiand_xr_pose_channel_v1::SpatiandXrPoseChannelV1,
+        event: spatiand_xr_pose_channel_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // A word about a channel that has been stopped since it was sent.
+        if state.poses.as_ref() != Some(channel) {
+            return;
+        }
+        match event {
+            // "Sent once", and after `unavailable` if glasses appear; one sent again is taken
+            // as the ring to read from now on, and the one before unmapped.
+            spatiand_xr_pose_channel_v1::Event::Channel { fd, size } => match crate::pose::Channel::map(fd, size) {
+                Ok(mapped) => {
+                    state.pose_channel = Some(mapped);
+                    state.pose_state = crate::pose::Poses::Here;
+                    state.events.push(Event::Poses { available: true });
+                }
+                Err(e) => {
+                    log::warn!("{e}");
+                    state.pose_channel = None;
+                    state.pose_state = crate::pose::Poses::Unavailable(e);
+                    state.events.push(Event::Poses { available: false });
+                }
+            },
+            spatiand_xr_pose_channel_v1::Event::Unavailable { reason } => {
+                // The object stays: the ring may come yet. One already mapped is no longer
+                // the room's word on the head.
+                state.pose_channel = None;
+                state.pose_state = crate::pose::Poses::Unavailable(reason);
+                state.events.push(Event::Poses { available: false });
+            }
+            spatiand_xr_pose_channel_v1::Event::RenderSize { width, height } => {
+                if width > 0 && height > 0 && state.eye_size.replace((width, height)) != Some((width, height)) {
+                    state.events.push(Event::EyeSize { width, height });
+                }
+            }
+            _ => {}
         }
     }
 }

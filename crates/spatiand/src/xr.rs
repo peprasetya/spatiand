@@ -101,6 +101,10 @@ pub struct XrState {
     /// The head's orientation the picture was drawn for, in the protocol's (OpenXR's) frame, if the
     /// client said. See `set_frame_pose`.
     pub frame_orientation: Option<[f32; 4]>,
+    /// The number the pose's slot carried, handed back with that picture; zero is none. Nothing
+    /// a room that drives the glasses itself draws by -- its slots carry none -- and kept so
+    /// that what a client said can be asked for (the control socket's `frame`).
+    pub frame_token: u32,
     /// The surface zooms its own content when pinched, and is told of pinches rather than
     /// being resized by them. See `set_pinch_taken`.
     pub pinch_taken: bool,
@@ -655,11 +659,12 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
                     });
                 }
             }
-            spatiand_xr_surface_v1::Request::SetFramePose { token: _, x, y, z, w } => {
+            spatiand_xr_surface_v1::Request::SetFramePose { token, x, y, z, w } => {
                 let q = [x, y, z, w].map(|c| c as f32 / 1e6);
                 // A zero quaternion is a client that meant "none" and has nothing to normalise.
                 let length = q.iter().map(|c| c * c).sum::<f32>().sqrt();
                 pending.next.frame_orientation = (length > 1e-3).then(|| q.map(|c| c / length));
+                pending.next.frame_token = token;
             }
             spatiand_xr_surface_v1::Request::Destroy => release(state, &mut pending),
             _ => {}

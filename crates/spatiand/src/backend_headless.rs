@@ -10,6 +10,14 @@
 //! it is `SPATIAND_BACKEND=headless`. Like the host, it wants only a render node: clients
 //! still need dmabuf offered to them, and pictures arriving from a host still need somewhere
 //! to go, even if nobody looks at them.
+//!
+//! **A head that is not there.** `SPATIAND_HEADLESS_HEAD=<degrees a second>` gives the session
+//! poses to hand out, where it otherwise says there are none: a head turning on the spot at
+//! that rate (0 holds it still), written into the pose channel each turn of the loop as the
+//! Deck's loop writes the glasses', each numbered -- the slot's `reserved`, as a host numbers
+//! the viewports it is sent -- so that a test of an application that draws from the head can
+//! see poses arrive and change, and see the number its picture is handed back with (the
+//! control socket's `frame`). Nothing is opened for it and nothing is drawn.
 
 use std::time::Duration;
 
@@ -56,6 +64,17 @@ pub fn run(
     let mut remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
     let control = crate::control::Control::start();
 
+    // The head that is not there: see the top of this file.
+    let head_turn = std::env::var("SPATIAND_HEADLESS_HEAD").ok().and_then(|v| v.parse::<f64>().ok());
+    if let Some(rate) = head_turn {
+        log::info!("headless: handing out the poses of a head turning {rate} degrees a second");
+    }
+    let head_started = std::time::Instant::now();
+    let stereo = spatiand_render::StereoConfig::default();
+    let mut pose_channel: Option<crate::pose::Channel> = None;
+    let mut pose_waiting = crate::pose::Waiting::default();
+    let mut poses_written: i64 = 0;
+
     while runtime.state.running {
         // SIGTERM is caught for every backend (`main` installs the handler), so a loop that does
         // not look is a process `systemctl stop` has to wait out and then kill.
@@ -76,7 +95,27 @@ pub fn run(
 
         let screen = runtime.state.screen.clone();
         runtime.state.send_frames(&screen, crate::pose::frame_time());
-        crate::pose::refuse(&mut runtime.state);
+        match head_turn {
+            Some(rate) => {
+                crate::pose::answer(&mut runtime.state, true, &mut pose_channel, &mut pose_waiting);
+                if let Some(channel) = pose_channel.as_mut() {
+                    // About the vertical, which is +Z in the room's own frame.
+                    let yaw = (rate * head_started.elapsed().as_secs_f64()).to_radians();
+                    let sample = crate::pose::now_ns();
+                    let mut slot = crate::pose::wire_slot(
+                        glam::DQuat::from_rotation_z(yaw),
+                        glam::DVec3::ZERO,
+                        &stereo,
+                        sample,
+                        sample + 14_000_000,
+                    );
+                    poses_written += 1;
+                    slot.reserved = poses_written;
+                    channel.write_slot(slot);
+                }
+            }
+            None => crate::pose::refuse(&mut runtime.state),
+        }
         runtime.state.space.refresh();
         runtime.state.settle_keyboard_focus();
         display.dispatch_clients(&mut runtime.state)?;

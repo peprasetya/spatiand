@@ -25,6 +25,9 @@
 //! → clipboard                     paste it here, as a window would
 //! ← held <who owns it, and as what>
 //! ← text <the bytes, escaped>     (see spatiand_stream::keys::escape)
+//! → frame 3                       the head window 3 said its picture was drawn for
+//! ← frame <token> <x> <y> <z> <w> (`set_frame_pose`: the number, and the quaternion in
+//! ← frame none | failed <why>     millionths), or that it said none
 //! ```
 //!
 //! Keys go through the seat, so a window on a host receives them over the link like any other
@@ -51,6 +54,7 @@ enum Asked {
     Keys(usize, Vec<keys::Stroke>),
     Click { id: usize, x: f64, y: f64, count: u32 },
     Clipboard,
+    Frame(usize),
 }
 
 /// How long a clipboard read waits for whoever holds it to finish writing.
@@ -183,6 +187,19 @@ impl Control {
                     None => tell(&format!("failed no window {id}")),
                 },
                 Asked::Clipboard => self.read_clipboard(state, client),
+                Asked::Frame(id) => {
+                    use smithay::wayland::seat::WaylandFocus;
+                    match find(state, id).and_then(|window| window.wl_surface().map(|s| crate::xr::state_of(&s))) {
+                        Some(xr) => match xr.frame_orientation {
+                            Some(q) => {
+                                let [x, y, z, w] = q.map(|c| (c * 1e6).round() as i32);
+                                tell(&format!("frame {} {x} {y} {z} {w}", xr.frame_token));
+                            }
+                            None => tell("frame none"),
+                        },
+                        None => tell(&format!("failed no window {id}")),
+                    }
+                }
             }
         }
     }
@@ -254,6 +271,7 @@ fn parse(line: &str) -> Result<Asked, String> {
         "list" => Asked::List,
         "clipboard" => Asked::Clipboard,
         "focus" => Asked::Focus(window(rest)?.0),
+        "frame" => Asked::Frame(window(rest)?.0),
         "key" => {
             let (id, chords) = window(rest)?;
             let strokes = chords

@@ -30,6 +30,10 @@
 //! ([`App::set_eyes`]) or claims a layer ([`App::set_layer`]), and in [`Mode::Flat`] draws one
 //! eye instead.
 //!
+//! **The head.** An application that draws its own eye views ([`Layer::Projection`]) asks for
+//! the room's poses ([`App::ask_poses`]), reads the newest just before it draws ([`App::pose`])
+//! and says which it drew from ([`App::set_frame_pose`]): see [`pose`].
+//!
 //! [`ui`] is the room's own look as widgets: what the launcher and the settings are drawn
 //! with, for an application's lists, grids and fields.
 
@@ -41,12 +45,14 @@ pub mod config;
 pub mod describe;
 pub mod gl;
 mod keys;
+pub mod pose;
 pub mod ui;
 mod wire;
 
 pub use describe::Description;
 pub use gl::Gl;
 pub use glow;
+pub use pose::{HeadPose, Poses};
 
 /// One of an application's windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -207,13 +213,28 @@ pub enum Event {
     /// A drag this application started ([`App::start_drag`]) is over: taken by where it went,
     /// and moved there rather than copied, or not taken at all.
     DragEnded { taken: bool, moved: bool },
+    /// The room's answer to [`App::ask_poses`]: its poses are there to be read ([`App::pose`]),
+    /// or there are none to give ([`App::poses`] says why) and the application carries on as a
+    /// flat window. Both may come, in that order or the other: glasses plugged in after the
+    /// application started.
+    Poses { available: bool },
+    /// A viewer that is not on this machine -- a headset being streamed to -- wants each eye
+    /// drawn at this size, in pixels ([`App::eye_size`]). A room that drives the glasses
+    /// itself never says.
+    EyeSize { width: u32, height: u32 },
 }
 
 impl Event {
     /// The window an event is about, if it is about one.
     pub fn window(&self) -> Option<WindowId> {
         match self {
-            Event::Mode(_) | Event::Hands | Event::Look { .. } | Event::DragEnded { .. } | Event::Room { .. } => None,
+            Event::Mode(_)
+            | Event::Hands
+            | Event::Look { .. }
+            | Event::DragEnded { .. }
+            | Event::Room { .. }
+            | Event::Poses { .. }
+            | Event::EyeSize { .. } => None,
             Event::Ready { window, .. }
             | Event::Resized { window, .. }
             | Event::CloseRequested { window }
@@ -348,6 +369,54 @@ impl App {
     /// that cannot be honoured comes back as [`Event::LayerRefused`].
     pub fn set_layer(&mut self, window: WindowId, layer: Layer) {
         self.wire.set_layer(window, layer);
+    }
+
+    /// Ask the room where the wearer's head and eyes are: for an application that draws its
+    /// own eye views ([`Layer::Projection`]), and for nothing else -- a film with its two eyes
+    /// already in it has no use for the head. The answer is [`Event::Poses`]; asked again, it
+    /// is the same asking. See [`pose`].
+    pub fn ask_poses(&mut self) {
+        self.wire.ask_poses();
+    }
+
+    /// Stop receiving poses. [`App::pose`] is `None` from here until they are asked for again.
+    pub fn stop_poses(&mut self) {
+        self.wire.stop_poses();
+    }
+
+    /// What the room has said of its poses: not asked, not answered yet, none to give, or there.
+    pub fn poses(&self) -> Poses {
+        self.wire.pose_state.clone()
+    }
+
+    /// Where the head and the eyes are: the newest pose the room has written, read from its
+    /// memory as this is called -- nothing is sent, so it is to be called as late as can be,
+    /// just before drawing. `None` while there are no poses ([`App::poses`]), and for the
+    /// moment before the room has written its first.
+    pub fn pose(&self) -> Option<HeadPose> {
+        self.wire.pose_channel.as_ref()?.newest()
+    }
+
+    /// The poses the room's ring still holds -- a few frames' worth -- the oldest first: to
+    /// find where the head was at a time between two of them.
+    pub fn pose_history(&self) -> Vec<HeadPose> {
+        self.wire.pose_channel.as_ref().map(|c| c.history()).unwrap_or_default()
+    }
+
+    /// The size a viewer that is not on this machine wants each eye drawn at, in pixels, where
+    /// there is one ([`Event::EyeSize`]): a picture drawn at another size is resampled for it.
+    pub fn eye_size(&self) -> Option<(u32, u32)> {
+        self.wire.eye_size
+    }
+
+    /// The head the window's next picture is drawn for: the pose its eye views were drawn
+    /// from ([`App::pose`]), said before [`App::draw`]. By the time the picture is shown the
+    /// head has moved on, and the room turns the picture by the difference, so that the world
+    /// stays where it is; it also hands the pose's number back to whoever gave it. For a
+    /// [`Layer::Projection`] window; `None` takes it back, and the picture is shown as though
+    /// drawn for the head as it is.
+    pub fn set_frame_pose(&mut self, window: WindowId, pose: Option<&HeadPose>) {
+        self.wire.set_frame_pose(window, pose);
     }
 
     /// Turn a sky about the vertical, to bring a panorama's interesting part round to the front.
