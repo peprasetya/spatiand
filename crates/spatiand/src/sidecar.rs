@@ -286,6 +286,35 @@ impl Audio {
             Direction::Input => &self.inputs,
         }
     }
+
+    /// The room's *Sound devices* list, as `spatiand_shell::Shell::set_audio` takes it: each
+    /// device's name, whether it is a microphone, and whether it is the one in use; outputs
+    /// first. The same list the Mac's settings show, fed from PipeWire here.
+    pub fn rows(&self) -> Vec<(String, bool, bool)> {
+        let outputs = self.outputs.iter().map(|d| (d.name.clone(), false, d.is_default));
+        let inputs = self.inputs.iter().map(|d| (d.name.clone(), true, d.is_default));
+        outputs.chain(inputs).collect()
+    }
+
+    /// The device on row `index` of [`Audio::rows`].
+    pub fn at_row(&self, index: usize) -> Option<(Direction, u32)> {
+        match index.checked_sub(self.outputs.len()) {
+            None => self.outputs.get(index).map(|d| (Direction::Output, d.id)),
+            Some(i) => self.inputs.get(i).map(|d| (Direction::Input, d.id)),
+        }
+    }
+
+    /// Mark `id` the one in use in its direction, at once, before the mixer confirms it: a list
+    /// that does not answer reads as a press that missed, and the wearer presses again.
+    pub fn mark_default(&mut self, direction: Direction, id: u32) {
+        let list = match direction {
+            Direction::Output => &mut self.outputs,
+            Direction::Input => &mut self.inputs,
+        };
+        for device in list {
+            device.is_default = device.id == id;
+        }
+    }
 }
 
 /// What a touch asked the machine to do.
@@ -1892,6 +1921,26 @@ impl Sidecar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rooms_sound_list_is_outputs_then_microphones_and_a_row_is_its_device() {
+        let device = |id, name: &str, is_default| AudioDevice { id, name: name.into(), is_default };
+        let mut audio = Audio {
+            outputs: vec![device(40, "Speakers", true), device(51, "XREAL Air", false)],
+            inputs: vec![device(62, "Microphone", true)],
+        };
+        assert_eq!(
+            audio.rows(),
+            vec![("Speakers".into(), false, true), ("XREAL Air".into(), false, false), ("Microphone".into(), true, true)]
+        );
+        assert_eq!(audio.at_row(1), Some((Direction::Output, 51)));
+        assert_eq!(audio.at_row(2), Some((Direction::Input, 62)));
+        assert_eq!(audio.at_row(3), None);
+        audio.mark_default(Direction::Output, 51);
+        assert_eq!(audio.rows()[0].2, false);
+        assert_eq!(audio.rows()[1].2, true);
+        assert_eq!(audio.rows()[2].2, true, "a microphone is not an output's to change");
+    }
 
     fn sidecar(panel: (u32, u32)) -> Sidecar {
         Sidecar::new(1, panel)

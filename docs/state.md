@@ -77,6 +77,19 @@ volume and brightness. Flip completions are tracked per-CRTC — a single flag l
 consume the other's and that screen then never presents again, silently. The volume and
 brightness bars are touchable (below).
 
+**Sound devices in the glasses.** The settings' *Sound devices* row, which the Mac has had, is
+the Deck's too (2026-11-17): where sound comes out and which microphone listens, from PipeWire
+through the mixer's thread (`volume_keys::Mixer`, `wpctl`, the sidecar picker's lists), chosen
+with A; the tick moves at once and the list is read again every two seconds while it is open.
+Offered where there is a `wpctl`. `SPATIAND_VIEW=audio` photographs it.
+
+**Notifications.** The room answers `org.freedesktop.Notifications` on the session bus
+(`crates/spatiand/src/notifications.rs`, D-Bus written out by hand, no stack): a desktop
+application's notification is shown on the card under the status bar, as the Mac's banners and
+the Beam Pro's are, and pressing it is its default action. The name is asked for with
+`ALLOW_REPLACEMENT | DO_NOT_QUEUE`, so Plasma's shell, where it runs, keeps it; in the room's own
+session it is free. `SPATIAND_NOTIFICATIONS=seconds` in the snapshot waits for one to arrive.
+
 **Tooling.** `SPATIAND_BACKEND=snapshot` renders a frame to a PNG from a render node, with no
 display, session or headset, and can host a real Wayland client while doing it. Almost every
 layout bug in this project was found by looking at its output. `tools/probe-*.py` established

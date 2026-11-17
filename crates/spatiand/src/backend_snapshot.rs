@@ -142,6 +142,9 @@ enum View {
     /// The Bluetooth page, with this machine's real paired devices as BlueZ has them now.
     /// `SPATIAND_VIEW_PAGE=<n>` moves the cursor down that many rows first.
     Bluetooth,
+    /// The settings' *Sound devices* list, with this machine's real outputs and microphones as
+    /// PipeWire has them now (on Linux; the Mac's are the app's to say).
+    Audio,
 }
 
 impl View {
@@ -158,6 +161,7 @@ impl View {
             Ok("controller") => Self::Controller,
             Ok("hosts") => Self::Hosts,
             Ok("bluetooth") => Self::Bluetooth,
+            Ok("audio") => Self::Audio,
             _ => Self::World,
         }
     }
@@ -289,6 +293,20 @@ pub fn run(
     let mut shell = Shell::new(apps, DesktopPanels::ALL, calibrated);
     shell.set_local_name(&crate::system::machine_name());
     crate::own::adopt(&mut shell);
+    // The settings offer the sound devices' list where the session does: on the Mac always, on
+    // Linux where there is a `wpctl` to read PipeWire with.
+    if cfg!(target_os = "macos") || crate::system::can_choose_audio() {
+        shell.offer_audio();
+    }
+    // `SPATIAND_NOTIFICATIONS=seconds`: the room answers `org.freedesktop.Notifications` on the
+    // session bus, as the Deck's session does, and the frame waits up to that long for one to
+    // arrive -- how the card is photographed with an application's notification on it.
+    #[cfg(target_os = "linux")]
+    let notification_wait: Option<f64> = std::env::var("SPATIAND_NOTIFICATIONS").ok().and_then(|v| v.parse().ok());
+    #[cfg(target_os = "linux")]
+    if notification_wait.is_some() {
+        crate::notifications::start();
+    }
 
     // Clients need an output to be told about, and frame callbacks need one to reference.
     let output = smithay::output::Output::new(
@@ -368,6 +386,24 @@ pub fn run(
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(0);
+            for _ in 0..rows {
+                shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
+            }
+        }
+        // Through the settings' row, as the wearer opens it, filled as the Deck's session fills
+        // it: the mixer's reading of PipeWire, outputs then microphones.
+        View::Audio => {
+            shell.handle(Intent::ToggleHud);
+            for _ in 0..shell.hud().items().len() {
+                if shell.hud().activate() == spatiand_shell::HudAction::OpenAudio {
+                    break;
+                }
+                shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
+            }
+            shell.handle(Intent::Accept);
+            #[cfg(target_os = "linux")]
+            shell.set_audio(&crate::system::audio_devices().rows());
+            let rows: usize = std::env::var("SPATIAND_VIEW_PAGE").ok().and_then(|p| p.parse().ok()).unwrap_or(0);
             for _ in 0..rows {
                 shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
             }
@@ -1078,6 +1114,20 @@ pub fn run(
     let card = if card.is_empty() { dictation_card } else { card };
     let card = if card.is_empty() { crate::assist::notice() } else { card };
     let card = if card.is_empty() { crate::install::notice() } else { card };
+    // An application's notification, as the Deck's session shows it: waited for, up to
+    // `SPATIAND_NOTIFICATIONS` seconds.
+    #[cfg(target_os = "linux")]
+    let card = if card.is_empty() {
+        if let Some(seconds) = notification_wait {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds);
+            while !crate::notifications::showing() && std::time::Instant::now() < until {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+        crate::notifications::notice()
+    } else {
+        card
+    };
     if !card.is_empty() {
         log::info!("the card says {card:?}");
     }
@@ -2169,6 +2219,19 @@ impl ThumbsScroll {
     }
 }
 
+/// An application's notification on the card (`crate::notifications`, Linux's alone).
+fn notification_showing() -> bool {
+    #[cfg(target_os = "linux")]
+    return crate::notifications::showing();
+    #[cfg(not(target_os = "linux"))]
+    false
+}
+
+fn notification_pressed() {
+    #[cfg(target_os = "linux")]
+    crate::notifications::pressed();
+}
+
 fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step: &Scripted, at: &mut (f64, f64)) {
     use smithay::backend::input::{Axis, AxisSource};
     use smithay::input::pointer::AxisFrame;
@@ -2184,6 +2247,8 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
         Scripted::Notice => {
             if crate::install::asking() {
                 crate::install::accept();
+            } else if cfg!(target_os = "linux") && notification_showing() {
+                notification_pressed();
             } else {
                 log::warn!("notice: the card is not asking anything");
             }

@@ -212,6 +212,9 @@ enum Job {
     Volume(Change),
     /// Make this device, by PipeWire node id, the default.
     Default(u32),
+    /// Read the volume and the lists now rather than at the next poll: the room's list of
+    /// sound devices has just opened.
+    Look,
 }
 
 /// What the worker hands back, each piece taken once by the frame loop.
@@ -269,6 +272,12 @@ impl Mixer {
         if let Ok(mut devices) = self.shared.devices.lock() {
             devices.take();
         }
+    }
+
+    /// Read the lists now, for a list that has just opened. Never waits.
+    pub fn look_now(&self) {
+        self.shared.watching.store(true, Ordering::Relaxed);
+        let _ = self.to.send(Job::Look);
     }
 
     /// Hand a job over, and drop any level still waiting to be picked up: it was set or read
@@ -333,16 +342,20 @@ fn work(from: &mpsc::Receiver<Job>, shared: &Shared) {
             .take_while(|job| matches!(job, Job::Volume(_)))
             .count();
         if run == 0 {
-            if let Job::Default(id) = backlog.remove(0) {
-                crate::system::set_default_device(id);
-                poll(from, shared, &mut backlog);
+            match backlog.remove(0) {
+                Job::Default(id) => {
+                    crate::system::set_default_device(id);
+                    poll(from, shared, &mut backlog);
+                }
+                Job::Look => poll(from, shared, &mut backlog),
+                Job::Volume(_) => {}
             }
         } else {
             let changes: Vec<Change> = backlog
                 .drain(..run)
                 .filter_map(|job| match job {
                     Job::Volume(change) => Some(change),
-                    Job::Default(_) => None,
+                    Job::Default(_) | Job::Look => None,
                 })
                 .collect();
             if let Some(level) = apply(&changes) {

@@ -905,6 +905,12 @@ pub fn find_node(text: &str, name: &str) -> Option<u32> {
 /// the sound server's own rescan is relied on — which is what the desktop's own picker does.
 ///
 /// What is made default is not always what was picked; see [`recordable`].
+/// Whether there is a `wpctl` to list and choose sound devices with: what the room's *Sound
+/// devices* row needs to be worth offering. Looked for on the PATH rather than run, once.
+pub fn can_choose_audio() -> bool {
+    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join("wpctl").is_file()))
+}
+
 pub fn set_default_device(id: u32) {
     let id = recordable(id);
     let result = std::process::Command::new("wpctl")

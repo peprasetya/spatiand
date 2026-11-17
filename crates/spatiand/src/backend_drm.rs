@@ -424,6 +424,10 @@ pub fn run(
     // the volume and the devices all go through it too.
     let mut volume_repeat = crate::volume_keys::Repeat::default();
     let mixer = crate::volume_keys::Mixer::start();
+    // This Deck's applications' notifications, shown on the room's card as the Mac's and the
+    // Beam Pro's are. The room is a session of its own, with no Plasma shell to answer them; one
+    // that does hold the name keeps it (`crate::notifications`).
+    crate::notifications::start();
 
     // The shell — what is on screen and what a button means. Deliberately built once, outside
     // the output loop: unplugging the glasses must not close your launcher.
@@ -457,6 +461,14 @@ pub fn run(
     let mut shell = Shell::new(apps, panels, calibrated);
     shell.set_local_name(&crate::system::machine_name());
     crate::own::adopt(&mut shell);
+    // Where sound comes out and which microphone listens, chosen in the glasses as on the Mac:
+    // the sidecar's picker is on a screen the wearer is not looking at, and there may be none.
+    // PipeWire's lists, through the mixer's thread (`crate::volume_keys::Mixer`).
+    if crate::system::can_choose_audio() {
+        shell.offer_audio();
+    }
+    // What the settings' list last showed, so it is set again only when it changes.
+    let mut audio_rows: Vec<(String, bool, bool)> = Vec::new();
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
@@ -1718,13 +1730,21 @@ pub fn run(
                         }
                         // The shell has already opened the page; `remotes.tick` keeps it filled.
                         HudAction::OpenHosts | HudAction::OpenPinned => {}
+                        // The settings' list of sound devices has opened: what is known now, and
+                        // PipeWire asked again at once rather than at the mixer's next poll.
                         HudAction::OpenAudio => {
-                            #[cfg(target_os = "macos")]
-                            crate::mac::audio_devices_wanted();
+                            audio_rows = audio.rows();
+                            shell.set_audio(&audio_rows);
+                            mixer.look_now();
                         }
-                        HudAction::ChooseAudio(_index) => {
-                            #[cfg(target_os = "macos")]
-                            crate::mac::audio_device_chosen(_index);
+                        // On the mixer's thread, as the sidecar's picker does; the tick moves at
+                        // once, before PipeWire says it has.
+                        HudAction::ChooseAudio(index) => {
+                            if let Some((direction, id)) = audio.at_row(index) {
+                                log::info!("sound: {} {id} chosen in the room", direction.label());
+                                mixer.choose_device(id);
+                                audio.mark_default(direction, id);
+                            }
                         }
                         HudAction::ChooseAppMenu(_) | HudAction::AppMenuBack => {}
                         // The shell has opened the page; ask BlueZ now rather than at the tick.
@@ -2136,19 +2156,34 @@ pub fn run(
             scene.sync_status(&mut renderer, &mut text, &status_text, ppd)?;
             // Dictation's card comes first (a terminal's text waiting to be typed, or that the
             // room is listening); then an application dropped into the room, offered for
-            // installing; then a notification from a host's own screen, which the wearer cannot
-            // see.
+            // installing; then a notification of this Deck's own applications
+            // (`crate::notifications`), as the Mac and the Beam Pro show theirs; then one from a
+            // host's own screen, which the wearer cannot see.
             // SpatiKey's before them all while a finger is wanted on the Mac: someone is to touch
             // its sensor now. The card it covers is back as it was when it goes.
             let notice = crate::spatikey::notice();
             let notice = if notice.is_empty() { dictation.notice() } else { notice };
             let notice = if notice.is_empty() { crate::assist::notice() } else { notice };
             let notice = if notice.is_empty() { crate::install::notice() } else { notice };
+            let notice = if notice.is_empty() { crate::notifications::notice() } else { notice };
             let notice = if notice.is_empty() { crate::remote::host_notice() } else { notice };
             scene.sync_notice(&mut renderer, &mut text, &notice, ppd)?;
             keyboard.dictating = dictation.look();
             if crate::install::take_changed() {
                 crate::own::adopt(&mut shell);
+            }
+            // The settings' list of sound devices, kept up to date while it is open: the mixer
+            // reads PipeWire every two seconds for as long as someone takes the lists, so a
+            // headset plugged in turns up without a press. The sidecar takes them as well when
+            // there is one; whichever took them, `audio` has them.
+            if shell.mode() == Mode::Audio {
+                if let Some(lists) = mixer.take_devices() {
+                    audio = lists;
+                }
+                if audio.rows() != audio_rows {
+                    audio_rows = audio.rows();
+                    shell.set_audio(&audio_rows);
+                }
             }
             if keyboard.open {
                 scene.sync_keyboard(&mut renderer, &mut text, &keyboard, ppd)?;
@@ -3297,6 +3332,16 @@ pub fn run(
                                     && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
                             {
                                 crate::install::accept();
+                            }
+                            // A notification of this Deck's own applications: pressed, its
+                            // application is told (its default action) and the card goes, as
+                            // pressing the Mac's banner opens what it came from.
+                            Some(a)
+                                if crate::install::notice().is_empty()
+                                    && crate::notifications::showing()
+                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                            {
+                                crate::notifications::pressed();
                             }
                             // Before the title bar: the button sits inside the bar, so testing
                             // the bar first would start a drag and never reach this.
