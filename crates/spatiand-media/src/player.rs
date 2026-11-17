@@ -1555,6 +1555,13 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                 log::warn!("a picture would not decode: {}", error_text(sent));
             }
             while ffi::avcodec_receive_frame(decoder.context, frame) >= 0 {
+                // Stopped, nothing more is made: the room for pictures is not waited for then,
+                // and every picture the decoder still held went on into the queue -- on Android
+                // into the reader, until every one of its pictures was held.
+                if shared.stop.load(Ordering::Relaxed) || !mine() {
+                    ffi::av_frame_unref(frame);
+                    break;
+                }
                 let stamp = (*frame).best_effort_timestamp;
                 let time = if stamp == ffi::AV_NOPTS_VALUE { 0.0 } else { stamp as f64 * decoder.time_base - start };
                 // Pictures from before where a seek was aimed are decoded only to get to the

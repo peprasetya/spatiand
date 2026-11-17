@@ -153,10 +153,10 @@ snapshot backend, pictures going over as dmabufs.
   channels has never run in a Spatiand session).
 * SpatiReel on the Deck at all: built only on deepmagpie. Nothing is deployed to the Deck.
 * Picture subtitles (PGS, VobSub) on a real disc's track: the code path has not had one.
-* HEVC through VAAPI: **it is switched off on Linux**, because one HEVC file (encoded by a
+* HEVC through VAAPI: ~~it is switched off on Linux~~, because one HEVC file (encoded by a
   Mac) hung deepmagpie's GPU decoder when given to VAAPI from the test tool, and the kernel
-  reset the GPU. HEVC is decoded in software there until that is understood
-  (`SPATIAND_MEDIA_HARDWARE=all` overrides).
+  reset the GPU. **On again since 2026-11-17**, with VP9 and AV1: see "2026-11-17: video
+  decoded by the hardware" at the end.
 
 **Not done yet**
 * ~~The Mac without glasses~~: done 2026-10-17. In 2D mode the app starts the compositor for
@@ -810,3 +810,71 @@ tap on the hidden picture showed them; Space played; a press on the empty part o
 them and the film playing; the round button paused, and 4 s later they were gone. Unit tests for the
 clock and the tap. Type-checked for Android. **Not checked**: the room's real `hands` (the snapshot
 room sends none, so motion stood in for it), a Mac or a Beam Pro, a touch screen's tap, glasses.
+## 2026-11-17: video decoded by the hardware, on the Beam Pro and for every codec on the Deck
+
+The owner's rule: video is decoded by the hardware, whichever way. SpatiReel broke it twice.
+
+**The Beam Pro decoded in software** (`HARDWARE` was `None` there). Now FFmpeg's MediaCodec
+decoders (`h264_mediacodec`, `hevc_mediacodec`, `vp9_`, `vp8_`, `av1_`, `mpeg2_`, `mpeg4_`) are asked
+for by name where Android names a hardware decoder for the type (not `c2.android.*`,
+`OMX.google.*`, `.sw.`), on a MediaCodec device whose window is an `AImageReader`'s
+(`AIMAGE_FORMAT_PRIVATE`, sampled by the GPU): `crates/spatiand-media/src/mediacodec.rs`. The
+codec draws each picture into one of the reader's Android hardware buffers, YUV in the GPU's own
+layout; the screen samples it as an external texture (`spatiand_app::gl::HardwareBufferTexture`,
+`samplerExternalOES`), the GPU's own conversion making it colour, the image's crop applied, HDR's
+light handled after it as for every other picture. Nothing is copied on the CPU. As SpatiMesh's
+Chromium found the same day (android-libc/0028), **a picture is drawn into the reader only once
+the one before has been taken from it**: a codec's window does not wait for its reader, and a
+second picture replaces the first. The picture thread renders one, waits for the reader's
+picture of the same time (stale ones from before a seek are let go), and goes on. Software only
+where the phone has no hardware decoder for the codec, the reader or codec will not start
+(`avcodec_open2` fails: software from there), or `SPATIAND_MEDIA_HARDWARE=0`.
+
+Measured on the Beam Pro with `cargo ndk build --example rate` run as the app from its cache
+(decode, draw into a 1920x1080 picture, read it back as a window's picture is on Android today),
+1080p60 clips with no sound, 20 s each, the phone dozing and nothing else running:
+
+| | shown a second | skipped | the player's processor |
+|---|---|---|---|
+| H.264, MediaCodec | 59.9 | 1 | 82% of a core |
+| H.264, software (before) | 59.8 | 3 | 217% |
+| HEVC, MediaCodec | 59.9 | 1 | 87% |
+| HEVC, software (before) | 59.7 | 5 | 244% |
+
+The codec service took 27-31% of a core besides. Of what is left in the player, most is the
+window's picture read back (`spatiand_app::gl`: Android's handover is still `wl_shm`); the test
+clips (`testsrc2`) are easy for a software decoder, a real film's software decode costs more.
+SpatiReel itself, as a window of the room on the stand-in display (`tools/beam-stand-in`), the
+HEVC clip on MediaCodec: 53% of a core, the room presenting 46-50 frames a second meanwhile;
+its software run was cut short by another agent's install. A frame decoded by MediaCodec and
+drawn through the external texture equals the software one within 1/255 (the GPU's own YUV
+conversion and the player's agree). Ending a film once ended the program
+(`pthread_mutex_lock called on a destroyed mutex`: the reader's listener called during its
+deletion), and a stopping player drew every picture the codec still held into the reader:
+the reader is looked at, not listened to, and a stopped player takes nothing more.
+
+**The Deck gave only H.264 to VA-API** since 2026-10-13, when a raw HEVC stream a Mac's
+VideoToolbox made (`spatiand-spike/clip1080.hevc`, 72 fps, no times) hung **deepmagpie's** GPU
+decoder (Radeon 8060S, VCN 5) and the kernel reset the GPU; its log has since rotated away. It
+never happened on the Deck, whose room decodes hosts' HEVC on VA-API every day (remote windows).
+On the Deck (Mesa 26.1.2, kernel 6.18.50-valve2), test processes only, the kernel's log read
+after each: that stream, HEVC 8 and 10 bit at 1080p60 and 4K30, VP9 and AV1 decoded through the
+system's ffmpeg and through this player (`examples/rate`, `examples/frame`), log clean. So every
+codec goes to VA-API now. Two things were wrong around it: FFmpeg's pool had room only for the
+codec's own references while the player holds up to six pictures outside it (`extra_hw_frames`,
+as the room's own decoder has), and ten-bit pictures came down to memory and were converted
+there, so 4K HEVC Main 10 played at 26 a second, slower than software; they are lent as dmabufs
+now too (P010 as `R16 ` and `GR32`, `Pixels::Dmabuf10`).
+
+| on the Deck, examples/rate | VA-API | software |
+|---|---|---|
+| 1080p60 H.264, HEVC, VP9, AV1 | 60/s, 11-12% of a core | 60/s, 52-82% (AV1: none, no software AV1) |
+| 1080p60 HEVC Main 10 | 60/s, 12% | 60/s, 89% |
+| 2160p30 HEVC Main 10 | 30/s, 8% | 29.9/s, 131% |
+
+Frames decoded this way equal software's bit for bit (HEVC 8 and 10 bit, VP9, H.264, read back
+from GL). **Not checked**: anything in the glasses; SpatiReel itself in either room (the
+examples draw and read back as it does, with no window); deepmagpie's VCN 5 with HEVC again (it
+is the machine everything runs on); a raw stream with no times plays as fast as it decodes, in
+software as well (a separate fault); ten-bit through the Beam Pro's reader; MPEG-2 and MPEG-4
+Part 2 through MediaCodec.

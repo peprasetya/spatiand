@@ -82,7 +82,7 @@ mod phone {
     use std::collections::HashMap;
     use std::ffi::{c_void, CStr, CString};
     use std::ptr;
-    use std::sync::{Arc, Condvar, Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
     use ndk_sys as ndk;
@@ -149,27 +149,24 @@ mod phone {
         Ok(device)
     }
 
+    /// How often the reader is looked at while a picture is on its way: it comes within a
+    /// millisecond or two of being drawn.
+    const LOOK_EVERY: Duration = Duration::from_micros(500);
+
     /// The `AImageReader` a film's decoder draws into, and its pictures as they arrive.
+    ///
+    /// **Looked at, not listened to.** A listener's call comes on the reader's own thread, and
+    /// can still be under way while the reader is deleted: closing a film then ended the program
+    /// ("pthread_mutex_lock called on a destroyed mutex", the listener's context freed under it).
     pub struct Reader {
         reader: *mut ndk::AImageReader,
         window: *mut ndk::ANativeWindow,
-        /// How many pictures have arrived: the listener counts, the picture thread waits on it.
-        arrived: Mutex<u64>,
-        signal: Condvar,
     }
 
     // The reader is the NDK's, which takes calls from any thread; a picture is taken on the
     // picture thread alone.
     unsafe impl Send for Reader {}
     unsafe impl Sync for Reader {}
-
-    unsafe extern "C" fn on_image(context: *mut c_void, _reader: *mut ndk::AImageReader) {
-        let reader = &*(context as *const Reader);
-        if let Ok(mut arrived) = reader.arrived.lock() {
-            *arrived += 1;
-        }
-        reader.signal.notify_all();
-    }
 
     impl Reader {
         /// A reader for pictures `size` big: only the size of buffers nobody sized, as the
@@ -194,15 +191,7 @@ mod phone {
                 unsafe { ndk::AImageReader_delete(reader) };
                 return Err("the film's image reader has no window".into());
             }
-            let made = Arc::new(Reader { reader, window, arrived: Mutex::new(0), signal: Condvar::new() });
-            // The context is the reader itself, which outlives the listener: deleting the
-            // reader ends its calls.
-            let mut listener = ndk::AImageReader_ImageListener {
-                context: Arc::as_ptr(&made) as *mut c_void,
-                onImageAvailable: Some(on_image),
-            };
-            unsafe { ndk::AImageReader_setImageListener(reader, &mut listener) };
-            Ok(made)
+            Ok(Arc::new(Reader { reader, window }))
         }
 
         /// The picture the codec was just told to draw, stamped `expected` (microseconds): the
@@ -211,7 +200,6 @@ mod phone {
         pub fn take(self: &Arc<Self>, expected: Option<i64>, patience: Duration) -> Option<Image> {
             let until = Instant::now() + patience;
             loop {
-                let seen = *self.arrived.lock().unwrap();
                 let mut image = ptr::null_mut();
                 let status = unsafe { ndk::AImageReader_acquireNextImage(self.reader, &mut image) };
                 if status == ndk::media_status_t::AMEDIA_OK && !image.is_null() {
@@ -227,15 +215,11 @@ mod phone {
                     log::warn!("every picture of the film's reader is held; one is skipped");
                     return None;
                 }
-                // Nothing yet: wait for the listener to say something has come.
-                let mut arrived = self.arrived.lock().unwrap();
-                while *arrived == seen {
-                    let left = until.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return None;
-                    }
-                    arrived = self.signal.wait_timeout(arrived, left).unwrap().0;
+                // Nothing yet.
+                if Instant::now() >= until {
+                    return None;
                 }
+                std::thread::sleep(LOOK_EVERY);
             }
         }
     }
