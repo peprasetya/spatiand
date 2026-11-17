@@ -165,6 +165,21 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   opened before the GPU process's sandbox (below). A trap for whoever measures this headless: a video alone on an
   emptied page drops about 60% of its frames whichever decoder plays it, software too; on a page with other
   content it drops none.
+* **The pictures stay on the GPU** (2026-11-17, `android-libc/0028`, with the sandbox's part in `0016`): 1080p
+  at 60 frames a second was too much for the copies above (HEVC played at 45 frames a second, 150 dropped). Now
+  the decoder draws into an `AImageReader`'s Android hardware buffers (`AIMAGE_FORMAT_PRIVATE`, YUV in the GPU's
+  own layout); each picture becomes a shared image (`SpatiandHardwareBufferImageBacking`: an external texture
+  bound to an EGLImage of the buffer, the GPU waiting on the decoder's fence) that the compositor samples as it is,
+  and the buffer goes back to the decoder once the page lets its frame go, as the Deck's VA-API pictures stay on its
+  GPU. ANGLE takes such a buffer through a Y'CbCr conversion and the external format Vulkan knows it by, as its
+  Android build does (`AHardwareBufferImageSiblingVkSpatiand`). Two things the numbers turned on: pictures are drawn
+  into the reader one at a time (one drawn while the one before was still in the reader's queue replaced it, and
+  60-frame H.264 reached the page at 42 frames a second), and the reader holds 24, the renderer's own cap (with ten,
+  60 frames a second played at 36). Where a reader cannot be had (no GPU channel, a codec that will not draw into
+  one) the pictures are copied out as before. Found the same day: in the sandbox every decoder failed to start
+  (NO_MEMORY), so films were decoded in software: the codec service takes MediaCodec's input in Android's shared
+  memory, which Android's libc opens as `/dev/ashmem<boot_id>` after reading the boot id, both now given to the
+  broker. Measured on the Beam Pro: 1080p60 HEVC at 59 frames a second, 2 to 9 dropped. Not measured: ten-bit pictures (P010) through the reader, 4K, and anything in the glasses.
 * No D-Bus: libdbus asks for a system bus at its build folder's path and finds none, as there is none to find.
 * **Bluetooth** (`android-libc/0025`, `android/src/id/prasetya/spatiand/BluetoothBridge.java`): Chromium's Linux
   build reaches Bluetooth through BlueZ on D-Bus, which Android has not got. Its adapter here is Android's Bluetooth

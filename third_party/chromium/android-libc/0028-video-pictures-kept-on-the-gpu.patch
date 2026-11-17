@@ -1,0 +1,1410 @@
+Video pictures kept on the GPU: Android's hardware decoders (0015) draw into an AImageReader's
+Android hardware buffers (AIMAGE_FORMAT_PRIVATE, the GPU's own YUV layout), each picture made a
+shared image (gpu::SpatiandHardwareBufferImageBacking, GL_TEXTURE_EXTERNAL_OES bound to an EGLImage
+of the buffer, the decoder's fence waited on first) that the compositor samples as it is, and given
+back to the decoder when its video frame is let go -- as the Deck's VA-API pictures stay on its
+GPU. Pictures are drawn into the reader one at a time (one drawn while the one before is still in
+the reader's queue replaced it: 60-frame H.264 reached the page at 42 frames a second), and the
+reader holds 24, the renderer's own cap (with ten 60 frames a second played at 36). Where that
+cannot be set up (no GPU channel, a reader or a codec that will not take one) the pictures are
+copied out into frames of memory as before. ANGLE (third_party/angle, a repository of its own; its
+part after Chromium's, as 0021 carries it) samples such a buffer through a Y'CbCr conversion, with
+the external format Vulkan knows it by (AHardwareBufferImageSiblingVkSpatiand, vk_cache_utils), as
+its Android build does. The GPU sandbox's part (Android's ashmem, without which no decoder started)
+is in 0016. Measured on the Beam Pro (2026-11-17), 1080p60 HEVC: 45 frames a second with 150
+dropped before, 59 with 2 to 9 dropped after.
+
+diff --git a/gpu/command_buffer/service/BUILD.gn b/gpu/command_buffer/service/BUILD.gn
+index e3b29bbacb..28ef2b29ea 100644
+--- a/gpu/command_buffer/service/BUILD.gn
++++ b/gpu/command_buffer/service/BUILD.gn
+@@ -2,6 +2,7 @@
+ # Use of this source code is governed by a BSD-style license that can be
+ # found in the LICENSE file.
+ 
++import("//build/config/compiler/compiler.gni")
+ import("//build/config/ui.gni")
+ import("//gpu/vulkan/features.gni")
+ import("//skia/features.gni")
+@@ -568,6 +569,15 @@ target(link_target_type, "gles2_sources") {
+     }
+   }
+ 
++  if (spatiand_android_libc) {
++    # Spatiand: on Android's libc, a video decoder's pictures (Android hardware buffers) as shared
++    # images the compositor samples without a copy (android-libc/0028).
++    sources += [
++      "shared_image/spatiand_hardware_buffer_image_backing.cc",
++      "shared_image/spatiand_hardware_buffer_image_backing.h",
++    ]
++  }
++
+   if (is_android) {
+     if (!is_debug) {
+       # On Android optimize more since this component can be a bottleneck.
+diff --git a/gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.cc b/gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.cc
+new file mode 100644
+index 0000000000..03e0e9d7dc
+--- /dev/null
++++ b/gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.cc
+@@ -0,0 +1,194 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.h"
++
++#include <android/hardware_buffer.h>
++#include <dlfcn.h>
++#include <poll.h>
++
++#include <utility>
++
++#include "base/logging.h"
++#include "base/posix/eintr_wrapper.h"
++#include "base/no_destructor.h"
++#include "gpu/command_buffer/service/shared_context_state.h"
++#include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
++#include "gpu/command_buffer/service/shared_image/skia_gl_image_representation.h"
++#include "gpu/command_buffer/service/texture_manager.h"
++#include "ui/gl/gl_bindings.h"
++#include "ui/gl/gl_fence_egl.h"
++#include "ui/gl/scoped_binders.h"
++#include "ui/gl/scoped_egl_image.h"
++
++namespace gpu {
++
++namespace {
++
++// Android's buffer calls, from libnativewindow (API 26), which this program is not linked with
++// (it is built for 24).
++struct HardwareBufferCalls {
++  void (*acquire)(AHardwareBuffer*) = nullptr;
++  void (*release)(AHardwareBuffer*) = nullptr;
++  void (*describe)(const AHardwareBuffer*, AHardwareBuffer_Desc*) = nullptr;
++  bool valid() const { return acquire && release && describe; }
++};
++
++const HardwareBufferCalls& Calls() {
++  static const HardwareBufferCalls calls = [] {
++    HardwareBufferCalls found;
++    if (void* library = dlopen("libnativewindow.so", RTLD_NOW)) {
++      found.acquire =
++          reinterpret_cast<decltype(found.acquire)>(dlsym(library, "AHardwareBuffer_acquire"));
++      found.release =
++          reinterpret_cast<decltype(found.release)>(dlsym(library, "AHardwareBuffer_release"));
++      found.describe =
++          reinterpret_cast<decltype(found.describe)>(dlsym(library, "AHardwareBuffer_describe"));
++    }
++    return found;
++  }();
++  return calls;
++}
++
++}  // namespace
++
++// One GL_TEXTURE_EXTERNAL_OES bound to an EGLImage of the buffer, made for each representation
++// (as Chromium on Android makes one for each of a decoder's pictures it draws): the compositor
++// produces one for each video frame it draws, in the context it draws with.
++class SpatiandHardwareBufferImageBacking::GLTexturePassthroughRepresentation
++    : public GLTexturePassthroughImageRepresentation {
++ public:
++  GLTexturePassthroughRepresentation(SharedImageManager* manager,
++                                     SharedImageBacking* backing,
++                                     MemoryTypeTracker* tracker,
++                                     gl::ScopedEGLImage egl_image,
++                                     scoped_refptr<gles2::TexturePassthrough> texture)
++      : GLTexturePassthroughImageRepresentation(manager, backing, tracker),
++        egl_image_(std::move(egl_image)),
++        texture_(std::move(texture)) {}
++
++  ~GLTexturePassthroughRepresentation() override {
++    if (!has_context()) {
++      texture_->MarkContextLost();
++    }
++  }
++
++  const scoped_refptr<gles2::TexturePassthrough>& GetTexturePassthrough(
++      size_t plane_index) override {
++    DCHECK_EQ(plane_index, 0u);
++    return texture_;
++  }
++
++  bool BeginAccess(GLenum mode) override {
++    // Read only: the decoder wrote the picture; nothing writes it after.
++    if (mode != GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM) {
++      return false;
++    }
++    static_cast<SpatiandHardwareBufferImageBacking*>(backing())->WaitForDecoder();
++    return true;
++  }
++  void EndAccess() override {}
++  bool SupportsMultipleConcurrentReadAccess() override { return true; }
++
++ private:
++  gl::ScopedEGLImage egl_image_;
++  scoped_refptr<gles2::TexturePassthrough> texture_;
++};
++
++SpatiandHardwareBufferImageBacking::SpatiandHardwareBufferImageBacking(
++    const Mailbox& mailbox,
++    const SharedImageInfo& si_info,
++    AHardwareBuffer* buffer,
++    base::ScopedFD decoded)
++    : ClearTrackingSharedImageBacking(mailbox,
++                                      si_info,
++                                      si_info.format.EstimatedSizeInBytes(si_info.size),
++                                      /*is_thread_safe=*/false),
++      buffer_(buffer),
++      decoded_(std::move(decoded)) {
++  Calls().acquire(buffer_);
++  SetCleared();
++}
++
++SpatiandHardwareBufferImageBacking::~SpatiandHardwareBufferImageBacking() {
++  Calls().release(buffer_);
++}
++
++void SpatiandHardwareBufferImageBacking::WaitForDecoder() {
++  if (!decoded_.is_valid()) {
++    return;
++  }
++  // The GPU waits, not this thread (EGL_ANDROID_native_fence_sync); the sync takes the file.
++  EGLint attributes[] = {EGL_SYNC_NATIVE_FENCE_FD_ANDROID, decoded_.get(), EGL_NONE};
++  std::unique_ptr<gl::GLFenceEGL> fence =
++      gl::GLFenceEGL::Create(EGL_SYNC_NATIVE_FENCE_ANDROID, attributes);
++  if (fence) {
++    std::ignore = decoded_.release();
++    fence->ServerWait();
++  } else {
++    // No such syncs: this thread waits.
++    struct pollfd poll_fd = {decoded_.get(), POLLIN, 0};
++    HANDLE_EINTR(poll(&poll_fd, 1, 100));
++    decoded_.reset();
++  }
++}
++
++// static
++bool SpatiandHardwareBufferImageBacking::IsSupported() {
++  return Calls().valid();
++}
++
++SharedImageBackingType SpatiandHardwareBufferImageBacking::GetType() const {
++  return SharedImageBackingType::kAHardwareBuffer;
++}
++
++std::unique_ptr<GLTexturePassthroughImageRepresentation>
++SpatiandHardwareBufferImageBacking::ProduceGLTexturePassthrough(SharedImageManager* manager,
++                                                                MemoryTypeTracker* tracker) {
++  // ANGLE takes the buffer itself as the client buffer (AHardwareBufferImageSiblingVkSpatiand).
++  const EGLint attributes[] = {EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
++  gl::ScopedEGLImage egl_image =
++      gl::MakeScopedEGLImage(EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
++                             reinterpret_cast<EGLClientBuffer>(buffer_), attributes);
++  if (!egl_image.is_valid()) {
++    LOG(ERROR) << "Spatiand: no EGLImage of a decoder's picture (" << std::hex << eglGetError()
++               << ")";
++    return nullptr;
++  }
++  constexpr GLenum kTarget = GL_TEXTURE_EXTERNAL_OES;
++  gl::GLApi* api = gl::g_current_gl_context;
++  GLuint service_id = 0;
++  api->glGenTexturesFn(1, &service_id);
++  {
++    gl::ScopedTextureBinder binder(kTarget, service_id);
++    api->glTexParameteriFn(kTarget, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++    api->glTexParameteriFn(kTarget, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++    api->glTexParameteriFn(kTarget, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    api->glTexParameteriFn(kTarget, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    api->glEGLImageTargetTexture2DOESFn(kTarget, egl_image.get());
++  }
++  auto texture = base::MakeRefCounted<gles2::TexturePassthrough>(service_id, kTarget);
++  texture->SetEstimatedSize(GetEstimatedSize());
++  return std::make_unique<GLTexturePassthroughRepresentation>(manager, this, tracker,
++                                                              std::move(egl_image),
++                                                              std::move(texture));
++}
++
++std::unique_ptr<SkiaGaneshImageRepresentation>
++SpatiandHardwareBufferImageBacking::ProduceSkiaGanesh(
++    SharedImageManager* manager,
++    MemoryTypeTracker* tracker,
++    scoped_refptr<SharedContextState> context_state) {
++  if (!context_state->GrContextIsGL()) {
++    LOG(ERROR) << "Spatiand: a decoder's picture is drawn only by Skia on GL";
++    return nullptr;
++  }
++  auto gl_representation = ProduceGLTexturePassthrough(manager, tracker);
++  if (!gl_representation) {
++    return nullptr;
++  }
++  return SkiaGLImageRepresentation::Create(std::move(gl_representation), std::move(context_state),
++                                           manager, this, tracker);
++}
++
++}  // namespace gpu
+diff --git a/gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.h b/gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.h
+new file mode 100644
+index 0000000000..87d79fc15a
+--- /dev/null
++++ b/gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.h
+@@ -0,0 +1,72 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_SPATIAND_HARDWARE_BUFFER_IMAGE_BACKING_H_
++#define GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_SPATIAND_HARDWARE_BUFFER_IMAGE_BACKING_H_
++
++#include <memory>
++
++#include "base/files/scoped_file.h"
++#include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
++#include "gpu/gpu_gles2_export.h"
++
++typedef struct AHardwareBuffer AHardwareBuffer;
++
++namespace gpu {
++
++// Spatiand, for Chromium's Linux build on Android's libc (SpatiMesh on the Beam Pro,
++// android-libc/0028): an Android hardware buffer that a video decoder wrote a picture into, as a
++// shared image the compositor samples without a copy. On the Deck a picture is a dmabuf and an
++// OzoneImageBacking; Android's decoders give hardware buffers instead, in the GPU's own YUV layout,
++// which ANGLE imports as an EGLImage (EGL_NATIVE_BUFFER_ANDROID, its
++// AHardwareBufferImageSiblingVkSpatiand) and samples as a GL_TEXTURE_EXTERNAL_OES through Vulkan's
++// Y'CbCr conversion, the external sampler a multiplanar format that prefers one asks for.
++//
++// Read only: the GPU waits for the decoder to have finished the picture (its fence) before it
++// first reads it, and the picture goes back to the decoder when the video frame holding it is let
++// go, which the compositor does only once its reads are done (read lock fences).
++class GPU_GLES2_EXPORT SpatiandHardwareBufferImageBacking
++    : public ClearTrackingSharedImageBacking {
++ public:
++  // Takes a reference to `buffer` for its life. `decoded` signals once the decoder has finished
++  // the picture (none: finished).
++  SpatiandHardwareBufferImageBacking(const Mailbox& mailbox,
++                                     const SharedImageInfo& si_info,
++                                     AHardwareBuffer* buffer,
++                                     base::ScopedFD decoded);
++  ~SpatiandHardwareBufferImageBacking() override;
++
++  SpatiandHardwareBufferImageBacking(const SpatiandHardwareBufferImageBacking&) = delete;
++  SpatiandHardwareBufferImageBacking& operator=(const SpatiandHardwareBufferImageBacking&) =
++      delete;
++
++  // Whether this process can make such backings (Android's buffer calls found).
++  static bool IsSupported();
++
++  // SharedImageBacking:
++  SharedImageBackingType GetType() const override;
++
++ protected:
++  std::unique_ptr<GLTexturePassthroughImageRepresentation> ProduceGLTexturePassthrough(
++      SharedImageManager* manager,
++      MemoryTypeTracker* tracker) override;
++  std::unique_ptr<SkiaGaneshImageRepresentation> ProduceSkiaGanesh(
++      SharedImageManager* manager,
++      MemoryTypeTracker* tracker,
++      scoped_refptr<SharedContextState> context_state) override;
++
++ private:
++  class GLTexturePassthroughRepresentation;
++
++  // Has the GPU wait for the decoder before its first read (later reads, in the same context,
++  // come after it).
++  void WaitForDecoder();
++
++  // Not a raw_ptr: an opaque type of Android's, referenced (AHardwareBuffer_acquire) for life.
++  AHardwareBuffer* const buffer_;
++  base::ScopedFD decoded_;
++};
++
++}  // namespace gpu
++
++#endif  // GPU_COMMAND_BUFFER_SERVICE_SHARED_IMAGE_SPATIAND_HARDWARE_BUFFER_IMAGE_BACKING_H_
+diff --git a/gpu/ipc/service/gpu_channel_shared_image_interface.cc b/gpu/ipc/service/gpu_channel_shared_image_interface.cc
+index d820085d23..e5afe49663 100644
+--- a/gpu/ipc/service/gpu_channel_shared_image_interface.cc
++++ b/gpu/ipc/service/gpu_channel_shared_image_interface.cc
+@@ -18,6 +18,10 @@
+ #include "gpu/ipc/service/gpu_channel.h"
+ #include "gpu/ipc/service/gpu_channel_manager.h"
+ 
++#if defined(__TERMUX__)
++#include "gpu/command_buffer/service/shared_image/spatiand_hardware_buffer_image_backing.h"
++#endif
++
+ #if BUILDFLAG(IS_ANDROID)
+ #include "gpu/command_buffer/service/ref_counted_lock.h"
+ #include "gpu/command_buffer/service/shared_image/android_video_image_backing.h"
+@@ -100,6 +104,31 @@ GpuChannelSharedImageInterface::CreateSharedImageForAndroidVideo(
+ }
+ #endif
+ 
++#if defined(__TERMUX__)
++scoped_refptr<ClientSharedImage>
++GpuChannelSharedImageInterface::CreateSharedImageForSpatiandHardwareBuffer(
++    const SharedImageInfo& si_info,
++    AHardwareBuffer* buffer,
++    base::ScopedFD decoded) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
++  if (!shared_image_stub_ || !SpatiandHardwareBufferImageBacking::IsSupported()) {
++    return nullptr;
++  }
++  if (shared_image_stub_->shared_context_state()->context_lost()) {
++    return nullptr;
++  }
++  auto mailbox = Mailbox::Generate();
++  auto backing = std::make_unique<SpatiandHardwareBufferImageBacking>(mailbox, si_info, buffer,
++                                                                      std::move(decoded));
++  // Registered with the mailbox, which keeps the backing until its last reference goes.
++  if (!shared_image_stub_->factory()->RegisterBacking(std::move(backing))) {
++    return nullptr;
++  }
++  return base::WrapRefCounted<ClientSharedImage>(new ClientSharedImage(
++      mailbox, si_info, GenVerifiedSyncToken(), holder_, GL_TEXTURE_EXTERNAL_OES));
++}
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+ scoped_refptr<ClientSharedImage>
+ GpuChannelSharedImageInterface::CreateSharedImageForD3D11Video(
+diff --git a/gpu/ipc/service/gpu_channel_shared_image_interface.h b/gpu/ipc/service/gpu_channel_shared_image_interface.h
+index 89aed73f85..2bb4da8b6f 100644
+--- a/gpu/ipc/service/gpu_channel_shared_image_interface.h
++++ b/gpu/ipc/service/gpu_channel_shared_image_interface.h
+@@ -27,6 +27,10 @@
+ #include "gpu/command_buffer/service/shared_image/d3d_image_backing.h"
+ #endif
+ 
++#if defined(__TERMUX__)
++typedef struct AHardwareBuffer AHardwareBuffer;
++#endif
++
+ namespace gpu {
+ class Scheduler;
+ #if BUILDFLAG(IS_ANDROID)
+@@ -55,6 +59,17 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelSharedImageInterface
+       scoped_refptr<RefCountedLock> drdc_lock);
+ #endif
+ 
++#if defined(__TERMUX__)
++  // Spatiand: a picture an Android video decoder wrote into `buffer`, as a shared image the
++  // compositor samples through an external sampler (SpatiandHardwareBufferImageBacking,
++  // android-libc/0028). `si_info`'s format is a multiplanar one that prefers an external sampler.
++  // `decoded` signals once the decoder has finished the picture.
++  scoped_refptr<ClientSharedImage> CreateSharedImageForSpatiandHardwareBuffer(
++      const SharedImageInfo& si_info,
++      AHardwareBuffer* buffer,
++      base::ScopedFD decoded);
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+   scoped_refptr<ClientSharedImage> CreateSharedImageForD3D11Video(
+       const SharedImageInfo& si_info,
+diff --git a/media/mojo/services/gpu_mojo_media_client_spatiand_android.cc b/media/mojo/services/gpu_mojo_media_client_spatiand_android.cc
+index c0735b77ae..788396db34 100644
+--- a/media/mojo/services/gpu_mojo_media_client_spatiand_android.cc
++++ b/media/mojo/services/gpu_mojo_media_client_spatiand_android.cc
+@@ -3,7 +3,7 @@
+ 
+ // Spatiand: the GPU process's media client for SpatiMesh on Android's libc, in place of the stub
+ // a Linux build without VA-API has: video decoded by Android's hardware decoders
+-// (SpatiandMediaCodecVideoDecoder, android-libc/0015).
++// (SpatiandMediaCodecVideoDecoder, android-libc/0015), its pictures kept on the GPU (0028).
+ 
+ #include <memory>
+ #include <optional>
+@@ -23,8 +23,11 @@ class GpuMojoMediaClientSpatiandAndroid final : public GpuMojoMediaClient {
+ 
+  protected:
+   std::unique_ptr<VideoDecoder> CreatePlatformVideoDecoder(VideoDecoderTraits& traits) final {
+-    return std::make_unique<SpatiandMediaCodecVideoDecoder>(traits.task_runner,
+-                                                            std::move(traits.media_log));
++    // The GPU's thread and the page's command buffer: the decoder's pictures become shared images
++    // there (android-libc/0028).
++    return std::make_unique<SpatiandMediaCodecVideoDecoder>(
++        traits.task_runner, std::move(traits.media_log), gpu_task_runner_,
++        traits.get_command_buffer_stub_cb);
+   }
+ 
+   std::optional<SupportedVideoDecoderConfigs> GetPlatformSupportedVideoDecoderConfigs() final {
+diff --git a/media/mojo/services/spatiand_media_codec_video_decoder.cc b/media/mojo/services/spatiand_media_codec_video_decoder.cc
+index 74459d86dd..0b1672f269 100644
+--- a/media/mojo/services/spatiand_media_codec_video_decoder.cc
++++ b/media/mojo/services/spatiand_media_codec_video_decoder.cc
+@@ -9,18 +9,32 @@
+ #include "media/mojo/services/spatiand_media_codec_video_decoder.h"
+ 
+ #include <dlfcn.h>
++#include <media/NdkImage.h>
++#include <media/NdkImageReader.h>
+ #include <media/NdkMediaCodec.h>
+ #include <media/NdkMediaFormat.h>
+ #include <string.h>
++#include <unistd.h>
+ 
+ #include <algorithm>
++#include <atomic>
+ #include <string>
+ #include <utility>
+ 
+ #include "base/containers/span.h"
+ #include "base/functional/bind.h"
++#include "base/files/scoped_file.h"
+ #include "base/logging.h"
++#include "base/memory/ref_counted.h"
+ #include "base/no_destructor.h"
++#include "base/task/bind_post_task.h"
++#include "components/viz/common/resources/shared_image_format.h"
++#include "gpu/command_buffer/client/client_shared_image.h"
++#include "gpu/command_buffer/common/shared_image_usage.h"
++#include "gpu/ipc/service/command_buffer_stub.h"
++#include "gpu/ipc/service/gpu_channel.h"
++#include "gpu/ipc/service/gpu_channel_shared_image_interface.h"
++#include "gpu/ipc/service/shared_image_stub.h"
+ #include "media/base/media_log.h"
+ #include "media/base/video_frame.h"
+ 
+@@ -41,6 +55,79 @@ constexpr int32_t kQcomYUV420SemiPlanar32m = 0x7FA30C04;
+ constexpr base::TimeDelta kPumpEvery = base::Milliseconds(2);
+ constexpr int kIdlePumps = 100;
+ 
++// Pictures the page may hold at once, beyond which the codec waits for one to come back: the
++// reader's images. The page holds ten to sixteen while it plays (the frames its renderer has
++// queued, up to 24 once it has run short a few times, the one shown, the compositor's, those whose
++// last reads are not yet done); with ten in all the decoder had none left to draw into and 60
++// frames a second played at 36, with sixteen at 45 to 59. The renderer's own cap
++// (VideoRendererImpl's kAbsoluteMaxFrames). A buffer is made only when one is wanted, so the
++// memory is what the page holds, as it would be in frames of memory.
++constexpr int32_t kReaderImages = 24;
++// Pumps the end of the stream waits for its last pictures to come out of the reader.
++constexpr int kEosWaits = 250;
++// Pumps a picture drawn into the reader is waited for before it is taken as lost and the next is
++// drawn (none has been lost since they are drawn one at a time).
++constexpr int kDrawnWaits = 50;
++
++// The NDK calls for pictures in hardware buffers: Android 8's, newer than the NDK level this is
++// built for (24).
++struct ImageCalls {
++  media_status_t (*new_with_usage)(int32_t, int32_t, int32_t, uint64_t, int32_t,
++                                   AImageReader**) = nullptr;
++  media_status_t (*acquire_async)(AImageReader*, AImage**, int*) = nullptr;
++  media_status_t (*hardware_buffer)(const AImage*, AHardwareBuffer**) = nullptr;
++  void (*delete_async)(AImage*, int) = nullptr;
++  bool valid() const { return new_with_usage && acquire_async && hardware_buffer && delete_async; }
++};
++
++const ImageCalls& Images() {
++  static const ImageCalls calls = [] {
++    ImageCalls found;
++    if (void* ndk = dlopen("libmediandk.so", RTLD_NOW)) {
++      found.new_with_usage = reinterpret_cast<decltype(found.new_with_usage)>(
++          dlsym(ndk, "AImageReader_newWithUsage"));
++      found.acquire_async = reinterpret_cast<decltype(found.acquire_async)>(
++          dlsym(ndk, "AImageReader_acquireNextImageAsync"));
++      found.hardware_buffer = reinterpret_cast<decltype(found.hardware_buffer)>(
++          dlsym(ndk, "AImage_getHardwareBuffer"));
++      found.delete_async =
++          reinterpret_cast<decltype(found.delete_async)>(dlsym(ndk, "AImage_deleteAsync"));
++    }
++    return found;
++  }();
++  return calls;
++}
++
++// The GPU channel's shared images, asked for on the GPU's thread.
++scoped_refptr<gpu::GpuChannelSharedImageInterface> SharedImagesOf(GetCommandBufferStubCB get_stub) {
++  gpu::CommandBufferStub* stub = get_stub ? get_stub.Run() : nullptr;
++  if (!stub || !stub->channel() || !stub->channel()->shared_image_stub()) {
++    return nullptr;
++  }
++  return stub->channel()->shared_image_stub()->shared_image_interface();
++}
++
++// A picture made a shared image, on the GPU's thread: sampled as it is, YUV through an external
++// sampler, as the Deck's VA-API pictures are.
++scoped_refptr<gpu::ClientSharedImage> MakeSharedImage(
++    scoped_refptr<gpu::GpuChannelSharedImageInterface> sii,
++    AHardwareBuffer* buffer,
++    base::ScopedFD decoded,
++    gfx::Size size,
++    bool ten_bit,
++    gfx::ColorSpace color_space) {
++  viz::SharedImageFormat format =
++      ten_bit ? viz::MultiPlaneFormat::kP010 : viz::MultiPlaneFormat::kNV12;
++  format.SetPrefersExternalSampler();
++  gpu::SharedImageInfo info(format, size, color_space, kTopLeft_GrSurfaceOrigin,
++                            kPremul_SkAlphaType,
++                            gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
++                                gpu::SHARED_IMAGE_USAGE_GLES2_READ |
++                                gpu::SHARED_IMAGE_USAGE_RASTER_READ,
++                            "SpatiandMediaCodecPicture");
++  return sii->CreateSharedImageForSpatiandHardwareBuffer(info, buffer, std::move(decoded));
++}
++
+ const char* MimeFor(VideoCodec codec) {
+   switch (codec) {
+     case VideoCodec::kH264:
+@@ -96,6 +183,74 @@ bool HasHardwareDecoder(const char* mime) {
+ 
+ }  // namespace
+ 
++class SpatiandMediaCodecVideoDecoder::Reader : public base::RefCountedThreadSafe<Reader> {
++ public:
++  static scoped_refptr<Reader> Create(int32_t width, int32_t height) {
++    if (!Images().valid()) {
++      return nullptr;
++    }
++    const int32_t images = kReaderImages;
++    AImageReader* reader = nullptr;
++    if (Images().new_with_usage(width, height, AIMAGE_FORMAT_PRIVATE,
++                                AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, images,
++                                &reader) != AMEDIA_OK ||
++        !reader) {
++      return nullptr;
++    }
++    ANativeWindow* window = nullptr;
++    if (AImageReader_getWindow(reader, &window) != AMEDIA_OK || !window) {
++      AImageReader_delete(reader);
++      return nullptr;
++    }
++    return base::WrapRefCounted(new Reader(reader, window, images));
++  }
++
++  ANativeWindow* window() const { return window_; }
++  int32_t images() const { return images_; }
++
++  // The next picture the codec drew, with the fence its drawing signals.
++  AImage* Take(int* fence) {
++    AImage* image = nullptr;
++    *fence = -1;
++    if (Images().acquire_async(reader_, &image, fence) != AMEDIA_OK) {
++      return nullptr;
++    }
++    return image;
++  }
++
++  // A picture handed back (from any thread), its buffer the codec's again.
++  void Give(AImage* image) {
++    Images().delete_async(image, -1);
++    held_.fetch_sub(1, std::memory_order_relaxed);
++  }
++  void Held() { held_.fetch_add(1, std::memory_order_relaxed); }
++  int held() const { return held_.load(std::memory_order_relaxed); }
++
++  // Called on the reader's own thread when a picture arrives.
++  void Listen(base::RepeatingClosure on_image) {
++    on_image_ = std::move(on_image);
++    listener_.context = this;
++    listener_.onImageAvailable = [](void* context, AImageReader*) {
++      static_cast<Reader*>(context)->on_image_.Run();
++    };
++    AImageReader_setImageListener(reader_, &listener_);
++  }
++  void StopListening() { AImageReader_setImageListener(reader_, nullptr); }
++
++ private:
++  friend class base::RefCountedThreadSafe<Reader>;
++  Reader(AImageReader* reader, ANativeWindow* window, int32_t images)
++      : reader_(reader), window_(window), images_(images) {}
++  ~Reader() { AImageReader_delete(reader_); }
++
++  AImageReader* const reader_;
++  ANativeWindow* const window_;
++  const int32_t images_;
++  AImageReader_ImageListener listener_ = {};
++  base::RepeatingClosure on_image_;
++  std::atomic<int> held_{0};
++};
++
+ SpatiandMediaCodecVideoDecoder::Pending::Pending(scoped_refptr<DecoderBuffer> buffer,
+                                                  DecodeCB decode_cb)
+     : buffer(std::move(buffer)), decode_cb(std::move(decode_cb)) {}
+@@ -139,8 +294,13 @@ SupportedVideoDecoderConfigs SpatiandMediaCodecVideoDecoder::GetSupportedConfigs
+ 
+ SpatiandMediaCodecVideoDecoder::SpatiandMediaCodecVideoDecoder(
+     scoped_refptr<base::SequencedTaskRunner> task_runner,
+-    std::unique_ptr<MediaLog> media_log)
+-    : task_runner_(std::move(task_runner)), media_log_(std::move(media_log)) {}
++    std::unique_ptr<MediaLog> media_log,
++    scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner,
++    GetCommandBufferStubCB get_stub_cb)
++    : task_runner_(std::move(task_runner)),
++      media_log_(std::move(media_log)),
++      gpu_task_runner_(std::move(gpu_task_runner)),
++      get_stub_cb_(std::move(get_stub_cb)) {}
+ 
+ SpatiandMediaCodecVideoDecoder::~SpatiandMediaCodecVideoDecoder() {
+   Abort(DecoderStatus::Codes::kAborted);
+@@ -165,6 +325,32 @@ void SpatiandMediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config
+   }
+   Abort(DecoderStatus::Codes::kAborted);
+   CloseCodec();
++  config_ = config;
++  output_cb_ = output_cb;
++  // The GPU channel's shared images, for pictures that stay on the GPU; asked for on the GPU's
++  // thread, and without them the pictures are copied out.
++  if (!sii_ && gpu_task_runner_ && get_stub_cb_ && Images().valid()) {
++    gpu_task_runner_->PostTaskAndReplyWithResult(
++        FROM_HERE, base::BindOnce(&SharedImagesOf, get_stub_cb_),
++        base::BindOnce(&SpatiandMediaCodecVideoDecoder::InitializeCodec,
++                       weak_factory_.GetWeakPtr(), std::move(init_cb)));
++    return;
++  }
++  InitializeCodec(std::move(init_cb), sii_);
++}
++
++void SpatiandMediaCodecVideoDecoder::InitializeCodec(
++    InitCB init_cb,
++    scoped_refptr<gpu::GpuChannelSharedImageInterface> sii) {
++  DCHECK(task_runner_->RunsTasksInCurrentSequence());
++  auto done = [&](DecoderStatus::Codes code) {
++    task_runner_->PostTask(FROM_HERE, base::BindOnce(std::move(init_cb), code));
++  };
++  sii_ = std::move(sii);
++  // A second Initialize may have overtaken this one.
++  CloseCodec();
++  const VideoDecoderConfig& config = config_;
++  const char* mime = MimeFor(config.codec());
+   AMediaCodec* codec = AMediaCodec_createDecoderByType(mime);
+   if (!codec) {
+     done(DecoderStatus::Codes::kFailedToCreateDecoder);
+@@ -179,24 +365,56 @@ void SpatiandMediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config
+   AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mime);
+   AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, config.coded_size().width());
+   AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, config.coded_size().height());
+-  // Ten bits a sample as P010, which Chromium's frames take as they are; eight as whatever the
+-  // decoder gives, NV12 or I420.
+   const bool ten_bit = config.profile() == HEVCPROFILE_MAIN10 ||
+                        config.profile() == VP9PROFILE_PROFILE2;
+-  AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT,
+-                        ten_bit ? kYUVP010 : kYUV420Flexible);
+-  const media_status_t configured = AMediaCodec_configure(codec, format, nullptr, nullptr, 0);
++  // On the GPU: the codec draws into a reader's hardware buffers, in its own layout. Copied out:
++  // ten bits a sample as P010, which Chromium's frames take as they are; eight as whatever the
++  // decoder gives, NV12 or I420.
++  scoped_refptr<Reader> reader;
++  if (sii_) {
++    reader = Reader::Create(config.coded_size().width(), config.coded_size().height());
++  }
++  if (!reader) {
++    AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT,
++                          ten_bit ? kYUVP010 : kYUV420Flexible);
++  }
++  media_status_t configured = AMediaCodec_configure(
++      codec, format, reader ? reader->window() : nullptr, nullptr, 0);
++  if (configured != AMEDIA_OK && reader) {
++    LOG(WARNING) << "Spatiand: Android's " << mime
++                 << " decoder would not draw into hardware buffers (" << configured
++                 << "), its pictures are copied out";
++    reader = nullptr;
++    AMediaCodec_delete(codec);
++    codec = AMediaCodec_createDecoderByType(mime);
++    AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT,
++                          ten_bit ? kYUVP010 : kYUV420Flexible);
++    configured = codec ? AMediaCodec_configure(codec, format, nullptr, nullptr, 0)
++                       : AMEDIA_ERROR_UNKNOWN;
++  }
+   AMediaFormat_delete(format);
+   if (configured != AMEDIA_OK || AMediaCodec_start(codec) != AMEDIA_OK) {
+     LOG(WARNING) << "Spatiand: Android's " << mime << " decoder would not start ("
+                  << configured << ")";
+-    AMediaCodec_delete(codec);
++    if (codec) {
++      AMediaCodec_delete(codec);
++    }
+     done(DecoderStatus::Codes::kFailedToCreateDecoder);
+     return;
+   }
+   codec_ = codec;
+-  config_ = config;
+-  output_cb_ = output_cb;
++  reader_ = std::move(reader);
++  if (reader_) {
++    // A picture in the reader: looked for at once, not at the next pump.
++    reader_->Listen(base::BindPostTask(
++        task_runner_, base::BindRepeating(&SpatiandMediaCodecVideoDecoder::Pump,
++                                          weak_factory_.GetWeakPtr())));
++  }
++  VLOG(1) << "Spatiand: Android's " << mime << " decoder "
++          << (reader_ ? "draws into hardware buffers" : "copies its pictures out");
++  drawn_.clear();
++  to_draw_.clear();
++  eos_drawn_ = false;
+   color_format_ = 0;
+   width_ = config.coded_size().width();
+   height_ = config.coded_size().height();
+@@ -227,6 +445,11 @@ void SpatiandMediaCodecVideoDecoder::Reset(base::OnceClosure closure) {
+   if (codec_) {
+     AMediaCodec_flush(codec_);
+   }
++  // Pictures drawn before, still in the reader or on their way to the page, are dropped.
++  ++reset_count_;
++  drawn_.clear();
++  to_draw_.clear();
++  eos_drawn_ = false;
+   task_runner_->PostTask(FROM_HERE, std::move(closure));
+ }
+ 
+@@ -236,7 +459,9 @@ bool SpatiandMediaCodecVideoDecoder::NeedsBitstreamConversion() const {
+ }
+ 
+ bool SpatiandMediaCodecVideoDecoder::CanReadWithoutStalling() const {
+-  return true;
++  // With the page holding most of the reader's pictures, the codec has few to draw into until
++  // one comes back: the page is not to wait for more before it plays.
++  return !reader_ || reader_->held() < reader_->images() - 4;
+ }
+ 
+ int SpatiandMediaCodecVideoDecoder::GetMaxDecodeRequests() const {
+@@ -261,7 +486,17 @@ void SpatiandMediaCodecVideoDecoder::Pump() {
+     CloseCodec();
+     return;
+   }
+-  if (!pending_.empty() || eos_cb_ || ++idle_pumps_ < kIdlePumps) {
++  if (reader_) {
++    TakeImages();
++    if (!drawn_.empty() && ++drawn_waits_ > kDrawnWaits) {
++      LOG(WARNING) << "Spatiand: a decoder's picture never reached its reader";
++      drawn_.clear();
++      DrawNext();
++    }
++    MaybeFinishEndOfStream();
++  }
++  if (!pending_.empty() || eos_cb_ || !drawn_.empty() || !to_draw_.empty() ||
++      ++idle_pumps_ < kIdlePumps) {
+     timer_.Start(FROM_HERE, kPumpEvery,
+                  base::BindOnce(&SpatiandMediaCodecVideoDecoder::Pump,
+                                 weak_factory_.GetWeakPtr()));
+@@ -323,6 +558,17 @@ bool SpatiandMediaCodecVideoDecoder::DrainOutput() {
+       return false;
+     }
+     idle_pumps_ = 0;
++    if (reader_) {
++      // Drawn into the reader one at a time (DrawNext).
++      to_draw_.push_back({static_cast<size_t>(index), info.presentationTimeUs,
++                          info.size > 0 && !(info.flags & AMEDIACODEC_BUFFER_FLAG_CODEC_CONFIG),
++                          (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) != 0});
++      DrawNext();
++      if (info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) {
++        return true;
++      }
++      continue;
++    }
+     const bool delivered = info.size <= 0 || DeliverFrame(index, info);
+     AMediaCodec_releaseOutputBuffer(codec_, index, false);
+     if (!delivered) {
+@@ -340,6 +586,156 @@ bool SpatiandMediaCodecVideoDecoder::DrainOutput() {
+   }
+ }
+ 
++void SpatiandMediaCodecVideoDecoder::DrawNext() {
++  // A picture drawn while the one before is still in the reader's queue would replace it (the
++  // codec's surface does not wait for the reader): the next is drawn once the reader has given
++  // the one before. Lost so, 60-frame H.264 reached the page at 42 frames a second.
++  while (drawn_.empty() && !to_draw_.empty()) {
++    const ToDraw next = to_draw_.front();
++    to_draw_.pop_front();
++    if (next.picture) {
++      drawn_.push_back(next.timestamp_us);
++      drawn_waits_ = 0;
++    }
++    AMediaCodec_releaseOutputBuffer(codec_, next.index, next.picture);
++    if (next.end_of_stream) {
++      eos_drawn_ = true;
++      eos_waits_ = 0;
++    }
++  }
++}
++
++void SpatiandMediaCodecVideoDecoder::TakeImages() {
++  for (;;) {
++    int fence = -1;
++    AImage* image = reader_->Take(&fence);
++    if (!image) {
++      return;
++    }
++    reader_->Held();
++    int64_t nanoseconds = 0;
++    AImage_getTimestamp(image, &nanoseconds);
++    const int64_t microseconds = nanoseconds / 1000;
++    // In the order drawn; one the codec drew before a reset, or never said it drew, is dropped.
++    auto drawn = std::find(drawn_.begin(), drawn_.end(), microseconds);
++    AHardwareBuffer* buffer = nullptr;
++    ++taken_;
++    if (drawn == drawn_.end() || Images().hardware_buffer(image, &buffer) != AMEDIA_OK ||
++        !buffer) {
++      ++unmatched_;
++      if (fence >= 0) {
++        close(fence);
++      }
++      reader_->Give(image);
++      continue;
++    }
++    drawn_.erase(drawn_.begin(), drawn + 1);
++    idle_pumps_ = 0;
++    drawn_waits_ = 0;
++    DrawNext();
++    int32_t width = 0, height = 0;
++    AImage_getWidth(image, &width);
++    AImage_getHeight(image, &height);
++    AImageCropRect crop = {0, 0, width, height};
++    AImage_getCropRect(image, &crop);
++    gfx::Rect visible(crop.left, crop.top, crop.right - crop.left, crop.bottom - crop.top);
++    visible.Intersect(gfx::Rect(width, height));
++    if (visible.IsEmpty()) {
++      visible = gfx::Rect(width, height);
++    }
++    const bool ten_bit = config_.profile() == HEVCPROFILE_MAIN10 ||
++                         config_.profile() == VP9PROFILE_PROFILE2;
++    gfx::ColorSpace color_space = config_.color_space_info().ToGfxColorSpace();
++    if (!color_space.IsValid()) {
++      color_space = gfx::ColorSpace::CreateREC709();
++    }
++    ++becoming_shared_;
++    gpu_task_runner_->PostTaskAndReplyWithResult(
++        FROM_HERE,
++        base::BindOnce(&MakeSharedImage, sii_, buffer, base::ScopedFD(fence),
++                       gfx::Size(width, height), ten_bit, color_space),
++        base::BindOnce(&SpatiandMediaCodecVideoDecoder::OnSharedImage,
++                       weak_factory_.GetWeakPtr(), reader_, reset_count_, image, ten_bit,
++                       base::Microseconds(microseconds), visible));
++  }
++}
++
++void SpatiandMediaCodecVideoDecoder::OnSharedImage(
++    scoped_refptr<Reader> reader,
++    uint32_t reset_count,
++    AImage* image,
++    bool ten_bit,
++    base::TimeDelta timestamp,
++    gfx::Rect visible_rect,
++    scoped_refptr<gpu::ClientSharedImage> shared_image) {
++  DCHECK(task_runner_->RunsTasksInCurrentSequence());
++  --becoming_shared_;
++  if (!shared_image || reset_count != reset_count_ || reader != reader_) {
++    // Of before a reset, or of a codec since closed: back to the reader it came from.
++    if (!shared_image && reset_count == reset_count_) {
++      LOG(WARNING) << "Spatiand: a decoder's picture did not become a shared image";
++    }
++    reader->Give(image);
++    MaybeFinishEndOfStream();
++    return;
++  }
++  const gpu::SyncToken sync_token = shared_image->creation_sync_token();
++  const gfx::ColorSpace color_space = shared_image->color_space();
++  // The frame holds the shared image unowned: the shared image itself is kept until the frame is
++  // let go, then destroyed once the page's last use of it is done (its release sync token), and
++  // the picture goes back to the codec. The compositor lets a frame go only once its reads are
++  // done (read lock fences). From whichever thread lets it go.
++  auto frame = VideoFrame::WrapSharedImage(
++      ten_bit ? PIXEL_FORMAT_P010LE : PIXEL_FORMAT_NV12, shared_image, sync_token,
++      base::BindOnce(
++          [](scoped_refptr<Reader> reader, AImage* image,
++             scoped_refptr<gpu::ClientSharedImage> shared_image,
++             const gpu::SyncToken& release_sync_token) {
++            shared_image->UpdateDestructionSyncToken(release_sync_token);
++            shared_image.reset();
++            reader->Give(image);
++          },
++          reader, image, shared_image),
++      visible_rect, config_.natural_size(), timestamp);
++  if (!frame) {
++    LOG(WARNING) << "Spatiand: no video frame of a decoder's picture";
++    reader->Give(image);
++    MaybeFinishEndOfStream();
++    return;
++  }
++  frame->set_color_space(color_space);
++  frame->set_hdr_metadata(config_.hdr_metadata());
++  frame->metadata().read_lock_fences_enabled = true;
++  frame->metadata().power_efficient = true;
++  output_cb_.Run(std::move(frame));
++  if (++output_ % 120 == 0) {
++    VLOG(1) << "Spatiand: pictures out " << output_ << ", taken " << taken_ << " (" << unmatched_
++            << " not drawn by this codec), held by the page " << reader_->held()
++            << ", waiting for the reader " << drawn_.size() << ", input waiting " << pending_.size();
++  }
++  MaybeFinishEndOfStream();
++}
++
++void SpatiandMediaCodecVideoDecoder::MaybeFinishEndOfStream() {
++  if (!eos_drawn_ || !codec_) {
++    return;
++  }
++  // Every picture before the end on its way to the page, or the reader given long enough.
++  if ((!drawn_.empty() || !to_draw_.empty() || becoming_shared_ > 0) &&
++      ++eos_waits_ < kEosWaits) {
++    return;
++  }
++  eos_drawn_ = false;
++  drawn_.clear();
++  to_draw_.clear();
++  // Flushed: it takes input again only after a flush of its own.
++  AMediaCodec_flush(codec_);
++  if (eos_cb_) {
++    task_runner_->PostTask(FROM_HERE,
++                           base::BindOnce(std::move(eos_cb_), DecoderStatus::Codes::kOk));
++  }
++}
++
+ void SpatiandMediaCodecVideoDecoder::ReadOutputFormat() {
+   AMediaFormat* format = AMediaCodec_getOutputFormat(codec_);
+   if (!format) {
+@@ -491,6 +887,14 @@ void SpatiandMediaCodecVideoDecoder::CloseCodec() {
+     AMediaCodec_delete(codec_);
+     codec_ = nullptr;
+   }
++  if (reader_) {
++    // The reader itself stays while the page holds any of its pictures.
++    reader_->StopListening();
++    reader_ = nullptr;
++  }
++  drawn_.clear();
++  to_draw_.clear();
++  eos_drawn_ = false;
+ }
+ 
+ }  // namespace media
+diff --git a/media/mojo/services/spatiand_media_codec_video_decoder.h b/media/mojo/services/spatiand_media_codec_video_decoder.h
+index 5c66689296..b74334b241 100644
+--- a/media/mojo/services/spatiand_media_codec_video_decoder.h
++++ b/media/mojo/services/spatiand_media_codec_video_decoder.h
+@@ -12,15 +12,23 @@
+ #include "base/memory/scoped_refptr.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/task/sequenced_task_runner.h"
++#include "base/task/single_thread_task_runner.h"
+ #include "base/timer/timer.h"
+ #include "media/base/decoder_buffer.h"
+ #include "media/base/supported_video_decoder_config.h"
+ #include "media/base/video_decoder.h"
+ #include "media/base/video_decoder_config.h"
++#include "media/mojo/services/gpu_mojo_media_client.h"
+ #include "ui/gfx/geometry/rect.h"
+ 
+ struct AMediaCodec;
+ struct AMediaCodecBufferInfo;
++struct AImage;
++
++namespace gpu {
++class ClientSharedImage;
++class GpuChannelSharedImageInterface;
++}  // namespace gpu
+ 
+ namespace media {
+ 
+@@ -28,9 +36,15 @@ class MediaLog;
+ 
+ // Spatiand: video decoded by Android's own hardware decoders (MediaCodec, through the NDK), in the
+ // GPU process, for SpatiMesh on Android's libc: Chromium's Linux GPU process decodes only with
+-// VA-API and V4L2, which Android has not got (android-libc/0015). Each picture the decoder gives
+-// is copied into a frame of memory, which goes to the page as shared memory: a copy or two more
+-// than the Deck's dmabufs, the decoding itself done by the hardware.
++// VA-API and V4L2, which Android has not got (android-libc/0015).
++//
++// The pictures stay on the GPU (android-libc/0028), as the Deck's VA-API pictures do: the decoder
++// draws into an AImageReader's Android hardware buffers, each of which is made a shared image
++// (gpu::SpatiandHardwareBufferImageBacking) the compositor samples as it is, YUV in the GPU's own
++// layout, and goes back to the decoder when its video frame is let go. Where that cannot be set up
++// (no GPU channel, a reader that will not start), each picture is copied out into a frame of
++// memory instead, as before: a copy on the CPU and two more on the way to the screen, which at
++// 1080p and 60 frames a second dropped one in four.
+ class SpatiandMediaCodecVideoDecoder : public VideoDecoder {
+  public:
+   // What the hardware decoders here take. Android's own software decoders are left out:
+@@ -38,7 +52,9 @@ class SpatiandMediaCodecVideoDecoder : public VideoDecoder {
+   static SupportedVideoDecoderConfigs GetSupportedConfigs();
+ 
+   SpatiandMediaCodecVideoDecoder(scoped_refptr<base::SequencedTaskRunner> task_runner,
+-                                 std::unique_ptr<MediaLog> media_log);
++                                 std::unique_ptr<MediaLog> media_log,
++                                 scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner,
++                                 GetCommandBufferStubCB get_stub_cb);
+   SpatiandMediaCodecVideoDecoder(const SpatiandMediaCodecVideoDecoder&) = delete;
+   SpatiandMediaCodecVideoDecoder& operator=(const SpatiandMediaCodecVideoDecoder&) = delete;
+   ~SpatiandMediaCodecVideoDecoder() override;
+@@ -67,20 +83,42 @@ class SpatiandMediaCodecVideoDecoder : public VideoDecoder {
+     scoped_refptr<DecoderBuffer> buffer;
+     DecodeCB decode_cb;
+   };
++  // The AImageReader the codec draws into, kept until the last picture taken from it is let go
++  // (its pictures are its own, and die with it).
++  class Reader;
+ 
++  // Initialize's second half, once the GPU channel's shared images are known (or not).
++  void InitializeCodec(InitCB init_cb,
++                       scoped_refptr<gpu::GpuChannelSharedImageInterface> sii);
+   // Hands the codec what it will take and the page what it has given; again shortly while it
+   // holds anything (the NDK's API of this Android level has no callbacks).
+   void Pump();
+   bool FeedInput();
+   bool DrainOutput();
+   void ReadOutputFormat();
++  // Copied out (no reader).
+   bool DeliverFrame(size_t index, const AMediaCodecBufferInfo& info);
+   bool DeliverP010Frame(const uint8_t* picture, size_t available, const AMediaCodecBufferInfo& info);
++  // On the GPU (a reader): the codec's next picture drawn into the reader, and the pictures the
++  // reader has, matched to the ones the codec drew.
++  void DrawNext();
++  void TakeImages();
++  void OnSharedImage(scoped_refptr<Reader> reader,
++                     uint32_t reset_count,
++                     AImage* image,
++                     bool ten_bit,
++                     base::TimeDelta timestamp,
++                     gfx::Rect visible_rect,
++                     scoped_refptr<gpu::ClientSharedImage> shared_image);
++  // The end of the stream reached once every picture before it has gone to the page.
++  void MaybeFinishEndOfStream();
+   void Abort(DecoderStatus::Codes code);
+   void CloseCodec();
+ 
+   scoped_refptr<base::SequencedTaskRunner> task_runner_;
+   std::unique_ptr<MediaLog> media_log_;
++  scoped_refptr<base::SingleThreadTaskRunner> gpu_task_runner_;
++  GetCommandBufferStubCB get_stub_cb_;
+   VideoDecoderConfig config_;
+   OutputCB output_cb_;
+   AMediaCodec* codec_ = nullptr;
+@@ -96,6 +134,34 @@ class SpatiandMediaCodecVideoDecoder : public VideoDecoder {
+   int32_t stride_ = 0;
+   int32_t slice_height_ = 0;
+   gfx::Rect crop_;
++
++  // On the GPU: the reader, the GPU channel's shared images, the pictures the codec has drawn and
++  // the reader not yet given (their times, in order), those on their way to becoming shared
++  // images, and how many times the decoder was reset (pictures of before are dropped).
++  scoped_refptr<Reader> reader_;
++  scoped_refptr<gpu::GpuChannelSharedImageInterface> sii_;
++  std::deque<int64_t> drawn_;
++  // The codec's output buffers not yet drawn, in order.
++  struct ToDraw {
++    size_t index;
++    int64_t timestamp_us;
++    bool picture;
++    bool end_of_stream;
++  };
++  std::deque<ToDraw> to_draw_;
++  int becoming_shared_ = 0;
++  // Counts for the log: pictures taken from the reader, of those not drawn by this codec (since its
++  // last reset), and gone to the page.
++  int64_t taken_ = 0;
++  int64_t unmatched_ = 0;
++  int64_t output_ = 0;
++  uint32_t reset_count_ = 0;
++  // The codec said its stream ended; the callback waits for the pictures before it.
++  bool eos_drawn_ = false;
++  int eos_waits_ = 0;
++  // Pumps since the picture drawn last was drawn.
++  int drawn_waits_ = 0;
++
+   base::OneShotTimer timer_;
+   base::WeakPtrFactory<SpatiandMediaCodecVideoDecoder> weak_factory_{this};
+ };
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/vk_cache_utils.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/vk_cache_utils.cpp
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/vk_cache_utils.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/vk_cache_utils.cpp
+@@ -28,6 +28,10 @@
+ #include "libANGLE/renderer/vulkan/vk_helpers.h"
+ #include "libANGLE/renderer/vulkan/vk_renderer.h"
+ 
++#if defined(__TERMUX__) && !defined(VK_USE_PLATFORM_ANDROID_KHR)
++#    include <vulkan/vulkan_android.h>
++#endif
++
+ #include <type_traits>
+ 
+ namespace rx
+@@ -5595,7 +5599,10 @@
+         static_cast<VkComponentSwizzle>(mRSwizzle), static_cast<VkComponentSwizzle>(mGSwizzle),
+         static_cast<VkComponentSwizzle>(mBSwizzle), static_cast<VkComponentSwizzle>(mASwizzle)};
+ 
+-#ifdef VK_USE_PLATFORM_ANDROID_KHR
++#if defined(VK_USE_PLATFORM_ANDROID_KHR) || defined(__TERMUX__)
++    // Built for Linux on Android's libc too (__TERMUX__): Android hardware buffers of the GPU's own
++    // formats, such as a video decoder's pictures, are sampled through their external format
++    // (linux/AHardwareBufferImageSiblingVkSpatiand.cpp).
+     VkExternalFormatANDROID externalFormat = {};
+     if (getExternalFormat() != 0)
+     {
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.cpp
+@@ -6,10 +6,11 @@
+ // AHardwareBufferImageSiblingVkSpatiand.cpp:
+ //    An Android hardware buffer as an EGLImage, for ANGLE built for Linux on Android's libc. See
+ //    the header. Made as HardwareBufferImageSiblingVkAndroid makes its images, less what only
+-//    Android's own build has (external formats, YUV, ANativeWindowBuffer): the buffer is imported
++//    Android's own build has (ANativeWindowBuffer, rendering into YUV): the buffer is imported
+ //    into a Vulkan image owned by the foreign queue, so that ANGLE gives it back to the foreign
+ //    queue after every submission that drew into it, and another process (Spatiand's room) can
+-//    read what was drawn.
++//    read what was drawn. A video decoder's pictures (YUV in the GPU's own layout, which Vulkan
++//    knows only by an external format) are sampled through a Y'CbCr conversion, as on Android.
+ //
+ 
+ #include "libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h"
+@@ -22,6 +23,7 @@
+ 
+ #    include "libANGLE/Display.h"
+ #    include "libANGLE/renderer/vulkan/DisplayVk.h"
++#    include "libANGLE/renderer/vulkan/vk_format_utils.h"
+ #    include "libANGLE/renderer/vulkan/vk_renderer.h"
+ 
+ namespace rx
+@@ -68,6 +70,36 @@
+ {
+     return reinterpret_cast<AHardwareBuffer *>(buffer);
+ }
++
++bool IsRgba(uint32_t format)
++{
++    return format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM ||
++           format == AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM;
++}
++
++// What Vulkan makes of a buffer that is not RGBA (a decoder's YUV): a format of its own, or the
++// GPU's own layout known by an external format; either is sampled through a Y'CbCr conversion.
++struct YuvSupport
++{
++    bool external = false;  // Sampled through its external format.
++    bool known    = false;  // Sampled as the Vulkan format Vulkan names for it.
++};
++
++YuvSupport CheckYuvSupport(vk::Renderer *renderer,
++                           const VkAndroidHardwareBufferFormatPropertiesANDROID &properties)
++{
++    YuvSupport support;
++    support.external = properties.externalFormat != 0 &&
++                       (properties.formatFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
++    if (properties.format != VK_FORMAT_UNDEFINED)
++    {
++        const angle::FormatID formatID = vk::GetFormatIDFromVkFormat(properties.format);
++        support.known = formatID != angle::FormatID::NONE &&
++                        angle::Format::Get(formatID).isYUV &&
++                        HasSampleOnlyTextureFormatSupport(renderer, formatID);
++    }
++    return support;
++}
+ }  // anonymous namespace
+ 
+ AHardwareBufferImageSiblingVkSpatiand::AHardwareBufferImageSiblingVkSpatiand(EGLClientBuffer buffer)
+@@ -77,6 +109,7 @@
+       mAcquired(false),
+       mRenderable(false),
+       mTextureable(false),
++      mYUV(false),
+       mImage(nullptr)
+ {}
+ 
+@@ -99,10 +132,29 @@
+     }
+     AHardwareBuffer_Desc description = {};
+     Calls().describe(HardwareBufferOf(buffer), &description);
+-    if (description.format != AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM &&
+-        description.format != AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM)
++    if (!IsRgba(description.format))
+     {
+-        return egl::Error(EGL_BAD_PARAMETER, "Only RGBA and RGBX hardware buffers.");
++        // A decoder's picture: sampled only, through a Y'CbCr conversion.
++        VkAndroidHardwareBufferFormatPropertiesANDROID formatProperties = {};
++        formatProperties.sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_FORMAT_PROPERTIES_ANDROID;
++        VkAndroidHardwareBufferPropertiesANDROID bufferProperties = {};
++        bufferProperties.sType = VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID;
++        bufferProperties.pNext = &formatProperties;
++        if (GetProperties(renderer->getDevice())(renderer->getDevice(), HardwareBufferOf(buffer),
++                                                 &bufferProperties) != VK_SUCCESS)
++        {
++            return egl::Error(EGL_BAD_PARAMETER, "Vulkan does not know the hardware buffer.");
++        }
++        const YuvSupport support = CheckYuvSupport(renderer, formatProperties);
++        if (!support.external && !support.known)
++        {
++            return egl::Error(EGL_BAD_PARAMETER,
++                              "The hardware buffer is neither RGBA nor YUV Vulkan can sample.");
++        }
++        if (!renderer->getFeatures().supportsYUVSamplerConversion.enabled)
++        {
++            return egl::Error(EGL_BAD_PARAMETER, "Vulkan has no Y'CbCr conversion.");
++        }
+     }
+     if (description.layers != 1 ||
+         (description.usage & (AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
+@@ -148,6 +200,11 @@
+     ANGLE_VK_TRY(displayVk,
+                  getProperties(renderer->getDevice(), hardwareBuffer, &bufferProperties));
+ 
++    if (!IsRgba(description.format))
++    {
++        return initYuv(displayVk, description, bufferProperties, formatProperties);
++    }
++
+     const vk::Format &vkFormat =
+         renderer->getFormat(description.format == AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM
+                                 ? GL_RGBX8_ANGLE
+@@ -225,6 +282,109 @@
+     return angle::Result::Continue;
+ }
+ 
++// A decoder's picture, YUV: sampled only, through a Y'CbCr conversion made from what the driver
++// suggests for it (its matrix, range and chroma siting), as HardwareBufferImageSiblingVkAndroid
++// samples such buffers on Android.
++angle::Result AHardwareBufferImageSiblingVkSpatiand::initYuv(
++    DisplayVk *displayVk,
++    const AHardwareBuffer_Desc &description,
++    const VkAndroidHardwareBufferPropertiesANDROID &bufferProperties,
++    const VkAndroidHardwareBufferFormatPropertiesANDROID &formatProperties)
++{
++    vk::Renderer *renderer   = displayVk->getRenderer();
++    const YuvSupport support = CheckYuvSupport(renderer, formatProperties);
++    ANGLE_VK_CHECK(displayVk, support.known || support.external, VK_ERROR_FORMAT_NOT_SUPPORTED);
++    ANGLE_VK_CHECK(displayVk, renderer->getFeatures().supportsYUVSamplerConversion.enabled,
++                   VK_ERROR_FEATURE_NOT_PRESENT);
++    const bool isExternal = !support.known;
++
++    // The format the front end sees: RGB, as a GL_TEXTURE_EXTERNAL_OES of YUV samples as RGB.
++    // The image itself: Vulkan's format for it, or none with the external format.
++    const vk::Format *vkFormat =
++        isExternal ? &renderer->getFormat(angle::FormatID::NONE)
++                   : &renderer->getFormat(vk::GetFormatIDFromVkFormat(formatProperties.format));
++    mFormat = gl::Format(isExternal ? GL_RGB8 : vkFormat->getIntendedGLFormat());
++    mYUV    = true;
++
++    VkExternalFormatANDROID externalFormat = {};
++    externalFormat.sType                   = VK_STRUCTURE_TYPE_EXTERNAL_FORMAT_ANDROID;
++    externalFormat.externalFormat          = isExternal ? formatProperties.externalFormat : 0;
++
++    VkExternalMemoryImageCreateInfo externalMemoryImageCreateInfo = {};
++    externalMemoryImageCreateInfo.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
++    externalMemoryImageCreateInfo.pNext = &externalFormat;
++    externalMemoryImageCreateInfo.handleTypes =
++        VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
++
++    VkExtent3D vkExtents;
++    gl_vk::GetExtent(mSize, &vkExtents);
++    vkExtents.depth = 1;
++
++    // With an external format: sampled and nothing else, optimal tiling, one level
++    // (VUID-VkImageCreateInfo-pNext-02396, -02397).
++    const VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
++
++    vk::YcbcrConversionDesc conversionDesc{};
++    const vk::YcbcrLinearFilterSupport linearFilterSupported =
++        (formatProperties.formatFeatures &
++         VK_FORMAT_FEATURE_SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER_BIT) != 0
++            ? vk::YcbcrLinearFilterSupport::Supported
++            : vk::YcbcrLinearFilterSupport::Unsupported;
++    conversionDesc.update(renderer, externalFormat.externalFormat,
++                          formatProperties.suggestedYcbcrModel,
++                          formatProperties.suggestedYcbcrRange,
++                          formatProperties.suggestedXChromaOffset,
++                          formatProperties.suggestedYChromaOffset, vk::kDefaultYCbCrChromaFilter,
++                          formatProperties.samplerYcbcrConversionComponents,
++                          isExternal ? angle::FormatID::NONE : vkFormat->getIntendedFormatID(),
++                          linearFilterSupported);
++
++    const angle::FormatID intendedFormatID = vkFormat->getIntendedFormatID();
++    const angle::FormatID actualFormatID =
++        vkFormat->getActualImageFormatID(vk::ImageFormatSupport::SampleOnly);
++    const vk::ImageFormatReinterpretability formatReinterpretability =
++        vk::ImageFormatReinterpretability::None;
++    VkImageCreateFlags imageCreateFlags = 0;
++    VkImageFormatListCreateInfoKHR imageFormatListInfoStorage;
++    vk::ImageHelper::ImageFormats imageFormats;
++    const void *imageCreateInfoPNext = vk::ImageHelper::DeriveCreateInfoPNext(
++        displayVk, intendedFormatID, actualFormatID, &externalMemoryImageCreateInfo,
++        &imageFormatListInfoStorage, &imageFormats, formatReinterpretability, &imageCreateFlags);
++
++    mImage = new vk::ImageHelper();
++    mImage->setTilingMode(VK_IMAGE_TILING_OPTIMAL);
++    ANGLE_TRY(mImage->initExternal(
++        displayVk, gl::TextureType::_2D, vkExtents, intendedFormatID, actualFormatID, 1, usage,
++        imageCreateFlags, vk::ImageAccess::ExternalPreInitialized, imageCreateInfoPNext,
++        gl::OwnerLevel(0), 1, 1, false, false, vk::TileMemory::Prohibited, conversionDesc,
++        nullptr, formatReinterpretability));
++
++    VkImportAndroidHardwareBufferInfoANDROID importHardwareBufferInfo = {};
++    importHardwareBufferInfo.sType  = VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID;
++    importHardwareBufferInfo.buffer = HardwareBufferOf(mBuffer);
++
++    VkMemoryDedicatedAllocateInfo dedicatedAllocInfo = {};
++    dedicatedAllocInfo.sType          = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
++    dedicatedAllocInfo.pNext          = &importHardwareBufferInfo;
++    dedicatedAllocInfo.image          = mImage->getImage().getHandle();
++    dedicatedAllocInfo.buffer         = VK_NULL_HANDLE;
++    const void *dedicatedAllocInfoPtr = &dedicatedAllocInfo;
++
++    VkMemoryRequirements externalMemoryRequirements = {};
++    externalMemoryRequirements.size                 = bufferProperties.allocationSize;
++    externalMemoryRequirements.alignment            = 0;
++    externalMemoryRequirements.memoryTypeBits       = bufferProperties.memoryTypeBits;
++
++    ANGLE_TRY(mImage->initExternalMemory(displayVk, renderer->getMemoryProperties(),
++                                         externalMemoryRequirements, 1, &dedicatedAllocInfoPtr,
++                                         vk::kForeignDeviceQueueIndex,
++                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT));
++
++    mRenderable  = false;
++    mTextureable = true;
++    return angle::Result::Continue;
++}
++
+ void AHardwareBufferImageSiblingVkSpatiand::onDestroy(const egl::Display *display)
+ {
+     if (mAcquired)
+@@ -252,7 +412,7 @@
+ 
+ bool AHardwareBufferImageSiblingVkSpatiand::isYUV() const
+ {
+-    return false;
++    return mYUV;
+ }
+ 
+ bool AHardwareBufferImageSiblingVkSpatiand::hasFrontBufferUsage() const
+diff --git a/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h
+--- a/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h
++++ b/third_party/angle/src/libANGLE/renderer/vulkan/linux/AHardwareBufferImageSiblingVkSpatiand.h
+@@ -7,7 +7,9 @@
+ //    An Android hardware buffer as an EGLImage, for ANGLE built for Linux on Android's libc
+ //    (Spatiand's Chromium on the Beam Pro, __TERMUX__). Its EGLClientBuffer is the
+ //    AHardwareBuffer itself. RGBA and RGBX, one layer, one level: the pictures Chromium draws its
+-//    windows into and hands to Spatiand's room without a copy.
++//    windows into and hands to Spatiand's room without a copy. And YUV, sampled only: the pictures
++//    Android's video decoders give Chromium (in the GPU's own layout, an external format to
++//    Vulkan), shown without a copy.
+ //
+ 
+ #ifndef LIBANGLE_RENDERER_VULKAN_LINUX_AHARDWAREBUFFERIMAGESIBLINGVKSPATIAND_H_
+@@ -15,6 +17,11 @@
+ 
+ #include "libANGLE/renderer/vulkan/ImageVk.h"
+ 
++#if defined(__TERMUX__)
++#    include <android/hardware_buffer.h>
++#    include <vulkan/vulkan_android.h>
++#endif
++
+ namespace rx
+ {
+ 
+@@ -50,6 +57,12 @@
+ 
+   private:
+     angle::Result initImpl(DisplayVk *displayVk);
++#if defined(__TERMUX__)
++    angle::Result initYuv(DisplayVk *displayVk,
++                          const AHardwareBuffer_Desc &description,
++                          const VkAndroidHardwareBufferPropertiesANDROID &bufferProperties,
++                          const VkAndroidHardwareBufferFormatPropertiesANDROID &formatProperties);
++#endif
+ 
+     EGLClientBuffer mBuffer;
+     gl::Extents mSize;
+@@ -57,6 +70,7 @@
+     bool mAcquired;
+     bool mRenderable;
+     bool mTextureable;
++    bool mYUV;
+ 
+     vk::ImageHelper *mImage;
+ };

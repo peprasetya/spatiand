@@ -13,18 +13,35 @@ process that opened it, is opened before the sandbox by one decoder made and let
 keeps a process from looking at among its open files is not taken for a directory, and the few
 memory and thread calls Android's libc and drivers make that glibc does not (mremap, msync, getcpu,
 membarrier, rt_sigtimedwait, set_tid_address) are allowed as Chrome on Android's baseline allows.
+Android's shared memory too (/dev/ashmem, and /dev/ashmem<boot_id>, the name Android's libc gives
+it, with the boot id it reads to make that name), in which the codec service takes MediaCodec's
+input and its message queues: without it every decoder failed to start (NO_MEMORY) and every film
+was decoded in software (2026-11-17).
 ---
- content/common/gpu_pre_sandbox_hook_linux.cc  | 30 +++++++++++++++++++
+ content/common/gpu_pre_sandbox_hook_linux.cc  | 46 +++++++++++++++++++
  content/gpu/gpu_main.cc                       | 25 ++++++++++++++++
  .../seccomp-bpf-helpers/baseline_policy.cc    | 17 +++++++++++
  sandbox/linux/services/proc_util.cc           |  8 +++++
- 4 files changed, 80 insertions(+)
+ 4 files changed, 96 insertions(+)
 
 diff --git a/content/common/gpu_pre_sandbox_hook_linux.cc b/content/common/gpu_pre_sandbox_hook_linux.cc
-index 2e53794fa3..a36d20949d 100644
+index 2e53794fa3..07f1f924a4 100644
 --- a/content/common/gpu_pre_sandbox_hook_linux.cc
 +++ b/content/common/gpu_pre_sandbox_hook_linux.cc
-@@ -603,6 +603,31 @@ void LoadChromecastV4L2Libraries() {
+@@ -18,10 +18,12 @@
+ #include "base/base_paths.h"
+ #include "base/files/file_enumerator.h"
+ #include "base/files/file_path.h"
++#include "base/files/file_util.h"
+ #include "base/files/scoped_file.h"
+ #include "base/functional/bind.h"
+ #include "base/logging.h"
+ #include "base/path_service.h"
++#include "base/strings/string_util.h"
+ #include "base/strings/stringprintf.h"
+ #include "build/build_config.h"
+ #include "build/buildflag.h"
+@@ -603,6 +605,45 @@ void LoadChromecastV4L2Libraries() {
  
  }  // namespace
  
@@ -40,6 +57,20 @@ index 2e53794fa3..a36d20949d 100644
 +    permissions->push_back(BrokerFilePermission::ReadWrite(device));
 +  }
 +  permissions->push_back(BrokerFilePermission::ReadWriteCreateRecursive("/dev/dma_heap/"));
++  // Android's shared memory, in which the codec service takes MediaCodec's input and its message
++  // queues (FMQ). Android's libc names the device after the boot ("/dev/ashmem<boot_id>",
++  // libcutils' ashmem) and reads the id the first time it is asked for some, long after the
++  // sandbox is up. Without these every decoder failed to start (NO_MEMORY, "cannot allocate memory
++  // at all") and every film was decoded in software (found 2026-11-17).
++  permissions->push_back(BrokerFilePermission::ReadOnly("/proc/sys/kernel/random/boot_id"));
++  permissions->push_back(BrokerFilePermission::ReadWrite("/dev/ashmem"));
++  std::string boot_id;
++  if (base::ReadFileToString(base::FilePath("/proc/sys/kernel/random/boot_id"), &boot_id)) {
++    boot_id = std::string(base::TrimWhitespaceASCII(boot_id, base::TRIM_ALL));
++    if (!boot_id.empty()) {
++      permissions->push_back(BrokerFilePermission::ReadWrite("/dev/ashmem" + boot_id));
++    }
++  }
 +  // Libraries and settings, read only: the driver's and the system's, and the linker's map of
 +  // them.
 +  for (const char* dir : {"/vendor/", "/odm/", "/system/", "/system_ext/", "/product/", "/apex/",
@@ -56,7 +87,7 @@ index 2e53794fa3..a36d20949d 100644
  sandbox::syscall_broker::BrokerCommandSet CommandSetForGPU(
      const sandbox::policy::SandboxLinux::Options& options) {
    sandbox::syscall_broker::BrokerCommandSet command_set;
-@@ -628,6 +653,11 @@ std::vector<BrokerFilePermission> FilePermissionsForGpu(
+@@ -628,6 +669,11 @@ std::vector<BrokerFilePermission> FilePermissionsForGpu(
  
    AddVulkanICDPermissions(&permissions);
  
