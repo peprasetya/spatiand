@@ -21,5 +21,10 @@ which needs no glasses, no screen and no unlocked Mac, and writes a PNG.
   first window (`--load-extension`, fresh profile). `ext-three-tabs`: three media tabs in two windows.
 - The media: `testsrc2` + a quiet `sine`, 20 s, in each container/codec pair (`ffmpeg ... -f
   mpegts`, `-c:v libx265 -tag:v hvc1`, `libvpx-vp9`/`libopus`, `libsvtav1`, `ac3`, `mp2`).
+- `decoders.sh [label] [flags]`: which decoder each codec gets (the pipeline's own account over
+  DevTools, chrome://gpu's table, the CPU of SpatiMesh's processes), from 4K clips served by
+  `rangeserve.py` (a static server that answers Range requests, which python's own does not);
+  `decoders.sh soft --disable-accelerated-video-decode` is the same in software, to compare.
+  `cdp.py PORT media|eval|shot|tabs ...` is the DevTools client it uses.
 
-Results of 2026-11-11 are in docs/spatimesh-mac-port.md.
+Results of 2026-11-11 and of 2026-11-18 (Chromium 157's decoders) are in docs/spatimesh-mac-port.md.

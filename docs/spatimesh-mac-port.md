@@ -352,3 +352,24 @@ changing it rebuilds nearly everything, so it is done when the tree is rebuilt a
    `ui/base/accelerators/accelerator.cc`'s Mac labels (lines 24-465) to the Linux ones.
 4. Then test with `edit.html`, the address bar, Ctrl+T/W/L/R/F, Ctrl+click on a link, and a page
    that takes Ctrl+F for itself.
+
+## Chromium 157's decoders (checked 2026-11-18)
+
+The owner's rule is that video is decoded by the hardware on every platform; on the Mac that had
+been seen on 153 and not since. Checked on littleotter (M6, macOS 27.2.1) with the installed
+SpatiMesh 157.0.8103.78 as a client of the snapshot room, started with the switches the room
+gives it (`crates/spatiand/src/own.rs`) and nothing else, on a test profile:
+`tools/spatimesh-mac-test/decoders.sh`. Each clip 3840x2160 at 60 a second, 20 s, played for 15 s.
+
+| Codec (clip) | Decoder the pipeline chose | Platform decoder | SpatiMesh's CPU: GPU process / page | Frames, dropped | The same in software (`--disable-accelerated-video-decode`) |
+|---|---|---|---|---|---|
+| H.264 High (`h264.mp4`) | `VideoToolboxVideoDecoder` | yes | 14 % / 4 % | 917, 0 | `FFmpegVideoDecoder`, 6 % / 41 % |
+| HEVC Main (`hevc.mp4`, `hvc1`) | `VideoToolboxVideoDecoder` | yes | 14 % / 4 % | 922, 0 | `FFmpegVideoDecoder`, 5 % / 40 % |
+| VP9 profile 0 (`vp9.webm`) | `VideoToolboxVideoDecoder` | yes | 13 % / 4 % | 920, 0 | `VpxVideoDecoder`, 17 % / 130 % |
+| AV1 Main (`av1.mp4`) | `VideoToolboxVideoDecoder` | yes | 14 % / 4 % | 921, 0 | none: it does not play (no software AV1, the owner's choice) |
+
+(% of one core, from `ps`; `powermetrics` wants root.) chrome://gpu: *Video Decode: Hardware
+accelerated*, and its table lists H.264 baseline to high, VP9 profiles 0 and 2, AV1 main, HEVC
+main, main 10 and range extensions. `VideoToolboxVideoDecoder` asks VideoToolbox to require its
+hardware decoder (`media/gpu/mac/video_toolbox_decompression_session_manager.mm`), so the name is
+the hardware. Nothing falls to software, and nothing was changed.
