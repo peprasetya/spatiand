@@ -85,7 +85,7 @@ pub(crate) struct Window {
     shm: Vec<ShmBuffer>,
     placeholder: Option<Placeholder>,
     /// Buffers made from a GPU's pictures and still the compositor's: by key.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     foreign: HashMap<u32, wl_buffer::WlBuffer>,
     next_key: u32,
     /// A frame callback is outstanding, so another need not be asked for.
@@ -97,8 +97,12 @@ pub(crate) struct Wire {
     compositor: wl_compositor::WlCompositor,
     shell: xdg_wm_base::XdgWmBase,
     shm: wl_shm::WlShm,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
+    /// The compositor has said it takes Android hardware buffers as dmabufs: RGBA with
+    /// Spatiand's own modifier, which only the room on Android offers (`gl::android`).
+    #[cfg(target_os = "android")]
+    hardware_buffers: bool,
     xr: Option<spatiand_xr_v1::SpatiandXrV1>,
     viewporter: Option<wp_viewporter::WpViewporter>,
     /// On somebody's desktop, not the room, where a window has its frame and pointer from the
@@ -146,7 +150,7 @@ const TEXT_FORMS: &[&str] = &["text/plain;charset=utf-8", "UTF8_STRING", "text/p
 enum Held {
     Shm(u32),
     Placeholder,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     Foreign(u32),
 }
 
@@ -201,6 +205,8 @@ impl Wire {
             shell,
             shm,
             dmabuf,
+            #[cfg(target_os = "android")]
+            hardware_buffers: false,
             xr,
             viewporter,
             decorations,
@@ -563,9 +569,17 @@ impl Wire {
         self.dmabuf.is_some()
     }
 
+    /// Whether the compositor takes Android hardware buffers, sent as dmabufs are: it has
+    /// offered RGBA with Spatiand's own modifier, as the room on Android does when its EGL can
+    /// make a picture of one (`android/eglshim`).
+    #[cfg(target_os = "android")]
+    pub(crate) fn takes_hardware_buffers(&self) -> bool {
+        self.dmabuf.is_some() && self.hardware_buffers
+    }
+
     /// Show a GPU's picture without copying it. `key` comes back in [`Wire::released`] when
     /// the compositor has finished with it, before which it may not be drawn into again.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn show_dmabuf(
         &mut self,
@@ -609,7 +623,7 @@ impl Wire {
     }
 
     /// Forget a GPU picture's buffer: its picture is being thrown away.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn forget_dmabuf(&mut self, id: WindowId, key: u32) {
         if let Some(buffer) = self.windows.get_mut(&id).and_then(|w| w.foreign.remove(&key)) {
             buffer.destroy();
@@ -1014,12 +1028,30 @@ macro_rules! ignore {
     };
 }
 
+// What the compositor takes as a dmabuf matters on Android alone, where the one kind is not a
+// dmabuf at all: elsewhere a GPU's own export is what the same GPU imports.
+#[cfg(not(target_os = "android"))]
+ignore! {
+    zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1 => (),
+}
+
+#[cfg(target_os = "android")]
+impl Dispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for Wire {
+    fn event(state: &mut Self, _: &zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, event: zwp_linux_dmabuf_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let zwp_linux_dmabuf_v1::Event::Modifier { format, modifier_hi, modifier_lo } = event {
+            let modifier = ((modifier_hi as u64) << 32) | modifier_lo as u64;
+            if format == crate::gl::ABGR8888 && modifier == crate::gl::HARDWARE_BUFFER_MODIFIER {
+                state.hardware_buffers = true;
+            }
+        }
+    }
+}
+
 ignore! {
     wl_shm::WlShm => (),
     wl_shm_pool::WlShmPool => (),
     wl_compositor::WlCompositor => (),
     wl_surface::WlSurface => (),
-    zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1 => (),
     zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1 => (),
     wp_viewporter::WpViewporter => (),
     zxdg_decoration_manager_v1::ZxdgDecorationManagerV1 => (),

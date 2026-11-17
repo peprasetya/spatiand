@@ -2,9 +2,10 @@
 //!
 //! An application draws with OpenGL ES 3 into a picture this module owns, and the picture goes
 //! to the compositor in whichever way the platform has for it without a copy: an `IOSurface`
-//! found by its number on a Mac ([`mac`]), a dmabuf on the Deck ([`linux`]). Where there is no
-//! such way yet, or it fails, the picture is read back and sent as ordinary memory -- slower,
-//! and the same picture -- so an application never has to know which it got.
+//! found by its number on a Mac ([`mac`]), a dmabuf on the Deck ([`linux`]), an Android hardware
+//! buffer on the Beam Pro, sent as the Deck sends its dmabuf ([`android`]). Where that way
+//! fails, the picture is read back and sent as ordinary memory -- slower, and the same picture
+//! -- so an application never has to know which it got.
 //!
 //! **Row 0 of a target is the top of the picture.** GL calls that row the bottom; nothing here
 //! flips anything, so whatever draws into a target uses a projection with y downwards (as
@@ -30,6 +31,8 @@ pub use linux::DmabufTexture;
 mod android;
 #[cfg(target_os = "android")]
 pub use android::{HardwareBufferTexture, TEXTURE_EXTERNAL_OES};
+#[cfg(target_os = "android")]
+pub(crate) use android::{ABGR8888, HARDWARE_BUFFER_MODIFIER};
 
 pub(crate) type Egl = egl::DynamicInstance<egl::EGL1_4>;
 
@@ -175,8 +178,10 @@ struct Image {
     shared: Option<mac::Shared>,
     #[cfg(target_os = "linux")]
     shared: Option<linux::Shared>,
+    #[cfg(target_os = "android")]
+    shared: Option<android::Shared>,
     /// Handed over and not known to be finished with.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     busy: bool,
 }
 
@@ -273,9 +278,23 @@ impl Target {
             } else {
                 None
             };
-            #[cfg(target_os = "macos")]
+            // On Android the texture's memory is the hardware buffer the room is handed.
+            #[cfg(target_os = "android")]
+            let shared = if self.shared {
+                match android::Shared::new(gl, texture, self.size) {
+                    Ok(shared) => Some(shared),
+                    Err(e) => {
+                        android::copying(&e);
+                        self.shared = false;
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            #[cfg(any(target_os = "macos", target_os = "android"))]
             let plain = shared.is_none();
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "android")))]
             let plain = true;
             if plain {
                 g.tex_image_2d(
@@ -299,7 +318,7 @@ impl Target {
             g.bind_texture(glow::TEXTURE_2D, None);
             Ok(Image {
                 texture,
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
                 shared,
                 busy: false,
             })
@@ -367,6 +386,21 @@ impl Target {
                 }
             }
         }
+        // As the Deck's, in a hardware buffer; its fence goes with it, so nothing waits here.
+        #[cfg(target_os = "android")]
+        if let Some(shared) = self.images[index].shared.as_ref() {
+            match shared.show(gl, wire, window, index as u32, self.size) {
+                Ok(()) => {
+                    self.images[index].busy = true;
+                    self.last = Some(index);
+                    return Ok(());
+                }
+                Err(e) => {
+                    android::copying(&e);
+                    self.shared = false;
+                }
+            }
+        }
         let (w, h) = self.size;
         let scratch = &mut self.scratch;
         scratch.resize((w * h * 4) as usize, 0);
@@ -391,9 +425,9 @@ impl Target {
             g.delete_framebuffer(self.framebuffer);
             for (index, image) in self.images.into_iter().enumerate() {
                 let _ = index;
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 wire.forget_dmabuf(window, index as u32);
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
                 if let Some(shared) = image.shared {
                     shared.destroy(gl);
                 }

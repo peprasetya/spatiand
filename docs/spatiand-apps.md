@@ -120,7 +120,7 @@ has not been in front of anybody's eyes.
 |---|---|
 | `crates/spatiand-app` | The SDK: windows, input (keys through the compositor's keymap, with repeat), GL, eye layouts, layers, a window's shape apart from its picture's size (`wp_viewporter`), and `Mode` -- one picture or two -- as an event. `ui` is the room's look as widgets: list, poster grid, shelf (a row of tiles), tabs, text field (plain or secret), button; gradients and glows. `examples/gallery.rs` shows them. |
 | `spatiand_xr_v1` version 6 | `display_mode` (flat / stereo), sent at bind and on change. |
-| A picture without a copy | Mac: drawn into a *global* `IOSurface`, named by number in the window's placeholder (`spatiand_proto::handover`, `mac/remote_video.rs`). Deck: a texture exported as a dmabuf (`gl/linux.rs`). Anywhere it fails, and on Android for now, the picture is read back and sent as `wl_shm`. |
+| A picture without a copy | Mac: drawn into a *global* `IOSurface`, named by number in the window's placeholder (`spatiand_proto::handover`, `mac/remote_video.rs`). Deck: a texture exported as a dmabuf (`gl/linux.rs`). Beam Pro: the texture is an Android hardware buffer, sent through `zwp_linux_dmabuf_v1` as the Deck's dmabuf is and as SpatiMesh's Chromium sends its frames there -- the plane's file a socket the buffer went through, Spatiand's own modifier, each frame's fence down the same socket (`gl/android.rs`, `android/eglshim`); chosen when the room offers that modifier. Anywhere it fails the picture is read back and sent as `wl_shm`, said once in the application's log; `SPATIAND_APP_COPY=1` asks for that. *The Android handover compiles (`cargo ndk check`) and has not run on a phone: the Beam Pro was off the network the night it was written (2026-11-18).* |
 | Launcher | `Level::Own`, the "Spatiand" bubble always first; `crates/spatiand/src/own.rs` lists the programs found beside the compositor (or in `SPATIAND_APPS_DIR`) and starts them. `mac/make-app.sh` puts SpatiReel in the bundle. On a Mac, Control-Option-W closes the window that has the keyboard. |
 | `crates/spatiand-media` | `vibrefy-media` moved in (`layout`, `hints`, `audio`, `mesh`), and an engine on FFmpeg in place of libmpv: `player` (reader, picture, sound and subtitle threads; the sound's clock; seeking; track choice; speed; a lip-sync offset), `sound` (cpal on a Mac; a `pw-cat` of its own on Linux, its channels named so the room's sink places a 5.1 or 7.1.4 film's channels), `screen` (planes to colour in a shader, HDR10/HLG brought down to SDR, a view from inside a sphere), `subs` (ASS text, picture subtitles, `.srt`), `stretch` (speed without a change of pitch), `still` (one frame, for a tile). Pictures stay on the GPU with VideoToolbox, and with VAAPI for H.264. |
 | `crates/vibrefy-api` | Moved in unchanged, from vibrefyApp's working tree at `254e043` plus its uncommitted changes. `vibrefy-wl` and the egui screens were not moved: the SDK and the toolkit replace them. |
@@ -842,7 +842,8 @@ Measured on the Beam Pro with `cargo ndk build --example rate` run as the app fr
 | HEVC, software (before) | 59.7 | 5 | 244% |
 
 The codec service took 27-31% of a core besides. Of what is left in the player, most is the
-window's picture read back (`spatiand_app::gl`: Android's handover is still `wl_shm`); the test
+window's picture read back (`spatiand_app::gl`: Android's handover was `wl_shm` when this was
+measured; it is a hardware buffer since 2026-11-18, not measured again yet); the test
 clips (`testsrc2`) are easy for a software decoder, a real film's software decode costs more.
 SpatiReel itself, as a window of the room on the stand-in display (`tools/beam-stand-in`), the
 HEVC clip on MediaCodec: 53% of a core, the room presenting 46-50 frames a second meanwhile;
