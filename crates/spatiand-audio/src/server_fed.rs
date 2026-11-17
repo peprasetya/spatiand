@@ -360,7 +360,8 @@ fn mix(out: &mut [f32]) {
     }
 }
 
-/// The device went away under the output: open it again.
+/// The device went away under the output: open it again. Only AAudio says so (`out_aaudio.rs`).
+#[cfg(target_os = "android")]
 fn lost() {
     shared().reopen.store(true, Ordering::SeqCst);
 }

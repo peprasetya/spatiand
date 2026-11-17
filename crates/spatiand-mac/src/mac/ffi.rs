@@ -259,11 +259,6 @@ pub unsafe extern "C" fn sp_pointer_where(x: *mut f32, y: *mut f32) {
     *y = pad.1;
 }
 
-#[no_mangle]
-pub extern "C" fn sp_pointer_speed(speed: f32) {
-    controller::set_speed(speed);
-}
-
 /// The trackpad's press, as it is now: the fingers on the pad as it began (0 for a mouse's
 /// click, which is no press), the stage macOS says (0 none -- the press has ended, 1 clicked, 2
 /// the deep click) and its pressure (0..1). `two_finger_deep` is the pressure at which two
@@ -460,12 +455,6 @@ mod command_tests {
         assert_eq!(c.keys_on_mac(false), vec![(125, false), (97, true)]);
         assert_eq!(c.key(125, false), vec![(97, false)]);
     }
-}
-
-/// A key by its evdev code, for what is not a key of the Mac's keyboard.
-#[no_mangle]
-pub extern "C" fn sp_key_evdev(code: u32, pressed: bool) {
-    controller::input().lock().unwrap().keys.push(Typed::Key { code, pressed });
 }
 
 /// One of the Deck's buttons, which the app gives its own shortcuts: 0 STEAM (the settings),

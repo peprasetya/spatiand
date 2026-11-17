@@ -79,7 +79,6 @@ void sp_hold_glasses(bool hold);
 void sp_pointer(float dx, float dy, int32_t buttons, float wheel_right, float wheel_up);
 // Whether the room has the Mac's pointer. Without it there is no pointer in the room.
 void sp_pointer_held(bool held);
-void sp_pointer_speed(float speed);
 // Two fingers spreading (above 1) or closing, since the last call.
 void sp_pinch(float scale);
 // The trackpad's press, as it is now: the fingers on the pad as it began (0 for a mouse's
@@ -93,9 +92,8 @@ bool sp_pad_press(int32_t fingers, int32_t stage, float pressure, float two_fing
 // whether there is such a client under the pointer (else the room's own things, which do not).
 void sp_scroll_end(void);
 bool sp_scroll_over_client(void);
-// A key of the Mac's keyboard, by its virtual key code; or by its evdev code.
+// A key of the Mac's keyboard, by its virtual key code.
 void sp_key(uint16_t mac_code, bool pressed);
-void sp_key_evdev(uint32_t code, bool pressed);
 // One of the Deck's buttons: 0 STEAM (settings), 1 ... (launcher), 2 A, 3 B, 4 X, 5 Y, 6 up,
 // 7 down, 8 left, 9 right, 10 menu, 11 view.
 void sp_control(int32_t control, bool pressed);

@@ -85,15 +85,9 @@ fn this_frame(before: Option<PadPress>, changes: &[Option<PadPress>]) -> (Option
 }
 
 /// The pointer's travel in pad units a point. The pad is two across and so is the view: at
-/// this, the width of a trackpad is most of the view. The app's setting scales it.
+/// this, the width of a trackpad is most of the view. (The travel is macOS's own, so how fast
+/// the pointer goes is System Settings' tracking speed, as for the Mac's own pointer.)
 const MOUSE_GAIN: f32 = 0.0022;
-
-/// How fast the pointer goes for the same travel: the app's setting, 1 as shipped.
-static SPEED: Mutex<f32> = Mutex::new(1.0);
-
-pub fn set_speed(speed: f32) {
-    *SPEED.lock().unwrap() = speed.clamp(0.2, 5.0);
-}
 
 /// How long the pointer may be still before it goes.
 /// Where the pointer is on its pad as of the last frame, for tests that trace it.
@@ -186,9 +180,8 @@ impl Controller {
             self.stirred = std::time::Instant::now();
         }
         if travel != (0.0, 0.0) {
-            let gain = MOUSE_GAIN * *SPEED.lock().unwrap();
-            self.pad.0 = (self.pad.0 + travel.0 * gain).clamp(-1.0, 1.0);
-            self.pad.1 = (self.pad.1 - travel.1 * gain).clamp(-1.0, 1.0);
+            self.pad.0 = (self.pad.0 + travel.0 * MOUSE_GAIN).clamp(-1.0, 1.0);
+            self.pad.1 = (self.pad.1 - travel.1 * MOUSE_GAIN).clamp(-1.0, 1.0);
             self.stirred = std::time::Instant::now();
         }
         if mouse_buttons != 0 {
