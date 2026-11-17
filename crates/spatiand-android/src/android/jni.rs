@@ -407,6 +407,14 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_status(env: *mut JNIEnv,
     unsafe { new_string(env, &line) }
 }
 
+/// `Native.waiting(had)`: what the phone's screen says while there are no glasses -- the Deck's
+/// waiting screen in a phone's words (`crate::waiting::phone_message`), with the glasses this
+/// build knows from the same device table; `had` once glasses have been in this session.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_waiting(env: *mut JNIEnv, _class: jclass, had: jboolean) -> jstring {
+    unsafe { new_string(env, &crate::waiting::phone_message(had == JNI_TRUE)) }
+}
+
 /// Hosts paired before the session read its preferences, in the `hosts.toml` the first Android
 /// build kept, become the preferences' remote hosts: pairing again is not something to ask of
 /// anyone for an upgrade.

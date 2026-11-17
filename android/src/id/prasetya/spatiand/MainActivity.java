@@ -145,7 +145,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         android.widget.FrameLayout middle = new android.widget.FrameLayout(this);
         middle.addView(touch, new android.widget.FrameLayout.LayoutParams(-1, -1));
         reminder = new TextView(this);
-        reminder.setText("Plug in your XR glasses\n\nConnect XREAL Air glasses over USB-C\nand Spatiand will open on them.");
+        // The Deck's waiting screen, worded by the same code (Native.waiting): no brand written here.
+        reminder.setText(Native.waiting(false));
         reminder.setTextColor(Color.rgb(222, 228, 240));
         reminder.setTextSize(18);
         reminder.setGravity(android.view.Gravity.CENTER);
@@ -507,8 +508,15 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     /** Show the reminder to plug the glasses in while they are not. */
     void showReminder() {
-        if (reminder != null) reminder.setVisibility(connection == null ? View.VISIBLE : View.GONE);
+        if (connection != null) hadGlasses = true;
+        if (reminder == null) return;
+        // "Glasses disconnected", with the windows still open, once there have been some.
+        if (connection == null) reminder.setText(Native.waiting(hadGlasses));
+        reminder.setVisibility(connection == null ? View.VISIBLE : View.GONE);
     }
+
+    /** Glasses have been in this session: unplugged, the screen says so, as the Deck's does. */
+    boolean hadGlasses;
 
     /** A cell of the bar, each as wide as the others, with the button centred in it. */
     void addSpread(LinearLayout bar, View button) {

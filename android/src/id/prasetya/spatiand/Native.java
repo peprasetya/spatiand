@@ -103,6 +103,13 @@ final class Native {
     static native String status();
 
     /**
+     * What the phone's screen says while there are no glasses: the Deck's waiting screen in a
+     * phone's words, with the glasses this build knows (crates/spatiand/src/waiting.rs);
+     * {@code had} once glasses have been in this session.
+     */
+    static native String waiting(boolean had);
+
+    /**
      * The phone's battery for the room's status pill (Battery.java): ACTION_BATTERY_CHANGED's
      * EXTRA_LEVEL, EXTRA_SCALE and EXTRA_STATUS; a scale of 0 for none.
      */

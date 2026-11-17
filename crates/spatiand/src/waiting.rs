@@ -89,6 +89,34 @@ pub fn message(missing: Missing, had_headset: bool, exit_hint: &str) -> String {
     }
 }
 
+/// The same two screens where the screen that says them is a phone's (the Beam Pro's, over its
+/// touch area): the Deck's words and the same list of known glasses, but for what differs
+/// there. The phone's screen does not hand over to the glasses -- it stays the controller --
+/// so Spatiand "opens on them"; and nothing is held to leave, the phone has its own way out.
+/// There is no half-connected case to word: Android gives the app the glasses' display and
+/// their USB together or not at all.
+#[cfg_attr(not(any(test, target_os = "android")), allow(dead_code))]
+pub fn phone_message(had_headset: bool) -> String {
+    if had_headset {
+        "Glasses disconnected\n\n\
+         Your windows are still open.\n\n\
+         Spatiand is waiting for the\n\
+         glasses to come back — plug\n\
+         them in again and Spatiand\n\
+         will open on them."
+            .to_string()
+    } else {
+        format!(
+            "Plug in your XR glasses\n\n\
+             Spatiand is waiting.\n\n\
+             Connect them over USB-C and\n\
+             Spatiand will open on them.\n\n\
+             {}",
+            known_glasses()
+        )
+    }
+}
+
 /// The glasses this build knows, by the device table's names (spatiand-hmd's devices.toml), a
 /// line each so that none overruns: tried on real hardware first, the rest after them. Not one
 /// brand written into the screen.
@@ -121,7 +149,28 @@ mod tests {
                 out.push(message(missing, had, exit_hint(controller, had)));
             }
         }
+        // The phone's two, which are the same words on a narrower screen still.
+        out.push(phone_message(true));
+        out.push(phone_message(false));
         out
+    }
+
+    #[test]
+    fn the_phone_says_what_the_deck_says_and_names_no_one_brand() {
+        // The Beam Pro's screen had "Connect XREAL Air glasses" written into it long after the
+        // Deck's listed what the build knows. Same heading, same list, from the same table.
+        for had in [true, false] {
+            let (deck, phone) = (message(Missing::Headset, had, ""), phone_message(had));
+            assert_eq!(deck.lines().next(), phone.lines().next());
+            assert!(phone.contains("will open on them") && !phone.contains("hand over"), "{phone}");
+        }
+        let (deck, phone) = (message(Missing::Headset, false, ""), phone_message(false));
+        let list = |text: &str| text[text.find("Known glasses:").expect("no list")..].to_string();
+        assert_eq!(list(&deck), list(&phone));
+        // Every pair in the table is named, not the one that happened to be written down.
+        for device in spatiand_hmd::device::all() {
+            assert!(phone.contains(&device.name), "{} is not listed", device.name);
+        }
     }
 
     #[test]
