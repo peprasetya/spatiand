@@ -78,22 +78,32 @@ pub struct Header {
     pub check: String,
 }
 
-/// `devices/<fp>.json`: a Mac that can open the vault with its Touch ID.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// `devices/<fp>.json`: a holder, a device that can open the vault with its own biometrics
+/// (`crate::holders`). The name is from the days when only Macs could.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TouchDevice {
-    /// The Mac's fingerprint, 64 hex.
+    /// The device's link fingerprint, 64 hex.
     pub device: String,
     pub name: String,
-    /// "mac-touch-id".
+    /// [`crate::holders::MAC`] or [`crate::holders::ANDROID`].
     pub kind: String,
-    /// Its Secure Enclave public key, X9.63, base64.
+    /// Its key's public half (the Secure Enclave's, the Keystore's), X9.63, base64.
     pub public: String,
     /// The vault key wrapped to that key (docs/spatikey.md, "Keys"), base64.
     pub wrapped: String,
     pub added: u64,
+    /// The short fingerprint of the holder that added it; empty for the one that made the vault
+    /// or set itself up from the recovery code.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub by: String,
+    /// Removed by a holder: kept as a tombstone, emptied, so that the removal travels as the newest
+    /// version of the file -- the device itself lets go of its half when it sees it -- and is not
+    /// mistaken for a record that never arrived.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
 }
 
-/// `local/spatikey/touch-id.json`: this Mac's own half, never sent.
+/// `local/spatikey/touch-id.json`: this device's own half, never sent.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TouchId {
     /// The vault it opens.
@@ -282,41 +292,118 @@ impl Vault {
         self.write(key, &mut entry, by)
     }
 
+    /// The holders: every device that opens the vault, oldest first. Removed ones are left out.
     pub fn touch_devices(&self) -> Vec<TouchDevice> {
         let dir = self.shared.join("devices");
-        let mut devices: Vec<TouchDevice> =
-            json_names(&dir).into_iter().filter_map(|name| read_json(&dir.join(format!("{name}.json")))).collect();
+        let mut devices: Vec<TouchDevice> = json_names(&dir)
+            .into_iter()
+            .filter(|name| is_hex(name, 64))
+            .filter_map(|name| read_json::<TouchDevice>(&dir.join(format!("{name}.json"))).filter(|d| d.device.eq_ignore_ascii_case(&name)))
+            .filter(|d| !d.removed)
+            .collect();
         devices.sort_by(|a, b| a.added.cmp(&b.added).then_with(|| a.device.cmp(&b.device)));
         devices
     }
 
+    /// One device's holder record as it is on disk, removed or not.
+    pub fn touch_device(&self, fp: &str) -> Option<TouchDevice> {
+        if !is_hex(fp, 64) {
+            return None;
+        }
+        read_json::<TouchDevice>(&self.device_path(fp)).filter(|d| d.device.eq_ignore_ascii_case(fp))
+    }
+
     pub fn add_touch_device(&self, device: &TouchDevice) -> Result<(), String> {
         if !is_hex(&device.device, 64) {
-            return Err("a Mac's fingerprint is 64 hex digits".into());
+            return Err("a device's fingerprint is 64 hex digits".into());
         }
         write_json(&self.device_path(&device.device), device)
     }
 
+    /// Rewrite a holder's record as a tombstone ([`TouchDevice::removed`]).
     pub fn remove_touch_device(&self, fp: &str) -> Result<(), String> {
         if !is_hex(fp, 64) {
-            return Err("a Mac's fingerprint is 64 hex digits".into());
+            return Err("a device's fingerprint is 64 hex digits".into());
         }
-        match std::fs::remove_file(self.device_path(fp)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("could not forget {fp}: {e}")),
+        let Some(old) = self.touch_device(fp) else { return Ok(()) };
+        if old.removed {
+            return Ok(());
         }
+        let tombstone = TouchDevice {
+            device: old.device,
+            name: old.name,
+            kind: old.kind,
+            added: crate::now_ms(),
+            removed: true,
+            ..TouchDevice::default()
+        };
+        write_json(&self.device_path(fp), &tombstone).map_err(|e| format!("could not remove {fp}: {e}"))
     }
 
-    /// This Mac's own half, if it has one for this vault.
+    /// This device's own half, if it has one for this vault.
     pub fn touch_id(&self) -> Option<TouchId> {
         read_json::<TouchId>(&self.local.join("touch-id.json")).filter(|touch| touch.vault == self.header.id)
     }
 
-    /// Keep this Mac's half, as this vault's whatever its `vault` said.
+    /// Keep this device's half, as this vault's whatever its `vault` said.
     pub fn set_touch_id(&self, touch: &TouchId) -> Result<(), String> {
         let touch = TouchId { vault: self.header.id.clone(), ..touch.clone() };
         write_json(&self.local.join("touch-id.json"), &touch)
+    }
+
+    /// Let go of this device's half: it was removed as a holder.
+    pub fn forget_touch_id(&self) -> Result<(), String> {
+        remove_if_there(&self.local.join("touch-id.json"))
+    }
+
+    // ---- devices asking to hold the vault (crate::holders) ----
+
+    /// The requests still open, oldest first.
+    pub fn askings(&self) -> Vec<crate::holders::Asking> {
+        let dir = self.shared.join("requests");
+        let mut asking: Vec<crate::holders::Asking> = json_names(&dir)
+            .into_iter()
+            .filter(|name| is_hex(name, 64))
+            .filter_map(|name| read_json::<crate::holders::Asking>(&dir.join(format!("{name}.json"))))
+            .filter(|a| !a.closed && is_hex(&a.device, 64))
+            .collect();
+        asking.sort_by(|a, b| a.made.cmp(&b.made).then_with(|| a.device.cmp(&b.device)));
+        asking
+    }
+
+    pub fn asking(&self, fp: &str) -> Option<crate::holders::Asking> {
+        if !is_hex(fp, 64) {
+            return None;
+        }
+        read_json::<crate::holders::Asking>(&self.request_path(fp)).filter(|a| !a.closed && a.device.eq_ignore_ascii_case(fp))
+    }
+
+    pub fn ask_to_hold(&self, asking: &crate::holders::Asking) -> Result<(), String> {
+        if !is_hex(&asking.device, 64) {
+            return Err("a device's fingerprint is 64 hex digits".into());
+        }
+        write_json(&self.request_path(&asking.device), asking)
+    }
+
+    /// Bury a request: added, or turned down.
+    pub fn close_asking(&self, fp: &str) -> Result<(), String> {
+        let Some(open) = self.asking(fp) else { return Ok(()) };
+        let closed = crate::holders::Asking { closed: true, public: String::new(), made: crate::now_ms(), ..open };
+        write_json(&self.request_path(fp), &closed)
+    }
+
+    /// This device's half of its own request, if it asked to hold this vault.
+    pub fn pending(&self) -> Option<crate::holders::Pending> {
+        read_json::<crate::holders::Pending>(&self.local.join("asking.json")).filter(|p| p.vault == self.header.id)
+    }
+
+    pub fn set_pending(&self, pending: &crate::holders::Pending) -> Result<(), String> {
+        let pending = crate::holders::Pending { vault: self.header.id.clone(), ..pending.clone() };
+        write_json(&self.local.join("asking.json"), &pending)
+    }
+
+    pub fn forget_pending(&self) -> Result<(), String> {
+        remove_if_there(&self.local.join("asking.json"))
     }
 
     pub fn has_recovery(&self) -> bool {
@@ -361,6 +448,10 @@ impl Vault {
 
     fn device_path(&self, fp: &str) -> PathBuf {
         self.shared.join("devices").join(format!("{}.json", fp.to_ascii_lowercase()))
+    }
+
+    fn request_path(&self, fp: &str) -> PathBuf {
+        self.shared.join("requests").join(format!("{}.json", fp.to_ascii_lowercase()))
     }
 
     /// The ids of the entries on disk: files named by 32 hex digits, nothing hidden or half
@@ -544,6 +635,15 @@ fn json_names(dir: &Path) -> Vec<String> {
         .collect();
     names.sort();
     names
+}
+
+/// Remove a file of this device's own; one not there is no error.
+fn remove_if_there(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
 }
 
 /// A small JSON file, read; None if it is not there or is not what it should be.

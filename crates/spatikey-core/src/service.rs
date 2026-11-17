@@ -25,11 +25,11 @@ use crate::hooks::{self, Room, Step};
 use crate::remote::Asker;
 use crate::vault::{self, TouchDevice, TouchId, Vault, VaultKey};
 use crate::wire::{
-    Choice, ChoicesAnswer, Code, Device, DevicesAnswer, Envelope, Field, FillAnswer, FindAnswer, GetAnswer, IdAnswer,
-    ListAnswer, Login, OpenAnswer, PasskeyCreate, PasskeyGet, Refusal, Reply, Request, RevealAnswer, Settings,
-    SettingsAnswer, SetupAnswer, StatusAnswer, TargetAnswer, TotpAnswer, Who,
+    Asking, Choice, ChoicesAnswer, Code, Device, DevicesAnswer, Envelope, Field, FillAnswer, FindAnswer, GetAnswer, Holder,
+    HolderAnswer, IdAnswer, ListAnswer, Login, OpenAnswer, PasskeyCreate, PasskeyGet, Refusal, Reply, Request, RevealAnswer,
+    Settings, SettingsAnswer, SetupAnswer, StatusAnswer, TargetAnswer, TotpAnswer, Who,
 };
-use crate::{b64, site, totp, webauthn};
+use crate::{b64, holders, site, totp, webauthn};
 
 /// How long a forwarder's status waits for its Macs to answer the broadcast.
 const NEAR: Duration = Duration::from_secs(1);
@@ -53,16 +53,27 @@ const ES256: i64 = -7;
 /// Names longer than this are cut short in a prompt.
 const LONGEST_NAME: usize = 60;
 
-/// What only the Mac's own code can do: the Secure Enclave and Touch ID, and asking its owner.
+/// What only a holder's own code can do: its biometric key and the prompt for it (the Secure
+/// Enclave and Touch ID on a Mac, the Keystore and BiometricPrompt on Android), and asking its
+/// owner. [`crate::platform::AppGuard`] is the real one.
 pub trait Guard: Send + Sync {
     /// Ask for a finger and hand back the vault key. `reason` finishes macOS's sentence
     /// "Spatiand is trying to ...". `linger_secs` lets one touch cover what follows for that
     /// long (0: this use only).
     fn unlock(&self, reason: &str, touch: &TouchId, linger_secs: u64) -> Result<VaultKey, Refusal>;
-    /// Make this Mac's Secure Enclave key and wrap `key` to it. The answer's `vault` is left
-    /// empty, for the caller to fill.
+    /// Make this device's key and wrap `key` to it. The answer's `vault` is left empty, for the
+    /// caller to fill.
     fn enroll(&self, key: &VaultKey) -> Result<TouchId, Refusal>;
-    /// Touch ID is there and has a finger enrolled (asks nothing).
+    /// Make this device's key with nothing wrapped to it yet, asking nobody: for asking a holder
+    /// to add this device ([`Request::HolderRequest`]). The answer's `wrapped` is empty.
+    fn make(&self) -> Result<TouchId, Refusal> {
+        Err(refuse(Code::NotHere, "this device cannot make a key to open SpatiKey with"))
+    }
+    /// What this device's biometrics are: [`holders::MAC`] or [`holders::ANDROID`].
+    fn kind(&self) -> &'static str {
+        holders::MAC
+    }
+    /// The sensor is there and has a finger enrolled (asks nothing).
     fn can_touch(&self) -> bool;
     /// The owner's yes or no to a device that wants to ask this Mac, with the six digits both show.
     fn allow_device(&self, name: &str, fp: &str, code: &str) -> bool;
@@ -94,8 +105,14 @@ pub fn next_conn() -> ConnId {
 }
 
 pub enum Mode {
+    /// A Mac: it holds the vault, or is set up to.
     Approver(Arc<dyn Guard>),
+    /// A device with no biometrics (the Deck, the Beam Pro): it asks a holder on its network.
     Forwarder(Arc<crate::remote::Asker>),
+    /// A device with biometrics that may hold the vault and may not yet (an Android phone with a
+    /// strong sensor): what it holds it answers itself, and until it does, it asks a holder as a
+    /// forwarder does. A request from another device is answered here or refused, never passed on.
+    Both(Arc<dyn Guard>, Arc<crate::remote::Asker>),
 }
 
 /// An open SpatiKey.
@@ -134,7 +151,7 @@ pub struct Service {
 
 impl Service {
     pub fn new(mode: Mode, me: Me, shared: PathBuf, local: PathBuf) -> Arc<Service> {
-        let approver = matches!(mode, Mode::Approver(_));
+        let approver = !matches!(mode, Mode::Forwarder(_));
         let service = Arc::new(Service {
             mode,
             me,
@@ -158,8 +175,10 @@ impl Service {
         &self.me
     }
 
+    /// Whether this device has biometrics of its own to open the vault with (whether or not it
+    /// holds it yet).
     pub fn is_approver(&self) -> bool {
-        matches!(self.mode, Mode::Approver(_))
+        !matches!(self.mode, Mode::Forwarder(_))
     }
 
     /// Answer one request from connection `conn`. Blocks while a person is asked.
@@ -168,6 +187,13 @@ impl Service {
         let answered = match &self.mode {
             Mode::Approver(guard) => self.approve(guard.as_ref(), conn, env),
             Mode::Forwarder(asker) => self.forward(asker, conn, env),
+            Mode::Both(guard, asker) => {
+                if self.answered_here(guard.as_ref(), &env) {
+                    self.approve(guard.as_ref(), conn, env)
+                } else {
+                    self.forward(asker, conn, env)
+                }
+            }
         };
         match answered {
             Ok(value) => Reply { id, ok: Some(value), err: None },
@@ -175,10 +201,32 @@ impl Service {
         }
     }
 
+    /// (Both) Whether a request is answered by this device rather than passed to a holder.
+    fn answered_here(&self, guard: &dyn Guard, env: &Envelope) -> bool {
+        // Another device's: answered here or refused, so that it asks another holder.
+        if !env.who.device.is_empty() {
+            return true;
+        }
+        match &env.request {
+            Request::Status | Request::Setup { .. } | Request::Recover { .. } | Request::HolderRequest { .. } | Request::Target => true,
+            Request::Find | Request::PairWith { .. } | Request::PairConfirm { .. } | Request::Pair { .. } => false,
+            request => match session_of(request) {
+                // A session belongs to whoever opened it: here, or a holder asked.
+                Some(token) => !lock(&self.relayed).contains_key(token),
+                None => self.holds(guard),
+            },
+        }
+    }
+
+    /// Whether this device opens the vault itself now.
+    fn holds(&self, guard: &dyn Guard) -> bool {
+        Vault::exists(&self.shared) && Vault::open(&self.shared, &self.local).is_ok_and(|vault| self.half(guard, &vault).is_some())
+    }
+
     /// The connection has gone: its sessions close.
     pub fn closed(&self, conn: ConnId) {
         lock(&self.sessions).retain(|_, session| session.conn != conn);
-        if let Mode::Forwarder(asker) = &self.mode {
+        if let Mode::Forwarder(asker) | Mode::Both(_, asker) = &self.mode {
             let gone: Vec<String> = {
                 let mut relayed = lock(&self.relayed);
                 let gone = relayed.iter().filter(|(_, c)| **c == conn).map(|(token, _)| token.clone()).collect();
@@ -255,7 +303,7 @@ impl Service {
     /// (Approver) the Guard, for the remote side's pairing.
     pub fn guard(&self) -> Option<&Arc<dyn Guard>> {
         match &self.mode {
-            Mode::Approver(guard) => Some(guard),
+            Mode::Approver(guard) | Mode::Both(guard, _) => Some(guard),
             Mode::Forwarder(_) => None,
         }
     }
@@ -269,9 +317,18 @@ impl Service {
         let elsewhere = !who.device.is_empty();
         match request {
             Request::Status => answer(self.status(guard)),
-            Request::Setup { .. } | Request::Recover { .. } | Request::Type { .. } | Request::Target if elsewhere => {
+            Request::Setup { .. }
+            | Request::Recover { .. }
+            | Request::HolderRequest { .. }
+            | Request::Type { .. }
+            | Request::Target
+                if elsewhere =>
+            {
                 Err(refuse(Code::NotHere, "that is done on the Mac itself"))
             }
+            Request::HolderRequest { name } => self.holder_request(guard, &name),
+            Request::HolderApprove { session, fp, code } => self.holder_approve(guard, conn, &who, &session, &fp, &code),
+            Request::HolderRefuse { session, fp } => self.holder_refuse(conn, &session, &fp),
             Request::Setup { name } => self.setup(guard, &name),
             Request::Open => self.open(guard, conn, &who),
             Request::Close { session } => self.close(conn, &session),
@@ -295,7 +352,7 @@ impl Service {
             Request::RecoveryNew { session } => self.recovery_new(conn, &session),
             Request::Recover { code } => self.recover(guard, Zeroizing::new(code)),
             Request::Devices { session } => self.devices(conn, &session),
-            Request::ForgetDevice { session, fp } => self.forget_device(conn, &session, &fp),
+            Request::ForgetDevice { session, fp } => self.forget_device(guard, conn, &who, &session, &fp),
             Request::Settings { session, set } => self.settings_asked(conn, &session, set),
             Request::Pair { .. } => Err(refuse(Code::BadRequest, "pairing is asked of a Mac over the network, not here")),
             Request::Find | Request::PairWith { .. } | Request::PairConfirm { .. } => {
@@ -306,15 +363,184 @@ impl Service {
 
     fn status(&self, guard: &dyn Guard) -> StatusAnswer {
         let vault = Vault::exists(&self.shared);
-        let opens_here = vault && Vault::open(&self.shared, &self.local).is_ok_and(|v| v.touch_id().is_some());
+        let opened = if vault { Vault::open(&self.shared, &self.local).ok() } else { None };
+        let opens_here = opened.as_ref().is_some_and(|v| self.half(guard, v).is_some());
+        let request_code = match &opened {
+            Some(v) if !opens_here => self.waiting_code(v),
+            _ => String::new(),
+        };
+        // A device that may only ask, until it holds the vault: whether its holders answer.
+        let approvers = match &self.mode {
+            Mode::Both(_, asker) if !opens_here => asker.near(NEAR),
+            _ => Vec::new(),
+        };
         StatusAnswer {
             vault,
             opens_here,
             can_set_up: !opens_here && guard.can_touch(),
-            approvers: Vec::new(),
+            approvers,
             name: self.me.name.clone(),
             fp: self.me.fp.clone(),
+            holders: opened.as_ref().map(holders_of).unwrap_or_default(),
+            kind: guard.kind().to_string(),
+            request_code,
         }
+    }
+
+    /// The digits this device shows while its request to hold `vault` waits; empty if it made none.
+    fn waiting_code(&self, vault: &Vault) -> String {
+        match (vault.pending(), vault.asking(&self.me.fp)) {
+            (Some(pending), Some(asking)) if asking.public == pending.public => {
+                holders::code(vault.id(), &self.me.fp, &pending.public)
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// This device's half for `vault`, as it stands in the synced folder now:
+    ///
+    /// * removed as a holder there (its record a tombstone): the half is let go, and None;
+    /// * a holder whose record is not there (a vault from before records, or one lost): the
+    ///   record is written again from the half -- the one change a vault set up with a single Mac
+    ///   needs, made in place;
+    /// * no half, but a request this device made that a holder has since added: the half is made
+    ///   from the key kept while it waited and the wrap the holder wrote.
+    fn half(&self, guard: &dyn Guard, vault: &Vault) -> Option<TouchId> {
+        let record = vault.touch_device(&self.me.fp);
+        if let Some(touch) = vault.touch_id() {
+            return match record {
+                Some(record) if record.removed => {
+                    log::warn!("spatikey: this device was removed from those that open vault {}; letting its half go", vault.id());
+                    if let Err(e) = vault.forget_touch_id() {
+                        log::warn!("spatikey: could not let go of this device's half: {e}");
+                    }
+                    None
+                }
+                Some(_) => Some(touch),
+                None => {
+                    let record = TouchDevice {
+                        device: self.me.fp.to_ascii_lowercase(),
+                        name: self.me.name.clone(),
+                        kind: guard.kind().to_string(),
+                        public: touch.public.clone(),
+                        wrapped: touch.wrapped.clone(),
+                        added: crate::now_ms(),
+                        ..TouchDevice::default()
+                    };
+                    match vault.add_touch_device(&record) {
+                        Ok(()) => log::info!("spatikey: wrote this device's record as a holder of vault {}", vault.id()),
+                        Err(e) => log::warn!("spatikey: could not write this device's record as a holder: {e}"),
+                    }
+                    Some(touch)
+                }
+            };
+        }
+        let pending = vault.pending()?;
+        let record = record.filter(|r| !r.removed && r.public == pending.public && !r.wrapped.is_empty())?;
+        let touch = TouchId { vault: vault.id().to_string(), public: pending.public, blob: pending.blob, wrapped: record.wrapped };
+        if let Err(e) = vault.set_touch_id(&touch) {
+            log::warn!("spatikey: could not keep the half a holder made for this device: {e}");
+            return None;
+        }
+        let _ = vault.forget_pending();
+        let _ = vault.close_asking(&self.me.fp);
+        log::info!("spatikey: added to the devices that open vault {} (by {})", vault.id(), record.by);
+        Some(touch)
+    }
+
+    /// A device with biometrics asks to hold the vault: its key made, its half kept here, its
+    /// request in the synced folder, and the digits to compare.
+    fn holder_request(&self, guard: &dyn Guard, name: &str) -> Result<Value, Refusal> {
+        let vault = self.vault()?;
+        if self.half(guard, &vault).is_some() {
+            return Err(refuse(Code::BadRequest, "this device opens SpatiKey already"));
+        }
+        if !guard.can_touch() {
+            return Err(refuse(
+                Code::TouchIdUnavailable,
+                format!("{} cannot be used on this device now", holders::sensor(guard.kind())),
+            ));
+        }
+        let _prompt = lock(&self.prompt);
+        // The same request while it waits: a new key would show other digits than the ones the
+        // owner may already be comparing.
+        let pending = match vault.pending() {
+            Some(pending) => pending,
+            None => {
+                let made = guard.make()?;
+                let pending = holders::Pending { vault: vault.id().to_string(), public: made.public, blob: made.blob, made: crate::now_ms() };
+                vault.set_pending(&pending).map_err(failed)?;
+                pending
+            }
+        };
+        if vault.asking(&self.me.fp).is_none_or(|asking| asking.public != pending.public) {
+            let name = match name.trim() {
+                "" => self.me.name.clone(),
+                name => name.to_string(),
+            };
+            let asking = holders::Asking {
+                v: 1,
+                device: self.me.fp.to_ascii_lowercase(),
+                name,
+                kind: guard.kind().to_string(),
+                public: pending.public.clone(),
+                made: crate::now_ms(),
+                closed: false,
+            };
+            vault.ask_to_hold(&asking).map_err(failed)?;
+            log::info!("spatikey: asked to be added to the devices that open vault {}", vault.id());
+        }
+        answer(HolderAnswer { code: holders::code(vault.id(), &self.me.fp, &pending.public) })
+    }
+
+    /// A holder adds a device that asked: a new touch here, and the vault key wrapped to the
+    /// device's key -- if the request is still the one whose digits the owner compared.
+    fn holder_approve(&self, guard: &dyn Guard, conn: ConnId, who: &Who, token: &str, fp: &str, code: &str) -> Result<Value, Refusal> {
+        let vault = self.vault()?;
+        self.session(conn, token, &vault)?;
+        let Some(asking) = vault.asking(fp) else {
+            return Err(refuse(Code::NoMatch, "no device is asking to be added with that fingerprint"));
+        };
+        if !holders::known(&asking.kind) {
+            return Err(refuse(Code::BadRequest, format!("SpatiKey does not know how to open the vault with {}", shown(&asking.kind))));
+        }
+        if !holders::same_code(&holders::code(vault.id(), &asking.device, &asking.public), code) {
+            return Err(refuse(Code::Denied, "that request changed since its digits were shown: look at it again"));
+        }
+        let public = b64::decode(&asking.public).map_err(|_| refuse(Code::BadRequest, "the request's key is not base64"))?;
+        // Before the touch: a key nothing can be wrapped to is refused without asking anybody.
+        holders::wrap(&VaultKey::random(), &public).map_err(|e| refuse(Code::BadRequest, e))?;
+        let name = match shown(&asking.name) {
+            name if name.is_empty() => "a device".to_string(),
+            name => name,
+        };
+        let key = self.unlock_lingering(guard, &vault, who, &format!("add {name} to the devices that open SpatiKey"), 0)?;
+        let wrapped = holders::wrap(&key, &public).map_err(failed)?;
+        let _writing = lock(&self.writing);
+        let record = TouchDevice {
+            device: asking.device.to_ascii_lowercase(),
+            name: asking.name.clone(),
+            kind: asking.kind.clone(),
+            public: asking.public.clone(),
+            wrapped: b64::encode(&wrapped),
+            added: crate::now_ms(),
+            by: self.short(),
+            removed: false,
+        };
+        vault.add_touch_device(&record).map_err(failed)?;
+        vault.close_asking(&asking.device).map_err(failed)?;
+        log::info!("spatikey: added {name} ({}) to the devices that open vault {}", &record.device[..8], vault.id());
+        nothing()
+    }
+
+    fn holder_refuse(&self, conn: ConnId, token: &str, fp: &str) -> Result<Value, Refusal> {
+        let vault = self.vault()?;
+        self.session(conn, token, &vault)?;
+        if vault.asking(fp).is_none() {
+            return Err(refuse(Code::NoMatch, "no device is asking to be added with that fingerprint"));
+        }
+        vault.close_asking(fp).map_err(failed)?;
+        nothing()
     }
 
     fn setup(&self, guard: &dyn Guard, name: &str) -> Result<Value, Refusal> {
@@ -333,14 +559,14 @@ impl Service {
         let key = VaultKey::random();
         let touch = self.with_card(&ByGuard(guard), "set SpatiKey up", || guard.enroll(&key), |touch| touch.as_ref().err())?;
         let vault = Vault::create_with(&self.shared, &self.local, &self.short(), &key).map_err(failed)?;
-        self.enrolled(&vault, touch, name)?;
+        self.enrolled(&vault, touch, name, guard.kind())?;
         let recovery_code = vault.set_recovery(&key).map_err(failed)?;
         answer(SetupAnswer { recovery_code })
     }
 
-    /// Keep what Touch ID made for `vault`: this Mac's half in `local`, and its record in
+    /// Keep what the sensor made for `vault`: this device's half in `local`, and its record in
     /// `devices`, each replacing any before.
-    fn enrolled(&self, vault: &Vault, touch: TouchId, name: &str) -> Result<(), Refusal> {
+    fn enrolled(&self, vault: &Vault, touch: TouchId, name: &str, kind: &str) -> Result<(), Refusal> {
         vault.set_touch_id(&touch).map_err(failed)?;
         let name = match name.trim() {
             "" => self.me.name.clone(),
@@ -349,12 +575,19 @@ impl Service {
         let device = TouchDevice {
             device: self.me.fp.clone(),
             name,
-            kind: "mac-touch-id".into(),
+            kind: kind.to_string(),
             public: touch.public,
             wrapped: touch.wrapped,
             added: crate::now_ms(),
+            ..TouchDevice::default()
         };
-        vault.add_touch_device(&device).map_err(failed)
+        vault.add_touch_device(&device).map_err(failed)?;
+        // A request this device made while it could not open the vault is answered now.
+        if vault.pending().is_some() {
+            let _ = vault.forget_pending();
+            let _ = vault.close_asking(&self.me.fp);
+        }
+        Ok(())
     }
 
     fn open(&self, guard: &dyn Guard, conn: ConnId, who: &Who) -> Result<Value, Refusal> {
@@ -727,30 +960,63 @@ impl Service {
             return Err(refuse(Code::Failed, "this vault has no recovery code"));
         }
         if !guard.can_touch() {
-            return Err(refuse(Code::TouchIdUnavailable, "Touch ID cannot be used on this Mac now"));
+            return Err(refuse(
+                Code::TouchIdUnavailable,
+                format!("{} cannot be used on this device now", holders::sensor(guard.kind())),
+            ));
         }
         let key = vault.recover(&code).map_err(|e| refuse(Code::Denied, e))?;
         let _prompt = lock(&self.prompt);
-        let touch =
-            self.with_card(&ByGuard(guard), "set Touch ID up again", || guard.enroll(&key), |touch| touch.as_ref().err())?;
-        self.enrolled(&vault, touch, "")?;
-        log::info!("spatikey: Touch ID set up again for vault {} from the recovery code", vault.id());
+        let what = match guard.kind() {
+            holders::MAC => "set Touch ID up again",
+            _ => "open SpatiKey with your fingerprint",
+        };
+        let touch = self.with_card(&ByGuard(guard), what, || guard.enroll(&key), |touch| touch.as_ref().err())?;
+        self.enrolled(&vault, touch, "", guard.kind())?;
+        log::info!("spatikey: this device opens vault {} again, set up from the recovery code", vault.id());
         nothing()
     }
 
     fn devices(&self, conn: ConnId, token: &str) -> Result<Value, Refusal> {
         let vault = self.vault()?;
         self.session(conn, token, &vault)?;
-        let touch_ids =
-            vault.touch_devices().into_iter().map(|d| Device { fp: d.device, name: d.name, added: d.added }).collect();
-        answer(DevicesAnswer { allowed: self.allowed(), touch_ids })
+        let touch_ids = vault
+            .touch_devices()
+            .into_iter()
+            .filter(|d| d.kind == holders::MAC)
+            .map(|d| Device { fp: d.device, name: d.name, added: d.added })
+            .collect();
+        let requests = vault
+            .askings()
+            .into_iter()
+            .map(|a| Asking {
+                code: holders::code(vault.id(), &a.device, &a.public),
+                fp: a.device,
+                name: a.name,
+                kind: a.kind,
+                made: a.made,
+            })
+            .collect();
+        answer(DevicesAnswer { allowed: self.allowed(), touch_ids, holders: holders_of(&vault), requests })
     }
 
-    fn forget_device(&self, conn: ConnId, token: &str, fp: &str) -> Result<Value, Refusal> {
+    fn forget_device(&self, guard: &dyn Guard, conn: ConnId, who: &Who, token: &str, fp: &str) -> Result<Value, Refusal> {
         let vault = self.vault()?;
         self.session(conn, token, &vault)?;
         if fp.eq_ignore_ascii_case(&self.me.fp) {
-            return Err(refuse(Code::BadRequest, "this Mac cannot forget itself; the recovery code sets Touch ID up again"));
+            return Err(refuse(
+                Code::BadRequest,
+                "this device cannot remove itself: remove it from another that opens SpatiKey",
+            ));
+        }
+        // A holder goes only with a new touch here, whatever the session covers: it is a device
+        // that opens every password.
+        if let Some(holder) = vault.touch_devices().into_iter().find(|d| d.device.eq_ignore_ascii_case(fp)) {
+            let name = match shown(&holder.name) {
+                name if name.is_empty() => "a device".to_string(),
+                name => name,
+            };
+            self.unlock_lingering(guard, &vault, who, &format!("remove {name} from the devices that open SpatiKey"), 0)?;
         }
         let _writing = lock(&self.writing);
         let mut forgot = false;
@@ -803,10 +1069,13 @@ impl Service {
 
     /// The same, with how long this touch may go on covering others, and be covered by them.
     fn unlock_lingering(&self, guard: &dyn Guard, vault: &Vault, who: &Who, what: &str, linger: u64) -> Result<VaultKey, Refusal> {
-        let Some(touch) = vault.touch_id() else {
+        let Some(touch) = self.half(guard, vault) else {
             return Err(refuse(
                 Code::NotHere,
-                "Touch ID is not set up for this vault on this Mac: set it up from the recovery code",
+                format!(
+                    "{} is not set up for this vault on this device: add it from a device that opens SpatiKey, or set it up from the recovery code",
+                    holders::sensor(guard.kind())
+                ),
             ));
         };
         let reason = format!("{what}{}", asking(who));
@@ -947,6 +1216,7 @@ impl Service {
     fn forward(&self, asker: &Arc<Asker>, conn: ConnId, env: Envelope) -> Result<Value, Refusal> {
         match &env.request {
             Request::Status => {
+                let opened = Vault::open(&self.shared, &self.local).ok();
                 return answer(StatusAnswer {
                     vault: Vault::exists(&self.shared),
                     opens_here: false,
@@ -954,10 +1224,16 @@ impl Service {
                     approvers: asker.near(NEAR),
                     name: self.me.name.clone(),
                     fp: self.me.fp.clone(),
-                })
+                    holders: opened.as_ref().map(holders_of).unwrap_or_default(),
+                    kind: String::new(),
+                    request_code: String::new(),
+                });
             }
-            Request::Setup { .. } | Request::Recover { .. } => {
-                return Err(refuse(Code::NotHere, "SpatiKey is set up on a Mac, with its Touch ID"))
+            Request::Setup { .. } | Request::Recover { .. } | Request::HolderRequest { .. } => {
+                return Err(refuse(
+                    Code::NotHere,
+                    "this device has no fingerprint reader of its own to open SpatiKey with: it asks a device that has",
+                ))
             }
             Request::Find => return answer(FindAnswer { macs: asker.find(FIND) }),
             Request::PairWith { fp } => return answer(asker.pair(fp)?),
@@ -1119,30 +1395,77 @@ impl Service {
     /// macOS asks on the Mac's own screen, which the wearer may not be looking at.
     fn call_showing_wait(&self, asker: &Asker, env: Envelope) -> Reply {
         match finger_wanted(&env.request) {
-            Some(what) => self.with_card(&ByRoom, &what, || asker.call(env), |reply| reply.err.as_ref()),
+            // Which holder is asked is known once one answers on the network: the card names it
+            // then ("Touch ID on darkPhoenix to ..."), and again if another is asked instead.
+            Some(what) => self.with_card_as(
+                &ByRoom,
+                touch_card(&what),
+                &what,
+                |rename| asker.call_with(env, &|fp: &str, name: &str| rename(self.holder_card(fp, name, &what))),
+                |reply| reply.err.as_ref(),
+            ),
             None => asker.call(env),
         }
+    }
+
+    /// The card while the holder `fp`, which answered as `name`, is asked for a finger.
+    fn holder_card(&self, fp: &str, name: &str, what: &str) -> String {
+        let record = Vault::open(&self.shared, &self.local).ok().and_then(|vault| vault.touch_device(fp)).filter(|r| !r.removed);
+        let name = match (shown(name), record.as_ref().map(|r| shown(&r.name))) {
+            (name, _) if !name.is_empty() => name,
+            (_, Some(name)) if !name.is_empty() => name,
+            _ => return touch_card(what),
+        };
+        holder_card(record.as_ref().map_or(holders::MAC, |r| r.kind.as_str()), &name, what)
     }
 
     /// `ask`, which may want a finger on the Mac for `what`, with a card saying so up while it
     /// runs; then the card of another still waiting, if there is one, or the card taken away --
     /// with a few seconds' word on why, when the finger did not come.
     ///
-    /// The one way a card is put up, on every platform: on the Mac by its guard, into its own room,
-    /// for its own requests and other devices' alike; on the Deck and the Beam Pro into theirs,
-    /// for as long as the Mac is asked.
+    /// The one way a card is put up, on every platform: on a holder by its guard, into its own
+    /// room, for its own requests and other devices' alike; on the Deck and the Beam Pro into
+    /// theirs, for as long as a holder is asked.
     fn with_card<T>(&self, shows: &dyn Shows, what: &str, ask: impl FnOnce() -> T, refusal: impl FnOnce(&T) -> Option<&Refusal>) -> T {
+        let card = match self.guard().map(|guard| guard.kind()) {
+            Some(holders::ANDROID) => format!("Fingerprint on this phone to {what}"),
+            _ => touch_card(what),
+        };
+        self.with_card_as(shows, card, what, |_| ask(), refusal)
+    }
+
+    /// [`Service::with_card`] with the card's words given, and a way for `ask` to change them while
+    /// it waits.
+    fn with_card_as<T>(
+        &self,
+        shows: &dyn Shows,
+        card: String,
+        what: &str,
+        ask: impl FnOnce(&(dyn Fn(String) + Sync)) -> T,
+        refusal: impl FnOnce(&T) -> Option<&Refusal>,
+    ) -> T {
         use std::sync::atomic::{AtomicU64, Ordering};
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let card = touch_card(what);
         {
             // Said under the lock, so that what the room shows is always the newest still waiting.
             let mut cards = lock(&self.cards);
             cards.push((n, card.clone()));
             shows.show(&card);
         }
-        let result = ask();
+        let rename = |text: String| {
+            let mut cards = lock(&self.cards);
+            let newest = cards.last().is_some_and(|(m, _)| *m == n);
+            if let Some((_, said)) = cards.iter_mut().find(|(m, _)| *m == n) {
+                if *said != text {
+                    *said = text.clone();
+                    if newest {
+                        shows.show(&text);
+                    }
+                }
+            }
+        };
+        let result = ask(&rename);
         let mut cards = lock(&self.cards);
         cards.retain(|(m, _)| *m != n);
         match (cards.last(), refusal(&result)) {
@@ -1158,7 +1481,7 @@ impl Service {
 }
 
 /// Who puts the card up: the Mac's guard, or this device's room.
-trait Shows {
+trait Shows: Sync {
     fn show(&self, text: &str);
     fn brief(&self, text: &str);
 }
@@ -1197,6 +1520,20 @@ pub fn touch_card(what: &str) -> String {
     format!("Touch ID on your Mac to {what}")
 }
 
+/// The card while the holder `name`, of `kind`, is asked for a finger for `what`: "Touch ID on
+/// darkPhoenix to save a password for github.com".
+pub fn holder_card(kind: &str, name: &str, what: &str) -> String {
+    match kind {
+        holders::ANDROID => format!("Fingerprint on {name} to {what}"),
+        _ => format!("Touch ID on {name} to {what}"),
+    }
+}
+
+/// The holders of `vault`, as the protocol has them.
+fn holders_of(vault: &Vault) -> Vec<Holder> {
+    vault.touch_devices().into_iter().map(|d| Holder { fp: d.device, name: d.name, kind: d.kind, added: d.added }).collect()
+}
+
 /// Whether a refusal is the finger not coming -- cancelled, not in time, Touch ID not there --
 /// which the card's last word says; anything else is the asking program's to say.
 fn touch_missed(code: Code) -> bool {
@@ -1224,6 +1561,7 @@ fn finger_wanted(request: &Request) -> Option<String> {
         Request::ProfileUnlock { profile } => Some(format!("open the profile {}", shown(profile))),
         Request::PasskeyCreate(request) => Some(format!("add a passkey for {}", request.rp_id)),
         Request::PasskeyGet(request) => Some(format!("sign in to {} with a passkey", request.rp_id)),
+        Request::HolderApprove { .. } => Some("add a device to those that open SpatiKey".to_string()),
         _ => None,
     }
 }
@@ -1287,6 +1625,8 @@ fn session_of(request: &Request) -> Option<&str> {
         | Request::RecoveryNew { session }
         | Request::Devices { session }
         | Request::ForgetDevice { session, .. }
+        | Request::HolderApprove { session, .. }
+        | Request::HolderRefuse { session, .. }
         | Request::Settings { session, .. } => Some(session.as_str()),
         Request::Totp { session, .. } | Request::Reveal { session, .. } | Request::Type { session, .. } => {
             session.as_deref().filter(|token| !token.is_empty())

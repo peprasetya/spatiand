@@ -167,6 +167,25 @@ pub enum Request {
         fp: String,
         ok: bool,
     },
+    /// On a device with biometrics that does not open the vault yet: make its key and ask, in the
+    /// synced folder, to be added by a device that does. Asked again while it waits, the same
+    /// request and the same digits. Answers [`HolderAnswer`].
+    HolderRequest {
+        #[serde(default)]
+        name: String,
+    },
+    /// On a holder, in a session: add the device `fp` that asked, if it shows `code`. Asks for a
+    /// new touch, whatever the session or a lingering touch would cover. Answers `{}`.
+    HolderApprove {
+        session: String,
+        fp: String,
+        code: String,
+    },
+    /// On a holder, in a session: turn the request of the device `fp` down. Answers `{}`.
+    HolderRefuse {
+        session: String,
+        fp: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -233,6 +252,43 @@ pub struct StatusAnswer {
     pub name: String,
     /// This machine's fingerprint, in full (the pairing code is made from both ends').
     pub fp: String,
+    /// The devices that open the vault with their own biometrics, oldest first.
+    #[serde(default)]
+    pub holders: Vec<Holder>,
+    /// What this machine's own biometrics are, when it has any: `mac-touch-id`,
+    /// `android-biometric`; empty for none (the Deck, the Beam Pro).
+    #[serde(default)]
+    pub kind: String,
+    /// While this machine waits to be added as a holder: the six digits it shows.
+    #[serde(default)]
+    pub request_code: String,
+}
+
+/// A device that opens the vault with its own biometrics.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Holder {
+    pub fp: String,
+    pub name: String,
+    /// `mac-touch-id` or `android-biometric`.
+    pub kind: String,
+    pub added: u64,
+}
+
+/// A device asking to be added as a holder.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Asking {
+    pub fp: String,
+    pub name: String,
+    pub kind: String,
+    /// The six digits it shows, "123 456".
+    pub code: String,
+    pub made: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HolderAnswer {
+    /// The six digits to compare with the ones the adding holder shows.
+    pub code: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -344,8 +400,15 @@ pub struct TargetAnswer {
 pub struct DevicesAnswer {
     /// Devices that may ask this Mac.
     pub allowed: Vec<Device>,
-    /// Macs that can open the vault with their Touch ID.
+    /// Macs that can open the vault with their Touch ID: [`DevicesAnswer::holders`] as SpatiKey's
+    /// windows from before other holders read it.
     pub touch_ids: Vec<Device>,
+    /// Every device that opens the vault with its biometrics.
+    #[serde(default)]
+    pub holders: Vec<Holder>,
+    /// Devices asking to be added to them.
+    #[serde(default)]
+    pub requests: Vec<Asking>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]

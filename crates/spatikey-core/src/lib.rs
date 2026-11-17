@@ -23,6 +23,10 @@ pub mod wire;
 // program that only asks it -- SpatiMesh, SpatiKey's window, the browsers' host -- leaves it out
 // (`default-features = false`) and asks over the socket.
 #[cfg(feature = "service")]
+pub mod holders;
+#[cfg(feature = "service")]
+pub mod platform;
+#[cfg(feature = "service")]
 pub mod recovery;
 #[cfg(feature = "service")]
 pub mod remote;

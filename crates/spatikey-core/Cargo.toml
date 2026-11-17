@@ -38,3 +38,6 @@ service = ["dep:argon2", "dep:spatiand-stream", "dep:quinn", "dep:rustls", "dep:
 
 [dev-dependencies]
 env_logger.workspace = true
+# A holder's private key in software, for the tests: ring makes and uses only ephemeral ECDH
+# keys, and a holder's key (the Secure Enclave's, Android Keystore's) is used again and again.
+p256 = { version = "0.13", default-features = false, features = ["ecdh", "std"] }

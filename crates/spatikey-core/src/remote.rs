@@ -45,6 +45,8 @@ const ASK_EVERY: Duration = Duration::from_secs(45);
 const STALE: Duration = Duration::from_secs(60);
 /// How long a device listens for its Mac before a request.
 const FIND_WAIT: Duration = Duration::from_millis(1500);
+/// Once a holder has answered, how much longer the one asked last is waited for.
+const PREFER_WAIT: Duration = Duration::from_millis(300);
 /// How long it listens for the Mac it is pairing with.
 const PAIR_FIND_WAIT: Duration = Duration::from_secs(3);
 /// Broadcasts on Wi-Fi go out unacknowledged at the slowest rate and are lost now and then, so
@@ -703,6 +705,8 @@ pub struct Asker {
     runtime: OnceLock<Result<tokio::runtime::Runtime, String>>,
     /// The hosts this device has paired with: those that are Macs need no second pairing.
     hosts: Mutex<Option<HostList>>,
+    /// The holder that last answered a request: asked first next time, if it answers.
+    last: Mutex<Option<Fingerprint>>,
 }
 
 /// What [`Asker::also_ask`] is given: read each time, as hosts come and go.
@@ -716,7 +720,13 @@ impl Asker {
 
     /// [`Asker::new`] by another [`Network`] rule, broadcasting to another port: what tests drive.
     pub fn with_network(identity: Identity, local: PathBuf, name: String, network: Network, discovery: u16) -> Asker {
-        let beacons = Beacons { network, port: discovery, fp: identity.fingerprint().to_string(), name: name.clone() };
+        Asker::with_ports(identity, local, name, network, vec![discovery])
+    }
+
+    /// [`Asker::with_network`] broadcasting to several ports: tests run more than one holder on
+    /// one machine, where only one can have each port.
+    pub fn with_ports(identity: Identity, local: PathBuf, name: String, network: Network, discovery: Vec<u16>) -> Asker {
+        let beacons = Beacons { network, ports: discovery, fp: identity.fingerprint().to_string(), name: name.clone() };
         Asker {
             identity,
             local,
@@ -727,6 +737,7 @@ impl Asker {
             pending: Mutex::new(HashMap::new()),
             runtime: OnceLock::new(),
             hosts: Mutex::new(None),
+            last: Mutex::new(None),
         }
     }
 
@@ -802,6 +813,17 @@ impl Asker {
     /// asked: up to two minutes). `not_reachable` if none answers the broadcast, `no_approver`
     /// with none paired.
     pub fn call(&self, env: Envelope) -> Reply {
+        self.call_with(env, &|_: &str, _: &str| {})
+    }
+
+    /// [`Asker::call`], telling `asking` which holder is asked -- its fingerprint and the name it
+    /// answered with -- once one is chosen, and again if another is asked instead.
+    ///
+    /// Any paired holder that answers on this network will do. The one that answered last is
+    /// asked first, if it answers within a moment of the first to; one that cannot answer --
+    /// it does not hold the vault, or its sensor cannot be used now (a Mac with its lid shut) --
+    /// is passed over for the next, since nobody was asked anything there.
+    pub fn call_with(&self, env: Envelope, asking: &(dyn Fn(&str, &str) + Sync)) -> Reply {
         let id = env.id;
         let paired: Vec<Fingerprint> = self.approvers().iter().filter_map(|d| d.fp.parse().ok()).collect();
         if paired.is_empty() {
@@ -812,10 +834,15 @@ impl Asker {
             Err(refusal) => return Reply::err(id, refusal),
         };
         drop(env);
-        match self.run(self.ask(&paired, &framed, id)) {
+        match self.run(self.ask(&paired, &framed, id, asking)) {
             Ok(Ok(reply)) => reply,
             Ok(Err(refusal)) | Err(refusal) => Reply::err(id, refusal),
         }
+    }
+
+    /// The holder that answered last, if any.
+    pub fn last(&self) -> Option<String> {
+        lock(&self.last).map(|fp| fp.to_string())
     }
 
     /// Ask the Mac `fp` (found by [`Asker::find`]) to let this device in. Returns once its owner
@@ -896,17 +923,34 @@ impl Asker {
         }
     }
 
-    async fn ask(&self, paired: &[Fingerprint], framed: &[u8], id: u64) -> Result<Reply, Refusal> {
+    async fn ask(&self, paired: &[Fingerprint], framed: &[u8], id: u64, asking: &(dyn Fn(&str, &str) + Sync)) -> Result<Reply, Refusal> {
         let mut fresh = false;
+        // Holders passed over, and the last one's refusal, said if none is left.
+        let mut passed: Vec<Fingerprint> = Vec::new();
+        let mut passed_why: Option<Reply> = None;
         loop {
-            let (link, kept) = self.link(paired, fresh).await?;
+            let left: Vec<Fingerprint> = paired.iter().filter(|fp| !passed.contains(fp)).copied().collect();
+            let (link, kept) = match self.link(&left, fresh).await {
+                Ok(link) => link,
+                Err(refusal) => return passed_why.map_or(Err(refusal), Ok),
+            };
+            asking(&link.mac.to_string(), &link.name);
             match exchange(&link.connection, framed, ANSWER_WAIT).await {
                 Ok(reply) if reply.id != id => {
                     self.forget(&link);
                     return Err(Refusal::new(Code::Failed, "the Mac answered another request"));
                 }
+                Ok(reply) if reply.err.as_ref().is_some_and(|r| passes_over(r.code)) && left.len() > 1 => {
+                    // Nobody was asked anything there: the next holder, on a connection of its own.
+                    log::info!("{} cannot answer ({}); asking another", link.name, reply.err.as_ref().map(|r| r.message.as_str()).unwrap_or(""));
+                    passed.push(link.mac);
+                    passed_why = Some(reply);
+                    self.forget(&link);
+                    fresh = false;
+                }
                 Ok(reply) => {
                     let Some(refusal) = reply.err.as_ref().filter(|r| r.code == Code::NotSameLan) else {
+                        *lock(&self.last) = Some(link.mac);
                         return Ok(reply);
                     };
                     // A kept connection may have outlived the Mac's memory of this device's last
@@ -953,18 +997,43 @@ impl Asker {
             }
             self.forget(&link);
         }
-        // Before each connection, a broadcast: it finds the Mac, and it is what the Mac will
-        // judge the connection by.
-        let (answered, failure) = self.beacons.discover(false, FIND_WAIT, |a| paired.contains(&a.fp)).await;
-        let Some(mac) = answered.into_iter().find(|a| paired.contains(&a.fp)) else {
+        // Before each connection, a broadcast: it finds the holders, and it is what the holder
+        // will judge the connection by. The one asked last is waited for a moment after another
+        // has answered.
+        let last = lock(&self.last).filter(|fp| paired.contains(fp));
+        let (answered, failure) = self
+            .beacons
+            .discover_settling(
+                false,
+                FIND_WAIT,
+                |a| paired.contains(&a.fp) && last.is_none_or(|last| last == a.fp),
+                |a| paired.contains(&a.fp),
+                PREFER_WAIT,
+            )
+            .await;
+        let order = choose(&answered, paired, last);
+        if order.is_empty() {
             return Err(not_found(failure, "no Mac this device is paired with answered on this network"));
-        };
-        let link = Arc::new(self.connect(&mac).await?);
-        if let Some(old) = lock(&self.link).replace(link.clone()) {
-            old.connection.close(0u32.into(), b"replaced");
         }
-        self.keep_heard(&link);
-        Ok((link, false))
+        // The first that lets this device connect.
+        let mut refused = None;
+        for mac in order {
+            match self.connect(mac).await {
+                Ok(link) => {
+                    let link = Arc::new(link);
+                    if let Some(old) = lock(&self.link).replace(link.clone()) {
+                        old.connection.close(0u32.into(), b"replaced");
+                    }
+                    self.keep_heard(&link);
+                    return Ok((link, false));
+                }
+                Err(refusal) => {
+                    log::info!("could not connect to {}: {refusal}", mac.name);
+                    refused = Some(refusal);
+                }
+            }
+        }
+        Err(refused.unwrap_or_else(|| Refusal::new(Code::NotReachable, "no Mac could be reached")))
     }
 
     async fn connect(&self, mac: &Answered) -> Result<Link, Refusal> {
@@ -996,7 +1065,7 @@ impl Asker {
             connection.close(1u32.into(), b"not spatikey/1");
             return Err(Refusal::new(Code::NotReachable, format!("what answered at {target} is not SpatiKey")));
         }
-        Ok(Link { endpoint, connection, mac: mac.fp, heard: Mutex::new(Instant::now()) })
+        Ok(Link { endpoint, connection, mac: mac.fp, name: mac.name.clone(), heard: Mutex::new(Instant::now()) })
     }
 
     /// While a connection is kept, a broadcast every [`ASK_EVERY`], so that the Mac keeps
@@ -1058,8 +1127,27 @@ struct Link {
     endpoint: quinn::Endpoint,
     connection: quinn::Connection,
     mac: Fingerprint,
+    /// What it called itself when it answered.
+    name: String,
     /// When the Mac last answered this device's broadcast.
     heard: Mutex<Instant>,
+}
+
+/// The holders that answered, in the order to try them: the one asked last first, then in the
+/// order they answered (the nearest, as a rule, first).
+fn choose<'a>(answered: &'a [Answered], paired: &[Fingerprint], last: Option<Fingerprint>) -> Vec<&'a Answered> {
+    let mut order: Vec<&Answered> = answered.iter().filter(|a| paired.contains(&a.fp)).collect();
+    if let Some(at) = last.and_then(|last| order.iter().position(|a| a.fp == last)) {
+        let preferred = order.remove(at);
+        order.insert(0, preferred);
+    }
+    order
+}
+
+/// A refusal that says the holder could not have asked anybody -- it does not hold the vault, or
+/// its sensor cannot be used now -- so another holder may be asked in its place.
+fn passes_over(code: Code) -> bool {
+    matches!(code, Code::NotHere | Code::TouchIdUnavailable)
 }
 
 impl Link {
@@ -1090,7 +1178,7 @@ struct Answered {
 #[derive(Clone)]
 struct Beacons {
     network: Network,
-    port: u16,
+    ports: Vec<u16>,
     fp: String,
     name: String,
 }
@@ -1099,6 +1187,20 @@ impl Beacons {
     /// Broadcast `ASK` (or `PAIR`), and gather the Macs that answer within `wait` -- sooner once
     /// `enough` says one will do. With none, also what stopped the broadcast going, if anything did.
     async fn discover(&self, pair: bool, wait: Duration, enough: impl Fn(&Answered) -> bool) -> (Vec<Answered>, Option<String>) {
+        self.discover_settling(pair, wait, enough, |_| false, Duration::ZERO).await
+    }
+
+    /// [`Beacons::discover`], and once one that will `good`ly do has answered, only `settle`
+    /// more for the one that is `enough`: the holder asked last is waited for a moment, not for
+    /// the whole of `wait` when it is not there.
+    async fn discover_settling(
+        &self,
+        pair: bool,
+        wait: Duration,
+        enough: impl Fn(&Answered) -> bool,
+        good: impl Fn(&Answered) -> bool,
+        settle: Duration,
+    ) -> (Vec<Answered>, Option<String>) {
         let nonce = nonce();
         let beacon = if pair {
             Beacon::Pair { nonce: nonce.clone(), fp: self.fp.clone(), name: self.name.clone() }
@@ -1113,8 +1215,8 @@ impl Beacons {
         if let Err(e) = socket.set_broadcast(true) {
             return (Vec::new(), Some(format!("could not broadcast: {e}")));
         }
-        let destinations = self.network.destinations(self.port);
-        let deadline = tokio::time::Instant::now() + wait;
+        let destinations: Vec<SocketAddr> = self.ports.iter().flat_map(|&port| self.network.destinations(port)).collect();
+        let mut deadline = tokio::time::Instant::now() + wait;
         let mut answered: Vec<Answered> = Vec::new();
         let mut went = false;
         let mut failure = None;
@@ -1145,9 +1247,13 @@ impl Beacons {
                     if let Some(mac) = self.answer(&buffer[..length], from, &nonce) {
                         if !answered.iter().any(|a| a.fp == mac.fp) {
                             let done = enough(&mac);
+                            let will_do = good(&mac);
                             answered.push(mac);
                             if done {
                                 break;
+                            }
+                            if will_do {
+                                deadline = deadline.min(tokio::time::Instant::now() + settle);
                             }
                         }
                     }
@@ -1417,6 +1523,22 @@ mod tests {
         assert_eq!(clean_name("  Steam Deck\n"), "Steam Deck");
         assert_eq!(clean_name("evil\u{202e}kced"), "evilkced");
         assert_eq!(clean_name(&"x".repeat(100)).len(), 64);
+    }
+
+    #[test]
+    fn the_holder_asked_last_goes_first_then_the_order_they_answered() {
+        let (a, b, c) = (Identity::new().unwrap().fingerprint(), Identity::new().unwrap().fingerprint(), Identity::new().unwrap().fingerprint());
+        let answered = |fps: &[Fingerprint]| -> Vec<Answered> {
+            fps.iter().map(|&fp| Answered { fp, name: String::new(), ip: Ipv4Addr::LOCALHOST.into(), port: 1 }).collect()
+        };
+        let heard = answered(&[a, b, c]);
+        let order = |paired: &[Fingerprint], last| choose(&heard, paired, last).into_iter().map(|a| a.fp).collect::<Vec<_>>();
+        assert_eq!(order(&[a, b, c], None), [a, b, c]);
+        assert_eq!(order(&[a, b, c], Some(c)), [c, a, b]);
+        assert_eq!(order(&[b, c], Some(a)), [b, c], "one not paired is not asked, last or not");
+        assert_eq!(order(&[], Some(a)), Vec::<Fingerprint>::new());
+        assert!(passes_over(Code::NotHere) && passes_over(Code::TouchIdUnavailable));
+        assert!(!passes_over(Code::Denied) && !passes_over(Code::Timeout) && !passes_over(Code::FingerprintsChanged));
     }
 
     #[test]

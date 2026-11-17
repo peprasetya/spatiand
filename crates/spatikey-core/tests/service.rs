@@ -719,7 +719,7 @@ fn typing_needs_a_room_and_types_what_was_asked() {
 #[test]
 fn devices_settings_and_a_new_recovery_code_in_a_session() {
     let place = Place::new("devices");
-    let (service, _guard, key) = ready(&place);
+    let (service, guard, key) = ready(&place);
     let conn = next_conn();
     let session = open(&service, conn);
     let deck = "aa".repeat(32);
@@ -739,17 +739,28 @@ fn devices_settings_and_a_new_recovery_code_in_a_session() {
         public: String::new(),
         wrapped: String::new(),
         added: 9,
+        ..TouchDevice::default()
     };
     vault.add_touch_device(&record).unwrap();
     let devices: DevicesAnswer = answer(ask(&service, conn, Request::Devices { session: session.clone() }));
     assert_eq!(devices.allowed, allowed);
-    assert_eq!(devices.touch_ids, vec![Device { fp: other_mac.clone(), name: "workMac".into(), added: 9 }]);
+    // This Mac's own record was written when it opened (`ready` leaves it out, as a vault from
+    // before the records would be), and is newer.
+    assert_eq!(devices.touch_ids[0], Device { fp: other_mac.clone(), name: "workMac".into(), added: 9 });
+    assert_eq!(devices.touch_ids.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(), ["workMac", "darkPhoenix"]);
+    assert_eq!(devices.holders.len(), 2);
+    assert!(devices.requests.is_empty());
 
     let forget = |fp: &str| Request::ForgetDevice { session: session.clone(), fp: fp.into() };
+    let unlocks = guard.unlocks();
     answer::<Value>(ask(&service, conn, forget(&deck)));
     assert!(service.allowed().is_empty());
+    assert_eq!(guard.unlocks(), unlocks, "a device that only asks is forgotten in the session");
     answer::<Value>(ask(&service, conn, forget(&other_mac)));
-    assert!(vault.touch_devices().is_empty());
+    assert_eq!(guard.unlocks(), unlocks + 1, "a holder goes only with a new touch");
+    assert!(guard.last_reason().starts_with("remove workMac from the devices that open SpatiKey"), "{}", guard.last_reason());
+    assert_eq!(vault.touch_devices().iter().map(|d| d.device.as_str()).collect::<Vec<_>>(), [me().fp.as_str()]);
+    assert!(vault.touch_device(&other_mac).is_some_and(|d| d.removed && d.wrapped.is_empty()), "a tombstone, emptied");
     assert_eq!(code(ask(&service, conn, forget(&other_mac))), Code::NoMatch);
     assert_eq!(code(ask(&service, conn, forget(&me().fp))), Code::BadRequest);
 
