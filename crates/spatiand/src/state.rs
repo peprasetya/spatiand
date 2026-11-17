@@ -1510,7 +1510,7 @@ impl Spatiand {
     /// in the `Space`, a place on the sphere, and focus. Everything downstream reads those and
     /// nothing downstream asks which protocol the window came from.
     pub fn adopt_x11_window(&mut self, surface: smithay::xwayland::X11Surface) {
-        let pid = surface.pid();
+        let pid = x11_client_pid(&surface);
         let title = surface.title();
         self.x11_pids.insert(surface.window_id(), pid);
         // Whether XWayland has already told us which surface this window draws into. It can
@@ -2135,6 +2135,25 @@ pub fn plain_app_id(id: &str) -> &str {
         Some((app, _)) if app.starts_with("id.prasetya.spatiand.") => app,
         _ => id,
     }
+}
+
+/// The process an X11 window belongs to: the one the X server itself knows connected it (the
+/// X-Resource extension, from the kernel's credentials on the client's socket), and only where
+/// it cannot say, the window's own word (`_NET_WM_PID`).
+///
+/// **The window's word is the process number as its program knows itself**, which in a sandbox
+/// is the sandbox's own (a Flatpak's 2 or 30), and means nothing here: its sound could not be
+/// traced to the launch it came from (`audio::Audio::adopt`). The server's answer is the
+/// number on this side, whatever namespace the program is in.
+fn x11_client_pid(surface: &smithay::xwayland::X11Surface) -> Option<u32> {
+    let said = surface.pid();
+    let known = surface.get_client_pid().ok().filter(|pid| *pid > 1);
+    if let (Some(known), Some(said)) = (known, said) {
+        if known != said {
+            log::info!("X11 window {:?}: its process is {known} (it says {said})", surface.title());
+        }
+    }
+    known.or(said)
 }
 
 #[cfg(test)]

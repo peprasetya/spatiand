@@ -10,12 +10,16 @@
 //! window attached to it afterwards. A slot is allocated at launch, its name goes into the
 //! app's environment where the audio server will find it, and the process id is remembered.
 //! When a window appears, its client's process id is walked up the process tree until it meets
-//! one of those — which is what catches an app that forks before it opens a window.
+//! one of those — which is what catches an app that forks before it opens a window — or a
+//! process whose environment names one of the slots, which is where that process's sound is
+//! going (a Steam game, a dozen levels below the Steam that was launched; see [`trace_slot`]).
 //!
 //! The environment is what does the routing, and it has to, because there is nothing to match
-//! on afterwards: a sandboxed app reports the process id it has inside its own sandbox, which
-//! bears no relation to anything on this side. The process walk only ties the *window* to the
-//! slot; the sound was already aimed before the app started.
+//! on afterwards: a sandboxed app's streams say the process id it has inside its own sandbox,
+//! which bears no relation to anything on this side. The process walk only ties the *window* to
+//! the slot; the sound was already aimed before the app started. (An X11 window's process is the
+//! one the X server knows on this side, not the number the window says of itself: see
+//! `state::x11_client_pid`.)
 //!
 //! Where that fails the window simply has no slot, and its app's audio goes wherever it would
 //! have gone without any of this. That is the important property: a window whose sound cannot
@@ -49,9 +53,16 @@ const MIN_HALF_WIDTH: f64 = 14.0 * std::f64::consts::PI / 180.0;
 /// How far up a process tree to look for the process we launched.
 ///
 /// A shell wrapper, a launcher script and the app itself is three; browsers add another one or
-/// two for their own supervisor. Eight is comfortably past anything real and stops a cycle in
-/// a malformed `/proc` from being an infinite loop.
-const ANCESTRY_DEPTH: usize = 8;
+/// two for their own supervisor. **A Steam game is a dozen and more**, and this used to be eight:
+/// since Steam's client runs in its own container (`steamrt64`, by 2026-11), a game is started
+/// by a launcher service beside that container (`steam-runtime-launch-client --alongside-steam`)
+/// through `steam-runtime-supervisor`, a shell, `steam-launch-wrapper`, `reaper`, the Steam
+/// Linux Runtime's own container and Proton, and the game's own process hangs off the nearest
+/// subreaper among them. Steam's windows, five levels down, still found Steam's sink; the game's
+/// window, three times as deep, never did, so the sink its sound was in had only Steam's windows
+/// to come from: the game was heard from the library. The limit is only there to stop a cycle
+/// in a malformed `/proc`, which [`trace_slot`] also stops by remembering where it has been.
+const ANCESTRY_DEPTH: usize = 64;
 /// How long after a launch a window nobody can trace is taken to be that application's.
 const UNCLAIMED_FOR: std::time::Duration = std::time::Duration::from_secs(45);
 /// How loud a sink must be to count as making a sound, and how long after its last one it is
@@ -163,7 +174,9 @@ impl Audio {
             return;
         }
         let Some(slot) = client_pid.and_then(|pid| self.slot_of_process(pid)).or_else(|| self.unclaimed()) else {
-            log::debug!("no sink was claimed for {client_pid:?}; its sound stays where it is");
+            // Said where it can be read later: a window whose sound is not placed is a
+            // question the session log should answer (a Steam game's was, unseen, for weeks).
+            log::info!("window {window}: no sink was claimed for process {client_pid:?} or its parents; its sound stays where it is");
             return;
         };
         self.bound.insert(window, slot);
@@ -178,7 +191,9 @@ impl Audio {
     /// the application knows itself by -- 2, or 30 -- so walking up from it never reaches the
     /// `flatpak` that was launched. Its sound went into the sink made for it and its window
     /// was never told so: played, and not placed. So a window nobody can trace is taken to be
-    /// the one that was being waited for.
+    /// the one that was being waited for. (An X11 window's process is now the X server's own
+    /// answer, on this side of the sandbox, and traced like any; this stays for whatever still
+    /// cannot be.)
     fn unclaimed(&self) -> Option<Slot> {
         self.claimed_at.iter().rev().find_map(|(slot, at)| {
             let waiting = at.elapsed() < UNCLAIMED_FOR
@@ -270,19 +285,12 @@ impl Audio {
             .collect()
     }
 
-    /// Walk up from `pid` looking for a process we launched.
+    /// The sink a window's process plays into: see [`trace_slot`].
     fn slot_of_process(&self, pid: u32) -> Option<Slot> {
-        let mut at = pid;
-        for _ in 0..ANCESTRY_DEPTH {
-            if let Some((_, slot)) = self.launched.iter().find(|(p, _)| *p == at) {
-                return Some(*slot);
-            }
-            at = parent_of(at)?;
-            if at <= 1 {
-                return None;
-            }
-        }
-        None
+        let ours = |slot: Slot| self.launched.iter().any(|(_, held)| *held == slot);
+        trace_slot(pid, &self.launched, parent_of, |at| {
+            routed_slot(at).filter(|slot| ours(*slot))
+        })
     }
 
     /// The window has gone; take its sink with it, if nothing is still playing into it.
@@ -849,6 +857,73 @@ fn parent_of(pid: u32) -> Option<u32> {
     after_name.split_whitespace().nth(1)?.parse().ok()
 }
 
+/// Which sink a window's process plays into, walking up from it: at each process, whether it
+/// is one we launched (`launched`, the sink it was given), and otherwise whether its environment
+/// names one of our sinks (`routed`) -- which is where its sound really goes, since that
+/// environment is what aims it ([`routing_env`]), inherited by everything the launch starts.
+///
+/// **Both, because each misses what the other finds.** The walk alone lost a Steam game: since
+/// Steam's client runs in its own container, a game is started by a service beside it and
+/// hangs a dozen and more levels below the `steam` we launched, past where the walk stopped
+/// ([`ANCESTRY_DEPTH`]); and a process handed to a subreaper or to the session's manager (a
+/// daemon that forks away) has no line back at all. Its environment says the launch's sink
+/// from its first level -- Proton's game carries Steam's, which is how its sound got there.
+/// The environment alone loses an application that clears it before it starts a child, which
+/// the walk still finds by its parents.
+///
+/// Stops at the first process outside any tree (`init`, 1), at one it has seen already (a
+/// cycle in a malformed `/proc`), or after [`ANCESTRY_DEPTH`] levels.
+fn trace_slot(
+    pid: u32,
+    launched: &[(u32, Slot)],
+    parent: impl Fn(u32) -> Option<u32>,
+    routed: impl Fn(u32) -> Option<Slot>,
+) -> Option<Slot> {
+    let mut at = pid;
+    let mut seen: Vec<u32> = Vec::new();
+    for _ in 0..ANCESTRY_DEPTH {
+        if at <= 1 || seen.contains(&at) {
+            return None;
+        }
+        if let Some((_, slot)) = launched.iter().rev().find(|(p, _)| *p == at) {
+            return Some(*slot);
+        }
+        if let Some(slot) = routed(at) {
+            return Some(slot);
+        }
+        seen.push(at);
+        at = parent(at)?;
+    }
+    None
+}
+
+/// What every window's sink is called, before its slot (`spatiand_audio::server::sink_name`).
+const SINK_PREFIX: &str = "spatiand.window.";
+
+/// The sink a process's environment aims its sound at, if it is one of a window's: read from
+/// `/proc`, which shows a process of the same user its environment as it was started, a
+/// container's (Steam's, the Steam Linux Runtime's) included.
+fn routed_slot(pid: u32) -> Option<Slot> {
+    slot_in_environment(&std::fs::read(format!("/proc/{pid}/environ")).ok()?)
+}
+
+/// The window's sink named in an environment as `/proc/<pid>/environ` has it (`NAME=value`,
+/// each ended by a NUL): either of the two variables [`routing_env`] sets, PipeWire's
+/// (`{ target.object = "spatiand.window.7" }`) or PulseAudio's (`spatiand.window.7`).
+fn slot_in_environment(environ: &[u8]) -> Option<Slot> {
+    use spatiand_audio::server::{PULSE_ROUTING_ENV, ROUTING_ENV};
+    environ.split(|b| *b == 0).find_map(|var| {
+        let var = std::str::from_utf8(var).ok()?;
+        let (name, value) = var.split_once('=')?;
+        if name != ROUTING_ENV && name != PULSE_ROUTING_ENV {
+            return None;
+        }
+        let after = &value[value.find(SINK_PREFIX)? + SINK_PREFIX.len()..];
+        let digits = after.find(|c: char| !c.is_ascii_digit()).unwrap_or(after.len());
+        after[..digits].parse().ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1121,6 +1196,176 @@ mod tests {
             Some(1),
             "the slot was forgotten while its app was still running"
         );
+    }
+
+    /// A process tree as Steam has started a Proton game since its client runs in a container
+    /// (from the Deck's own Steam, 2026-11-16): parent of each, from the game up to the `steam`
+    /// Spatiand launched. Sixteen levels; the walk used to stop after eight.
+    const STEAM_GAME_TREE: &[(u32, u32)] = &[
+        (3261, 3200), // Stumble Guys.exe -> pv-adverb (the runtime's subreaper)
+        (3200, 3190), // pv-adverb -> srt-bwrap
+        (3190, 3180), // srt-bwrap -> pressure-vessel-wrap
+        (3180, 3170), // pressure-vessel-wrap -> _v2-entry-point
+        (3170, 2895), // _v2-entry-point -> reaper
+        (2895, 2894), // reaper -> steam-launch-wrapper
+        (2894, 2893), // steam-launch-wrapper -> sh -c
+        (2893, 2890), // sh -c -> steam-runtime-supervisor
+        (2890, 2100), // steam-runtime-supervisor -> srt-launcher-service --alongside-steam
+        (2100, 2090), // srt-launcher-service -> srt-client-container
+        (2090, 2000), // srt-client-container -> steamrt64/steam
+        (2000, 1950), // steamrt64/steam -> steam.sh
+        (1950, 1944), // steam.sh -> steam, launched by Spatiand
+        (1944, 900),  // steam -> the session (Spatiand)
+        (900, 1),
+    ];
+
+    fn parent_in(tree: &'static [(u32, u32)]) -> impl Fn(u32) -> Option<u32> {
+        move |pid| tree.iter().find(|(p, _)| *p == pid).map(|(_, parent)| *parent)
+    }
+
+    #[test]
+    fn a_steam_game_far_below_the_launch_finds_its_sink() {
+        let launched = [(1944, 1)];
+        // By its parents alone, with no environment to read: the whole way up.
+        assert_eq!(trace_slot(3261, &launched, parent_in(STEAM_GAME_TREE), |_| None), Some(1));
+        // And by its own environment, which names Steam's sink -- where its sound is.
+        let env = |pid| (pid == 3261).then_some(1);
+        assert_eq!(trace_slot(3261, &[], parent_in(STEAM_GAME_TREE), env), Some(1));
+        // Steam's own window (steamwebhelper, inside Steam's container) as before.
+        const STEAM_UI: &[(u32, u32)] = &[(2300, 2200), (2200, 2150), (2150, 2140), (2140, 2090), (2090, 2000), (2000, 1950), (1950, 1944), (1944, 1)];
+        assert_eq!(trace_slot(2300, &launched, parent_in(STEAM_UI), |_| None), Some(1));
+    }
+
+    #[test]
+    fn a_process_with_no_line_back_is_found_by_its_environment() {
+        // Forked away to the session's manager: its parent is init, the launch out of sight.
+        const ORPHAN: &[(u32, u32)] = &[(5000, 1)];
+        assert_eq!(trace_slot(5000, &[(1944, 3)], parent_in(ORPHAN), |_| None), None);
+        assert_eq!(trace_slot(5000, &[(1944, 3)], parent_in(ORPHAN), |_| Some(3)), Some(3));
+    }
+
+    #[test]
+    fn the_launch_is_believed_before_an_environment_further_up() {
+        // An application launched by us under a parent whose environment says another sink:
+        // the nearer answer wins, at whichever level it is found.
+        const TREE: &[(u32, u32)] = &[(700, 600), (600, 500), (500, 1)];
+        let env = |pid| (pid == 500).then_some(9);
+        assert_eq!(trace_slot(700, &[(600, 4)], parent_in(TREE), env), Some(4));
+        // And the window's own environment before a launch above it.
+        let own = |pid| (pid == 700).then_some(9);
+        assert_eq!(trace_slot(700, &[(500, 4)], parent_in(TREE), own), Some(9));
+    }
+
+    #[test]
+    fn a_cycle_or_a_tree_with_no_launch_ends() {
+        const CYCLE: &[(u32, u32)] = &[(10, 11), (11, 12), (12, 10)];
+        assert_eq!(trace_slot(10, &[(99, 1)], parent_in(CYCLE), |_| None), None);
+        const UNRELATED: &[(u32, u32)] = &[(20, 21), (21, 1)];
+        assert_eq!(trace_slot(20, &[(99, 1)], parent_in(UNRELATED), |_| None), None);
+        // A parent that cannot be read (gone, or another user's) ends it too.
+        assert_eq!(trace_slot(30, &[(99, 1)], |_| None, |_| None), None);
+    }
+
+    #[test]
+    fn an_environment_names_its_window_sink_in_either_language() {
+        assert_eq!(sink_name_check(), "spatiand.window.7");
+        let env = b"HOME=/home/deck\0PIPEWIRE_PROPS={ target.object = \"spatiand.window.7\" }\0PULSE_SINK=spatiand.window.7\0";
+        assert_eq!(slot_in_environment(env), Some(7));
+        // PulseAudio's alone: pressure-vessel leaves it, and a Pulse client reads only it.
+        assert_eq!(slot_in_environment(b"PULSE_SERVER=unix:/run/pressure-vessel/pulse/native\0PULSE_SINK=spatiand.window.12\0"), Some(12));
+        // Exactly what this session puts in a launch's environment.
+        let ours: Vec<u8> = routing_env(42)
+            .into_iter()
+            .flat_map(|(k, v)| format!("{k}={v}\0").into_bytes())
+            .collect();
+        assert_eq!(slot_in_environment(&ours), Some(42));
+        // Not a sink of ours, not those variables, not a number.
+        assert_eq!(slot_in_environment(b"PULSE_SINK=alsa_output.pci-0000_04_00.5\0"), None);
+        assert_eq!(slot_in_environment(b"MY_PULSE_SINK=spatiand.window.3\0NOTE=spatiand.window.4\0"), None);
+        assert_eq!(slot_in_environment(b"PULSE_SINK=spatiand.window.\0"), None);
+        assert_eq!(slot_in_environment(b""), None);
+    }
+
+    fn sink_name_check() -> String {
+        // The prefix read back from an environment is the one sinks are named with.
+        let name = spatiand_audio::server::sink_name(7);
+        assert!(name.starts_with(SINK_PREFIX));
+        name
+    }
+
+    /// The same, on real processes: a chain twelve deep, the way a game hangs below Steam, its
+    /// launch's environment inherited all the way down.
+    #[test]
+    fn a_real_process_twelve_levels_down_finds_the_launch_and_its_environment() {
+        use std::os::unix::process::CommandExt;
+        let dir = std::env::temp_dir().join(format!("spatiand-audio-tree-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // Each level starts the next in the background and waits, so each is a process of its
+        // own; the last says who it is and becomes `sleep`.
+        const SCRIPT: &str = r#"if [ "$DEPTH" -gt 0 ]; then DEPTH=$((DEPTH-1)) sh -c "$0" "$0" & wait; else echo $$ > "$OUT.new"; mv "$OUT.new" "$OUT"; exec sleep 30; fi"#;
+        let start = |name: &str, env: &[(String, String)]| {
+            let out = dir.join(name);
+            let _ = std::fs::remove_file(&out);
+            let root = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(SCRIPT)
+                .arg(SCRIPT)
+                .env("DEPTH", "12")
+                .env("OUT", &out)
+                // Not the environment of a session this test may itself be running in.
+                .env_remove("PIPEWIRE_PROPS")
+                .env_remove("PULSE_SINK")
+                .envs(env.iter().cloned())
+                .process_group(0)
+                .spawn()
+                .expect("a shell to start");
+            let begun = std::time::Instant::now();
+            let leaf = loop {
+                if let Ok(text) = std::fs::read_to_string(&out) {
+                    if let Ok(pid) = text.trim().parse::<u32>() {
+                        break pid;
+                    }
+                }
+                assert!(begun.elapsed().as_secs() < 10, "the chain never reached its end");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            };
+            (root, leaf)
+        };
+        let stop = |mut root: std::process::Child| {
+            let _ = std::process::Command::new("kill").arg("--").arg(format!("-{}", root.id())).status();
+            let _ = root.wait();
+        };
+
+        // Without any environment: found by the launch, twelve parents up.
+        let (root, leaf) = start("plain", &[]);
+        let mut depth = 0;
+        let mut at = leaf;
+        while at != root.id() {
+            at = parent_of(at).expect("a parent");
+            depth += 1;
+        }
+        let mut audio = Audio::new(false, Directness::default());
+        audio.launched(root.id(), 5);
+        let found = audio.slot_of_process(leaf);
+        stop(root);
+        assert!(depth >= 12, "the chain is only {depth} deep");
+        assert_eq!(found, Some(5));
+
+        // With the launch's environment, and the launch itself out of sight (as if it had
+        // exited, or the line back went through a subreaper): found by the environment.
+        let (root, leaf) = start("routed", &routing_env(6));
+        let mut audio = Audio::new(false, Directness::default());
+        audio.launched(4_000_000_000, 6);
+        let found = audio.slot_of_process(leaf);
+        // But an environment naming a sink that is not one of this session's launches is not
+        // believed: a process left from an earlier session, say.
+        let mut other = Audio::new(false, Directness::default());
+        other.launched(4_000_000_000, 8);
+        let stale = other.slot_of_process(leaf);
+        stop(root);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(found, Some(6));
+        assert_eq!(stale, None);
     }
 
     #[test]
