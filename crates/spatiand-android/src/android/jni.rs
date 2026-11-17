@@ -167,7 +167,7 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_surfaceGone(_env: *mut J
     }
 }
 
-/// `Native.phoneSurface(surface)`: the phone's touch area, where the monitors are drawn.
+/// `Native.phoneSurface(surface)`: the phone's touch area (`super::panel`).
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_phoneSurface(env: *mut JNIEnv, _class: jclass, surface: jobject) {
     shared().phone.set(window_of(env, surface));
@@ -272,13 +272,6 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_recenter(_env: *mut JNIE
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_audioOutput(_env: *mut JNIEnv, _class: jclass, id: jint) {
     spatiand_audio::server::set_output_device(id);
-}
-
-/// `Native.traffic(rx, tx)`: the network's bytes so far, from `TrafficStats`, for the monitors.
-#[no_mangle]
-pub extern "system" fn Java_id_prasetya_spatiand_Native_traffic(_env: *mut JNIEnv, _class: jclass, rx: jni_sys::jlong, tx: jni_sys::jlong) {
-    crate::system::ANDROID_TRAFFIC[0].store(rx.max(0) as u64, Ordering::Relaxed);
-    crate::system::ANDROID_TRAFFIC[1].store(tx.max(0) as u64, Ordering::Relaxed);
 }
 
 /// `Native.battery(level, scale, status)`: the phone's battery from `ACTION_BATTERY_CHANGED`,

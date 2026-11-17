@@ -1411,9 +1411,6 @@ public class MainActivity extends Activity implements SensorEventListener {
                     : Native.status());
             String recording = Native.takeRecording();
             if (recording != null) publish(recording);
-            // The network's bytes so far, for the monitors under the thumb (dropped by accident in
-            // 9598df4 with the line beside it; the room's side was still waiting for them).
-            Native.traffic(android.net.TrafficStats.getTotalRxBytes(), android.net.TrafficStats.getTotalTxBytes());
             ui.postDelayed(this, 1000);
         }
     };

@@ -350,18 +350,13 @@ fn read_memory() -> Option<f32> {
     parse_memory(&std::fs::read_to_string("/proc/meminfo").ok()?)
 }
 
-/// The network's bytes received and sent, on Android, where only the app's own Java side may
-/// ask (`TrafficStats`); it hands them over once a second.
-#[cfg(target_os = "android")]
-pub static ANDROID_TRAFFIC: [std::sync::atomic::AtomicU64; 2] =
-    [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
-
+/// Nothing on Android: the Beam Pro shows no monitors (its touch area is the pad and nothing
+/// else, `android/panel.rs`, at the owner's word on 2026-09-27), so nothing makes a [`Monitors`]
+/// there, and an app may not read `/proc/net/dev`. Were they shown again, the bytes would come
+/// from the app's Java side (`TrafficStats`), as they did while the phone drew them.
 #[cfg(target_os = "android")]
 fn read_net() -> Option<[u64; 2]> {
-    use std::sync::atomic::Ordering;
-    let rx = ANDROID_TRAFFIC[0].load(Ordering::Relaxed);
-    let tx = ANDROID_TRAFFIC[1].load(Ordering::Relaxed);
-    (rx > 0 || tx > 0).then_some([rx, tx])
+    None
 }
 
 /// Only interfaces backed by hardware, which is what `device` under sysfs means. That leaves

@@ -80,7 +80,7 @@ impl Slot {
 pub struct Shared {
     /// The glasses' display.
     pub glasses: Slot,
-    /// The phone's touch area, where the monitors are drawn under the thumb.
+    /// The phone's touch area: the pad, and nothing drawn on it but its ground.
     pub phone: Slot,
     /// The glasses' usbfs descriptor, when a new one has been handed over.
     pub usb: Mutex<Option<OwnedFd>>,

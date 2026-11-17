@@ -120,7 +120,8 @@ Only what the Deck gets from its hardware is Android's (`crates/spatiand-android
 | DRM scanout | smithay's `GlesRenderer` drawing straight into the glasses' `ANativeWindow` (`backend.rs`, adapted from `backend_drm.rs`) |
 | the Deck's controller | the phone, made into the Deck's controller state (`phone.rs`) |
 | hidraw | the glasses' usbfs descriptor |
-| the sidecar panel | the phone's touch area, with the monitors drawn dim under the thumb (`panel.rs`) |
+| the sidecar panel | the phone's touch area: the pad and nothing drawn on it (`panel.rs`); the monitors were under the thumb for a day and taken out at the owner's word (2026-09-27), and what fed them went with them |
+| an application's dmabuf | an Android hardware buffer sent as one: the plane's file a socket the buffer went through, Spatiand's own modifier, each frame's fence down that socket (`android/eglshim`). SpatiMesh's Chromium and Spatiand's own applications (`spatiand-app`'s `gl/android.rs`) both hand their frames over so |
 | VAAPI dmabufs | MediaCodec into `AHardwareBuffer`s; a placeholder shm buffer carries a token, and the compositor draws the decoder's picture in its place (`spatiand_video::android`, `remote_video.rs`) |
 | PipeWire sinks | the same `Binaural` renderer and measured head, on AAudio (`spatiand_audio`'s `server_android.rs`) |
 

@@ -45,7 +45,7 @@ final class Native {
     /** The glasses' window is going; returns once nothing draws into it. */
     static native void surfaceGone();
 
-    /** Draw the monitors into the phone's touch area. */
+    /** The phone's touch area, for the room to draw its ground into. */
     static native void phoneSurface(Surface surface);
 
     static native void phoneSurfaceGone();
@@ -107,9 +107,6 @@ final class Native {
      * EXTRA_LEVEL, EXTRA_SCALE and EXTRA_STATUS; a scale of 0 for none.
      */
     static native void battery(int level, int scale, int status);
-
-    /** The network's bytes so far, from TrafficStats, for the monitors under the thumb. */
-    static native void traffic(long received, long sent);
 
     /**
      * The phone's apps, for the room's launcher (Shell.listApps): a JSON list of objects with
