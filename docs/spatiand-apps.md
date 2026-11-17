@@ -786,3 +786,27 @@ Control-Q and Command-Q each cancelled (exit status 1). **Not checked**: Command
 the Beam Pro (the same code; the apps type-checked for Android, SpatiQuill -- whose `proc_listchildpids`
 is the Mac's own -- for aarch64-apple-darwin), a real copy of a large file (the FIFO stands in for one), SpatiKey
 against the real service (the demo stand-in answers `close`).
+
+## 2026-11-17: SpatiReel's controls go away while paused too
+
+The owner: "When paused, the control panel does not go hidden... sometimes there is something I want
+to see as I pause it, but it's covered." The controls over a film now follow one clock, playing or
+paused (`crates/spatireel/src/play.rs`, `Clock`): on show for 3 s after the wearer's hands last did
+something -- the room's `hands`, a press, a key, a scroll (and pointer motion only in a room too old to
+send `hands`) -- then gone, leaving the paused frame whole with no pause mark. A **tap on the
+picture** (pressed and let go within 12 px, anywhere but the controls' own shade) puts them away at
+once, and never pauses or plays; the `hands` the room sends for that tap (600 ms) do not bring them
+back, and a tap with the controls brought back less than 0.3 s before -- by the hand on its way, or
+by the press itself when they were gone -- shows them rather than hiding them. Space and Return
+still pause and play, and so does the round button; a press on the shade misses nothing. Unchanged:
+they stay while the "Picture and sound" menu is open, and with the film all round as the sky the
+window is the controls and the room fades it (`set_idle_fade`).
+
+**Checked** on deepmagpie in the snapshot room (scratch HOME, XDG_* and `SPATIAND_APPS_CONFIG`,
+`SPATIAND_HMD=null SPATIAND_INPUT=off`, a 30 s video-only clip; every picture looked at): paused with
+Space, the controls stayed for 3 s and were gone 4 s later on the same frame; a move brought them
+back; a tap hid them and they stayed hidden 2 s; a move brought them back again, a tap hid them, a
+tap on the hidden picture showed them; Space played; a press on the empty part of the shade left
+them and the film playing; the round button paused, and 4 s later they were gone. Unit tests for the
+clock and the tap. Type-checked for Android. **Not checked**: the room's real `hands` (the snapshot
+room sends none, so motion stood in for it), a Mac or a Beam Pro, a touch screen's tap, glasses.

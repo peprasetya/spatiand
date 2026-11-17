@@ -78,6 +78,75 @@ const WINDOW: (f32, f32) = (1920.0, 1080.0);
 const CONTROLS_ALONE: (u32, u32) = (1280, 250);
 const CONTROLS_WITH_MENU: (u32, u32) = (1280, 860);
 const CONTROLS_SHOWN: Duration = Duration::from_secs(3);
+/// How long after a tap has put the controls away the hands that made it are not taken to want
+/// them back: the room says `hands` for the tap's press and release a frame or a few later.
+const PUT_AWAY_DEAF: Duration = Duration::from_millis(600);
+/// How far the pointer may go between a press and its release on the picture for the two to be
+/// a tap, rather than the view being turned.
+const TAP_SLACK: f32 = 12.0;
+/// How long the controls must have been on show for a tap on the picture to put them away.
+const TAP_SETTLED: Duration = Duration::from_millis(300);
+
+/// When the controls over the film are on show: for [`CONTROLS_SHOWN`] after the wearer last
+/// did something, and then not -- paused as much as playing, since a film is often paused to
+/// look at something in the frame -- or until a tap on the picture puts them away at once.
+#[derive(Debug, Clone, Copy)]
+struct Clock {
+    until: Instant,
+    /// When they last came on show.
+    since: Instant,
+    /// Put away by a tap: until then, the hands that made it do not bring them back.
+    deaf_until: Instant,
+}
+
+impl Clock {
+    fn new(now: Instant) -> Clock {
+        Clock { until: now + CONTROLS_SHOWN, since: now, deaf_until: now }
+    }
+
+    fn on(&self, now: Instant) -> bool {
+        now < self.until
+    }
+
+    /// On show, and for long enough that a tap on the picture is meant for them: not brought
+    /// back a moment ago by the very hand that is tapping -- the move to get there, or the
+    /// room's `hands` for the press arriving before the press itself.
+    fn settled(&self, now: Instant) -> bool {
+        self.on(now) && now.saturating_duration_since(self.since) >= TAP_SETTLED
+    }
+
+    /// A press, a key, a scroll: on show from now.
+    fn wake(&mut self, now: Instant) {
+        if !self.on(now) {
+            self.since = now;
+        }
+        self.until = now + CONTROLS_SHOWN;
+    }
+
+    /// The hands stirred (or, in a room too old to say, the pointer moved): the same, unless a
+    /// tap has only just put the controls away.
+    fn stir(&mut self, now: Instant) {
+        if now >= self.deaf_until {
+            self.wake(now);
+        }
+    }
+
+    /// A tap on the picture: gone at once.
+    fn put_away(&mut self, now: Instant) {
+        self.until = now;
+        self.deaf_until = now + PUT_AWAY_DEAF;
+    }
+
+    /// How long until they go by themselves, while they are on show.
+    fn left(&self, now: Instant) -> Option<Duration> {
+        self.on(now).then(|| self.until - now)
+    }
+}
+
+/// Whether a press at `from` let go at `to` is a tap.
+fn is_tap(from: (f32, f32), to: (f32, f32)) -> bool {
+    (to.0 - from.0).hypot(to.1 - from.1) <= TAP_SLACK
+}
 
 /// The size a window showing a picture of this shape is: as large as fits in [`WINDOW`].
 fn fitted(aspect: f32) -> (u32, u32) {
@@ -165,7 +234,15 @@ pub struct Playing {
     /// The pointer is held down on the picture, turning the view: where it was last.
     turning: Option<(f32, f32)>,
     pointer: (f32, f32),
-    controls_until: Instant,
+    clock: Clock,
+    /// Where a press on the picture, with the controls on show, began: let go there, it puts
+    /// them away.
+    tap: Option<(f32, f32)>,
+    /// Whether the controls were in the last picture drawn: paused, nothing else would draw
+    /// the one without them.
+    drawn_shown: Option<bool>,
+    /// The shade the controls are drawn on, over the foot of the film.
+    panel: Rect,
     /// Whether the room has ever said the wearer's hands stirred (`Event::Hands`).
     hands_heard: bool,
     /// Whether the room has the keyboard on this window, and whether the pointer is over it:
@@ -256,7 +333,10 @@ impl Playing {
             gaze: Gaze::default(),
             turning: None,
             pointer: (0.0, 0.0),
-            controls_until: Instant::now() + CONTROLS_SHOWN,
+            clock: Clock::new(Instant::now()),
+            tap: None,
+            drawn_shown: None,
+            panel: Rect::default(),
             hands_heard: false,
             focused: false,
             inside: false,
@@ -292,14 +372,14 @@ impl Playing {
     }
 
     fn controls_shown(&self) -> bool {
-        // Always, when the controls are all the window is; and while a menu is open, the film
-        // is paused, or the wearer has just done something.
+        // Always, when the controls are all the window is (the room fades that window itself);
+        // and while a menu is open, or the wearer has just done something -- paused or not:
+        // paused, the frame is what is being looked at.
         // `SPATIREEL_CONTROLS=stay` is for a picture of them: a snapshot is taken long after
         // they would have gone.
         matches!(self.staging, Staging::Sky { .. })
             || self.menu.is_some()
-            || self.player.paused()
-            || Instant::now() < self.controls_until
+            || self.clock.on(Instant::now())
             || std::env::var("SPATIREEL_CONTROLS").as_deref() == Ok("stay")
     }
 
@@ -312,7 +392,7 @@ impl Playing {
         // pointer over this window is told apart. Keys this window receives wake it by
         // themselves, in `input`.
         if self.inside {
-            self.stir();
+            self.clock.stir(Instant::now());
         }
     }
 
@@ -322,20 +402,14 @@ impl Playing {
         self.dirty = true;
     }
 
-    fn stir(&mut self) {
-        if !self.controls_shown() {
-            self.dirty = true;
-        }
-        self.controls_until = Instant::now() + CONTROLS_SHOWN;
-    }
-
     /// When this next needs to be drawn whether or not anything happens: the next picture,
-    /// or the controls' clock moving on.
+    /// or the controls' clock running out.
     pub fn next_wake(&self) -> Duration {
         if !self.player.paused() {
             Duration::from_millis(8)
         } else {
-            Duration::from_millis(250)
+            let most = Duration::from_millis(250);
+            self.clock.left(Instant::now()).map_or(most, |left| (left + Duration::from_millis(5)).min(most))
         }
     }
 
@@ -435,9 +509,13 @@ impl Playing {
             (None, None) => false,
             _ => true,
         };
-        if !new && !self.dirty && !words_changed {
+        // The controls coming or going is a reason to draw too: paused, there is no next
+        // picture that would.
+        let shown_changed = self.drawn_shown != Some(shown);
+        if !new && !self.dirty && !words_changed && !shown_changed {
             return Ok(false);
         }
+        self.drawn_shown = Some(shown);
         self.words_shown = cue.clone();
         self.dirty = false;
         let staging = self.staging;
@@ -572,6 +650,7 @@ impl Playing {
         }
         let height = 210.0f32.min(all.h);
         let mut panel = Rect::new(all.x, all.bottom() - height, all.w, height);
+        self.panel = panel;
         if !alone {
             // A shade behind the controls, so they can be read over a bright scene.
             p.fill(gl, panel, 0.0, [0.02, 0.025, 0.04, 0.78]);
@@ -718,18 +797,25 @@ impl Playing {
 
     pub fn input(&mut self, input: &Input) -> Outcome {
         self.dirty = true;
+        let now = Instant::now();
         let was_shown = self.controls_shown();
-        // Motion is the head's as often as the hand's: only a room too old to say which
-        // (no `Event::Hands` ever) has it wake the controls.
-        let motion = matches!(input, Input::Pointer { .. } | Input::PointerLeft);
+        let menu_was_open = self.menu.is_some();
         match input {
             Input::Pointer { .. } => self.inside = true,
             Input::PointerLeft => self.inside = false,
             _ => {}
         }
-        // A pointer leaving is no reason to show anything.
-        if (!motion || !self.hands_heard) && !matches!(input, Input::PointerLeft) {
-            self.stir();
+        match input {
+            // A pointer leaving is no reason to show anything.
+            Input::PointerLeft => {}
+            // Motion is the head's as often as the hand's: only a room too old to say which
+            // (no `Event::Hands` ever) has it wake the controls.
+            Input::Pointer { .. } => {
+                if !self.hands_heard {
+                    self.clock.stir(now);
+                }
+            }
+            _ => self.clock.wake(now),
         }
         if let Input::Pointer { x, y } = input {
             // Held down on a sphere seen through the window: the view turns with the hand.
@@ -783,6 +869,13 @@ impl Playing {
         }
         match input {
             Input::Press { pressed: true, .. } => {
+                // A press on the picture itself, with the controls on show (and not only just
+                // brought back by this same hand) and no menu being put away by it, may be a tap
+                // that puts them away; it never pauses or plays.
+                let alone = matches!(self.staging, Staging::Sky { .. });
+                let on_picture = !self.panel.contains(self.pointer.0, self.pointer.1);
+                let meant = was_shown && self.clock.settled(now) && !alone && !menu_was_open && on_picture;
+                self.tap = meant.then_some(self.pointer);
                 if was_shown && self.bar.inset(-12.0).contains(self.pointer.0, self.pointer.1) {
                     self.seeking = true;
                     self.seek_to_pointer();
@@ -791,10 +884,17 @@ impl Playing {
                 }
             }
             Input::Press { pressed: false, .. } => {
+                // Let go where it was pressed: a tap, not the view being turned.
+                if let Some(from) = self.tap.take() {
+                    if is_tap(from, self.pointer) && self.menu.is_none() {
+                        self.clock.put_away(now);
+                    }
+                }
                 self.seeking = false;
                 self.turning = None;
             }
             Input::PointerLeft => {
+                self.tap = None;
                 self.seeking = false;
                 self.turning = None;
             }
@@ -887,6 +987,65 @@ mod tests {
         assert_eq!(capped((1920, 2160), EyeLayout::TopBottom), (1920, 2160));
         // Smaller than that, it is left alone.
         assert_eq!(capped((1280, 720), EyeLayout::Mono), (1280, 720));
+    }
+
+    #[test]
+    fn the_controls_go_by_themselves_and_come_back_for_the_hands() {
+        let start = Instant::now();
+        let mut clock = Clock::new(start);
+        assert!(clock.on(start));
+        assert_eq!(clock.left(start), Some(CONTROLS_SHOWN));
+        // Nothing done for the while they stay: gone, whatever the film is doing.
+        let later = start + CONTROLS_SHOWN;
+        assert!(!clock.on(later));
+        assert_eq!(clock.left(later), None);
+        // The hands stir: back, for as long again.
+        clock.stir(later);
+        assert!(clock.on(later + CONTROLS_SHOWN - Duration::from_millis(1)));
+        assert!(!clock.on(later + CONTROLS_SHOWN));
+    }
+
+    #[test]
+    fn a_tap_puts_the_controls_away_and_its_own_hands_do_not_bring_them_back() {
+        let start = Instant::now();
+        let mut clock = Clock::new(start);
+        let tapped = start + Duration::from_millis(500);
+        clock.put_away(tapped);
+        assert!(!clock.on(tapped));
+        // The room's word that the hands stirred, for the tap itself, a few frames on.
+        clock.stir(tapped + Duration::from_millis(120));
+        assert!(!clock.on(tapped + Duration::from_millis(120)));
+        // The hands moving afterwards bring them back.
+        let moved = tapped + PUT_AWAY_DEAF;
+        clock.stir(moved);
+        assert!(clock.on(moved));
+        // A second tap, a press, a key: back at once, however soon.
+        clock.put_away(moved);
+        clock.wake(moved + Duration::from_millis(50));
+        assert!(clock.on(moved + Duration::from_millis(50)));
+    }
+
+    #[test]
+    fn a_tap_puts_away_only_controls_that_were_already_there() {
+        let start = Instant::now();
+        let mut clock = Clock::new(start);
+        assert!(!clock.settled(start));
+        assert!(clock.settled(start + TAP_SETTLED));
+        // Gone, then brought back by the hand on its way to tap: that tap is not for them.
+        let back = start + CONTROLS_SHOWN + Duration::from_secs(1);
+        clock.stir(back);
+        assert!(clock.on(back) && !clock.settled(back + Duration::from_millis(50)));
+        assert!(clock.settled(back + TAP_SETTLED));
+        // Kept on show by more stirring, they stay settled.
+        clock.stir(back + Duration::from_secs(1));
+        assert!(clock.settled(back + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_press_let_go_where_it_was_is_a_tap_and_a_drag_is_not() {
+        assert!(is_tap((100.0, 100.0), (100.0, 100.0)));
+        assert!(is_tap((100.0, 100.0), (108.0, 106.0)));
+        assert!(!is_tap((100.0, 100.0), (140.0, 100.0)));
     }
 
     #[test]
