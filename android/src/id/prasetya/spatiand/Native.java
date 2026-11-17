@@ -146,4 +146,31 @@ final class Native {
 
     /** Run a command as the shell user through Wireless debugging. Blocks; its output, or "error: ...". */
     static native String adbRun(String host, int port, String keyPath, String command);
+
+    /**
+     * What the phone is called (Settings' device name, or its model), for the room's list of
+     * machines, pairing with hosts and SpatiKey. Before begin().
+     */
+    static native void deviceName(String name);
+
+    /** The phone's clipboard holds this text now (PhoneClipboard). */
+    static native void clipboardText(String text);
+
+    /** The phone's clipboard holds this picture now, as PNG (PhoneClipboard). */
+    static native void clipboardImage(byte[] png);
+
+    /**
+     * One of the phone's notifications, posted or posted again, that would interrupt on the
+     * phone (Notices): its key, its app's name, its title and its text, for the room's card.
+     */
+    static native void notice(String key, String app, String title, String text);
+
+    /** A notification was taken away. */
+    static native void noticeGone(String key);
+
+    /**
+     * The phone's sound devices for the room's settings, as JSON: a list of objects with "id"
+     * (0 for Android's own choice), "name", "input" and "current"; outputs first.
+     */
+    static native void audioDevices(String json);
 }

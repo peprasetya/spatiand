@@ -841,7 +841,7 @@ pub extern "C" fn sp_window_close(id: u32) {
 /// `text` must be a valid C string or null.
 #[no_mangle]
 pub unsafe extern "C" fn sp_notice(notice: *const c_char) {
-    *super::NOTICE.lock().unwrap() = text(notice);
+    super::noticed(text(notice));
 }
 
 // --- sound ---

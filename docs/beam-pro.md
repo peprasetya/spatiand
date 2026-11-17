@@ -232,6 +232,33 @@ with Spatiand open, `content call --uri content://id.prasetya.spatiand.shell --m
 app's window through the room's own input path (the provider answers the shell user alone;
 these were extras on MainActivity's intent until 2026-11-12, which any app could send).
 
+## The room as on the Deck and the Mac — 2026-11-17
+
+The owner, 2026-11-17: "all features should be uniform on all platforms". What the Deck and the
+Mac had and the Beam Pro lacked, now with the same core code behind it and Android only in the
+platform layer:
+
+| Feature | Core (shared, tested) | Android's layer |
+|---|---|---|
+| Clipboard joined to the room's | `remote/local_board.rs`: the Mac's `ClipboardSync` rules (text eager to 256 KiB, PNG fetched up to 8 MiB, no echo) | `android/clipboard.rs` as a `LocalClipboard` peer named `android`; `PhoneClipboard.java` reads Android's clipboard every 0.4 s (its description's timestamp) while Spatiand has the focus, else through the helper (`CLIP_STAMP`, `CLIP_TEXT`: the shell may read in the background; text only, as a picture's address is granted to whoever reads it); a picture put there is a file of the app's cache handed out by `OpenFiles` |
+| "Leave Spatiand" | the HUD row, as before | the glasses let go of (back to 2D), then `MainActivity.leave`: the task removed and the process ended, taking the phone's apps' displays (the helper lets go of them) and Spatiand's own apps with it; the next start is a new session |
+| The phone's name | `system::machine_name`, with `DEVICE_NAME` where the host name is "localhost" | `Native.deviceName`: Settings' device name, else `Build.MODEL` |
+| Notifications on the card | `notices.rs`, the one card of all three (the Deck's D-Bus server `notifications.rs` and the Mac's banners use it too): once per notification, app then title and text (markup out, lines cut), 8 s here, pressed opens it; under SpatiKey's, dictation's, the assistant's and the install card | `Notices.java`, a notification listener the wearer allows once (a button and a question on the phone's screen); not Spatiand's own, ongoing, group summaries, silent (below `IMPORTANCE_DEFAULT`) or held back by Do Not Disturb; bound only while the room runs. Pressed: the notification's own intent sent by the helper onto a display of the room's (`SEND_INTENT`), in its app's window |
+| Bluetooth page | `bluetooth.rs`'s one page behind an `Adapter`: BlueZ on the Deck, IOBluetooth on the Mac (`mac/bluetooth.rs`), the phone's here; actions judged and worded alike (`worked`, `words`) | `Radios.java` lists paired devices and which are connected (BLUETOOTH_CONNECT, asked on the phone); connect, disconnect, forget and on/off by the helper (`BLUETOOTH`: `BluetoothDevice.connect/disconnect/removeBond`, `cmd bluetooth_manager`), which Android keeps for the system; "Add a device" is Android's Bluetooth page as a window in the room, as the Deck opens its desktop's wizard |
+| Wi-Fi row | the HUD row, as on the Deck | Android's Wi-Fi page as a window in the room, as the Deck's is its desktop's panel |
+| Sound devices in the glasses | the HUD's list, as the Mac's | the phone's pickers' list and choice, kept in step both ways (`Native.audioDevices`, `Shell.chooseAudio`), refilled when a device comes or goes |
+
+**What Android forbids an app, and so is the helper's or Android's own page:** reading the
+clipboard without the focus; connecting or disconnecting a paired device, forgetting one,
+switching Bluetooth; joining a Wi-Fi network (an app may only suggest one), switching Wi-Fi;
+pairing a new device without Android's own pairing dialog. With no helper, the Bluetooth page
+lists but says the helper is starting; the Wi-Fi and pairing pages, as all of the phone's apps,
+open once it has come.
+
+**The owner grants once:** notification access (Settings → Notification read, reply & control →
+Spatiand), and Bluetooth for Spatiand (the question on the phone's screen the first time the
+Bluetooth page opens, as for Web Bluetooth).
+
 ## Consequences for the design
 
 - **Without shell privilege**, one app gets the sphere, head tracking and remote Linux apps:

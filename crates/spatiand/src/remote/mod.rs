@@ -27,6 +27,9 @@
 
 /// The Mac's own windows are shown through the same client; see `spatiand-mac`'s `local`.
 pub(crate) mod client;
+/// A platform's own clipboard joined to the session's: the Beam Pro's.
+#[allow(dead_code)]
+pub mod local_board;
 mod microphone;
 mod pairing;
 mod session;

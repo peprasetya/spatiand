@@ -53,7 +53,7 @@ import java.util.Map;
  */
 public final class ShellHelper extends Binder {
     /** Told to the app on attaching; the app starts a new helper when its own is newer. */
-    static final int VERSION = 2;
+    static final int VERSION = 3;
     static final String TAG = "spatiand-shell";
     static final String PACKAGE = "id.prasetya.spatiand";
     static final String AUTHORITY = PACKAGE + ".shell";
@@ -74,6 +74,11 @@ public final class ShellHelper extends Binder {
     static final int SOUND = 14;
     static final int MOVE_TASK = 16;
     static final int TOUCH = 17;
+    // Since version 3.
+    static final int CLIP_STAMP = 18;
+    static final int CLIP_TEXT = 19;
+    static final int BLUETOOTH = 20;
+    static final int SEND_INTENT = 21;
 
     // What this tells the app, on the Binder the app gave when it attached.
     static final int TOLD_EMPTY = 1;
@@ -431,6 +436,33 @@ public final class ShellHelper extends Binder {
                     }
                     return true;
                 }
+                case CLIP_STAMP: {
+                    long stamp = clipStamp();
+                    if (reply != null) {
+                        reply.writeNoException();
+                        reply.writeLong(stamp);
+                    }
+                    return true;
+                }
+                case CLIP_TEXT: {
+                    String text = clipText();
+                    if (reply != null) {
+                        reply.writeNoException();
+                        reply.writeString(text);
+                    }
+                    return true;
+                }
+                case BLUETOOTH: {
+                    String op = data.readString(), address = data.readString();
+                    answer(reply, bluetooth(op, address));
+                    return true;
+                }
+                case SEND_INTENT: {
+                    int id = data.readInt();
+                    android.app.PendingIntent intent = android.app.PendingIntent.readPendingIntentOrNullFromParcel(data);
+                    answer(reply, sendIntent(id, intent));
+                    return true;
+                }
                 case QUIT:
                     answer(reply);
                     log("asked to go");
@@ -559,7 +591,7 @@ public final class ShellHelper extends Binder {
     AudioManager audio;
 
     /** The system's context, as the shell's: what an AudioManager and an AudioPolicy need. */
-    Context context() throws Exception {
+    synchronized Context context() throws Exception {
         if (context != null) return context;
         Class<?> threads = Class.forName("android.app.ActivityThread");
         java.lang.reflect.Constructor<?> make = threads.getDeclaredConstructor();
@@ -859,6 +891,102 @@ public final class ShellHelper extends Binder {
                     .redirectErrorStream(true).start();
             placeholder.waitFor();
         }
+    }
+
+    // --- the clipboard ---
+
+    android.content.ClipboardManager clipboard;
+
+    /**
+     * Android's clipboard as the shell's: the shell may read it while another app has the focus
+     * (READ_CLIPBOARD_IN_BACKGROUND), which Spatiand may not (PhoneClipboard).
+     */
+    synchronized android.content.ClipboardManager clipboard() throws Exception {
+        if (clipboard == null) {
+            Context c = context();
+            clipboard = android.content.ClipboardManager.class.getConstructor(Context.class, android.os.Handler.class)
+                    .newInstance(c, new android.os.Handler(Looper.getMainLooper()));
+        }
+        return clipboard;
+    }
+
+    /** When the clip on the clipboard was put there; 0 for none. Reading this shows no toast. */
+    long clipStamp() throws Exception {
+        android.content.ClipDescription d = clipboard().getPrimaryClipDescription();
+        return d == null ? 0 : d.getTimestamp();
+    }
+
+    /** The clipboard's text; null for none, or a clip that is not text. */
+    String clipText() throws Exception {
+        android.content.ClipData clip = clipboard().getPrimaryClip();
+        if (clip == null || clip.getItemCount() == 0) return null;
+        android.content.ClipData.Item item = clip.getItemAt(0);
+        CharSequence text = item.getText();
+        if (text == null && item.getHtmlText() != null) {
+            text = android.text.Html.fromHtml(item.getHtmlText(), android.text.Html.FROM_HTML_MODE_LEGACY);
+        }
+        return text == null ? null : text.toString();
+    }
+
+    // --- Bluetooth ---
+
+    /**
+     * What Android keeps for the system and the shell may do, for the room's Bluetooth page
+     * (Radios): connect a paired device ("connect", every profile it has), let go of it
+     * ("disconnect"), forget it ("forget"), switch Bluetooth ("on", "off"). Android's answer:
+     * 0 when done or under way.
+     */
+    int bluetooth(String op, String address) throws Exception {
+        if (op.equals("on") || op.equals("off")) {
+            Process p = new ProcessBuilder("cmd", "bluetooth_manager", op.equals("on") ? "enable" : "disable")
+                    .redirectErrorStream(true).start();
+            String said = new String(p.getInputStream().readAllBytes()).trim();
+            int exit = p.waitFor();
+            log("bluetooth " + op + ": " + exit + (said.isEmpty() ? "" : " " + said));
+            return exit;
+        }
+        Context c = context();
+        java.lang.reflect.Constructor<android.bluetooth.BluetoothManager> make =
+                android.bluetooth.BluetoothManager.class.getDeclaredConstructor(Context.class);
+        make.setAccessible(true);
+        android.bluetooth.BluetoothAdapter adapter = make.newInstance(c).getAdapter();
+        if (adapter == null) return -1;
+        android.bluetooth.BluetoothDevice device = adapter.getRemoteDevice(address);
+        int result;
+        switch (op) {
+            case "connect":
+                result = (Integer) android.bluetooth.BluetoothDevice.class.getMethod("connect").invoke(device);
+                break;
+            case "disconnect":
+                result = (Integer) android.bluetooth.BluetoothDevice.class.getMethod("disconnect").invoke(device);
+                break;
+            case "forget":
+                result = (Boolean) android.bluetooth.BluetoothDevice.class.getMethod("removeBond").invoke(device) ? 0 : 1;
+                break;
+            default:
+                return -1;
+        }
+        log("bluetooth " + op + " " + address + ": " + result);
+        return result;
+    }
+
+    // --- a notification pressed in the room ---
+
+    /**
+     * Send a notification's intent (the app hands it over) with what it opens put on one of the
+     * room's displays: only the display's owner may start an app there, and that is this.
+     */
+    int sendIntent(int display, android.app.PendingIntent intent) throws Exception {
+        if (intent == null) return -1;
+        android.app.ActivityOptions options = android.app.ActivityOptions.makeBasic().setLaunchDisplayId(display);
+        try {
+            options.setPendingIntentBackgroundActivityStartMode(android.app.ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
+        } catch (NoSuchMethodError old) {
+            // Before Android 14 there was nothing to allow.
+        }
+        intent.send(context(), 0, null, null, null, null, options.toBundle());
+        log("sent " + intent.getCreatorPackage() + "'s notification to display " + display);
+        return 0;
     }
 
     // --- input ---

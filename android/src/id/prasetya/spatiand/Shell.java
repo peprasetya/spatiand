@@ -190,7 +190,16 @@ final class Shell {
         return started == null ? -100 : started;
     }
 
+    /**
+     * What a component "package/!notice" stands for (apps.rs, open_notice): the notification the
+     * wearer pressed on the room's card, whose intent is sent onto the display in its place.
+     */
+    static final String NOTICE = "/!notice";
+    /** The pressed notification's intent (Notices.press), for the display it opens on. */
+    static volatile android.app.PendingIntent pendingNotice;
+
     private static Integer launchOn(int display, String component, String uri, String type) {
+        if (component.endsWith(NOTICE)) return sendNotice(display);
         return call(ShellHelper.LAUNCH, data -> {
             data.writeInt(display);
             data.writeString(component);
@@ -200,6 +209,92 @@ final class Shell {
                 data.writeString(type);
             }
         }, Parcel::readInt, -100);
+    }
+
+    /**
+     * The pressed notification's intent, sent by the helper onto a display: only the display's
+     * owner may start an app there. 0 when sent; below 0 when not, as LAUNCH answers.
+     */
+    private static Integer sendNotice(int display) {
+        android.app.PendingIntent intent = pendingNotice;
+        pendingNotice = null;
+        if (intent == null) return -100;
+        return call(ShellHelper.SEND_INTENT, data -> {
+            data.writeInt(display);
+            android.app.PendingIntent.writePendingIntentOrNullToParcel(intent, data);
+        }, Parcel::readInt, -100);
+    }
+
+    // --- the room's word for the phone, by JNI from the room's threads ---
+
+    /** The room copied this: on the phone's clipboard with it (crates/.../clipboard.rs). */
+    static void putClipboardText(String text) {
+        PhoneClipboard.putText(text);
+    }
+
+    static void putClipboardImage(byte[] png) {
+        PhoneClipboard.putImage(png);
+    }
+
+    /** When the clip on the clipboard was put there, as the shell may read it; 0 for none, -1 unknown. */
+    static long clipStamp() {
+        Long stamp = call(ShellHelper.CLIP_STAMP, data -> {}, Parcel::readLong, -1L);
+        return stamp == null ? -1 : stamp;
+    }
+
+    /** The clipboard's text, as the shell may read it; null for none. */
+    static String clipText() {
+        return call(ShellHelper.CLIP_TEXT, data -> {}, Parcel::readString, null);
+    }
+
+    /** The room's card was pressed on a notification: see Notices.press. */
+    static String pressNotice(String key) {
+        return Notices.press(key);
+    }
+
+    /** Bluetooth as the room's page shows it: see Radios.state. */
+    static String bluetoothState() {
+        Context c = context;
+        return c == null ? null : Radios.state(c);
+    }
+
+    /** Connect, disconnect, forget a device, or switch Bluetooth: see Radios.act. */
+    static int bluetoothDo(String op, String address) {
+        Context c = context;
+        return c == null ? -1 : Radios.act(c, op, address);
+    }
+
+    /** What only the shell may do with Bluetooth, done by the helper: Android's answer, or -1. */
+    static int bluetoothByHelper(String op, String address) {
+        Integer said = call(ShellHelper.BLUETOOTH, data -> {
+            data.writeString(op);
+            data.writeString(address);
+        }, Parcel::readInt, -1);
+        return said == null ? -1 : said;
+    }
+
+    /** The activity that answers a settings action, "package/class", for a window in the room. */
+    static String settingsComponent(String action) {
+        Context c = context;
+        return c == null ? null : Radios.settingsComponent(c, action);
+    }
+
+    /** "Leave Spatiand", chosen in the room: MainActivity.leave. */
+    static void leave() {
+        MainActivity main = MainActivity.running;
+        if (main != null) main.runOnUiThread(main::leave);
+    }
+
+    /** The room's settings want the sound devices' list: the app says it again. */
+    static void audioDevicesWanted() {
+        MainActivity main = MainActivity.running;
+        if (main != null) main.runOnUiThread(main::sayAudioDevices);
+    }
+
+    /** A sound device chosen in the room's settings: chosen on the phone's pickers too. */
+    static void chooseAudio(int id, boolean input) {
+        MainActivity main = MainActivity.running;
+        if (main != null) main.runOnUiThread(() -> main.chooseAudio(id, input));
     }
 
     // --- "Open with", for SpatiShelf (spatiand_xr_v1.ask_system) ---

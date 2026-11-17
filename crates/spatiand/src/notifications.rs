@@ -31,6 +31,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::notices::{words as card, Card};
+
 const NAME: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 const BUS: &str = "org.freedesktop.DBus";
@@ -45,8 +47,6 @@ const NEVER_FOR: Duration = Duration::from_secs(600);
 /// What an application's own time is held between: shorter cannot be read, longer is in the way.
 const SHORTEST: Duration = Duration::from_secs(3);
 const LONGEST: Duration = Duration::from_secs(60);
-/// Characters on a line of the card, before it is cut short.
-const LINE: usize = 120;
 
 // Message types and flags (the D-Bus specification's).
 const CALL: u8 = 1;
@@ -58,22 +58,21 @@ const NO_REPLY_EXPECTED: u8 = 1;
 const ALLOW_REPLACEMENT: u32 = 1;
 const DO_NOT_QUEUE: u32 = 4;
 
-/// The notification on the card.
-struct Shown {
-    id: u32,
-    text: String,
-    /// Whether its actions include "default", which a press is.
-    default_action: bool,
-    until: Instant,
-}
-
+/// The card, by notification id: the room's one card logic (`crate::notices`), shared with the
+/// Beam Pro's and the Mac's.
 struct State {
-    shown: Option<Shown>,
+    card: Card,
+    /// The notification on the card, if its actions include "default", which a press is.
+    default_action: Option<u32>,
     /// The last id handed out; they start at 1, as 0 means "replaces nothing".
     last_id: u32,
 }
 
-static STATE: Mutex<State> = Mutex::new(State { shown: None, last_id: 0 });
+static STATE: Mutex<State> = Mutex::new(State { card: Card::new(), default_action: None, last_id: 0 });
+
+fn id_of(key: &str) -> u32 {
+    key.parse().unwrap_or(0)
+}
 /// The socket's writing side, shared by every thread that answers or signals.
 static OUT: Mutex<Option<UnixStream>> = Mutex::new(None);
 static SERIAL: AtomicU32 = AtomicU32::new(1);
@@ -94,7 +93,7 @@ pub fn start() {
 /// nothing is on show. One that has had its time is closed here.
 pub fn notice() -> String {
     expire();
-    STATE.lock().unwrap().shown.as_ref().map(|s| s.text.clone()).unwrap_or_default()
+    STATE.lock().unwrap().card.text(Instant::now())
 }
 
 /// Whether a notification is on show now, so that a press on the card is this module's.
@@ -105,26 +104,24 @@ pub fn showing() -> bool {
 /// The card was pressed: the notification's default action, if it has one, and it is closed as
 /// dismissed by the wearer.
 pub fn pressed() {
-    let taken = STATE.lock().unwrap().shown.take();
-    if let Some(shown) = taken {
-        log::info!("notification {} pressed", shown.id);
-        if shown.default_action {
-            invoked(shown.id, "default");
+    let taken = {
+        let mut state = STATE.lock().unwrap();
+        let id = state.card.press(Instant::now()).map(|k| id_of(&k));
+        id.map(|id| (id, state.default_action.take() == Some(id)))
+    };
+    if let Some((id, default_action)) = taken {
+        log::info!("notification {id} pressed");
+        if default_action {
+            invoked(id, "default");
         }
-        closed(shown.id, 2);
+        closed(id, 2);
     }
 }
 
 fn expire() {
-    let gone = {
-        let mut state = STATE.lock().unwrap();
-        match &state.shown {
-            Some(shown) if Instant::now() >= shown.until => state.shown.take(),
-            _ => None,
-        }
-    };
-    if let Some(shown) = gone {
-        closed(shown.id, 1);
+    let gone = STATE.lock().unwrap().card.expire(Instant::now()).map(|k| id_of(&k));
+    if let Some(id) = gone {
+        closed(id, 1);
     }
 }
 
@@ -179,7 +176,7 @@ fn serve() {
                     log::warn!("notifications: the session bus went away ({e})");
                 }
                 *OUT.lock().unwrap() = None;
-                STATE.lock().unwrap().shown = None;
+                STATE.lock().unwrap().card.clear();
             }
             Err(e) if !connected_once => {
                 log::info!("notifications: no session bus ({e}); desktop applications' notifications are not shown in the room");
@@ -243,7 +240,7 @@ fn session(mut conn: Conn) -> io::Result<()> {
                         Some("NameAcquired") => owned = true,
                         Some("NameLost") => {
                             owned = false;
-                            STATE.lock().unwrap().shown = None;
+                            STATE.lock().unwrap().card.clear();
                             next_ask = Instant::now() + ASK_AGAIN;
                         }
                         _ => {}
@@ -381,7 +378,7 @@ fn notify(m: &Msg) -> Result<u32, (&'static str, String)> {
     let n = read_notify(&m.body, m.big).map_err(invalid)?;
     let text = card(&n.app, &n.summary, &n.body);
     let default_action = n.actions.chunks(2).any(|pair| pair[0] == "default");
-    let (id, displaced) = {
+    let (id, posted) = {
         let mut state = STATE.lock().unwrap();
         let id = if n.replaces != 0 {
             state.last_id = state.last_id.max(n.replaces);
@@ -390,18 +387,18 @@ fn notify(m: &Msg) -> Result<u32, (&'static str, String)> {
             state.last_id = state.last_id.checked_add(1).unwrap_or(1);
             state.last_id
         };
-        let displaced = state.shown.take().filter(|old| old.id != id).map(|old| old.id);
-        if !text.is_empty() {
-            state.shown = Some(Shown { id, text, default_action, until: Instant::now() + lasting(n.timeout) });
+        let posted = state.card.post(&id.to_string(), text, lasting(n.timeout), Instant::now());
+        if posted.shown {
+            state.default_action = default_action.then_some(id);
         }
-        (id, displaced)
+        (id, posted)
     };
     log::info!("notification {id} from {:?}", n.app);
     // The one it pushed off the card is over, as far as its application need know.
-    if let Some(old) = displaced {
-        closed(old, 1);
+    if let Some(old) = posted.displaced {
+        closed(id_of(&old), 1);
     }
-    if STATE.lock().unwrap().shown.as_ref().is_none_or(|s| s.id != id) {
+    if !posted.shown {
         // Nothing to show: over as soon as it began.
         closed(id, 1);
     }
@@ -410,15 +407,7 @@ fn notify(m: &Msg) -> Result<u32, (&'static str, String)> {
 
 fn close(m: &Msg) -> Result<(), (&'static str, String)> {
     let id = R::new(&m.body, m.big).u32().map_err(|e| ("org.freedesktop.DBus.Error.InvalidArgs", e))?;
-    let taken = {
-        let mut state = STATE.lock().unwrap();
-        if state.shown.as_ref().is_some_and(|s| s.id == id) {
-            state.shown.take()
-        } else {
-            None
-        }
-    };
-    if taken.is_some() {
+    if STATE.lock().unwrap().card.remove(&id.to_string()) {
         closed(id, 3);
     }
     Ok(())
@@ -464,106 +453,6 @@ fn lasting(expire_ms: i32) -> Duration {
         i32::MIN..=-1 => DEFAULT_FOR,
         0 => NEVER_FOR,
         ms => Duration::from_millis(ms as u64).clamp(SHORTEST, LONGEST),
-    }
-}
-
-// --- the card's words ---
-
-/// Text as it is to be read: tags taken out, the five entities and numbered characters put back,
-/// and every run of white space one space. Only what looks like a tag -- `<` then a letter or
-/// `/` -- is a tag, so "a < b" survives.
-fn plain(text: &str) -> String {
-    let mut stripped = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(i) = rest.find('<') {
-        stripped.push_str(&rest[..i]);
-        let after = &rest[i + 1..];
-        let tag = after.chars().next().is_some_and(|c| c == '/' || c.is_ascii_alphabetic());
-        match after.find('>') {
-            Some(j) if tag => {
-                stripped.push(' ');
-                rest = &after[j + 1..];
-            }
-            _ => {
-                stripped.push('<');
-                rest = after;
-            }
-        }
-    }
-    stripped.push_str(rest);
-    entities(&stripped).split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn entities(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(i) = rest.find('&') {
-        out.push_str(&rest[..i]);
-        let after = &rest[i..];
-        let found = after.find(';').filter(|j| *j <= 10).and_then(|j| {
-            let name = &after[1..j];
-            let c = match name {
-                "amp" => Some('&'),
-                "lt" => Some('<'),
-                "gt" => Some('>'),
-                "quot" => Some('"'),
-                "apos" => Some('\''),
-                n if n.starts_with("#x") || n.starts_with("#X") => u32::from_str_radix(&n[2..], 16).ok().and_then(char::from_u32),
-                n if n.starts_with('#') => n[1..].parse().ok().and_then(char::from_u32),
-                _ => None,
-            };
-            c.map(|c| (c, j))
-        });
-        match found {
-            Some((c, j)) => {
-                out.push(c);
-                rest = &after[j + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &after[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn limit(line: String) -> String {
-    if line.chars().count() <= LINE {
-        return line;
-    }
-    let mut cut: String = line.chars().take(LINE - 1).collect();
-    cut.truncate(cut.trim_end().len());
-    cut.push('\u{2026}');
-    cut
-}
-
-/// The card: who it is from, then what it says. An application that gave no name is named by its
-/// summary, and its body is what it says.
-fn card(app: &str, summary: &str, body: &str) -> String {
-    let (app, summary, body) = (plain(app), plain(summary), plain(body));
-    let (first, second) = if !app.is_empty() {
-        // `notify-send -a Firefox Firefox ...`: the name once is enough.
-        let summary = if summary == app { String::new() } else { summary };
-        let second = match (summary.is_empty(), body.is_empty()) {
-            (false, false) => format!("{summary} \u{2014} {body}"),
-            (false, true) => summary,
-            (true, false) => body,
-            (true, true) => String::new(),
-        };
-        (app, second)
-    } else if !summary.is_empty() {
-        (summary, body)
-    } else {
-        (body, String::new())
-    };
-    let (first, second) = (limit(first), limit(second));
-    match (first.is_empty(), second.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => first,
-        (true, false) => second,
-        (false, false) => format!("{first}\n{second}"),
     }
 }
 
@@ -1147,30 +1036,6 @@ mod tests {
         let mut r = R::new(&[0, 0, 1, 2, 0, 0, 0, 2, b'h', b'i', 0], true);
         assert_eq!(r.u32().unwrap(), 258);
         assert_eq!(r.s().unwrap(), "hi");
-    }
-
-    #[test]
-    fn markup_is_taken_out_and_entities_put_back() {
-        assert_eq!(plain("film.mkv <b>is</b> ready &amp; waiting"), "film.mkv is ready & waiting");
-        assert_eq!(plain("a < b and c > d"), "a < b and c > d");
-        assert_eq!(plain("<a href=\"x\">link</a>&lt;tag&gt; &quot;q&quot; &apos;s&apos;"), "link <tag> \"q\" 's'");
-        assert_eq!(plain("line\n\n  two<br/>three"), "line two three");
-        assert_eq!(plain("&#233;t&#xE9; &bogus; & alone"), "été &bogus; & alone");
-    }
-
-    #[test]
-    fn the_card_says_who_then_what() {
-        assert_eq!(card("Firefox", "Download finished", "film.mkv"), "Firefox\nDownload finished \u{2014} film.mkv");
-        assert_eq!(card("Firefox", "Download finished", ""), "Firefox\nDownload finished");
-        assert_eq!(card("Firefox", "Firefox", "Done"), "Firefox\nDone");
-        assert_eq!(card("", "Battery low", "5% left"), "Battery low\n5% left");
-        assert_eq!(card("", "", "Only a body"), "Only a body");
-        assert_eq!(card(" ", "<b></b>", ""), "");
-        let long = "word ".repeat(60);
-        let said = card("App", &long, "");
-        let second = said.lines().nth(1).unwrap();
-        assert_eq!(second.chars().count(), LINE);
-        assert!(second.ends_with("word\u{2026}"));
     }
 
     #[test]

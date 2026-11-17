@@ -115,8 +115,12 @@ public class MainActivity extends Activity implements SensorEventListener {
         new Thread(this::unpackSpatiMesh, "unpack-spatimesh").start();
         File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
         if (movies != null) Native.recordingsDir(movies.getPath());
+        Native.deviceName(deviceName());
         Native.begin();
         Battery.watch(this);
+        // The phone's clipboard joined to the room's, and its notifications on the room's card.
+        PhoneClipboard.start(this);
+        Notices.rebind(this);
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
@@ -216,6 +220,41 @@ public class MainActivity extends Activity implements SensorEventListener {
         ui.post(refresh);
         ui.post(rumbler);
         startBuzzer();
+    }
+
+    /**
+     * What the phone is called, for the room's list of machines, pairing with hosts and SpatiKey:
+     * the name Settings gives it ("Device name"), or its model. Android's host name is
+     * "localhost", which names nothing.
+     */
+    String deviceName() {
+        String name = Settings.Global.getString(getContentResolver(), Settings.Global.DEVICE_NAME);
+        if (name == null || name.trim().isEmpty()) name = android.os.Build.MODEL;
+        return name == null ? "" : name.trim();
+    }
+
+    // ------------------------------------------------------------------ leaving
+
+    boolean leaving;
+
+    /**
+     * "Leave Spatiand", chosen in the room, as the Deck returns to its desktop: the room has let go
+     * of the glasses already (back to 2D, crates/.../mod.rs return_to_desktop), and now the app
+     * closes and its process ends. With the process go every window: the phone's apps' displays
+     * (the helper lets go of them when this process ends), Spatiand's own apps (its children,
+     * which Android ends with it), the room itself. The next start is a new session from nothing.
+     */
+    void leave() {
+        if (leaving) return;
+        leaving = true;
+        Log.i(TAG, "leaving Spatiand");
+        Notices.unbind();
+        // A moment for the room to put the glasses back in 2D before their USB is closed.
+        ui.postDelayed(() -> {
+            closeGlassesWindow();
+            finishAndRemoveTask();
+            ui.postDelayed(() -> android.os.Process.killProcess(android.os.Process.myPid()), 500);
+        }, 600);
     }
 
     // ------------------------------------------------------------------ recordings
@@ -396,11 +435,28 @@ public class MainActivity extends Activity implements SensorEventListener {
                     Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
                     () -> "false".equals(systemProperty(
                             "persist.sys.fflag.override.settings_enable_monitor_phantom_procs"))),
+            new Access("notifications", "Show the phone's notifications in the glasses",
+                    "Show the phone's notifications in the glasses",
+                    "A notification that comes while you wear the glasses is shown on a small card "
+                            + "in the room, as on the Deck and the Mac, and pressing the card opens "
+                            + "it there. Android lets an app see notifications only once you allow it "
+                            + "on its own page.\n\nOn the next page, turn on Spatiand.",
+                    Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS,
+                    () -> Notices.allowed(this)),
         };
     }
 
     /** Spatiand's own page in Settings for this access, or the list of apps if it has none. */
     void openAccess(Access a) {
+        if (a.page.equals(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)) {
+            try {
+                startActivity(new Intent(a.page).putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                        Notices.component(this).flattenToString()));
+            } catch (android.content.ActivityNotFoundException none) {
+                startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+            }
+            return;
+        }
         try {
             startActivity(new Intent(a.page, android.net.Uri.parse("package:" + getPackageName())));
         } catch (android.content.ActivityNotFoundException none) {
@@ -511,6 +567,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         }
         wifiLock.acquire();
         askForAccess();
+        // Reading notifications allowed just now, on its page: listening from now on.
+        Notices.rebind(this);
         // "Display over other apps" allowed just now, on its page: the glasses' picture goes
         // above XREAL's placeholder at once.
         if (presentation != null && Settings.canDrawOverlays(this)) {
@@ -843,17 +901,46 @@ public class MainActivity extends Activity implements SensorEventListener {
         for (String name : names) copyAssets(from + "/" + name, new File(to, name));
     }
 
-    /** What the phone can play to and listen with, for the pickers at the top. */
+    /** What the phone can play to and listen with, as the pickers at the top list them. */
+    AudioDeviceInfo[] outs = new AudioDeviceInfo[0], ins = new AudioDeviceInfo[0];
+    /** The device chosen on each picker, by Android's id for it; 0 for Android's own choice. */
+    int outputId, inputId;
+    boolean soundWatched;
+
+    /**
+     * The pickers at the top, filled with what the phone can play to and listen with, again
+     * whenever a device comes or goes (a Bluetooth headset connecting), each keeping its choice
+     * while its device is there. The room's settings show the same list ("Sound devices", as on
+     * the Mac) and choose on these pickers (chooseAudio).
+     */
     void fillSoundPickers() {
         AudioManager audio = getSystemService(AudioManager.class);
-        AudioDeviceInfo[] outs = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
-        AudioDeviceInfo[] ins = audio.getDevices(AudioManager.GET_DEVICES_INPUTS);
+        if (!soundWatched) {
+            soundWatched = true;
+            audio.registerAudioDeviceCallback(new android.media.AudioDeviceCallback() {
+                @Override
+                public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+                    fillSoundPickers();
+                }
+
+                @Override
+                public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+                    fillSoundPickers();
+                }
+            }, ui);
+        }
+        outs = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
+        ins = audio.getDevices(AudioManager.GET_DEVICES_INPUTS);
         fillPicker(output, outs, "Out");
         fillPicker(input, ins, "In");
+        output.setSelection(positionOf(outs, outputId), false);
+        input.setSelection(positionOf(ins, inputId), false);
         input.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                Native.audioInput(position == 0 ? 0 : ins[position - 1].getId());
+                inputId = position == 0 || position > ins.length ? 0 : ins[position - 1].getId();
+                Native.audioInput(inputId);
+                sayAudioDevices();
             }
 
             @Override
@@ -863,24 +950,64 @@ public class MainActivity extends Activity implements SensorEventListener {
         output.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                Native.audioOutput(position == 0 ? 0 : outs[position - 1].getId());
+                outputId = position == 0 || position > outs.length ? 0 : outs[position - 1].getId();
+                Native.audioOutput(outputId);
+                sayAudioDevices();
             }
 
             @Override
             public void onNothingSelected(AdapterView<?> parent) {}
         });
+        sayAudioDevices();
+    }
+
+    /** A device's place on its picker: after "automatic", or "automatic" if it has gone. */
+    static int positionOf(AudioDeviceInfo[] devices, int id) {
+        if (id == 0) return 0;
+        for (int i = 0; i < devices.length; i++) {
+            if (devices[i].getId() == id) return i + 1;
+        }
+        return 0;
+    }
+
+    static String soundName(AudioDeviceInfo d) {
+        String name = d.getProductName() == null ? "" : d.getProductName().toString();
+        return deviceKind(d.getType()) + (name.isEmpty() ? "" : " (" + name + ")");
     }
 
     void fillPicker(Spinner picker, AudioDeviceInfo[] devices, String what) {
         List<String> names = new ArrayList<>();
         names.add(what + ": automatic");
-        for (AudioDeviceInfo d : devices) {
-            String name = d.getProductName() == null ? "" : d.getProductName().toString();
-            names.add(what + ": " + deviceKind(d.getType()) + (name.isEmpty() ? "" : " (" + name + ")"));
-        }
+        for (AudioDeviceInfo d : devices) names.add(what + ": " + soundName(d));
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, names);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         picker.setAdapter(adapter);
+    }
+
+    /** The pickers' lists and choices, for the room's settings (Native.audioDevices). */
+    void sayAudioDevices() {
+        try {
+            org.json.JSONArray list = new org.json.JSONArray();
+            list.put(soundEntry(0, "Automatic", false, outputId == 0));
+            for (AudioDeviceInfo d : outs) list.put(soundEntry(d.getId(), soundName(d), false, d.getId() == outputId));
+            list.put(soundEntry(0, "Automatic", true, inputId == 0));
+            for (AudioDeviceInfo d : ins) list.put(soundEntry(d.getId(), soundName(d), true, d.getId() == inputId));
+            Native.audioDevices(list.toString());
+        } catch (org.json.JSONException e) {
+            Log.w(TAG, "sound devices: " + e);
+        }
+    }
+
+    static org.json.JSONObject soundEntry(int id, String name, boolean input, boolean current)
+            throws org.json.JSONException {
+        return new org.json.JSONObject().put("id", id).put("name", name).put("input", input).put("current", current);
+    }
+
+    /** A sound device chosen in the room's settings: chosen here, which does the rest. */
+    void chooseAudio(int id, boolean in) {
+        Spinner picker = in ? input : output;
+        picker.setSelection(positionOf(in ? ins : outs, id));
+        sayAudioDevices();
     }
 
     static String deviceKind(int type) {

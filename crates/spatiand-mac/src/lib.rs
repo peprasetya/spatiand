@@ -83,6 +83,9 @@ mod listen;
 mod menu;
 #[path = "../../spatiand/src/install.rs"]
 mod install;
+/// The room's card for the Mac's banners: the Deck's and the Beam Pro's card logic (`mac::notice`).
+#[path = "../../spatiand/src/notices.rs"]
+mod notices;
 #[path = "../../spatiand/src/own.rs"]
 mod own;
 #[path = "../../spatiand/src/pip.rs"]

@@ -10,9 +10,14 @@
 //! The list is only refreshed while the page is open — every two seconds, which is how a
 //! keyboard that wakes up shows up as connected without anyone pressing anything.
 //!
-//! **On the Mac** the page and this worker are the same; what it asks is IOBluetooth's, through
-//! the app (`crates/spatiand-mac/src/mac/bluetooth.rs`), and adding a device is System Settings'
-//! Bluetooth pane in the room where the Deck's is the desktop's wizard.
+//! **The page is the same on every platform; only what is behind it differs** ([`Adapter`]):
+//! BlueZ here ([`BlueZ`]), IOBluetooth through the app on the Mac
+//! (`crates/spatiand-mac/src/mac/bluetooth.rs`), Android's Bluetooth on the Beam Pro
+//! (`spatiand-android`'s `bluetooth`), each answering the same questions -- is it on, which
+//! devices are paired and connected -- and doing the same things, judged the same way by what
+//! the system says afterwards ([`worked`], [`words`]). Adding a device is the system's own
+//! pairing page: the desktop's wizard here, System Settings' Bluetooth pane on the Mac,
+//! Android's Bluetooth page on the Beam Pro, each a window in the room.
 
 use std::process::Command;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
@@ -24,18 +29,63 @@ const TOOL: &str = "bluetoothctl";
 const REFRESH: Duration = Duration::from_secs(2);
 /// How long a connect may try. A sleeping device is found within a few seconds of waking;
 /// longer than this and the wearer is better told to wake it.
-const CONNECT_TIMEOUT_S: u32 = 15;
+pub const CONNECT_TIMEOUT_S: u32 = 15;
 
 /// Is there anything here to ask?
 pub fn available() -> bool {
-    #[cfg(target_os = "macos")]
-    return crate::mac::bluetooth::available();
-    #[allow(unreachable_code)]
     Command::new(TOOL)
         .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// A platform's Bluetooth, as the page asks it. Asked on the page's own thread, never the
+/// compositor's: any of these may take seconds.
+pub trait Adapter: Send + 'static {
+    /// Whether it is on (`None`: no adapter, or it cannot be asked), and the paired devices, in
+    /// any order. A word for the wearer when something stands in the way of asking.
+    fn read_state(&mut self) -> (Option<bool>, Vec<DeviceRow>, Option<String>);
+    /// Connect, disconnect, forget or switch, and say how it went, judged by what the system
+    /// says afterwards. `label` is the device's name. Not asked for [`BluetoothAction::Add`].
+    fn perform(&mut self, action: &BluetoothAction, label: &str) -> String;
+}
+
+/// What adding a device came to.
+pub enum Added {
+    /// A pairing wizard to launch as a window: the desktop's.
+    Wizard(String),
+    /// The system's own pairing page is open in the room already (the Mac's System Settings
+    /// pane, Android's Bluetooth page); what to tell the wearer, if anything.
+    #[allow(dead_code)] // the Mac's and the Beam Pro's
+    Opened(String),
+    /// None to open: why, for the wearer.
+    Not(String),
+}
+
+/// How a device is added on this platform.
+pub type AddDevice = fn() -> Added;
+
+/// BlueZ, through `bluetoothctl`.
+pub struct BlueZ;
+
+impl Adapter for BlueZ {
+    fn read_state(&mut self) -> (Option<bool>, Vec<DeviceRow>, Option<String>) {
+        let (powered, devices) = read_state();
+        (powered, devices, None)
+    }
+
+    fn perform(&mut self, action: &BluetoothAction, label: &str) -> String {
+        perform(action, label)
+    }
+}
+
+/// The desktop's pairing wizard, when it has one.
+fn desktop_wizard() -> Added {
+    match spatiand_platform::settings_command("bluetooth") {
+        Some(command) => Added::Wizard(command),
+        None => Added::Not("There is no pairing wizard on this system.".into()),
+    }
 }
 
 enum Ask {
@@ -44,7 +94,7 @@ enum Ask {
 }
 
 enum Heard {
-    State { powered: Option<bool>, devices: Vec<DeviceRow> },
+    State { powered: Option<bool>, devices: Vec<DeviceRow>, note: Option<String> },
     Began(String),
     /// A command finished: the address it was about (if any) and what to tell the wearer.
     Done(Option<String>, String),
@@ -58,15 +108,22 @@ pub struct Devices {
     changed: bool,
     /// The wizard's command, waiting for `tick` to hand it out.
     wizard: Option<String>,
+    add: AddDevice,
 }
 
 impl Devices {
+    /// BlueZ's devices, and the desktop's wizard to add one.
     pub fn start() -> Devices {
+        Self::start_with(BlueZ, desktop_wizard)
+    }
+
+    /// A platform's devices, and its way to add one.
+    pub fn start_with(adapter: impl Adapter, add: AddDevice) -> Devices {
         let (asks, asked) = channel();
         let (tell, heard) = channel();
         let spawned = std::thread::Builder::new()
             .name("bluetooth".into())
-            .spawn(move || worker(asked, tell));
+            .spawn(move || worker(adapter, asked, tell));
         if let Err(e) = spawned {
             log::warn!("bluetooth: could not start its thread: {e}");
         }
@@ -77,6 +134,7 @@ impl Devices {
             last: None,
             changed: false,
             wizard: None,
+            add,
         }
     }
 
@@ -120,22 +178,14 @@ impl Devices {
     }
 
     fn open_wizard(&mut self) {
-        // The Mac's wizard is System Settings' Bluetooth pane, which its app brings into the
-        // room itself.
-        #[cfg(target_os = "macos")]
-        {
-            self.view.note = crate::mac::bluetooth::add();
-            self.changed = true;
-            return;
-        }
-        #[allow(unreachable_code)]
-        match spatiand_platform::settings_command("bluetooth") {
-            Some(command) => {
+        match (self.add)() {
+            Added::Wizard(command) => {
                 log::info!("bluetooth: {command}");
                 self.wizard = Some(command);
             }
-            None => {
-                self.view.note = "There is no pairing wizard on this system.".into();
+            Added::Opened(note) | Added::Not(note) => {
+                log::info!("bluetooth: adding a device: {note}");
+                self.view.note = note;
                 self.changed = true;
             }
         }
@@ -153,9 +203,12 @@ impl Devices {
         }
         loop {
             match self.heard.try_recv() {
-                Ok(Heard::State { powered, devices }) => {
+                Ok(Heard::State { powered, devices, note }) => {
                     self.view.powered = powered;
                     self.view.devices = devices;
+                    if let Some(note) = note {
+                        self.view.note = note;
+                    }
                 }
                 Ok(Heard::Began(address)) => {
                     if !self.view.busy.contains(&address) {
@@ -181,7 +234,7 @@ impl Devices {
     }
 }
 
-fn worker(asked: Receiver<Ask>, tell: Sender<Heard>) {
+fn worker(mut adapter: impl Adapter, asked: Receiver<Ask>, tell: Sender<Heard>) {
     while let Ok(first) = asked.recv() {
         // Everything queued behind a slow connect, taken at once: the actions in order, and
         // however many refreshes piled up as one, afterwards.
@@ -207,69 +260,77 @@ fn worker(asked: Receiver<Ask>, tell: Sender<Heard>) {
             if let Some(a) = &address {
                 let _ = tell.send(Heard::Began(a.clone()));
             }
-            let note = perform(&action, &label);
+            let note = adapter.perform(&action, &label);
             log::info!("bluetooth: {note}");
             if tell.send(Heard::Done(address, note)).is_err() {
                 return;
             }
         }
         if refresh {
-            let (powered, devices) = read_state();
-            if tell.send(Heard::State { powered, devices }).is_err() {
+            let (powered, mut devices, note) = adapter.read_state();
+            sort(&mut devices);
+            if tell.send(Heard::State { powered, devices, note }).is_err() {
                 return;
             }
         }
     }
 }
 
-fn perform(action: &BluetoothAction, label: &str) -> String {
-    let timeout = CONNECT_TIMEOUT_S.to_string();
-    let (args, did, failed): (Vec<&str>, String, String) = match action {
-        BluetoothAction::Connect(a) => (
-            vec!["--timeout", &timeout, "connect", a],
+/// Connected first, then by name, so the answer to "is it connected?" is at the top.
+fn sort(devices: &mut [DeviceRow]) {
+    devices.sort_by(|a, b| {
+        b.connected
+            .cmp(&a.connected)
+            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+            .then_with(|| a.address.cmp(&b.address))
+    });
+}
+
+/// What to tell the wearer when an action worked, and when it did not: the same words on every
+/// platform.
+pub fn words(action: &BluetoothAction, label: &str) -> (String, String) {
+    match action {
+        BluetoothAction::Connect(_) => (
             format!("Connected {label}."),
             format!(
                 "{label} did not connect. Wake it with a key or its button and try again; if it \
                  still will not, it may have paired again under another address."
             ),
         ),
-        BluetoothAction::Disconnect(a) => (
-            vec!["disconnect", a],
-            format!("Disconnected {label}."),
-            format!("{label} would not disconnect."),
-        ),
-        BluetoothAction::Forget(a) => (
-            vec!["remove", a],
-            format!("Forgot {label}."),
-            format!("Could not forget {label}."),
-        ),
+        BluetoothAction::Disconnect(_) => (format!("Disconnected {label}."), format!("{label} would not disconnect.")),
+        BluetoothAction::Forget(_) => (format!("Forgot {label}."), format!("Could not forget {label}.")),
         BluetoothAction::Power(on) => (
-            vec!["power", if *on { "on" } else { "off" }],
             format!("Bluetooth is {}.", if *on { "on" } else { "off" }),
-            "Bluetooth did not switch. Something may be blocking it (rfkill).".into(),
+            "Bluetooth did not switch. Something may be blocking it.".into(),
         ),
+        BluetoothAction::Add | BluetoothAction::None => (String::new(), String::new()),
+    }
+}
+
+/// Whether an action worked, judged by what the system says afterwards rather than by its
+/// answer: a connect that runs out of time can say nothing about failing.
+#[allow(dead_code)] // the Mac's and the Beam Pro's adapters
+pub fn worked(action: &BluetoothAction, powered: Option<bool>, devices: &[DeviceRow]) -> bool {
+    let device = |a: &str| devices.iter().find(|d| d.address == *a);
+    match action {
+        BluetoothAction::Connect(a) => device(a).is_some_and(|d| d.connected),
+        BluetoothAction::Disconnect(a) => !device(a).is_some_and(|d| d.connected),
+        BluetoothAction::Forget(a) => device(a).is_none(),
+        BluetoothAction::Power(on) => powered == Some(*on),
+        BluetoothAction::Add | BluetoothAction::None => true,
+    }
+}
+
+fn perform(action: &BluetoothAction, label: &str) -> String {
+    let timeout = CONNECT_TIMEOUT_S.to_string();
+    let args: Vec<&str> = match action {
+        BluetoothAction::Connect(a) => vec!["--timeout", &timeout, "connect", a],
+        BluetoothAction::Disconnect(a) => vec!["disconnect", a],
+        BluetoothAction::Forget(a) => vec!["remove", a],
+        BluetoothAction::Power(on) => vec!["power", if *on { "on" } else { "off" }],
         BluetoothAction::Add | BluetoothAction::None => return String::new(),
     };
-    // The Mac's: the same page, with IOBluetooth through the app in place of BlueZ.
-    #[cfg(target_os = "macos")]
-    {
-        let _ = args;
-        if let Err(e) = crate::mac::bluetooth::act(action) {
-            log::info!("bluetooth: {e}");
-        }
-        // Judged by what the Mac says afterwards, as BlueZ's is below.
-        let (powered, devices) = crate::mac::bluetooth::read_state();
-        let device = |a: &str| devices.iter().find(|d| d.address == *a).cloned();
-        let worked = match action {
-            BluetoothAction::Connect(a) => device(a).is_some_and(|d| d.connected),
-            BluetoothAction::Disconnect(a) => !device(a).is_some_and(|d| d.connected),
-            BluetoothAction::Forget(a) => device(a).is_none(),
-            BluetoothAction::Power(on) => powered == Some(*on),
-            _ => true,
-        };
-        return if worked { did } else { failed };
-    }
-    #[allow(unreachable_code)]
+    let (did, failed) = words(action, label);
     if let Err(e) = Command::new(TOOL).args(&args).output() {
         return format!("Could not run {TOOL}: {e}");
     }
@@ -301,16 +362,13 @@ fn run(args: &[&str]) -> Option<String> {
 }
 
 fn read_state() -> (Option<bool>, Vec<DeviceRow>) {
-    #[cfg(target_os = "macos")]
-    return crate::mac::bluetooth::read_state();
-    #[allow(unreachable_code)]
     let powered = run(&["show"]).and_then(|s| field(&s, "Powered").map(|v| v == "yes"));
     // `devices Paired` is BlueZ 5.65 and later; `paired-devices` is what came before it.
     let listing = run(&["devices", "Paired"])
         .filter(|s| s.lines().any(|l| l.starts_with("Device ")))
         .or_else(|| run(&["paired-devices"]))
         .unwrap_or_default();
-    let mut devices: Vec<DeviceRow> = listing
+    let devices: Vec<DeviceRow> = listing
         .lines()
         .filter_map(|line| {
             let rest = line.strip_prefix("Device ")?;
@@ -322,17 +380,10 @@ fn read_state() -> (Option<bool>, Vec<DeviceRow>) {
             Some(device_from_info(address, &info))
         })
         .collect();
-    // Connected first, then by name, so the answer to "is it connected?" is at the top.
-    devices.sort_by(|a, b| {
-        b.connected
-            .cmp(&a.connected)
-            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
-            .then_with(|| a.address.cmp(&b.address))
-    });
     (powered, devices)
 }
 
-fn is_address(s: &str) -> bool {
+pub fn is_address(s: &str) -> bool {
     s.len() == 17 && s.split(':').count() == 6
 }
 
@@ -391,6 +442,82 @@ mod tests {
         let d = device_from_info("AA:BB:CC:DD:EE:FF", "");
         assert_eq!(d.label, "AA:BB:CC:DD:EE:FF");
         assert_eq!(d.battery, None);
+    }
+
+    /// A platform's Bluetooth that answers at once, as the Beam Pro's does through its app.
+    struct Phone;
+
+    fn row(label: &str, address: &str, connected: bool) -> DeviceRow {
+        DeviceRow { label: label.into(), address: address.into(), kind: String::new(), connected, battery: None }
+    }
+
+    impl Adapter for Phone {
+        fn read_state(&mut self) -> (Option<bool>, Vec<DeviceRow>, Option<String>) {
+            let devices = vec![row("zed", "00:00:00:00:00:01", false), row("Keys", "00:00:00:00:00:02", true), row("amp", "00:00:00:00:00:03", false)];
+            (Some(true), devices, Some("asked".into()))
+        }
+
+        fn perform(&mut self, action: &BluetoothAction, label: &str) -> String {
+            format!("did {action:?} to {label}")
+        }
+    }
+
+    /// Tick until the worker has answered, or give up.
+    fn settle(devices: &mut Devices, shell: &mut Shell, until: impl Fn(&BluetoothView) -> bool) -> Option<String> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut wizard = None;
+        while Instant::now() < deadline {
+            wizard = wizard.or(devices.tick(shell));
+            if until(&devices.view) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        wizard
+    }
+
+    #[test]
+    fn a_platforms_bluetooth_fills_the_same_page_connected_first() {
+        let mut devices = Devices::start_with(Phone, || Added::Opened(String::new()));
+        let mut shell = Shell::new(Vec::new(), spatiand_shell::DesktopPanels::ALL, true);
+        devices.refresh();
+        settle(&mut devices, &mut shell, |v| !v.devices.is_empty());
+        let labels: Vec<&str> = devices.view.devices.iter().map(|d| d.label.as_str()).collect();
+        assert_eq!(labels, ["Keys", "amp", "zed"]);
+        assert_eq!(devices.view.powered, Some(true));
+        assert_eq!(devices.view.note, "asked");
+        devices.act(BluetoothAction::Connect("00:00:00:00:00:03".into()));
+        settle(&mut devices, &mut shell, |v| v.note.starts_with("did"));
+        assert_eq!(devices.view.note, "did Connect(\"00:00:00:00:00:03\") to amp");
+    }
+
+    #[test]
+    fn adding_a_device_is_the_platforms_own_page_or_its_word_why_not() {
+        let mut shell = Shell::new(Vec::new(), spatiand_shell::DesktopPanels::ALL, true);
+        let mut opened = Devices::start_with(Phone, || Added::Opened(String::new()));
+        opened.act(BluetoothAction::Add);
+        assert_eq!(opened.tick(&mut shell), None);
+        let mut wizard = Devices::start_with(Phone, || Added::Wizard("pair-wizard".into()));
+        wizard.act(BluetoothAction::Add);
+        assert_eq!(wizard.tick(&mut shell).as_deref(), Some("pair-wizard"));
+        let mut none = Devices::start_with(Phone, || Added::Not("No way to pair here.".into()));
+        none.act(BluetoothAction::Add);
+        none.tick(&mut shell);
+        assert_eq!(none.view.note, "No way to pair here.");
+    }
+
+    #[test]
+    fn an_action_is_judged_by_what_the_system_says_afterwards() {
+        let devices = [row("Keys", "00:00:00:00:00:02", true), row("amp", "00:00:00:00:00:03", false)];
+        let a = |s: &str| s.to_string();
+        assert!(worked(&BluetoothAction::Connect(a("00:00:00:00:00:02")), Some(true), &devices));
+        assert!(!worked(&BluetoothAction::Connect(a("00:00:00:00:00:03")), Some(true), &devices));
+        assert!(worked(&BluetoothAction::Disconnect(a("00:00:00:00:00:03")), Some(true), &devices));
+        assert!(!worked(&BluetoothAction::Forget(a("00:00:00:00:00:03")), Some(true), &devices));
+        assert!(worked(&BluetoothAction::Forget(a("00:00:00:00:00:09")), Some(true), &devices));
+        assert!(worked(&BluetoothAction::Power(false), Some(false), &devices));
+        assert!(!worked(&BluetoothAction::Power(true), None, &devices));
+        assert_eq!(words(&BluetoothAction::Connect(a("x")), "Keys").0, "Connected Keys.");
     }
 
     #[test]

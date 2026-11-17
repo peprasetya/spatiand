@@ -88,6 +88,11 @@ final class BluetoothBridge {
         running = new BluetoothBridge(activity);
     }
 
+    /** Ask the wearer for Bluetooth on the phone's screen: the room's Bluetooth page needs it too (Radios). */
+    static synchronized void ask() {
+        if (running != null && !running.permitted()) running.askPermission();
+    }
+
     /** The wearer answered Android's question. */
     static synchronized void permissionsAnswered() {
         if (running != null) running.handler.post(running::sayAdapter);

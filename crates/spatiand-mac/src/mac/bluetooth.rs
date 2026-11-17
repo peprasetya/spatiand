@@ -112,6 +112,39 @@ pub fn add() -> String {
     "System Settings' Bluetooth is open in front of you: choose the device to add there.".into()
 }
 
+/// The Mac's Bluetooth behind the room's page (`crate::bluetooth::Adapter`), as BlueZ is the
+/// Deck's and Android's the Beam Pro's.
+pub struct Mac;
+
+impl crate::bluetooth::Adapter for Mac {
+    fn read_state(&mut self) -> (Option<bool>, Vec<DeviceRow>, Option<String>) {
+        let (powered, devices) = read_state();
+        (powered, devices, None)
+    }
+
+    fn perform(&mut self, action: &BluetoothAction, label: &str) -> String {
+        if matches!(action, BluetoothAction::Add | BluetoothAction::None) {
+            return String::new();
+        }
+        if let Err(e) = act(action) {
+            log::info!("bluetooth: {e}");
+        }
+        // Judged by what the Mac says afterwards, as the Deck's is by what BlueZ says.
+        let (powered, devices) = read_state();
+        let (did, failed) = crate::bluetooth::words(action, label);
+        if crate::bluetooth::worked(action, powered, &devices) {
+            did
+        } else {
+            failed
+        }
+    }
+}
+
+/// Adding a device: System Settings' Bluetooth pane, in the room ([`add`]).
+pub fn add_device() -> crate::bluetooth::Added {
+    crate::bluetooth::Added::Opened(add())
+}
+
 // --- the app's answers (`ffi`) ---
 
 pub fn list_begin(powered: Option<bool>) {

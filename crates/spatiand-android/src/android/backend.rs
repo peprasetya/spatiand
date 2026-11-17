@@ -263,13 +263,12 @@ pub fn run(
     let mut shell = Shell::new(shell_apps, panels, calibrated);
     shell.set_local_name(&crate::system::machine_name());
     crate::own::adopt(&mut shell);
-    // On a Mac the menu bar that chooses where sound comes out is out of sight in the glasses.
-    #[cfg(target_os = "macos")]
+    // On a Mac the menu bar that chooses where sound comes out is out of sight in the glasses;
+    // on the Beam Pro, the phone's pickers are (`super::audio_devices_changed`).
     shell.offer_audio();
-    // The settings' Bluetooth page, the Deck's (`crate::bluetooth`), on the Mac through
-    // IOBluetooth. Android's is the Beam Pro's own work, not here yet.
-    #[cfg(target_os = "macos")]
-    let mut bluetooth = crate::bluetooth::Devices::start();
+    // The settings' Bluetooth page, the Deck's (`crate::bluetooth`), with this platform's
+    // Bluetooth behind it: IOBluetooth through the app on the Mac, Android's on the Beam Pro.
+    let mut bluetooth = super::bluetooth_devices();
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
@@ -503,8 +502,7 @@ pub fn run(
 
             // --- input ---
             controller.poll(tracker.orientation());
-            #[cfg(target_os = "macos")]
-            if let Some(devices) = crate::mac::audio_devices_changed() {
+            if let Some(devices) = super::audio_devices_changed() {
                 shell.set_audio(&devices);
             }
             // An application's own menus, a level at a time as the app reads them.
@@ -824,10 +822,12 @@ pub fn run(
             remotes.tick(&mut runtime.display_handle, &mut prefs, &mut shell);
             runtime.state.quiet_hosts = remotes.quiet();
             crate::clipboard::exchange(&mut remotes, &mut runtime.state);
-            // The Bluetooth page kept filled while it is open. Adding a device opens System
-            // Settings' pane itself, so there is no wizard to start here.
-            #[cfg(target_os = "macos")]
-            let _ = bluetooth.tick(&mut shell);
+            // The Bluetooth page kept filled while it is open. Adding a device opens the system's
+            // own page itself (System Settings' pane, Android's Bluetooth page), so there is no
+            // wizard to start here.
+            if let Some(command) = bluetooth.tick(&mut shell) {
+                log::warn!("no way to launch a pairing wizard here: {command}");
+            }
             if shell.wants_text() && !keyboard.open {
                 keyboard.open = true;
                 keyboard_for_shell = true;
@@ -842,9 +842,8 @@ pub fn run(
                     ShellEvent::PairHost { address, code } => remotes.pair(address, code),
                     ShellEvent::CancelPairing => remotes.cancel(),
                     ShellEvent::ForgetHost(address) => remotes.forget(&address, &mut prefs),
-                    ShellEvent::Bluetooth(_action) => {
-                        #[cfg(target_os = "macos")]
-                        bluetooth.act(_action);
+                    ShellEvent::Bluetooth(action) => {
+                        bluetooth.act(action);
                     }
                     ShellEvent::ModeChanged(mode) => {
                         if mode == Mode::Launcher {
@@ -1007,14 +1006,8 @@ pub fn run(
                             log::info!("keyboard {}", if keyboard.open { "shown" } else { "hidden" });
                         }
                         HudAction::OpenHosts | HudAction::OpenPinned => {}
-                        HudAction::OpenAudio => {
-                            #[cfg(target_os = "macos")]
-                            crate::mac::audio_devices_wanted();
-                        }
-                        HudAction::ChooseAudio(_index) => {
-                            #[cfg(target_os = "macos")]
-                            crate::mac::audio_device_chosen(_index);
-                        }
+                        HudAction::OpenAudio => super::audio_devices_wanted(),
+                        HudAction::ChooseAudio(index) => super::audio_device_chosen(index),
                         HudAction::ChooseAppMenu(_index) => {
                             #[cfg(target_os = "macos")]
                             crate::mac::app_menu_chosen(_index);
@@ -1025,7 +1018,6 @@ pub fn run(
                         }
                         // The page has opened: asked now rather than at the tick, as on the Deck.
                         HudAction::OpenBluetooth => {
-                            #[cfg(target_os = "macos")]
                             bluetooth.refresh();
                         }
                         HudAction::ReturnToDesktop => super::return_to_desktop(),

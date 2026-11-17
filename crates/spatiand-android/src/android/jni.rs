@@ -500,6 +500,64 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_appsSay(env: *mut JNIEnv
     }
 }
 
+/// `Native.deviceName(name)`: what the phone is called (Settings' device name, or its model), for
+/// the launcher's list of machines, pairing with hosts and SpatiKey: Android's host name is
+/// "localhost". Before `begin()`.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_deviceName(env: *mut JNIEnv, _class: jclass, name: jstring) {
+    if let Some(name) = unsafe { java_string(env, name) } {
+        *crate::system::DEVICE_NAME.lock().unwrap() = name;
+    }
+}
+
+/// `Native.clipboardText(text)`: the phone's clipboard holds this text now.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_clipboardText(env: *mut JNIEnv, _class: jclass, text: jstring) {
+    if let Some(text) = unsafe { java_string(env, text) } {
+        super::clipboard::copied_text(text);
+    }
+}
+
+/// `Native.clipboardImage(png)`: the phone's clipboard holds this picture now, as PNG.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_clipboardImage(env: *mut JNIEnv, _class: jclass, png: jni_sys::jbyteArray) {
+    let png = unsafe { super::clipboard::java_bytes(env, png) };
+    super::clipboard::copied_png(png);
+}
+
+/// `Native.notice(key, app, title, text)`: one of the phone's notifications, posted or posted
+/// again, that would interrupt on the phone.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_notice(
+    env: *mut JNIEnv,
+    _class: jclass,
+    key: jstring,
+    app: jstring,
+    title: jstring,
+    text: jstring,
+) {
+    let read = |s: jstring| if s.is_null() { String::new() } else { unsafe { java_string(env, s) }.unwrap_or_default() };
+    let (key, app, title, text) = (read(key), read(app), read(title), read(text));
+    super::notices::posted(&key, &app, &title, &text);
+}
+
+/// `Native.noticeGone(key)`: a notification was taken away.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_noticeGone(env: *mut JNIEnv, _class: jclass, key: jstring) {
+    if let Some(key) = unsafe { java_string(env, key) } {
+        super::notices::removed(&key);
+    }
+}
+
+/// `Native.audioDevices(json)`: the phone's sound devices and which are in use, for the room's
+/// settings: `[{"id", "name", "input", "current"}]`, outputs first.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_audioDevices(env: *mut JNIEnv, _class: jclass, json: jstring) {
+    if let Some(json) = unsafe { java_string(env, json) } {
+        super::sound::set(&json);
+    }
+}
+
 /// `Native.openApp(component, label)`: one of the phone's apps into the room, as from the launcher.
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_openApp(env: *mut JNIEnv, _class: jclass, component: jstring, label: jstring) {

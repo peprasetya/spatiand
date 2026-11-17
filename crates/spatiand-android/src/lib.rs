@@ -34,6 +34,9 @@ mod avatar;
 mod attention;
 #[path = "../../spatiand/src/audio.rs"]
 mod audio;
+/// The room's Bluetooth page, here with Android's Bluetooth behind it (`android::bluetooth`).
+#[path = "../../spatiand/src/bluetooth.rs"]
+mod bluetooth;
 #[path = "../../spatiand/src/cadence.rs"]
 mod cadence;
 #[path = "../../spatiand/src/calib.rs"]
@@ -72,6 +75,9 @@ mod listen;
 mod menu;
 #[path = "../../spatiand/src/install.rs"]
 mod install;
+/// The phone's notifications on the room's card (`android::notices`).
+#[path = "../../spatiand/src/notices.rs"]
+mod notices;
 #[path = "../../spatiand/src/own.rs"]
 mod own;
 #[path = "../../spatiand/src/pip.rs"]

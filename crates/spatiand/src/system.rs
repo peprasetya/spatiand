@@ -1257,8 +1257,14 @@ Audio
     }
 }
 
-/// What this machine is called, for the launcher's list of machines: its host name, without a
-/// domain.
+/// What the platform's app says this device is called, where its host name names nothing: on
+/// Android, the phone's own name (Settings' "Device name", or its model), handed over before the
+/// session starts (`Native.deviceName`). Empty where the host name says it.
+pub static DEVICE_NAME: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// What this machine is called, for the launcher's list of machines, pairing with hosts and
+/// SpatiKey: its host name, without a domain -- or, where that names nothing (Android answers
+/// "localhost"), what the platform says it is called.
 pub fn machine_name() -> String {
     let mut buffer = [0u8; 256];
     // SAFETY: a buffer of the length said, which the call fills with a C string.
@@ -1268,11 +1274,38 @@ pub fn machine_name() -> String {
         .flatten()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let name = name.split('.').next().unwrap_or("").trim().to_string();
-    // Android answers "localhost", which names nothing.
-    if name.is_empty() || name == "localhost" {
-        "This device".into()
+    let given = DEVICE_NAME.lock().map(|n| n.clone()).unwrap_or_default();
+    chosen_name(&name, &given)
+}
+
+/// The host name without its domain, unless it names nothing; then the name the platform gave;
+/// then "This device".
+fn chosen_name(host: &str, given: &str) -> String {
+    let host = host.split('.').next().unwrap_or("").trim();
+    let given = given.trim();
+    if !host.is_empty() && host != "localhost" {
+        host.to_string()
+    } else if !given.is_empty() {
+        given.to_string()
     } else {
-        name
+        "This device".into()
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::chosen_name;
+
+    #[test]
+    fn a_machine_is_named_by_its_host_name_without_a_domain() {
+        assert_eq!(chosen_name("steamdeck.local", ""), "steamdeck");
+        assert_eq!(chosen_name("deepmagpie", "Anything"), "deepmagpie");
+    }
+
+    #[test]
+    fn a_phone_whose_host_name_names_nothing_is_called_what_it_says() {
+        assert_eq!(chosen_name("localhost", "Beam Pro"), "Beam Pro");
+        assert_eq!(chosen_name("", " Paulus's Beam Pro "), "Paulus's Beam Pro");
+        assert_eq!(chosen_name("localhost", ""), "This device");
     }
 }

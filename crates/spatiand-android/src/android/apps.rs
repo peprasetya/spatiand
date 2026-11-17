@@ -166,6 +166,27 @@ pub fn launch(app: &AppEntry) {
     send(Command::Open { component: app.exec.clone(), label: app.name.clone(), data: None });
 }
 
+/// What an app's "component" is when what is opened is the notification just pressed rather
+/// than its launcher activity: `<package>/!notice`. The app's side sends the notification's own
+/// intent onto the display in its place (`Shell.launchOn`).
+const NOTICE_COMPONENT: &str = "!notice";
+
+fn is_notice(component: &str) -> bool {
+    component.ends_with(&format!("/{NOTICE_COMPONENT}"))
+}
+
+/// What a pressed notification opens, in the room: in its app's window if it has one (brought
+/// out), or in a new one, as from the launcher. With no helper yet, as [`launch`] does.
+pub fn open_notice(package: &str, label: &str) {
+    launch(&AppEntry { name: label.to_string(), exec: format!("{package}/{NOTICE_COMPONENT}"), icon: None, categories: Vec::new() });
+}
+
+/// The window an app opened as `component` is in: the same component, or the same app when either
+/// was opened from a notification.
+fn same_window(open: &str, component: &str) -> bool {
+    open == component || ((is_notice(open) || is_notice(component)) && package_of(open) == package_of(component))
+}
+
 /// `spatiand_xr_v1.ask_system` (SpatiShelf's "Open with"): asked of `Shell.askSystem` off the
 /// compositor's thread, and answered into `answer`. An app chosen to open a file is opened in the
 /// room as from the launcher, handed the file.
@@ -343,11 +364,13 @@ fn run(stream: std::os::unix::net::UnixStream, inbox: Receiver<Command>) {
         for command in first.into_iter().chain(inbox.try_iter()) {
             match command {
                 Command::Open { component, label, data } => {
-                    if let Some(entry) = entries.values_mut().find(|e| e.component == component) {
+                    if let Some(entry) = entries.values_mut().find(|e| same_window(&e.component, &component)) {
                         entry.show = true;
-                        // Open already: handed the file where it is.
+                        // Open already: handed the file where it is, or the notification's intent.
                         if let Some((uri, kind)) = &data {
                             java_relaunch(entry.display, &component, uri, kind);
+                        } else if is_notice(&component) {
+                            java_relaunch(entry.display, &component, "", "");
                         }
                         continue;
                     }
@@ -810,6 +833,13 @@ fn java_show_flat(display: i32, label: &str) {
         let args = [jvalue { i: display }, jvalue { l: jni::new_string(env, label) }];
         ((**env).v1_1.CallStaticVoidMethodA)(env, class, method, args.as_ptr());
     });
+}
+
+/// Start Spatiand's shell helper, if it is not there: something else in the room needs it.
+pub fn start_helper() {
+    if !READY.load(Ordering::SeqCst) {
+        java_start_helper();
+    }
 }
 
 fn java_start_helper() {

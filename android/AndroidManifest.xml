@@ -41,6 +41,13 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="*/*" />
         </intent>
+        <!-- Android's own Wi-Fi and Bluetooth pages, opened as windows in the room (Radios). -->
+        <intent>
+            <action android:name="android.settings.WIFI_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.BLUETOOTH_SETTINGS" />
+        </intent>
     </queries>
     <application
         android:label="Spatiand"
@@ -88,8 +95,21 @@
             android:name=".ShellProvider"
             android:authorities="id.prasetya.spatiand.shell"
             android:exported="true" />
-        <!-- Files SpatiShelf hands to the phone's own apps ("Open with"): read only, and only by
-             an app granted the one address (OpenFiles, Shell.askSystem). -->
+        <!-- The phone's notifications on the room's card (Notices): only once the wearer has
+             allowed it on Android's own page, which MainActivity opens; bound only while the
+             room is running. -->
+        <service
+            android:name=".Notices"
+            android:label="Spatiand"
+            android:exported="true"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+        <!-- Files SpatiShelf hands to the phone's own apps ("Open with"), and a picture copied in
+             the room put on the phone's clipboard (PhoneClipboard): read only, and only by an
+             app granted the one address (OpenFiles, Shell.askSystem). -->
         <provider
             android:name=".OpenFiles"
             android:authorities="id.prasetya.spatiand.files"

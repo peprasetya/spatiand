@@ -186,6 +186,12 @@ pub const PLUG_HINT: &str = "Plug the glasses into this Mac.";
 /// Wi-Fi and Bluetooth are System Settings' own panes, brought here as windows.
 pub const PANELS: spatiand_shell::DesktopPanels = spatiand_shell::DesktopPanels::ALL;
 
+/// The room's Bluetooth page's devices: this Mac's, through IOBluetooth ([`bluetooth`]), as the
+/// Deck's are BlueZ's and the Beam Pro's Android's (`crate::bluetooth::Adapter`).
+pub fn bluetooth_devices() -> crate::bluetooth::Devices {
+    crate::bluetooth::Devices::start_with(bluetooth::Mac, bluetooth::add_device)
+}
+
 /// This Mac's applications, as the app listed them.
 pub fn local_apps() -> Vec<spatiand_shell::AppEntry> {
     local::apps()
@@ -491,16 +497,33 @@ fn typed(n: u32, result: Result<(), String>) {
     }
 }
 
-/// The notification the app wants shown, or nothing.
-pub static NOTICE: Mutex<String> = Mutex::new(String::new());
+/// The banner the app shows on the room's card: the room's one card logic (`crate::notices`), the
+/// Deck's and the Beam Pro's, with the banner the app has found as its one notification.
+static NOTICE: Mutex<crate::notices::Card> = Mutex::new(crate::notices::Card::new());
+/// What the card knows the Mac's banner by: the app shows one at a time.
+const BANNER: &str = "banner";
+
+/// The app found a banner (who it is from, then what it says, put together by the app), or the
+/// one it found is over (""). The app takes each away after the card's glance
+/// ([`crate::notices::GLANCE`]); the card's own time is a little longer, so that a word lost on
+/// the way does not leave one there.
+pub fn noticed(text: String) {
+    let mut card = NOTICE.lock().unwrap();
+    if text.is_empty() {
+        card.remove(BANNER);
+    } else {
+        card.post(BANNER, text, crate::notices::GLANCE + Duration::from_secs(4), Instant::now());
+    }
+}
 
 /// The notification to show under the status bar: who it is from, then what it says.
 pub fn notice() -> String {
-    NOTICE.lock().map(|n| n.clone()).unwrap_or_default()
+    NOTICE.lock().map(|mut card| card.text(Instant::now())).unwrap_or_default()
 }
 
-/// The card was pressed: the app presses the banner it came from.
+/// The card was pressed: it goes, and the app presses the banner it came from.
 pub fn notice_pressed() {
+    NOTICE.lock().unwrap().press(Instant::now());
     ffi::tell(ffi::Asked::NoticePressed, "");
 }
 
