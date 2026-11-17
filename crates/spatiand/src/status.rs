@@ -8,6 +8,7 @@
 //! Deliberately terse. It sits over the world permanently, so every character has to earn its
 //! place; the pose numbers that used to occupy the middle of the view moved here and shrank.
 
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 use std::path::Path;
 
 /// Local wall-clock time as `HH:MM`.
@@ -45,11 +46,54 @@ impl Battery {
     }
 }
 
+impl Battery {
+    /// What Android's `ACTION_BATTERY_CHANGED` says, read as the Deck's sysfs is: its
+    /// `EXTRA_LEVEL` out of `EXTRA_SCALE`, and `EXTRA_STATUS`, of which `BATTERY_STATUS_CHARGING`
+    /// (2) and `BATTERY_STATUS_FULL` (5) count as charging, as "Charging" and "Full" do on the
+    /// Deck. `None` for a scale of 0 or less, which is how "no battery, or not heard yet" is
+    /// sent.
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub fn from_android(level: i32, scale: i32, status: i32) -> Option<Battery> {
+        if scale <= 0 || level < 0 {
+            return None;
+        }
+        let percent = ((level as i64 * 100 + scale as i64 / 2) / scale as i64).clamp(0, 100) as u8;
+        Some(Battery {
+            percent,
+            charging: status == 2 || status == 5,
+        })
+    }
+}
+
+/// The phone's battery, as the app's Java side last heard it (`Native.battery`): an app on
+/// Android 12 and later may not read `/sys/class/power_supply`, so the Deck's way finds nothing
+/// there, and the pill showed only the time. 0 is none; else 0x100, the percent in the low byte
+/// and 0x200 for charging.
+#[cfg(target_os = "android")]
+static ANDROID_BATTERY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Hand the phone's battery to the status line; `None` takes it away.
+#[cfg(target_os = "android")]
+pub fn set_android_battery(battery: Option<Battery>) {
+    let packed = battery.map_or(0, |b| 0x100 | b.percent as u32 | if b.charging { 0x200 } else { 0 });
+    ANDROID_BATTERY.store(packed, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The phone's battery, from what the Java side handed over.
+#[cfg(target_os = "android")]
+pub fn battery() -> Option<Battery> {
+    let packed = ANDROID_BATTERY.load(std::sync::atomic::Ordering::Relaxed);
+    (packed & 0x100 != 0).then(|| Battery {
+        percent: (packed & 0xff) as u8,
+        charging: packed & 0x200 != 0,
+    })
+}
+
 /// Read the battery from sysfs.
 ///
 /// `None` on a machine without one — a desktop, or a Deck whose battery node has moved. The
 /// status bar simply omits it rather than showing a zero, which would look like an emergency.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 pub fn battery() -> Option<Battery> {
     let supplies = std::fs::read_dir("/sys/class/power_supply").ok()?;
     for entry in supplies.flatten() {
@@ -148,6 +192,7 @@ pub fn battery() -> Option<Battery> {
     }
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "android")))]
 fn read_trimmed(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()
@@ -161,8 +206,14 @@ fn read_trimmed(path: &Path) -> Option<String> {
 /// number of windows were here once; the first lives in the HUD next to the control that changes
 /// it, and the second was never something to look up mid-task.
 pub fn line() -> String {
+    line_with(battery())
+}
+
+/// The line with this battery, or none: what [`line`] draws, and what the snapshot room draws
+/// with a battery of its own choosing (`SPATIAND_SNAPSHOT_BATTERY`).
+pub fn line_with(battery: Option<Battery>) -> String {
     let mut parts = vec![clock()];
-    if let Some(b) = battery() {
+    if let Some(b) = battery {
         parts.push(b.label());
     }
     parts.join("  ")
@@ -221,6 +272,34 @@ mod tests {
             "status line is {text:?} ({} characters)",
             text.chars().count()
         );
+    }
+
+    #[test]
+    fn android_reads_as_the_deck_does() {
+        // The Beam Pro's level is out of a scale of 100, but Android lets a phone pick another.
+        assert_eq!(Battery::from_android(82, 100, 3), Some(Battery { percent: 82, charging: false }));
+        assert_eq!(Battery::from_android(41, 50, 2), Some(Battery { percent: 82, charging: true }));
+        assert_eq!(Battery::from_android(1, 3, 3).unwrap().percent, 33);
+        assert_eq!(Battery::from_android(2, 3, 3).unwrap().percent, 67);
+        // Full on the charger is charging, as "Full" is on the Deck; "not charging" (4, a phone
+        // holding its charge on the cable) and "unknown" (1) are not, as on the Deck.
+        assert!(Battery::from_android(100, 100, 5).unwrap().charging);
+        assert!(!Battery::from_android(80, 100, 4).unwrap().charging);
+        assert!(!Battery::from_android(80, 100, 1).unwrap().charging);
+        // Nothing heard, or a nonsense intent, is no battery rather than 0%.
+        assert_eq!(Battery::from_android(0, 0, 0), None);
+        assert_eq!(Battery::from_android(-1, 100, 2), None);
+        assert_eq!(Battery::from_android(150, 100, 2).unwrap().percent, 100);
+    }
+
+    #[test]
+    fn the_line_with_a_battery_is_the_time_then_the_charge() {
+        let b = Battery { percent: 82, charging: false };
+        assert_eq!(line_with(Some(b)), format!("{}  82%", clock()));
+        let b = Battery { percent: 100, charging: true };
+        assert_eq!(line_with(Some(b)), format!("{}  100%\u{26a1}", clock()));
+        assert!(line_with(Some(b)).chars().count() <= 14);
+        assert_eq!(line_with(None), clock());
     }
 
     #[test]

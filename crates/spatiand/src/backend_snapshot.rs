@@ -78,8 +78,22 @@
 //!
 //! `SPATIAND_SNAPSHOT_MODE=flat` tells clients the wearer sees one picture rather than two
 //! (`spatiand_xr_v1.display_mode`), for looking at what a Spatiand application does in 2D.
+//!
+//! `SPATIAND_SNAPSHOT_BATTERY=<percent>[,charging]` draws the status pill with that battery
+//! instead of the machine's own, which a desktop does not have; `none` draws it with none.
 
 use std::path::PathBuf;
+
+/// The battery the pill is drawn with: `SPATIAND_SNAPSHOT_BATTERY`, else the machine's own.
+fn snapshot_battery() -> Option<crate::status::Battery> {
+    let Ok(wanted) = std::env::var("SPATIAND_SNAPSHOT_BATTERY") else {
+        return crate::status::battery();
+    };
+    let mut parts = wanted.split(',');
+    let percent = parts.next()?.trim().parse::<u8>().ok()?;
+    let charging = parts.next().map(str::trim) == Some("charging");
+    Some(crate::status::Battery { percent: percent.min(100), charging })
+}
 
 use glam::{DQuat, DVec3};
 #[cfg(not(target_os = "macos"))]
@@ -1054,7 +1068,7 @@ pub fn run(
     scene.sync_status(
         &mut renderer,
         &mut text,
-        &crate::status::line(),
+        &crate::status::line_with(snapshot_battery()),
         ppd,
     )?;
     // The card, chosen as a session chooses it: SpatiKey's while a finger is wanted on the Mac,

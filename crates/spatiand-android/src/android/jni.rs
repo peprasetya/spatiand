@@ -281,6 +281,14 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_traffic(_env: *mut JNIEn
     crate::system::ANDROID_TRAFFIC[1].store(tx.max(0) as u64, Ordering::Relaxed);
 }
 
+/// `Native.battery(level, scale, status)`: the phone's battery from `ACTION_BATTERY_CHANGED`,
+/// for the status pill, as the Deck reads its own from sysfs (which an app may not read here). A
+/// scale of 0 takes it away.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_battery(_env: *mut JNIEnv, _class: jclass, level: jint, scale: jint, status: jint) {
+    crate::status::set_android_battery(crate::status::Battery::from_android(level, scale, status));
+}
+
 /// `Native.padButton(device, code, down)`: a gamepad's button. Returns whether it was one.
 #[no_mangle]
 pub extern "system" fn Java_id_prasetya_spatiand_Native_padButton(

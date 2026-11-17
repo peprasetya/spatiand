@@ -103,6 +103,12 @@ final class Native {
     static native String status();
 
     /**
+     * The phone's battery for the room's status pill (Battery.java): ACTION_BATTERY_CHANGED's
+     * EXTRA_LEVEL, EXTRA_SCALE and EXTRA_STATUS; a scale of 0 for none.
+     */
+    static native void battery(int level, int scale, int status);
+
+    /**
      * The phone's apps, for the room's launcher (Shell.listApps): a JSON list of objects with
      * "name", "exec" ("package/activity") and "icon" (a PNG's path).
      */

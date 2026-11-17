@@ -116,6 +116,7 @@ public class MainActivity extends Activity implements SensorEventListener {
         File movies = getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES);
         if (movies != null) Native.recordingsDir(movies.getPath());
         Native.begin();
+        Battery.watch(this);
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
