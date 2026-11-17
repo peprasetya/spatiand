@@ -67,6 +67,12 @@ pub enum Pixels {
     VideoToolbox,
     /// A VAAPI surface lent as dmabufs, two planes like [`Pixels::Nv12`], on the GPU.
     Dmabuf,
+    /// A ten-bit VAAPI surface lent as dmabufs: two planes like [`Pixels::Dmabuf`], sixteen
+    /// bits a sample, the ten in the top of them (P010).
+    Dmabuf10,
+    /// An Android hardware buffer MediaCodec drew into, YUV in the GPU's own layout, sampled
+    /// through the GPU's own conversion (`crate::mediacodec`).
+    HardwareBuffer,
 }
 
 /// One plane of a [`Pixels::Dmabuf`] picture: where it is in which descriptor.
@@ -138,6 +144,9 @@ pub struct Picture {
     pub time: f64,
     pub colour: Colour,
     serial: u64,
+    /// A [`Pixels::HardwareBuffer`] picture's place in its reader, given back when dropped.
+    #[cfg(target_os = "android")]
+    image: Option<crate::mediacodec::Image>,
 }
 
 // SAFETY: an AVFrame's buffers are reference counted with atomics, and nothing here writes
@@ -159,7 +168,7 @@ impl Picture {
     /// The planes of a [`Pixels::Dmabuf`] picture, brightness first: however the driver
     /// grouped them into layers, they come out in the order they are in the picture.
     pub fn dmabuf_planes(&self) -> Vec<DmabufPlane> {
-        if self.pixels != Pixels::Dmabuf {
+        if !matches!(self.pixels, Pixels::Dmabuf | Pixels::Dmabuf10) {
             return Vec::new();
         }
         unsafe {
@@ -178,6 +187,13 @@ impl Picture {
     /// The `CVPixelBufferRef`, for a [`Pixels::VideoToolbox`] picture.
     pub fn pixel_buffer(&self) -> *const c_void {
         unsafe { (*self.frame).data[3] as *const c_void }
+    }
+
+    /// The `AHardwareBuffer` of a [`Pixels::HardwareBuffer`] picture, and the part of it that is
+    /// picture (left, top, right, bottom, each 0 to 1).
+    #[cfg(target_os = "android")]
+    pub fn hardware_buffer(&self) -> Option<(*mut c_void, [f32; 4])> {
+        self.image.as_ref().map(|image| (image.buffer as *mut c_void, image.crop))
     }
 }
 
@@ -369,6 +385,9 @@ unsafe impl Send for Source {}
 struct Decoder {
     context: *mut ffi::AVCodecContext,
     time_base: f64,
+    /// Where Android's decoder draws its pictures (`crate::mediacodec`), freed after the codec.
+    #[cfg(target_os = "android")]
+    reader: Option<Arc<crate::mediacodec::Reader>>,
 }
 unsafe impl Send for Decoder {}
 impl Drop for Decoder {
@@ -383,9 +402,12 @@ const HARDWARE: Option<(ffi::AVHWDeviceType, ffi::AVPixelFormat, &str)> =
     Some((ffi::AV_HWDEVICE_TYPE_VIDEOTOOLBOX, ffi::AV_PIX_FMT_VIDEOTOOLBOX, "VideoToolbox"));
 #[cfg(target_os = "linux")]
 const HARDWARE: Option<(ffi::AVHWDeviceType, ffi::AVPixelFormat, &str)> = Some((ffi::AV_HWDEVICE_TYPE_VAAPI, ffi::AV_PIX_FMT_VAAPI, "VAAPI"));
-// MediaCodec is asked for the same way and is not wired to a way of showing its pictures
-// yet: until it is, the Beam Pro decodes in software.
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+// MediaCodec, through FFmpeg's decoders of that name, drawing into an AImageReader's hardware
+// buffers (`crate::mediacodec`).
+#[cfg(target_os = "android")]
+const HARDWARE: Option<(ffi::AVHWDeviceType, ffi::AVPixelFormat, &str)> =
+    Some((ffi::AV_HWDEVICE_TYPE_MEDIACODEC, ffi::AV_PIX_FMT_MEDIACODEC, "MediaCodec"));
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
 const HARDWARE: Option<(ffi::AVHWDeviceType, ffi::AVPixelFormat, &str)> = None;
 
 unsafe extern "C" fn choose_format(_context: *mut ffi::AVCodecContext, offered: *const ffi::AVPixelFormat) -> ffi::AVPixelFormat {
@@ -402,8 +424,41 @@ unsafe extern "C" fn choose_format(_context: *mut ffi::AVCodecContext, offered: 
     *offered
 }
 
+/// Android's decoder for the stream, where the phone has one in hardware: FFmpeg's MediaCodec
+/// decoder of the codec's name, and the reader it is to draw into.
+#[cfg(target_os = "android")]
+unsafe fn android_decoder(stream: *mut ffi::AVStream) -> Option<(*const ffi::AVCodec, Arc<crate::mediacodec::Reader>)> {
+    let parameters = (*stream).codecpar;
+    let name = text(ffi::avcodec_get_name((*parameters).codec_id))?;
+    let (decoder, mime) = crate::mediacodec::decoder_for(&name)?;
+    if !crate::mediacodec::hardware_decodes(mime) {
+        log::info!("this phone has no hardware decoder for {name}");
+        return None;
+    }
+    let named = CString::new(decoder).ok()?;
+    let codec = ffi::avcodec_find_decoder_by_name(named.as_ptr());
+    if codec.is_null() {
+        log::warn!("FFmpeg was built without {decoder}");
+        return None;
+    }
+    let size = ((*parameters).width.max(0) as u32, (*parameters).height.max(0) as u32);
+    match crate::mediacodec::Reader::new(size) {
+        Ok(reader) => Some((codec, reader)),
+        Err(e) => {
+            log::warn!("{e}");
+            None
+        }
+    }
+}
+
 unsafe fn open_decoder(stream: *mut ffi::AVStream, hardware: bool) -> Result<(Decoder, bool), String> {
     let parameters = (*stream).codecpar;
+    // On Android the hardware is a decoder of its own, not a mode of FFmpeg's.
+    #[cfg(target_os = "android")]
+    let android = if hardware && (*parameters).codec_type == ffi::AVMEDIA_TYPE_VIDEO { android_decoder(stream) } else { None };
+    #[cfg(target_os = "android")]
+    let codec = android.as_ref().map_or_else(|| ffi::avcodec_find_decoder((*parameters).codec_id), |(codec, _)| *codec);
+    #[cfg(not(target_os = "android"))]
     let codec = ffi::avcodec_find_decoder((*parameters).codec_id);
     if codec.is_null() {
         return Err("FFmpeg has no decoder for this".into());
@@ -412,19 +467,42 @@ unsafe fn open_decoder(stream: *mut ffi::AVStream, hardware: bool) -> Result<(De
     ffi::avcodec_parameters_to_context(context, parameters);
     (*context).pkt_timebase = (*stream).time_base;
     let mut on_gpu = false;
-    // On Linux, H.264 only for now. An HEVC file (one a Mac's encoder made) hung the decoder
-    // of an AMD GPU when given to VAAPI from here on 2026-10-13, and the kernel reset the
-    // whole GPU to get it back -- which on a Deck is the room going down with the film.
-    // Until that is understood, HEVC and the rest are decoded in software there;
-    // `SPATIAND_MEDIA_HARDWARE=all` asks for the GPU regardless.
-    let trusted = !cfg!(target_os = "linux")
-        || (*parameters).codec_id == ffi::AV_CODEC_ID_H264
-        || std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() == Ok("all");
-    if let (true, Some((kind, _, _))) = (hardware && trusted && (*parameters).codec_type == ffi::AVMEDIA_TYPE_VIDEO, HARDWARE) {
+    #[cfg(target_os = "android")]
+    let mut reader = None;
+    #[cfg(target_os = "android")]
+    if let Some((_, drawn_into)) = android {
+        // A device whose window is the reader's: FFmpeg's own would have none, and the pictures
+        // would be copied out of the codec.
+        match crate::mediacodec::device(&drawn_into) {
+            Ok(device) => {
+                (*context).hw_device_ctx = device;
+                (*context).get_format = Some(choose_format);
+                on_gpu = true;
+                reader = Some(drawn_into);
+            }
+            Err(e) => {
+                ffi::avcodec_free_context(&mut context);
+                return Err(e);
+            }
+        }
+    }
+    // Every codec the GPU decodes, on Linux too (the owner: video is decoded by the hardware,
+    // whichever way). From 2026-10-13 to 11-17 Linux gave only H.264 to VA-API: an HEVC stream
+    // (a Mac's VideoToolbox's, raw) hung the decoder of deepmagpie's GPU (Radeon 8060S, VCN 5)
+    // and the kernel reset the GPU. That was never seen on the Deck, whose room decodes hosts'
+    // HEVC on VA-API every day; on 11-17 the Deck decoded that same stream, HEVC 8 and 10 bit
+    // (4K too), VP9 and AV1 through this player, with its kernel's log clean
+    // (docs/spatiand-apps.md). `SPATIAND_MEDIA_HARDWARE=0` still decodes everything in software.
+    if let (true, Some((kind, _, _))) = (hardware && !cfg!(target_os = "android") && (*parameters).codec_type == ffi::AVMEDIA_TYPE_VIDEO, HARDWARE) {
         let mut device = ptr::null_mut();
         if ffi::av_hwdevice_ctx_create(&mut device, kind, ptr::null(), ptr::null_mut(), 0) >= 0 {
             (*context).hw_device_ctx = device;
             (*context).get_format = Some(choose_format);
+            // Room in the decoder's pool for the pictures held outside it: those waiting to be
+            // shown, the one on show and the one the screen lets go of, as the room's own decoder
+            // keeps room (spatiand-video). Without it VA-API's pool is only the codec's
+            // references, and the held pictures take surfaces it needs.
+            (*context).extra_hw_frames = PICTURES_AHEAD as c_int + 3;
             on_gpu = true;
         }
     }
@@ -438,7 +516,15 @@ unsafe fn open_decoder(stream: *mut ffi::AVStream, hardware: bool) -> Result<(De
         return Err(format!("the decoder would not open: {}", error_text(opened)));
     }
     let time_base = (*stream).time_base;
-    Ok((Decoder { context, time_base: time_base.num as f64 / time_base.den.max(1) as f64 }, on_gpu))
+    Ok((
+        Decoder {
+            context,
+            time_base: time_base.num as f64 / time_base.den.max(1) as f64,
+            #[cfg(target_os = "android")]
+            reader,
+        },
+        on_gpu,
+    ))
 }
 
 unsafe fn text(value: *const std::ffi::c_char) -> Option<String> {
@@ -1340,17 +1426,24 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
     }
     #[cfg(target_os = "linux")]
     if format == ffi::AV_PIX_FMT_VAAPI {
-        // An eight-bit picture is lent as it is: mapped, not copied, and the mapping keeps
-        // the surface until the picture is dropped. Anything else comes down to main memory.
+        // An eight- or ten-bit picture is lent as it is: mapped, not copied, and the mapping
+        // keeps the surface until the picture is dropped. Anything else comes down to main
+        // memory. Ten bits came down too until 2026-11-17, and were converted there: a 4K HDR
+        // film decoded by the Deck's GPU then played slower than in software (26 a second).
         let frames = (*frame).hw_frames_ctx;
         let software = if frames.is_null() { ffi::AV_PIX_FMT_NONE } else { (*((*frames).data as *const ffi::AVHWFramesContext)).sw_format };
-        if software == ffi::AV_PIX_FMT_NV12 && std::env::var("SPATIAND_MEDIA_COPY").is_err() {
+        let kind = match software {
+            f if f == ffi::AV_PIX_FMT_NV12 => Some(Pixels::Dmabuf),
+            f if f == ffi::AV_PIX_FMT_P010LE => Some(Pixels::Dmabuf10),
+            _ => None,
+        };
+        if let (Some(kind), true) = (kind, std::env::var("SPATIAND_MEDIA_COPY").is_err()) {
             let mut lent = ffi::av_frame_alloc();
             (*lent).format = ffi::AV_PIX_FMT_DRM_PRIME;
             if ffi::av_hwframe_map(lent, frame, (ffi::AV_HWFRAME_MAP_READ | ffi::AV_HWFRAME_MAP_DIRECT) as c_int) >= 0 {
                 ffi::av_frame_copy_props(lent, frame);
                 ffi::av_frame_unref(frame);
-                return Some((lent, Pixels::Dmabuf));
+                return Some((lent, kind));
             }
             ffi::av_frame_free(&mut lent);
         }
@@ -1410,6 +1503,32 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
     Some((plain, kind))
 }
 
+/// A MediaCodec picture drawn into its decoder's reader, and taken from it: the codec's buffer
+/// rendered (which gives it back to the codec), then the reader's picture of the same time waited
+/// for. Only then is the next drawn (see `crate::mediacodec`). None if it never arrives.
+#[cfg(target_os = "android")]
+unsafe fn drawn(frame: *mut ffi::AVFrame, decoder: &Decoder, complained: &mut bool) -> Option<crate::mediacodec::Image> {
+    let reader = decoder.reader.as_ref()?;
+    // The time the codec was given for this picture, in microseconds, as FFmpeg gave it.
+    let base = (*decoder.context).pkt_timebase;
+    let pts = (*frame).pts;
+    let expected = (pts != ffi::AV_NOPTS_VALUE).then(|| {
+        if base.num > 0 && base.den > 0 {
+            ffi::av_rescale_q(pts, base, ffi::AVRational { num: 1, den: 1_000_000 })
+        } else {
+            pts
+        }
+    });
+    if ffi::av_mediacodec_release_buffer((*frame).data[3].cast(), 1) < 0 {
+        return None;
+    }
+    let image = reader.take(expected, Duration::from_millis(100));
+    if image.is_none() && !std::mem::replace(complained, true) {
+        log::warn!("a picture MediaCodec drew never reached its reader; it is skipped");
+    }
+    image
+}
+
 fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>, generation: u64) {
     let _ = stream;
     unsafe {
@@ -1417,6 +1536,8 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
         let mut scaler: *mut ffi::SwsContext = ptr::null_mut();
         let mut serial = shared.serial.load(Ordering::Relaxed);
         let mut complained = false;
+        #[cfg(target_os = "android")]
+        let mut lost = false;
         let mine = || shared.video_generation.load(Ordering::Relaxed) == generation;
         while !shared.stop.load(Ordering::Relaxed) && mine() {
             let Ok((packet, packet_serial)) = shared.video.pop() else { continue };
@@ -1445,11 +1566,37 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                 }
                 let colour = colour_of(frame);
                 let (width, height) = ((*frame).width.max(0) as u32, (*frame).height.max(0) as u32);
-                let Some((held, pixels)) = settle(frame, &mut scaler) else {
+                // Android's decoder's picture: in its reader, on the GPU, nothing of it in the frame.
+                #[cfg(target_os = "android")]
+                let image = if (*frame).format == ffi::AV_PIX_FMT_MEDIACODEC {
+                    let image = drawn(frame, &decoder, &mut lost);
+                    ffi::av_frame_unref(frame);
+                    if image.is_none() {
+                        continue;
+                    }
+                    image
+                } else {
+                    None
+                };
+                #[cfg(target_os = "android")]
+                let settled = if image.is_some() { Some((ptr::null_mut(), Pixels::HardwareBuffer)) } else { settle(frame, &mut scaler) };
+                #[cfg(not(target_os = "android"))]
+                let settled = settle(frame, &mut scaler);
+                let Some((held, pixels)) = settled else {
                     ffi::av_frame_unref(frame);
                     continue;
                 };
-                let picture = Picture { frame: held, pixels, width, height, time, colour, serial };
+                let picture = Picture {
+                    frame: held,
+                    pixels,
+                    width,
+                    height,
+                    time,
+                    colour,
+                    serial,
+                    #[cfg(target_os = "android")]
+                    image,
+                };
                 let mut pictures = shared.pictures.lock().unwrap();
                 while pictures.len() >= PICTURES_AHEAD && !shared.stop.load(Ordering::Relaxed) && serial == shared.serial.load(Ordering::Relaxed) {
                     // Waiting for room is not being stuck.

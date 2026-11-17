@@ -12,6 +12,7 @@ pub mod audio;
 pub mod hardware;
 pub mod hints;
 pub mod layout;
+pub mod mediacodec;
 pub mod mesh;
 pub mod stretch;
 pub mod subs;

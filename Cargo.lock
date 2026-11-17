@@ -5000,6 +5000,7 @@ dependencies = [
  "glam",
  "libc",
  "log",
+ "ndk-sys 0.6.0+11769913",
  "png",
  "rsmpeg",
  "spatiand-app",

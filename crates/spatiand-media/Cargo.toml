@@ -35,6 +35,11 @@ rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg8", "l
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 cpal = "0.18"
 
+# Android's decoders draw into an AImageReader's hardware buffers (`mediacodec`), as the
+# compositor's own decoders do (`spatiand-video`'s android.rs).
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-sys = { version = "0.6", features = ["media", "nativewindow"] }
+
 [dev-dependencies]
 env_logger.workspace = true
 png = "0.18"
@@ -45,4 +50,8 @@ required-features = ["engine"]
 
 [[example]]
 name = "stream"
+required-features = ["engine"]
+
+[[example]]
+name = "rate"
 required-features = ["engine"]

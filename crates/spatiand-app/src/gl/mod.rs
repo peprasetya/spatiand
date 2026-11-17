@@ -26,6 +26,10 @@ mod mac;
 pub use mac::SurfaceTexture;
 #[cfg(target_os = "linux")]
 pub use linux::DmabufTexture;
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::{HardwareBufferTexture, TEXTURE_EXTERNAL_OES};
 
 pub(crate) type Egl = egl::DynamicInstance<egl::EGL1_4>;
 

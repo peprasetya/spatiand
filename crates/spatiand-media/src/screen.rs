@@ -32,9 +32,9 @@ void main() {
 }
 "#;
 
-const FRAGMENT: &str = r#"#version 300 es
+/// The planes of a picture, made colour here.
+const PLANES: &str = r#"#version 300 es
 precision highp float;
-in vec2 v_at;
 uniform sampler2D u_y;
 uniform sampler2D u_u;
 uniform sampler2D u_v;
@@ -43,6 +43,39 @@ uniform int u_planes;
 uniform mat3 u_matrix;
 uniform vec3 u_offset;
 uniform float u_deep;
+
+vec3 decoded(vec2 uv) {
+    vec3 yuv;
+    yuv.x = texture(u_y, uv).r;
+    if (u_planes == 2) {
+        yuv.yz = texture(u_u, uv).rg;
+    } else {
+        yuv.y = texture(u_u, uv).r;
+        yuv.z = texture(u_v, uv).r;
+    }
+    // Ten bits in sixteen read as a fraction of sixteen: `u_deep` makes them a fraction of ten.
+    return u_matrix * (yuv * u_deep - u_offset);
+}
+"#;
+
+/// A picture in an Android hardware buffer (`Pixels::HardwareBuffer`): the GPU makes it colour
+/// as it samples it, by what the buffer says it is.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+const EXTERNAL: &str = r#"#version 300 es
+#extension GL_OES_EGL_image_external_essl3 : require
+precision highp float;
+uniform samplerExternalOES u_ext;
+// The part of the buffer that is picture: left, top, right, bottom.
+uniform vec4 u_crop;
+
+vec3 decoded(vec2 uv) {
+    return texture(u_ext, mix(u_crop.xy, u_crop.zw, uv)).rgb;
+}
+"#;
+
+/// The rest, the same for both: which part of the picture is shown, and HDR's light.
+const FRAGMENT: &str = r#"
+in vec2 v_at;
 // 0: an ordinary film. 1: PQ. 2: HLG.
 uniform int u_light;
 // The part of the picture to show: left, top, right, bottom.
@@ -55,16 +88,7 @@ uniform vec2 u_tan;
 out vec4 f_color;
 
 vec3 colour(vec2 uv) {
-    vec3 yuv;
-    yuv.x = texture(u_y, uv).r;
-    if (u_planes == 2) {
-        yuv.yz = texture(u_u, uv).rg;
-    } else {
-        yuv.y = texture(u_u, uv).r;
-        yuv.z = texture(u_v, uv).r;
-    }
-    // Ten bits in sixteen read as a fraction of sixteen: `u_deep` makes them a fraction of ten.
-    vec3 rgb = u_matrix * (yuv * u_deep - u_offset);
+    vec3 rgb = decoded(uv);
     if (u_light == 0) {
         return clamp(rgb, 0.0, 1.0);
     }
@@ -158,33 +182,18 @@ impl Default for Gaze {
     }
 }
 
-pub struct Screen {
+/// A compiled shader and where its uniforms are.
+struct Program {
     program: glow::Program,
-    vao: glow::VertexArray,
-    _corners: glow::Buffer,
-    at: [Option<glow::UniformLocation>; 14],
-    /// Textures of its own, for a picture in main memory.
-    planes: [glow::Texture; 3],
-    /// A picture on the GPU already, as textures that are its own memory.
-    #[cfg(target_os = "macos")]
-    borrowed: Vec<spatiand_app::gl::SurfaceTexture>,
-    #[cfg(target_os = "linux")]
-    borrowed: Vec<spatiand_app::gl::DmabufTexture>,
-    /// The picture the textures hold, kept for as long as they do.
-    loaded: Option<Arc<Picture>>,
-    /// The textures hold ten bits in sixteen, to be scaled up as they are read.
-    deep: bool,
+    at: [Option<glow::UniformLocation>; 16],
 }
 
-const NAMES: [&str; 14] =
-    ["u_rect", "u_view", "u_y", "u_u", "u_v", "u_planes", "u_matrix", "u_offset", "u_uv", "u_span", "u_gaze", "u_tan", "u_deep", "u_light"];
-
-impl Screen {
-    pub fn new(gl: &Gl) -> Result<Screen, String> {
-        let g = gl.api();
+impl Program {
+    fn new(g: &glow::Context, decoding: &str) -> Result<Program, String> {
         unsafe {
             let program = g.create_program()?;
-            for (kind, source) in [(glow::VERTEX_SHADER, VERTEX), (glow::FRAGMENT_SHADER, FRAGMENT)] {
+            let fragment = format!("{decoding}{FRAGMENT}");
+            for (kind, source) in [(glow::VERTEX_SHADER, VERTEX), (glow::FRAGMENT_SHADER, fragment.as_str())] {
                 let shader = g.create_shader(kind)?;
                 g.shader_source(shader, source);
                 g.compile_shader(shader);
@@ -198,6 +207,48 @@ impl Screen {
             if !g.get_program_link_status(program) {
                 return Err(format!("the film's shader would not link: {}", g.get_program_info_log(program)));
             }
+            Ok(Program { program, at: NAMES.map(|name| g.get_uniform_location(program, name)) })
+        }
+    }
+}
+
+pub struct Screen {
+    /// For pictures in planes, in memory or lent by the platform's decoder.
+    planar: Program,
+    /// For pictures in Android hardware buffers, which the GPU samples as they are.
+    #[cfg(target_os = "android")]
+    external: Option<Program>,
+    vao: glow::VertexArray,
+    _corners: glow::Buffer,
+    /// Textures of its own, for a picture in main memory.
+    planes: [glow::Texture; 3],
+    /// A picture on the GPU already, as textures that are its own memory.
+    #[cfg(target_os = "macos")]
+    borrowed: Vec<spatiand_app::gl::SurfaceTexture>,
+    #[cfg(target_os = "linux")]
+    borrowed: Vec<spatiand_app::gl::DmabufTexture>,
+    #[cfg(target_os = "android")]
+    borrowed: Vec<spatiand_app::gl::HardwareBufferTexture>,
+    /// The picture the textures hold, kept for as long as they do.
+    loaded: Option<Arc<Picture>>,
+    /// The textures hold ten bits in sixteen, to be scaled up as they are read.
+    deep: bool,
+}
+
+const NAMES: [&str; 16] = [
+    "u_rect", "u_view", "u_y", "u_u", "u_v", "u_planes", "u_matrix", "u_offset", "u_uv", "u_span", "u_gaze", "u_tan", "u_deep", "u_light",
+    "u_ext", "u_crop",
+];
+
+impl Screen {
+    pub fn new(gl: &Gl) -> Result<Screen, String> {
+        let g = gl.api();
+        let planar = Program::new(g, PLANES)?;
+        // Every Android GPU samples external images from GLSL ES 3; one that would not could
+        // show no decoder's picture, and says so.
+        #[cfg(target_os = "android")]
+        let external = Program::new(g, EXTERNAL).map_err(|e| log::warn!("no film decoded by MediaCodec can be shown: {e}")).ok();
+        unsafe {
             let vao = g.create_vertex_array()?;
             let corners = g.create_buffer()?;
             g.bind_vertex_array(Some(vao));
@@ -223,12 +274,13 @@ impl Screen {
                 }
             }
             Ok(Screen {
-                program,
+                planar,
+                #[cfg(target_os = "android")]
+                external,
                 vao,
                 _corners: corners,
-                at: NAMES.map(|name| g.get_uniform_location(program, name)),
                 planes,
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
                 borrowed: Vec::new(),
                 loaded: None,
                 deep: false,
@@ -255,6 +307,13 @@ impl Screen {
         #[cfg(target_os = "linux")]
         for held in self.borrowed.drain(..) {
             gl.release_dmabuf_texture(held);
+        }
+        // The texture goes before the picture, whose dropping gives its buffer back to the
+        // decoder. What was drawn from it is done by then: the window's picture was read back, or
+        // finished, when it was handed over (spatiand_app::gl).
+        #[cfg(target_os = "android")]
+        for held in self.borrowed.drain(..) {
+            gl.release_hardware_buffer_texture(held);
         }
         let _ = gl;
         self.loaded = None;
@@ -314,19 +373,23 @@ impl Screen {
                     }
                     g.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
                 }
-                Pixels::Dmabuf => {
+                Pixels::Dmabuf | Pixels::Dmabuf10 => {
                     #[cfg(target_os = "linux")]
                     {
                         use std::os::fd::BorrowedFd;
-                        // "R8  " and "GR88": a byte of brightness, two bytes of colour.
+                        // "R8  " and "GR88": a byte of brightness, two bytes of colour. Ten
+                        // bits: "R16 " and "GR32" (GR1616), sixteen bits each.
                         const R8: u32 = u32::from_le_bytes(*b"R8  ");
                         const GR88: u32 = u32::from_le_bytes(*b"GR88");
+                        const R16: u32 = u32::from_le_bytes(*b"R16 ");
+                        const GR1616: u32 = u32::from_le_bytes(*b"GR32");
+                        let (luma, chroma) = if picture.pixels == Pixels::Dmabuf10 { (R16, GR1616) } else { (R8, GR88) };
                         let planes = picture.dmabuf_planes();
                         if planes.len() < 2 {
                             log::warn!("a decoded picture was lent with {} planes", planes.len());
                             return;
                         }
-                        for (plane, size, fourcc) in [(planes[0], (w as u32, h as u32), R8), (planes[1], (half.0 as u32, half.1 as u32), GR88)] {
+                        for (plane, size, fourcc) in [(planes[0], (w as u32, h as u32), luma), (planes[1], (half.0 as u32, half.1 as u32), chroma)] {
                             // SAFETY: the descriptor is the picture's, which is held below
                             // for as long as the texture is.
                             let fd = BorrowedFd::borrow_raw(plane.fd);
@@ -337,6 +400,19 @@ impl Screen {
                                     self.clear(gl);
                                     return;
                                 }
+                            }
+                        }
+                    }
+                }
+                Pixels::HardwareBuffer => {
+                    #[cfg(target_os = "android")]
+                    {
+                        let Some((buffer, _)) = picture.hardware_buffer() else { return };
+                        match gl.hardware_buffer_texture(buffer) {
+                            Ok(held) => self.borrowed.push(held),
+                            Err(e) => {
+                                log::warn!("{e}");
+                                return;
                             }
                         }
                     }
@@ -366,48 +442,75 @@ impl Screen {
         self.loaded = Some(picture.clone());
     }
 
-    unsafe fn bind(&self, gl: &Gl, view: (u32, u32), rect: [f32; 4], uv: [f32; 4]) -> bool {
-        let Some(picture) = self.loaded.as_ref() else { return false };
+    /// The program for the picture loaded, made current with the picture's textures and the
+    /// uniforms every drawing has; none if there is nothing to draw.
+    unsafe fn bind(&self, gl: &Gl, view: (u32, u32), rect: [f32; 4], uv: [f32; 4]) -> Option<&Program> {
+        let picture = self.loaded.as_ref()?;
         let g = gl.api();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
         let borrowed: Vec<glow::Texture> = self.borrowed.iter().map(|held| held.texture).collect();
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
         let borrowed: Vec<glow::Texture> = Vec::new();
-        let on_gpu = matches!(picture.pixels, Pixels::VideoToolbox | Pixels::Dmabuf);
-        if on_gpu && borrowed.len() < 2 {
-            return false;
-        }
-        let textures: &[glow::Texture] = if on_gpu { &borrowed } else { &self.planes };
-        let two = !matches!(picture.pixels, Pixels::Planar420 | Pixels::Planar420Ten);
-        g.use_program(Some(self.program));
+        let program = if picture.pixels == Pixels::HardwareBuffer {
+            #[cfg(target_os = "android")]
+            {
+                let program = self.external.as_ref()?;
+                let texture = borrowed.first()?;
+                let crop = picture.hardware_buffer().map_or([0.0, 0.0, 1.0, 1.0], |(_, crop)| crop);
+                g.use_program(Some(program.program));
+                g.active_texture(glow::TEXTURE0);
+                g.bind_texture(spatiand_app::gl::TEXTURE_EXTERNAL_OES, Some(*texture));
+                g.uniform_1_i32(program.at[14].as_ref(), 0);
+                g.uniform_4_f32(program.at[15].as_ref(), crop[0], crop[1], crop[2], crop[3]);
+                program
+            }
+            #[cfg(not(target_os = "android"))]
+            return None;
+        } else {
+            let on_gpu = matches!(picture.pixels, Pixels::VideoToolbox | Pixels::Dmabuf | Pixels::Dmabuf10);
+            if on_gpu && borrowed.len() < 2 {
+                return None;
+            }
+            let textures: &[glow::Texture] = if on_gpu { &borrowed } else { &self.planes };
+            let two = !matches!(picture.pixels, Pixels::Planar420 | Pixels::Planar420Ten);
+            let program = &self.planar;
+            g.use_program(Some(program.program));
+            for (unit, texture) in textures.iter().enumerate().take(if two { 2 } else { 3 }) {
+                g.active_texture(glow::TEXTURE0 + unit as u32);
+                g.bind_texture(glow::TEXTURE_2D, Some(*texture));
+            }
+            g.active_texture(glow::TEXTURE0);
+            let (matrix, offset) = conversion(picture.colour);
+            g.uniform_1_i32(program.at[2].as_ref(), 0);
+            g.uniform_1_i32(program.at[3].as_ref(), 1);
+            g.uniform_1_i32(program.at[4].as_ref(), if two { 1 } else { 2 });
+            g.uniform_1_i32(program.at[5].as_ref(), if two { 2 } else { 3 });
+            g.uniform_matrix_3_f32_slice(program.at[6].as_ref(), false, &matrix.to_cols_array());
+            g.uniform_3_f32(program.at[7].as_ref(), offset.x, offset.y, offset.z);
+            // Ten bits in the bottom of sixteen are a fraction of sixteen read, made a fraction of
+            // ten; ten in the top of sixteen (P010) want only the last 63 of 65535 back.
+            let scale = match picture.pixels {
+                Pixels::Planar420Ten if self.deep => 65535.0 / 1023.0,
+                Pixels::Dmabuf10 => 65535.0 / 65472.0,
+                _ => 1.0,
+            };
+            g.uniform_1_f32(program.at[12].as_ref(), scale);
+            program
+        };
         g.bind_vertex_array(Some(self.vao));
         g.disable(glow::BLEND);
-        for (unit, texture) in textures.iter().enumerate().take(if two { 2 } else { 3 }) {
-            g.active_texture(glow::TEXTURE0 + unit as u32);
-            g.bind_texture(glow::TEXTURE_2D, Some(*texture));
-        }
-        g.active_texture(glow::TEXTURE0);
-        let (matrix, offset) = conversion(picture.colour);
-        g.uniform_4_f32(self.at[0].as_ref(), rect[0], rect[1], rect[2], rect[3]);
-        g.uniform_2_f32(self.at[1].as_ref(), view.0 as f32, view.1 as f32);
-        g.uniform_1_i32(self.at[2].as_ref(), 0);
-        g.uniform_1_i32(self.at[3].as_ref(), 1);
-        g.uniform_1_i32(self.at[4].as_ref(), if two { 1 } else { 2 });
-        g.uniform_1_i32(self.at[5].as_ref(), if two { 2 } else { 3 });
-        g.uniform_matrix_3_f32_slice(self.at[6].as_ref(), false, &matrix.to_cols_array());
-        g.uniform_3_f32(self.at[7].as_ref(), offset.x, offset.y, offset.z);
-        g.uniform_4_f32(self.at[8].as_ref(), uv[0], uv[1], uv[2], uv[3]);
-        let deep = picture.pixels == Pixels::Planar420Ten && self.deep;
-        g.uniform_1_f32(self.at[12].as_ref(), if deep { 65535.0 / 1023.0 } else { 1.0 });
+        g.uniform_4_f32(program.at[0].as_ref(), rect[0], rect[1], rect[2], rect[3]);
+        g.uniform_2_f32(program.at[1].as_ref(), view.0 as f32, view.1 as f32);
+        g.uniform_4_f32(program.at[8].as_ref(), uv[0], uv[1], uv[2], uv[3]);
         g.uniform_1_i32(
-            self.at[13].as_ref(),
+            program.at[13].as_ref(),
             match picture.colour.light {
                 Light::Ordinary => 0,
                 Light::Pq => 1,
                 Light::Hlg => 2,
             },
         );
-        true
+        Some(program)
     }
 
     /// Draw the part `uv` of the picture (left, top, right, bottom, each 0 to 1) over `rect`
@@ -415,10 +518,8 @@ impl Screen {
     pub fn draw(&self, gl: &Gl, view: (u32, u32), rect: [f32; 4], uv: [f32; 4]) {
         let g = gl.api();
         unsafe {
-            if !self.bind(gl, view, rect, uv) {
-                return;
-            }
-            g.uniform_1_f32(self.at[9].as_ref(), 0.0);
+            let Some(program) = self.bind(gl, view, rect, uv) else { return };
+            g.uniform_1_f32(program.at[9].as_ref(), 0.0);
             g.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             g.bind_vertex_array(None);
         }
@@ -429,14 +530,12 @@ impl Screen {
     pub fn look(&self, gl: &Gl, view: (u32, u32), rect: [f32; 4], uv: [f32; 4], half: bool, gaze: Gaze) {
         let g = gl.api();
         unsafe {
-            if !self.bind(gl, view, rect, uv) {
-                return;
-            }
+            let Some(program) = self.bind(gl, view, rect, uv) else { return };
             let turn = Mat3::from_rotation_y(-gaze.yaw) * Mat3::from_rotation_x(gaze.pitch);
             let across = (gaze.field * 0.5).tan();
-            g.uniform_1_f32(self.at[9].as_ref(), if half { std::f32::consts::PI } else { std::f32::consts::TAU });
-            g.uniform_matrix_3_f32_slice(self.at[10].as_ref(), false, &turn.to_cols_array());
-            g.uniform_2_f32(self.at[11].as_ref(), across, across * rect[3] / rect[2].max(1.0));
+            g.uniform_1_f32(program.at[9].as_ref(), if half { std::f32::consts::PI } else { std::f32::consts::TAU });
+            g.uniform_matrix_3_f32_slice(program.at[10].as_ref(), false, &turn.to_cols_array());
+            g.uniform_2_f32(program.at[11].as_ref(), across, across * rect[3] / rect[2].max(1.0));
             g.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             g.bind_vertex_array(None);
         }
