@@ -31,6 +31,8 @@ served only a fonts pack no build of ours installed). In the same change: Google
 is off by default, on the device and on its servers, with its pages' APIs and the Settings page gone
 (SpatiPal is the assistant here), and Web Bluetooth is there on Linux and asks, as in Chrome.
 
+**To drop at the next update (the owner, 2026-11-17):** base/0152 "Add setting to clear data on exit": its own flag, numbered by hand, became the history bit in Chromium 157 and every bounce-tracking clearing wiped all history; moved to bit 62 for now.
+
 **Candidates to drop when they next cost work**, since they do nothing in a Linux-UI build:
 "Experimental support for extensions on Android" (235 files, and it renames build flags across the
 tree, which every new Chromium uses in new places), "Android fonts fingerprinting mitigation",
