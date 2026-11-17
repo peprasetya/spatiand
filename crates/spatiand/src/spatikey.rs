@@ -160,10 +160,22 @@ impl Room for Desktop {
     }
 }
 
-/// The Deck's and the Beam Pro's service: everything to a paired Mac on this network, with the
-/// identity this machine pairs with hosts as.
+/// The service on a machine whose SpatiKey is not in an app of its own (the Mac's is in
+/// Spatiand.app): on the Deck and the Beam Pro, everything to a paired holder on this network; on
+/// an Android device with a strong biometric, the vault held here once it has been added, and
+/// asked of a holder until then. Its identity is the one this machine pairs with hosts as.
 #[cfg(not(target_os = "macos"))]
 fn forward() {
+    // Whether Android has a sensor here is known once the app has given its context, which may be
+    // after the room's first frame: asked on a thread of its own, which then serves.
+    #[cfg(target_os = "android")]
+    let _ = std::thread::Builder::new().name("spatikey-start".into()).spawn(|| serve_here(crate::android::key::guard()));
+    #[cfg(not(target_os = "android"))]
+    serve_here(None);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn serve_here(guard: Option<Arc<dyn spatikey_core::service::Guard>>) {
     use spatikey_core::paths;
     use spatikey_core::service::{Me, Mode, Service};
     let identity = match spatiand_stream::Identity::load_or_create(&paths::identity_dir()) {
@@ -175,7 +187,7 @@ fn forward() {
     };
     let name = crate::system::machine_name();
     let fp = identity.fingerprint().to_string();
-    let asker = Arc::new(spatikey_core::remote::Asker::new(identity, paths::local(), name.clone()));
+    let asker = Arc::new(spatikey_core::remote::Asker::new(identity.clone(), paths::local(), name.clone()));
     asker.also_ask(Box::new(|| {
         crate::prefs::Prefs::load()
             .remotes
@@ -183,10 +195,23 @@ fn forward() {
             .map(|r| spatikey_core::wire::Device { fp: r.fingerprint, name: r.host, added: 0 })
             .collect()
     }));
-    let service = Service::new(Mode::Forwarder(asker), Me { fp, name }, paths::shared(), paths::local());
-    match spatikey_core::socket::serve(&paths::socket(), service) {
-        Ok(_) => log::info!("SpatiKey: asking a Mac on this network, at {}", paths::socket().display()),
+    let holds = guard.is_some();
+    let mode = match guard {
+        Some(guard) => Mode::Both(guard, asker),
+        None => Mode::Forwarder(asker),
+    };
+    let service = Service::new(mode, Me { fp, name }, paths::shared(), paths::local());
+    match spatikey_core::socket::serve(&paths::socket(), service.clone()) {
+        Ok(_) if holds => log::info!("SpatiKey: this device's biometrics may hold the vault; at {}", paths::socket().display()),
+        Ok(_) => log::info!("SpatiKey: asking a holder on this network, at {}", paths::socket().display()),
         Err(e) => log::warn!("SpatiKey: could not listen at {}: {e}", paths::socket().display()),
+    }
+    if holds {
+        // Answering devices on this network, as a Mac does, once this one holds the vault.
+        match spatikey_core::remote::serve(service, identity) {
+            Ok(listening) => std::mem::forget(listening),
+            Err(e) => log::warn!("SpatiKey: devices on this network cannot ask this one: {e}"),
+        }
     }
 }
 

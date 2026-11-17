@@ -8,6 +8,7 @@ pub mod clipboard;
 pub mod egl;
 pub mod explicit_sync;
 mod jni;
+pub mod key;
 pub mod keys;
 mod logging;
 pub mod pads;

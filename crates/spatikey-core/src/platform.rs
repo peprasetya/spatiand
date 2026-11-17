@@ -81,6 +81,11 @@ pub fn answer(id: u64, json: Zeroizing<String>) {
     }
 }
 
+/// [`answer`], from text that carries no key (Android's answers other than an unlock's).
+pub fn answer_text(id: u64, json: &str) {
+    answer(id, Zeroizing::new(json.to_string()));
+}
+
 /// The app's answer to an unlock, as the vault key's bytes rather than JSON: Android hands them
 /// over as a byte array it then overwrites, where a Java string could not be.
 pub fn answer_key(id: u64, vk: &[u8]) {

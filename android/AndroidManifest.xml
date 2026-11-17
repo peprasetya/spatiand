@@ -24,6 +24,9 @@
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!-- SpatiKey on a device with a strong fingerprint or face (KeyGuard.java): the vault is
+         opened by BiometricPrompt. A device without one (the Beam Pro) never asks. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- The notification the Wireless debugging pairing code is typed into (AdbStarter). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Turning Wireless debugging on when Spatiand's helper is needed after a restart: granted by
