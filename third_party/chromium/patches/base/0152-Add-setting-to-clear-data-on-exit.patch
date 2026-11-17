@@ -40,9 +40,9 @@ FILE:Add-setting-to-clear-data-on-exit.patch
  .../search_engines/template_url_service.cc    |  1 +
  content/browser/btm/btm_service_impl.cc       |  2 +-
  content/browser/storage_partition_impl.cc     |  2 +
- .../public/browser/browsing_data_remover.h    |  5 ++
+ .../public/browser/browsing_data_remover.h    |  8 +++
  .../Add-setting-to-clear-data-on-exit.inc     |  8 +++
- 36 files changed, 348 insertions(+), 34 deletions(-)
+ 36 files changed, 351 insertions(+), 34 deletions(-)
  create mode 100644 components/browsing_data/core/clear_browsing_data_tab.h
  create mode 100644 cromite_flags/chrome/browser/about_flags_cc/Add-setting-to-clear-data-on-exit.inc
 
@@ -1022,17 +1022,20 @@ index 7b69ec7f35..342ef42a35 100644
                                                 settings.size_in_bytes());
    }
 diff --git a/content/public/browser/browsing_data_remover.h b/content/public/browser/browsing_data_remover.h
-index e5d8e5285c..2992f6737c 100644
+index e5d8e5285c..611df326a2 100644
 --- a/content/public/browser/browsing_data_remover.h
 +++ b/content/public/browser/browsing_data_remover.h
-@@ -154,6 +154,11 @@ class BrowsingDataRemover {
+@@ -154,6 +154,14 @@ class BrowsingDataRemover {
    static constexpr DataType DATA_TYPE_CONTENT_END =
        DATA_TYPE_DECLARATIVE_PERFORMANCE_OBSERVER;
  
 +  // Modifier flag used by Chrome to preserve SSL host state during a clear.
 +  // Keep this outside the content datatype range and distinct from runtime
 +  // modifiers such as DATA_TYPE_LOGICAL_CLEAR.
-+  static constexpr DataType DATA_TYPE_SKIP_SSL_HOST_STATE = 1 << 28;
++  // Spatiand: above every embedder datatype. 1 << 28 is DATA_TYPE_CONTENT_END
++  // << 1, which is Chrome's DATA_TYPE_HISTORY, so every clearing of a bounce
++  // tracker's state (BtmServiceImpl adds this to it) deleted all history.
++  static constexpr DataType DATA_TYPE_SKIP_SSL_HOST_STATE = uint64_t{1} << 62;
 +
    // Data stored by APIs in The Privacy Sandbox (https://privacysandbox.com/).
    static constexpr DataType DATA_TYPE_PRIVACY_SANDBOX =

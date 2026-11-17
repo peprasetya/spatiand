@@ -8,9 +8,9 @@ Uses the flag used in tests to forcibly enable MV2
 License: GPL-2.0-or-later - https://spdx.org/licenses/GPL-2.0-or-later.html
 FILE:Override-the-MV2-deprecation.patch
 ---
- extensions/browser/manifest_v2_handler.cc | 2 +-
- extensions/common/extension.cc            | 6 ------
- 2 files changed, 1 insertion(+), 7 deletions(-)
+ extensions/browser/manifest_v2_handler.cc |  2 +-
+ extensions/common/extension.cc            | 35 +++++++++++++++++++----
+ 2 files changed, 30 insertions(+), 7 deletions(-)
 
 diff --git a/extensions/browser/manifest_v2_handler.cc b/extensions/browser/manifest_v2_handler.cc
 index 5841d3dfbc..5e6b5c88e2 100644
@@ -26,7 +26,7 @@ index 5841d3dfbc..5e6b5c88e2 100644
  // Returns the suffix to use for histograms related to the manifest location
  // grouping.
 diff --git a/extensions/common/extension.cc b/extensions/common/extension.cc
-index 28a3cac375..538a937aca 100644
+index 28a3cac375..8f0fbaaaef 100644
 --- a/extensions/common/extension.cc
 +++ b/extensions/common/extension.cc
 @@ -97,12 +97,6 @@ bool IsManifestSupported(int manifest_version,
@@ -42,3 +42,46 @@ index 28a3cac375..538a937aca 100644
      return true;
    }
  
+@@ -183,6 +177,32 @@ bool ComputeExtensionID(const base::DictValue& manifest,
+   return true;
+ }
+ 
++// Spatiand: an unpacked extension in SpatiMesh's shared folder, at
++// apps/spatimesh/profiles/<profile>/extension-files/<id>, is the copy of one
++// loaded from a folder on another machine, and keeps the id it has there,
++// which is the copy's folder's name: one with no "key" has an id made from its
++// path on that machine, which no path here would give
++// (chrome/browser/spatiand/extension_sync.cc). A "key" says the same id, and
++// is taken as it would be anywhere.
++ExtensionId SpatiandSharedId(const base::FilePath& path,
++                             mojom::ManifestLocation location,
++                             const base::DictValue& manifest) {
++  if (!Manifest::IsUnpackedLocation(location) ||
++      manifest.Find(keys::kPublicKey)) {
++    return ExtensionId();
++  }
++  const std::string id = path.BaseName().MaybeAsASCII();
++  const base::FilePath copies = path.DirName();
++  const base::FilePath profiles = copies.DirName().DirName();
++  if (!crx_file::id_util::IdIsValid(id) ||
++      copies.BaseName().value() != FILE_PATH_LITERAL("extension-files") ||
++      profiles.BaseName().value() != FILE_PATH_LITERAL("profiles") ||
++      profiles.DirName().BaseName().value() != FILE_PATH_LITERAL("spatimesh")) {
++    return ExtensionId();
++  }
++  return id;
++}
++
+ std::u16string InvalidManifestVersionError(const char* manifest_version_error,
+                                            bool is_platform_app) {
+   std::string valid_version;
+@@ -246,6 +266,9 @@ scoped_refptr<Extension> Extension::Create(const base::FilePath& path,
+   ExtensionId extension_id;
+   if (!explicit_id.empty()) {
+     extension_id = explicit_id;
++  } else if (ExtensionId shared = SpatiandSharedId(path, location, value);
++             !shared.empty()) {
++    extension_id = std::move(shared);
+   } else if (!ComputeExtensionID(value, path, flags, error, &extension_id)) {
+     return nullptr;
+   }
