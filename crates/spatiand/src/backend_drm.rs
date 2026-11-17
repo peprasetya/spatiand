@@ -472,6 +472,10 @@ pub fn run(
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
+    // How still the room and the pointer are held while the head moves a little: the wearer's
+    // level, for the view (`steady_view` below) and for a press (`press_hold`) alike.
+    shell.set_steadiness(prefs.steadiness.index());
+    pointers.set_steadiness(prefs.steadiness);
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();
@@ -496,9 +500,9 @@ pub fn run(
     );
     // The gyro offset and the magnetometer's own field, from last time and for next time.
     let mut sensor_memory = spatiand_track::SensorMemory::new();
-    // The view held steady against the wearer's pulse, as on the Mac and the Beam Pro: see
-    // `spatiand_track::SteadyView`.
-    let mut steady_view = spatiand_track::SteadyView::from_env();
+    // The view held still while the head only sways, at the wearer's steadiness, as on the Mac
+    // and the Beam Pro: see `spatiand_track::SteadyView`.
+    let mut steady_view = spatiand_track::SteadyView::new(prefs.steadiness);
     // Windows that arrived before their app id was set, still to be matched to a sink.
     let mut awaiting_app_id: Vec<(usize, Option<u32>, std::time::Instant)> = Vec::new();
     // Raw samples to a file, when the session environment asks: see `imu_record`.
@@ -1704,6 +1708,9 @@ pub fn run(
                                     (e.yaw.to_radians(), e.pitch.to_radians())
                                 });
                             tracker.recenter();
+                            // The head has jumped to the new forward, room and all; the view
+                            // goes with it at once rather than being held behind.
+                            steady_view.reset();
                             runtime.state.layout.rotate_all(-anchor.0, -anchor.1);
                             crate::xr::rotate_sky_anchor(&mut runtime.state, -anchor.0);
                             log::info!(
@@ -1731,6 +1738,12 @@ pub fn run(
                             crate::pip::toggle_size(&mut runtime.state, &mut prefs, &mut shell)
                         }
                         HudAction::Look => shell.set_look(prefs.next_look()),
+                        HudAction::Steadiness => {
+                            let level = prefs.next_steadiness();
+                            shell.set_steadiness(level.index());
+                            steady_view.set_level(level);
+                            pointers.set_steadiness(level);
+                        }
                         // The shell has already switched mode; all that is owed is the list,
                         // exactly as for the environment picker.
                         HudAction::OpenSwitcher => {
@@ -2014,6 +2027,17 @@ pub fn run(
             runtime.state.spawn_yaw = tracker.euler_degrees().yaw.to_radians();
             runtime.state.layout.view_pitch = crate::window::facing(tracker.recentred_orientation()).1;
 
+            let orientation = tracker.predicted_orientation(
+                spatiand_track::DEFAULT_PREDICTION_SECONDS,
+                spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES,
+            );
+            // Held still while the head only sways -- a pulse, a breath, a body that is never
+            // quite still -- and let go of as it turns, at the wearer's steadiness. Before the
+            // pose is written for clients too, so they and the compositor draw with the same
+            // head; and before the head-locked windows are placed, so they stay where they are in
+            // the view the room is drawn with.
+            let orientation = steady_view.filter(orientation);
+
             // Surfaces that asked to be head-locked follow the view, every frame.
             //
             // Kept here rather than in the scene because it is a change to where a window
@@ -2023,8 +2047,11 @@ pub fn run(
             // This is also what makes a client that does its own head tracking possible. If
             // the compositor moved such a window as well, tracking would be applied twice and
             // the result is unusable -- see the `head_locked` layer in `spatiand_xr_v1`.
+            //
+            // The view's direction, as it is drawn: a head held still in a sway would otherwise
+            // see such a window sway across the view by what the room held out.
             {
-                let view_yaw = runtime.state.spawn_yaw;
+                let view_yaw = crate::window::facing(orientation).0;
                 let locked: Vec<smithay::desktop::Window> = runtime
                     .state
                     .space
@@ -2053,15 +2080,6 @@ pub fn run(
                     }
                 }
             }
-
-            let orientation = tracker.predicted_orientation(
-                spatiand_track::DEFAULT_PREDICTION_SECONDS,
-                spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES,
-            );
-            // Held steady against the wearer's own pulse: a heartbeat rocks the head a few
-            // hundredths of a degree, and text stared at shimmered with it. Before the pose is
-            // written for clients too, so they and the compositor draw with the same head.
-            let orientation = steady_view.filter(orientation);
 
             // --- is anyone paying attention ---
             //
@@ -3327,12 +3345,12 @@ pub fn run(
                             // Mac: pressed, it does nothing, and nothing reaches the card under it.
                             Some(a)
                                 if crate::spatikey::owns_notice()
-                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) => {}
+                                    && scene.notice_hit(&a.ray, orientation) => {}
                             // Dictation's card: a terminal's text waiting there is typed by
                             // pressing it (without Enter). It floats in front of everything.
                             Some(a)
                                 if dictation.owns_notice()
-                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                                    && scene.notice_hit(&a.ray, orientation) =>
                             {
                                 if let Some(said) = dictation.take_review() {
                                     type_text(&mut runtime.state, &mut shell, &said, time_ms);
@@ -3341,7 +3359,7 @@ pub fn run(
                             // The assistant's card (a reminder, say): pressed, it is put away.
                             Some(a)
                                 if !crate::assist::notice().is_empty()
-                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                                    && scene.notice_hit(&a.ray, orientation) =>
                             {
                                 crate::assist::notice_pressed();
                             }
@@ -3349,7 +3367,7 @@ pub fn run(
                             // pressing it is "yes". It floats in front of everything.
                             Some(a)
                                 if crate::install::asking()
-                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                                    && scene.notice_hit(&a.ray, orientation) =>
                             {
                                 crate::install::accept();
                             }
@@ -3359,7 +3377,7 @@ pub fn run(
                             Some(a)
                                 if crate::install::notice().is_empty()
                                     && crate::notifications::showing()
-                                    && scene.notice_hit(&a.ray, tracker.recentred_orientation()) =>
+                                    && scene.notice_hit(&a.ray, orientation) =>
                             {
                                 crate::notifications::pressed();
                             }

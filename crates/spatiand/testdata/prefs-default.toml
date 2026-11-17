@@ -6,4 +6,5 @@ remote_microphone = true
 pip_corner = "bottom-right"
 pip_size = "small"
 look = "system"
+steadiness = "medium"
 remote = []

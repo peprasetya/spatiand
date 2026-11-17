@@ -6,6 +6,7 @@ remote_microphone = false
 pip_corner = "top-left"
 pip_size = "large"
 look = "dark"
+steadiness = "strong"
 pointer_hold_degrees = 1.5
 pointer_hold_mouse_degrees = 0.25
 

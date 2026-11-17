@@ -72,6 +72,13 @@ pub struct Prefs {
     #[serde(default = "system_look")]
     pub look: String,
 
+    /// How still the room and the pointer are held while the head moves a little: off, light,
+    /// medium (the default) or strong. See `spatiand_track::Steadiness`; the settings step
+    /// through them, and the same file and the same levels serve the Deck, the Beam Pro and the
+    /// Mac.
+    #[serde(default, deserialize_with = "forgiving_steadiness")]
+    pub steadiness: spatiand_track::Steadiness,
+
     /// How far the pointer may turn from where a button went down before it is followed, in
     /// degrees: what keeps a click a click under a head that is never still, and a double click
     /// on one point. 0 turns it off. Not in the file unless put there by hand, so that the
@@ -113,6 +120,13 @@ fn system_look() -> String {
     "system".into()
 }
 
+/// A level this build knows by name, or the default for one it does not: a file written by a
+/// newer build, with a level added, must not cost every other setting in it.
+fn forgiving_steadiness<'de, D: serde::Deserializer<'de>>(d: D) -> Result<spatiand_track::Steadiness, D::Error> {
+    let name = String::deserialize(d)?;
+    Ok(spatiand_track::Steadiness::from_name(&name).unwrap_or_default())
+}
+
 /// The looks, in the order the settings list shows them.
 const LOOKS: [&str; 3] = ["system", "light", "dark"];
 
@@ -140,6 +154,14 @@ impl Prefs {
         log::info!("look: {}", self.look);
         next
     }
+
+    /// Go to the next steadiness, keep it, and say which it now is.
+    pub fn next_steadiness(&mut self) -> spatiand_track::Steadiness {
+        self.steadiness = self.steadiness.next();
+        self.save();
+        log::info!("steadiness: {}", self.steadiness.name());
+        self.steadiness
+    }
 }
 
 impl Default for Prefs {
@@ -155,6 +177,7 @@ impl Default for Prefs {
             pip_corner: Default::default(),
             pip_size: Default::default(),
             look: system_look(),
+            steadiness: Default::default(),
             pointer_hold_degrees: None,
             pointer_hold_mouse_degrees: None,
             remotes: Vec::new(),
@@ -421,6 +444,7 @@ mod toml_files {
             pip_corner: spatiand_render::pip::Corner::TopLeft,
             pip_size: spatiand_render::pip::Size::Large,
             look: "dark".into(),
+            steadiness: spatiand_track::Steadiness::Strong,
             pointer_hold_degrees: Some(1.5),
             pointer_hold_mouse_degrees: Some(0.25),
             remotes: vec![
@@ -455,9 +479,24 @@ mod toml_files {
         // written as the shortest decimal that is that f32 -- `0.35` -- where 0.8 wrote the
         // f64 it widens to, `0.3499999940395355`. Either text reads to the same f32 in either
         // version, so a file goes back and forth between builds unchanged in value.
+        // They were written before there was a steadiness, which they read as the default.
         for (name, old) in WRITTEN_BY_TOML_0_8 {
-            assert_eq!(toml::from_str::<Prefs>(old).unwrap(), prefs(name), "{name}");
+            let expected = Prefs { steadiness: Default::default(), ..prefs(name) };
+            assert_eq!(toml::from_str::<Prefs>(old).unwrap(), expected, "{name}");
         }
+    }
+
+    #[test]
+    fn a_file_from_before_steadiness_holds_the_room_at_the_default() {
+        let old = "look = \"dark\"\n";
+        assert_eq!(toml::from_str::<Prefs>(old).unwrap().steadiness, spatiand_track::Steadiness::Medium);
+        let chosen = "steadiness = \"off\"\n";
+        assert_eq!(toml::from_str::<Prefs>(chosen).unwrap().steadiness, spatiand_track::Steadiness::Off);
+        // One a newer build has and this one does not is the default, and the rest of the file
+        // is read as it is: a level is not worth every other setting.
+        let newer = "look = \"dark\"\nsteadiness = \"rock solid\"\n";
+        let read = toml::from_str::<Prefs>(newer).unwrap();
+        assert_eq!((read.steadiness, read.look.as_str()), (spatiand_track::Steadiness::Medium, "dark"));
     }
 
     #[test]

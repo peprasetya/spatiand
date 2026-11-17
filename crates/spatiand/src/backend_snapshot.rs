@@ -335,6 +335,19 @@ pub fn run(
     match view {
         View::Hud => {
             shell.handle(Intent::ToggleHud);
+            // The rows the wearer chose, as a session shows them.
+            let prefs = crate::prefs::Prefs::load();
+            shell.set_look(prefs.look_index());
+            shell.set_steadiness(prefs.steadiness.index());
+            // `SPATIAND_VIEW_PAGE=<row label>`: the cursor on that row, the list scrolled to it.
+            if let Ok(label) = std::env::var("SPATIAND_VIEW_PAGE") {
+                for _ in 0..shell.hud().items().len() {
+                    if shell.hud().focused().label.starts_with(label.as_str()) {
+                        break;
+                    }
+                    shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
+                }
+            }
         }
         View::Launcher => {
             shell.handle(Intent::ToggleLauncher);

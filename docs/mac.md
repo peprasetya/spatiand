@@ -158,8 +158,9 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   "Surround 7.1.4" and "Microphone" -- as `~/Movies/Spatiand/spatiand-<time>.mkv`
   (`SPATIAND_RECORDINGS` to put it elsewhere). The frame is copied into one of the encoder's
   `IOSurface`s on the GPU and fenced; the recorder's thread waits on the fence and encodes.
-* The view is held steady against the wearer's pulse (`spatiand_track::Steady`,
-  `SPATIAND_STEADY=0` to compare).
+* The room is held still while the head only sways, and a press goes down where the pointer
+  rested before pressing moved it, at the *Steadiness* chosen in the settings, as on the Deck and
+  the Beam Pro (`spatiand_track::Steady`; `docs/state.md`, *Head tracking*).
 * From a Mac, Command is sent to a host as Control.
 
 ## 2D mode: Spatiand's own applications as Mac windows

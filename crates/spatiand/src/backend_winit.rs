@@ -452,6 +452,7 @@ pub fn run(
                         | HudAction::PipCorner
                         | HudAction::PipSize
                         | HudAction::Look
+                        | HudAction::Steadiness
                         | HudAction::OpenPinned
                         | HudAction::ReturnToDesktop
                         | HudAction::ControllerLayout

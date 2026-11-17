@@ -221,6 +221,11 @@ impl Shell {
         self.hud.set_look(look);
     }
 
+    /// Say which steadiness is chosen, 0 to 3 (off, light, medium, strong), for the HUD's row.
+    pub fn set_steadiness(&mut self, level: usize) {
+        self.hud.set_steadiness(level);
+    }
+
     /// Say where pinned windows are and how big, so the HUD's two rows show it. `corner` is 0
     /// to 3, bottom right first; see `Hud::set_pip`.
     pub fn set_pip(&mut self, corner: usize, large: bool) {

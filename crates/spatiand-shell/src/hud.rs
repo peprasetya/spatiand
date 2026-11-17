@@ -88,6 +88,9 @@ pub enum HudAction {
     /// Go to the next look for Spatiand's own windows and pages: following the system, light,
     /// dark. See [`Hud::set_look`].
     Look,
+    /// Go to the next steadiness: how still the room and the pointer are held while the head
+    /// moves a little -- off, light, medium, strong. See [`Hud::set_steadiness`].
+    Steadiness,
     /// Open the controller layout of whatever is in front of the wearer.
     ControllerLayout,
     /// Open the environment picker.
@@ -216,6 +219,22 @@ fn look_row(look: usize) -> HudItem {
     }
 }
 
+/// The steadiness row: off, light, medium, strong -- in the order the compositor numbers them
+/// (`spatiand_track::Steadiness::ALL`).
+pub const STEADINESS_ROWS: [&str; 4] =
+    ["Steadiness: off", "Steadiness: light", "Steadiness: medium", "Steadiness: strong"];
+
+/// Which the room starts at with nothing chosen: medium.
+const DEFAULT_STEADINESS: usize = 2;
+
+fn steadiness_row(level: usize) -> HudItem {
+    HudItem {
+        label: STEADINESS_ROWS[level.min(STEADINESS_ROWS.len() - 1)],
+        detail: "How still the room and the pointer stay while your head moves a little. Choose to change",
+        action: HudAction::Steadiness,
+    }
+}
+
 /// The size row, small then large.
 const PIP_SIZE_ROWS: [&str; 2] = ["Pinned size: small", "Pinned size: large"];
 
@@ -315,6 +334,7 @@ impl Hud {
                 action: HudAction::OpenEnvironments,
             },
             look_row(0),
+            steadiness_row(DEFAULT_STEADINESS),
             HudItem {
                 label: "Remote computers",
                 detail: "Apps running on your other computers: see which are online, or pair \
@@ -367,6 +387,15 @@ impl Hud {
         for item in &mut self.items {
             if item.action == HudAction::Look {
                 *item = look_row(look);
+            }
+        }
+    }
+
+    /// Show the steadiness chosen, 0 to 3 in the order of [`STEADINESS_ROWS`], on its row.
+    pub fn set_steadiness(&mut self, level: usize) {
+        for item in &mut self.items {
+            if item.action == HudAction::Steadiness {
+                *item = steadiness_row(level);
             }
         }
     }
@@ -674,6 +703,20 @@ mod tests {
     }
 
     #[test]
+    fn the_steadiness_row_says_which_is_chosen() {
+        let mut hud = Hud::new(DesktopPanels::ALL);
+        let row = |hud: &Hud| hud.items().iter().find(|i| i.action == HudAction::Steadiness).unwrap().label;
+        assert_eq!(row(&hud), "Steadiness: medium");
+        for (level, label) in STEADINESS_ROWS.iter().enumerate() {
+            hud.set_steadiness(level);
+            assert_eq!(row(&hud), *label);
+        }
+        // Out of range is the strongest rather than a panic: it is a setting from a file.
+        hud.set_steadiness(9);
+        assert_eq!(row(&hud), "Steadiness: strong");
+    }
+
+    #[test]
     fn the_rows_are_in_the_order_they_are_reached_for() {
         // Written down because the order is a decision, not an accident: the things done often
         // and the things done in a hurry are at the top, and the two that end something -- a
@@ -697,6 +740,8 @@ mod tests {
                 "Environment",
                 // Beside what surrounds you: how Spatiand's own windows look in it.
                 "Look: as the system",
+                // And how still it all stays round a head that is never still.
+                "Steadiness: medium",
                 // Spatiand's own pages before the desktop's panels: this one is where the
                 // launcher's remote tabs come from, and it is reached for more than Bluetooth.
                 "Remote computers",

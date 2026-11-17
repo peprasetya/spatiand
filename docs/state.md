@@ -23,13 +23,37 @@ and shows a waiting screen; replugging hands back.
 three poses gives up = sensor +Z, left = +X, forward = −Y. That is `AxisMap::XREAL_AIR` and it
 is the default. Calibration exists in-world (never a terminal) with B to cancel; the HUD can
 cycle the four valid pitch/roll interpretations, since a wrong one is a valid rotation and
-nothing in the measurement can catch it. **The view is held steady against the wearer's pulse**
-on every platform -- the Deck, the Beam Pro and the Mac (`spatiand_track::SteadyView`, applied
-to the orientation each frame draws and hands to clients with; `SPATIAND_STEADY=0` to compare):
-a nearly still head is followed slowly, a turn at once, never more than a fraction of a degree
-behind. It works in degrees and seconds, so the Deck's 72 frames a second and the others' 60 are
-the same to it (its tests run it at 60, 72 and 90 with and without sensor noise); the sensors are
-read at about 1000 Hz on all three (hidraw, Android's usbfs, IOKit).
+nothing in the measurement can catch it. **The room is held still while the head only sways**
+(2026-11-17; the owner: "a small movement and the screen shakes with the shake of my body"), on
+every platform -- the Deck, the Beam Pro and the Mac -- at the wearer's **Steadiness**: a row in
+the settings that steps off, light, medium (the default), strong (`steadiness` in `prefs.toml`;
+`SPATIAND_STEADY=0|light|medium|strong` overrides it, to compare). `spatiand_track::Steady`,
+applied to the orientation each frame draws with, writes to clients' pose channel, places
+head-locked windows by and hit-tests the notification card with:
+
+* **a band** (0.5, 1.2 and 2.5 degrees) within which the head moves nothing at all. The view
+  moves only by as much as the head has gone past it, so a sway inside it is held to the last bit
+  and nothing creeps afterwards; a sway a little wider pushes it once and then sways inside it;
+* **a turn closes the band** (pushing it at 15 to 40 degrees a second and faster, at medium) to a
+  fifth of a degree within its first few degrees, so a turn ends where the head is, and the band
+  opens again round the head as it slows -- a sway is too slow to close it;
+* the view drawn **settles on the held one** in about 40 ms, and at once in a turn.
+
+Measured (`cargo run -p spatiand-track --example steadiness [imu.bin]`, 72 frames a second): a
+made-up body swaying 1 degree each way (half up and down, a third leaning) at 0.2 to 3 Hz with a
+tremor and the sensors' noise moves the medium view 0.006 degrees a second at most, against 2 to
+13 raw; strong holds 2 degrees. A deliberate turn of 20 to 90 degrees at 50 to 200 a second: the
+view starts 54 to 100 ms after the head at medium (80 to 150 at strong, 36 to 64 at light) --
+the delay XREAL's own room has -- is nine tenths of the way 4 to 16 ms after it (strong 6 to 23),
+never past the end, and still once the head is. A press that nods the head 0.5 to 1.5 degrees:
+medium moves nothing for a degree, 0.23 for 1.5. The Deck's recorded head (8 minutes, 2026-09-19):
+in the third of its seconds when it stayed within a quarter of a degree of where it was, the
+view moved 0.028 degrees a second at medium against 0.72 raw; within half a degree, 0.13 against
+1.25; within a degree, 0.49 against 1.96. What the band costs: a look of less than the band moves
+the room not at all, and a small one by that much less. Degrees and seconds throughout, so the
+Deck's 72 frames, the others' 60 and the Deck's loop turning every few milliseconds between
+frames are the same to it (its tests run at 60, 72, 90 and 260); the sensors are read at about
+1000 Hz on all three (hidraw, Android's usbfs, IOKit).
 
 **Controller.** Raw hidraw, every button confirmed by pressing it. Both pads point; right pad
 click is left mouse, left pad right mouse, A/B/X duplicate them. The left pad scrolls up and down
@@ -50,7 +74,17 @@ point. A mouse or a trackpad is let go after 0.1 of a degree of its own movement
 it still having the 0.4. The room's pointer is drawn where it is held
 (`crates/spatiand/src/press_hold.rs`, used in `PointerState::motion`, which every pointer passes;
 `pointer_hold_degrees` and `pointer_hold_mouse_degrees` in `prefs.toml`, 0 for off; the figures
-are chosen from the sizes around them, not yet from a recorded head). Held, a slow wobbling scroll went
+are chosen from the sizes around them, not yet from a recorded head). **And a press goes down
+where the pointer rested just before pressing moved it** (2026-11-17, with the steadiness): a
+thumb rolls as it pushes a pad's click, a tap tips the phone, the head nods with the effort, all
+before the button is felt. So a press looks back (80, 120, 150 ms at light, medium, strong) for
+the last frame the pointer was at rest, and if it has moved less than 0.6, 1 or 1.5 degrees
+since, the application is told the pointer is back there and the button goes down there; the
+hold then allows for that jolt. Not for a pointer that came to rest where it is pressed, one
+moving all that while, a mouse, or a layout's own mouse. With the room's view: a press that nods
+the head up to 1.5 degrees clicks within a hundredth of a degree of where the wearer pointed at
+medium and strong, and the pointer does not move while the button is down (`press_hold.rs`'s
+tests; off, it missed by the whole nod and dragged). Held, a slow wobbling scroll went
 stop and start, so each of its steps goes out over the frames after it, 0.35 of what is owed a
 frame (`ScrollSpread`, about 40 ms on average): from the owner's recorded thumbs, frames sending
 nothing mid-scroll fell from 28% to 10% (`spatiand-input/examples/replay_scroll.rs`). Both pads *pressed* together

@@ -272,6 +272,10 @@ pub fn run(
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
+    // How still the room and the pointer are held while the head moves a little, as on the
+    // Deck: the wearer's level, for the view (`steady_view` below) and for a press alike.
+    shell.set_steadiness(prefs.steadiness.index());
+    pointers.set_steadiness(prefs.steadiness);
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();
@@ -283,8 +287,9 @@ pub fn run(
     let mut calibration: Option<Calibration> = None;
     let mut tracker = HeadTracker::new(stored.unwrap_or(AxisMap::XREAL_AIR), TrackerConfig::default());
     let mut sensor_memory = spatiand_track::SensorMemory::new();
-    // The view held steady against the wearer's pulse (`spatiand_track::SteadyView`).
-    let mut steady_view = spatiand_track::SteadyView::from_env();
+    // The view held still while the head only sways, at the wearer's steadiness
+    // (`spatiand_track::SteadyView`).
+    let mut steady_view = spatiand_track::SteadyView::new(prefs.steadiness);
     let mut awaiting_app_id: Vec<(usize, Instant, Option<u32>)> = Vec::new();
     // Asked once per pair of glasses, when they are opened: the display then goes away and
     // comes back double-width, which is a rebuild.
@@ -977,6 +982,8 @@ pub fn run(
                                     (e.yaw.to_radians(), e.pitch.to_radians())
                                 });
                             tracker.recenter();
+                            // The view goes to the new forward at once, as on the Deck.
+                            steady_view.reset();
                             runtime.state.layout.rotate_all(-anchor.0, -anchor.1);
                             crate::xr::rotate_sky_anchor(&mut runtime.state, -anchor.0);
                             // And the phone aims where the head now faces, from the next frame.
@@ -1000,6 +1007,12 @@ pub fn run(
                             crate::pip::toggle_size(&mut runtime.state, &mut prefs, &mut shell)
                         }
                         HudAction::Look => shell.set_look(prefs.next_look()),
+                        HudAction::Steadiness => {
+                            let level = prefs.next_steadiness();
+                            shell.set_steadiness(level.index());
+                            steady_view.set_level(level);
+                            pointers.set_steadiness(level);
+                        }
                         HudAction::OpenSwitcher => shell.set_windows(crate::remote::with_offered(runtime.state.open_windows())),
                         HudAction::ControllerLayout => controls.open_editor(),
                         HudAction::ToggleKeyboard => {
@@ -1098,8 +1111,16 @@ pub fn run(
 
             runtime.state.spawn_yaw = tracker.euler_degrees().yaw.to_radians();
             runtime.state.layout.view_pitch = crate::window::facing(tracker.recentred_orientation()).1;
+
+            // Two frames ahead: this one through Android's compositor on its next tick, then
+            // scanout -- the Beam Pro's latency, measured as smoothest.
+            let orientation = tracker.predicted_orientation(super::PREDICT_AHEAD_S, spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES);
+            // Held still while the head only sways, and let go of as it turns, at the wearer's
+            // steadiness, as on the Deck: see `spatiand_track::SteadyView`. Before the head-locked
+            // windows are placed, so they stay where they are in the view drawn.
+            let orientation = steady_view.filter(orientation);
             {
-                let view_yaw = runtime.state.spawn_yaw;
+                let view_yaw = crate::window::facing(orientation).0;
                 let locked: Vec<smithay::desktop::Window> = runtime
                     .state
                     .space
@@ -1120,13 +1141,6 @@ pub fn run(
                     }
                 }
             }
-
-            // Two frames ahead: this one through Android's compositor on its next tick, then
-            // scanout -- the Beam Pro's latency, measured as smoothest.
-            let orientation = tracker.predicted_orientation(super::PREDICT_AHEAD_S, spatiand_track::DEFAULT_PREDICTION_MAX_DEGREES);
-            // Held steady against the wearer's own pulse, as on the Deck: see
-            // `spatiand_track::SteadyView` (off with SPATIAND_STEADY=0).
-            let orientation = steady_view.filter(orientation);
 
             {
                 let dt = last_tick.elapsed();

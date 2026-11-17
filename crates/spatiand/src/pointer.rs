@@ -717,6 +717,30 @@ pub struct PointerState {
     /// The ray last given to [`Self::motion`] and the one the pointer was held on instead, when
     /// they differ: where the room draws its pointer ([`Self::shown`]).
     steadied: Option<(Ray, Ray)>,
+    /// The ray last given to [`Self::motion`].
+    given: Option<Ray>,
+    /// The wearer's steadiness; see [`Self::set_steadiness`].
+    steadiness: spatiand_track::Steadiness,
+    /// What applications were told of where the pointer is, a frame at a time over the last few
+    /// hundred milliseconds: for a press that goes down where the pointer rested before pressing
+    /// moved it ([`press_hold::PressHold::rested`]), which has to be said again before the button.
+    told: std::collections::VecDeque<Told>,
+    /// Whether what applications last heard of the pointer came from [`Self::motion`].
+    told_last: bool,
+}
+
+/// One frame's motion as an application was told it. See [`PointerState::told`].
+#[derive(Debug, Clone)]
+struct Told {
+    time_ms: u32,
+    /// The direction it was shown in, as the hold gave it.
+    direction: glam::DVec3,
+    ray: Ray,
+    distance: Option<f64>,
+    focus: Option<WlSurface>,
+    location: Point<f64, Logical>,
+    /// Where in a window it was, for a layout's mouse, when not on a menu.
+    mapped: Option<(f64, f64)>,
 }
 
 /// A ray plus what it currently hits.
@@ -966,7 +990,16 @@ impl PointerState {
     /// setting (`prefs.toml`) in place of [`press_hold::HOLD_DEGREES`] and
     /// [`press_hold::MOUSE_HOLD_DEGREES`].
     pub fn set_hold(&mut self, degrees: f64, mouse_degrees: f64) {
-        self.hold = press_hold::PressHold::new(degrees, mouse_degrees);
+        let mut hold = press_hold::PressHold::new(degrees, mouse_degrees);
+        hold.set_steadiness(self.steadiness);
+        self.hold = hold;
+    }
+
+    /// The wearer's steadiness, which says how far back a press looks for where the pointer
+    /// rested before pressing moved it (`press_hold`). The room's view is held by the same.
+    pub fn set_steadiness(&mut self, level: spatiand_track::Steadiness) {
+        self.steadiness = level;
+        self.hold.set_steadiness(level);
     }
 
     /// Whether what aims the pointer this frame is a mouse or a trackpad, and if so the head it
@@ -1003,6 +1036,7 @@ impl PointerState {
         // held ray's. See `press_hold`.
         let hand = self.mouse_head.map(|head| head.inverse() * aim.ray.direction);
         let direction = self.hold.aim(aim.ray.direction, hand, time_ms);
+        self.given = Some(aim.ray);
         let held;
         let aim = if direction != aim.ray.direction {
             let ray = Ray { origin: aim.ray.origin, direction };
@@ -1092,6 +1126,24 @@ impl PointerState {
         self.last_aim = Some((aim.ray, distance));
         let location = local.unwrap_or_else(|| Point::from((0.0, 0.0)));
         let onto = focus.as_ref().map(|(surface, _)| surface.clone());
+        // Kept a moment, for a press that looks back to it; the last word for a frame told twice.
+        let told = Told {
+            time_ms,
+            direction,
+            ray: aim.ray,
+            distance,
+            focus: onto.clone(),
+            location,
+            mapped: if on_popup.is_none() { local.map(|p| (p.x, p.y)) } else { None },
+        };
+        match self.told.back_mut() {
+            Some(last) if last.time_ms == time_ms => *last = told,
+            _ => self.told.push_back(told),
+        }
+        while self.told.front().is_some_and(|t| time_ms.wrapping_sub(t.time_ms) > 300) {
+            self.told.pop_front();
+        }
+        self.told_last = true;
         pointer.motion(
             state,
             focus.map(|(s, p)| (s, p)),
@@ -1130,6 +1182,7 @@ impl PointerState {
             return true;
         }
         self.last_focus = None;
+        self.told_last = false;
         pointer.motion(
             state,
             None,
@@ -1196,9 +1249,25 @@ impl PointerState {
             // state themselves and a stray release leaves them convinced a drag is running.
             return;
         }
-        // The pointer stays where this went down; see `press_hold`.
+        // The pointer stays where this went down; see `press_hold`. Which may be where it rested
+        // a moment ago, before pressing moved it: then the application is told it is back there
+        // first, so that is where the button goes down.
         if pressed {
-            self.hold.pressed(time_ms);
+            // Only where what the application last heard of the pointer came from here, this
+            // frame: a layout's mouse moves it by itself (`nudge`), and its click is its own.
+            let told = self
+                .hold
+                .put_back(time_ms)
+                .filter(|_| self.told_last && self.told.back().is_some_and(|t| t.time_ms == time_ms))
+                .and_then(|direction| self.told.iter().rev().find(|t| t.direction == direction).cloned())
+                .filter(|told| told.focus.as_ref().is_none_or(|surface| {
+                    use smithay::reexports::wayland_server::Resource;
+                    surface.is_alive()
+                }));
+            self.hold.pressed_at(time_ms, told.as_ref().map(|t| t.direction));
+            if let Some(told) = told {
+                self.put_back(state, &pointer, told, time_ms);
+            }
         } else if self.held.is_empty() {
             self.hold.released();
         }
@@ -1217,6 +1286,36 @@ impl PointerState {
             },
         );
         pointer.frame(state);
+    }
+
+    /// Tell applications the pointer is where it was a moment ago, as they were told then: on the
+    /// same surface at the same place. For a press that goes down where the pointer rested before
+    /// pressing moved it; see `press_hold`.
+    fn put_back(
+        &mut self,
+        state: &mut Spatiand,
+        pointer: &smithay::input::pointer::PointerHandle<Spatiand>,
+        told: Told,
+        time_ms: u32,
+    ) {
+        pointer.motion(
+            state,
+            told.focus.clone().map(|surface| (surface, Point::from((0.0, 0.0)))),
+            &MotionEvent {
+                location: told.location,
+                serial: SERIAL_COUNTER.next_serial(),
+                time: time_ms,
+            },
+        );
+        pointer.frame(state);
+        if let Some(mapped) = told.mapped {
+            self.mapped_cursor = Some(mapped);
+        }
+        self.last_aim = Some((told.ray, told.distance));
+        if let Some(given) = self.given {
+            self.steadied = (given != told.ray).then_some((given, told.ray));
+        }
+        log::debug!("press put back where the pointer rested, {} ms before", time_ms.wrapping_sub(told.time_ms));
     }
 
     /// Scroll the surface under the pointer.
@@ -1380,6 +1479,8 @@ impl PointerState {
         };
         let locked = with_pointer_constraint(surface, &pointer, |c| c.is_some_and(|c| c.is_active()));
         let focus = Some((surface.clone(), Point::from((0.0, 0.0))));
+        // The layout's own mouse has the pointer now: a click it makes is where it put it.
+        self.told_last = false;
         if dx != 0.0 || dy != 0.0 {
             state.attention.stir();
             pointer.relative_motion(
