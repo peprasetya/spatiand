@@ -10,7 +10,7 @@ and at its end what has been built of it.
 |---|---|---|
 | Linux, the Deck | **Chromium** with Spatiand's patches, Cromite's among them (`third_party/chromium`, "The monthly update" below) | `~/spatiand-chromium`, packaged on its own |
 | Android (Beam Pro) | **Chromium, the Deck's**, built for Android's libc (2026-11-08; "SpatiMesh for Android" below) | in the APK, `libspatimesh_chromium.so` and its resources |
-| Mac | **Chromium, being ported** (`CHROMIUM_TARGET=mac`, docs/mac-plan.md); none until then | -- |
+| Mac | **Chromium, the Deck's** (Linux UI, Ozone/Wayland, carried to macOS: docs/spatimesh-mac-port.md); in the room and on the Mac's desktop as a client of Spatiand. Hardware video decoding on Chromium 157 checked 2026-11-18 | `CHROMIUM_TARGET=mac`, built on littleotter |
 
 **WPE WebKit and GStreamer removed on 2026-11-10** (the owner's decision: Chromium has replaced
 WPE on every platform, and GStreamer was WPE's media alone). Gone: `third_party/wpe` (its build,
@@ -38,8 +38,8 @@ Not yet in Chromium (the Rust player had them; the Rust window had no engine to 
 since WPE went): H.264 and HEVC in an MPEG transport stream (no frame decoded; with
 StrictFFmpegCodecs a decode error at the first frame), an MPEG program stream (VOB: "PTS is not
 defined"), MP2 sound, and a film's own subtitle tracks. Firefox add-ons (`.xpi`), which the Rust
-window's own extension runtime took, Chrome does not (the owner: not wanted). The Mac has no
-SpatiMesh until its Chromium port; `tools/spatiand-dnd-e2e.py` drops onto Chromium only where one is
+window's own extension runtime took, Chrome does not (the owner: not wanted). On the Mac the Deck's Chromium runs in littleotter's snapshot room
+(docs/spatimesh-mac-port.md); `tools/spatiand-dnd-e2e.py` drops onto Chromium only where one is
 named. `crates/spatiand-media`'s MediaSource (`mse.rs`, `Player::open_source`) was the Rust window's alone and was
 removed on 2026-11-17, with what else only its pages used there (`hardware.rs`'s list of codecs for pages, a sound group's hush and change of name).
 The Beam Pro's Chromium had been built without Dolby (`enable_platform_ac3_eac3_audio`, the Deck's);

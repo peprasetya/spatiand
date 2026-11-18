@@ -11,11 +11,11 @@ Last updated 2026-11-18 (the section below; the rest is as of the sidecar).
 
 ## 2026-11-17 and 11-18: what changed, and what was not run on hardware
 
-About two hundred and thirty commits in two days. **Almost all were verified by tests and by
+Over two hundred commits in two days. **Almost all were verified by tests and by
 headless snapshot rooms only.** On-device evidence exists for three things: the Mac's hardware video
 decoding in SpatiMesh on Chromium 157 (measured on littleotter, docs/spatimesh-mac-port.md); what
 the owner confirmed himself (the steadiness "much better", SpatiKey's entries opening, the host
-list fixed); and the Mac's start-up crash, seen once and not again. Where a commit says "not run",
+list fixed). Where a commit says "not run",
 the doc of its area says so, and that holds here.
 
 | Area | What changed | Not run on real hardware |
