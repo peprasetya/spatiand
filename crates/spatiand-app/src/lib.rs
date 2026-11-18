@@ -50,6 +50,7 @@ pub mod ui;
 mod wire;
 
 pub use describe::Description;
+pub use keys::chord_char;
 pub use gl::Gl;
 pub use glow;
 pub use pose::{HeadPose, Poses};

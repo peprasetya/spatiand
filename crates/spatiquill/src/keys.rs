@@ -3,6 +3,9 @@
 
 use spatiand_app::{Key, Modifiers};
 
+/// The character a chord is read by, on any layout: the SDK's (it was this file's).
+pub use spatiand_app::chord_char;
+
 /// The right Control key's evdev code. On a Mac the room tells either Command key to its
 /// clients as this key (`crates/spatiand-mac/src/mac/ffi.rs`, `Command`), so a chord made with
 /// it is a Mac's Command chord; elsewhere it is simply the right Control. The SDK says it is
@@ -113,30 +116,6 @@ pub fn paste_bytes(text: &[u8], bracketed: bool) -> Vec<u8> {
         out.extend_from_slice(b"\x1b[201~");
     }
     out
-}
-
-/// The Latin letter on the key at evdev `code`, by its place on a US keyboard: the letter a
-/// chord is read by when the layout's own is not Latin (Cyrillic, Greek, Hebrew, Arabic...),
-/// as every terminal reads Control-C there.
-fn letter_at(code: u32) -> Option<char> {
-    const ROWS: [(u32, &str); 3] = [(16, "qwertyuiop"), (30, "asdfghjkl"), (44, "zxcvbnm")];
-    ROWS.iter().find_map(|&(first, letters)| letters.chars().nth(code.checked_sub(first)? as usize))
-}
-
-/// The character a chord is read by: the key's own, in lower case; and where that is a letter
-/// outside Latin's, the Latin letter in its place (`letter_at`). A layout's own Latin letters
-/// (AZERTY's A where QWERTY's Q is) stay theirs.
-pub fn chord_char(c: char, code: u32) -> char {
-    let c = c.to_lowercase().next().unwrap_or(c);
-    if c.is_ascii() || !c.is_alphabetic() {
-        return c;
-    }
-    letter_at(code).filter(|_| !is_latin(c)).unwrap_or(c)
-}
-
-/// A letter of the Latin alphabet's own, with whatever marks: ü, é, ß, ø.
-fn is_latin(c: char) -> bool {
-    matches!(c as u32, 0x00C0..=0x024F | 0x1E00..=0x1EFF)
 }
 
 /// A key as a number, to cross from the window to the tab.

@@ -124,7 +124,7 @@ impl Keyboard {
         // Quitting is the room's one chord for every application (`quits`): it comes as
         // `Event::Quit` and not as the key, and is not repeated for being held.
         if let Event::Key { key, pressed: true, modifiers, .. } = &event {
-            if quits(*key, *modifiers, self.control_q_kept) {
+            if quits(*key, code, *modifiers, self.control_q_kept) {
                 events.push(Event::Quit { window });
                 self.held = None;
                 return;
@@ -173,11 +173,38 @@ pub(crate) const RIGHT_CONTROL: u32 = 97;
 ///   ([`crate::App::keep_control_q`]: a terminal, whose programs have it as XON or
 ///   quoted-insert), and then Control-Shift-Q.
 /// * Never with Alt held: a chord of its own.
-pub(crate) fn quits(key: Key, m: Modifiers, control_q_kept: bool) -> bool {
-    if key != Key::Char('q') || m.alt {
+/// The key is Q by [`chord_char`]: on a layout that is not Latin, the key where Q is.
+pub(crate) fn quits(key: Key, code: u32, m: Modifiers, control_q_kept: bool) -> bool {
+    if !matches!(key, Key::Char(c) if chord_char(c, code) == 'q') || m.alt {
         return false;
     }
     m.command || m.logo || (m.control && (m.shift || !control_q_kept))
+}
+
+/// The Latin letter on the key at evdev `code`, by its place on a US keyboard: the letter a
+/// chord is read by when the layout's own is not Latin (Cyrillic, Greek, Hebrew, Arabic...),
+/// as every terminal reads Control-C there.
+fn letter_at(code: u32) -> Option<char> {
+    const ROWS: [(u32, &str); 3] = [(16, "qwertyuiop"), (30, "asdfghjkl"), (44, "zxcvbnm")];
+    ROWS.iter().find_map(|&(first, letters)| letters.chars().nth(code.checked_sub(first)? as usize))
+}
+
+/// **The character a chord is read by**, for every application: the key's own, in lower case;
+/// and where that is a letter outside Latin's, the Latin letter in its place (by the key's
+/// place on a US keyboard), so that Control-C, Command-Q and Control-V are where they always
+/// are on a Russian, Greek or Hebrew layout. A layout's own Latin letters (AZERTY's A where
+/// QWERTY's Q is, a German ü) stay theirs. `code` is the key's evdev code (`Event::Key`'s).
+pub fn chord_char(c: char, code: u32) -> char {
+    let c = c.to_lowercase().next().unwrap_or(c);
+    if c.is_ascii() || !c.is_alphabetic() {
+        return c;
+    }
+    letter_at(code).filter(|_| !is_latin(c)).unwrap_or(c)
+}
+
+/// A letter of the Latin alphabet's own, with whatever marks: ü, é, ß, ø.
+fn is_latin(c: char) -> bool {
+    matches!(c as u32, 0x00C0..=0x024F | 0x1E00..=0x1EFF)
 }
 
 fn named(sym: xkb::Keysym) -> Key {
@@ -216,27 +243,48 @@ mod quit_tests {
     fn control_q_and_command_q_quit() {
         let q = Key::Char('q');
         // The left Control, the right (a Mac's Command), Control-Shift, the logo key.
-        assert!(quits(q, held(false, true, false, false, false), false));
-        assert!(quits(q, held(false, true, false, false, true), false));
-        assert!(quits(q, held(true, true, false, false, false), false));
-        assert!(quits(q, held(false, false, false, true, false), false));
+        assert!(quits(q, 16, held(false, true, false, false, false), false));
+        assert!(quits(q, 16, held(false, true, false, false, true), false));
+        assert!(quits(q, 16, held(true, true, false, false, false), false));
+        assert!(quits(q, 16, held(false, false, false, true, false), false));
         // A plain Q, a Shift-Q, an Alt chord, another letter: no.
-        assert!(!quits(q, Modifiers::default(), false));
-        assert!(!quits(q, held(true, false, false, false, false), false));
-        assert!(!quits(q, held(false, true, true, false, false), false));
-        assert!(!quits(q, held(false, true, true, false, true), false));
-        assert!(!quits(Key::Char('w'), held(false, true, false, false, true), false));
+        assert!(!quits(q, 16, Modifiers::default(), false));
+        assert!(!quits(q, 16, held(true, false, false, false, false), false));
+        assert!(!quits(q, 16, held(false, true, true, false, false), false));
+        assert!(!quits(q, 16, held(false, true, true, false, true), false));
+        assert!(!quits(Key::Char('w'), 17, held(false, true, false, false, true), false));
+    }
+
+    #[test]
+    fn command_q_quits_on_a_layout_that_is_not_latin() {
+        // Russian: Й is on Q's key (16). AZERTY's A is there too, and is its own: no quit.
+        assert!(quits(Key::Char('\u{439}'), 16, held(false, true, false, false, true), false));
+        assert!(quits(Key::Char('\u{419}'), 16, held(false, true, false, false, false), false));
+        assert!(!quits(Key::Char('a'), 16, held(false, true, false, false, true), false));
+        assert!(!quits(Key::Char('\u{446}'), 17, held(false, true, false, false, true), false));
+    }
+
+    #[test]
+    fn chords_go_by_the_key_s_place_where_the_layout_is_not_latin() {
+        // Russian: С is on C's key (46), В on V's (47); Greek τ on T's (20).
+        assert_eq!(chord_char('\u{441}', 46), 'c');
+        assert_eq!(chord_char('\u{421}', 46), 'c');
+        assert_eq!(chord_char('\u{432}', 47), 'v');
+        assert_eq!(chord_char('\u{3c4}', 20), 't');
+        // A layout's own Latin letters are theirs: AZERTY's A on Q's key, a German ü.
+        assert_eq!(chord_char('a', 16), 'a');
+        assert_eq!(chord_char('\u{fc}', 26), '\u{fc}');
     }
 
     #[test]
     fn a_terminal_keeps_the_left_control_q() {
         let q = Key::Char('q');
         // Its program has Control-Q (XON, quoted-insert) ...
-        assert!(!quits(q, held(false, true, false, false, false), true));
+        assert!(!quits(q, 16, held(false, true, false, false, false), true));
         // ... and Command-Q, Control-Shift-Q and the logo key's Q still quit.
-        assert!(quits(q, held(false, true, false, false, true), true));
-        assert!(quits(q, held(true, true, false, false, false), true));
-        assert!(quits(q, held(false, false, false, true, false), true));
+        assert!(quits(q, 16, held(false, true, false, false, true), true));
+        assert!(quits(q, 16, held(true, true, false, false, false), true));
+        assert!(quits(q, 16, held(false, false, false, true, false), true));
     }
 
     #[test]
