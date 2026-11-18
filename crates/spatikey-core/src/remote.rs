@@ -589,7 +589,7 @@ impl Mac {
             // Where it went wrong, but not what was there: it may be a password.
             Err(e) => {
                 return Reply::err(
-                    id_of(&bytes),
+                    wire::id_of(&bytes),
                     Refusal::new(Code::BadRequest, format!("not a request (line {}, column {})", e.line(), e.column())),
                 )
             }
@@ -1459,9 +1459,6 @@ fn clean_name(name: &str) -> String {
 }
 
 /// The `id` of a request that would not read, if that much of it can be read.
-fn id_of(bytes: &[u8]) -> u64 {
-    serde_json::from_slice::<serde_json::Value>(bytes).ok().and_then(|value| value.get("id")?.as_u64()).unwrap_or(0)
-}
 
 fn same_fp(a: &str, b: &str) -> bool {
     matches!((a.parse::<Fingerprint>(), b.parse::<Fingerprint>()), (Ok(a), Ok(b)) if a == b)
@@ -1543,7 +1540,7 @@ mod tests {
 
     #[test]
     fn a_request_that_does_not_read_is_answered_by_its_id_when_it_has_one() {
-        assert_eq!(id_of(br#"{"id":9,"op":"nonsense"}"#), 9);
-        assert_eq!(id_of(b"not json"), 0);
+        assert_eq!(wire::id_of(br#"{"id":9,"op":"nonsense"}"#), 9);
+        assert_eq!(wire::id_of(b"not json"), 0);
     }
 }

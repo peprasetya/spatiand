@@ -141,11 +141,14 @@ fn serve_one(mut stream: UnixStream, service: Arc<Service>) {
 /// A request, or the refusal to send back: with id 0 when the message is not JSON at all, else
 /// with its own id, so that the caller knows which question was not understood.
 fn parse(frame: &[u8]) -> Result<Envelope, Reply> {
-    let value: Value =
-        serde_json::from_slice(frame).map_err(|_| Reply::err(0, Refusal::new(Code::BadRequest, "that is not JSON")))?;
-    let id = value.get("id").and_then(Value::as_u64).unwrap_or(0);
-    serde_json::from_value(value)
-        .map_err(|e| Reply::err(id, Refusal::new(Code::BadRequest, format!("not a request SpatiKey knows: {e}"))))
+    // Straight from the bytes: through a Value, an older build's two ids would be one.
+    serde_json::from_slice(frame).map_err(|e| {
+        if serde_json::from_slice::<serde::de::IgnoredAny>(frame).is_err() {
+            Reply::err(0, Refusal::new(Code::BadRequest, "that is not JSON"))
+        } else {
+            Reply::err(wire::id_of(frame), Refusal::new(Code::BadRequest, format!("not a request SpatiKey knows: {e}")))
+        }
+    })
 }
 
 #[cfg(feature = "service")]
@@ -344,5 +347,13 @@ mod tests {
         let unknown = parse(br#"{"id":9,"op":"open_sesame"}"#).unwrap_err();
         assert_eq!((unknown.id, unknown.err.unwrap().code), (9, Code::BadRequest));
         assert!(matches!(parse(br#"{"id":3,"op":"status"}"#).unwrap().request, Request::Status));
+        // A request naming an entry, as a client writes it now and as one wrote it before.
+        let get = Envelope { id: 5, who: Who::default(), request: Request::Get { session: "s".into(), id: "e".into() } };
+        let read = parse(&serde_json::to_vec(&get).unwrap()).unwrap();
+        assert!(read.id == 5 && matches!(read.request, Request::Get { ref id, .. } if id == "e"));
+        let older = parse(br#"{"id":6,"op":"get","session":"s","id":"e"}"#).unwrap();
+        assert!(older.id == 6 && matches!(older.request, Request::Get { ref id, .. } if id == "e"));
+        let unknown = parse(br#"{"id":"e","op":"get","id":8}"#).unwrap_err();
+        assert_eq!((unknown.id, unknown.err.unwrap().code), (8, Code::BadRequest));
     }
 }

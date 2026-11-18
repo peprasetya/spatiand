@@ -15,7 +15,10 @@ use crate::entry::{Entry, Summary};
 /// Larger than this is not a request; the connection is closed.
 pub const MAX_MESSAGE: usize = 512 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Written with the request's fields beside `id` and `who`; read by hand (its `Deserialize`
+/// below), so that the requests naming an entry are read as builds before 2026-11-18 wrote them
+/// too, with the entry's id as a second `id` (which no build could read).
+#[derive(Debug, Clone, Serialize)]
 pub struct Envelope {
     pub id: u64,
     /// Who is asking, as the end that received it names them. A caller may fill in `app`; the
@@ -24,6 +27,82 @@ pub struct Envelope {
     pub who: Who,
     #[serde(flatten)]
     pub request: Request,
+}
+
+impl<'de> Deserialize<'de> for Envelope {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Envelope, D::Error> {
+        struct Fields;
+        impl<'de> serde::de::Visitor<'de> for Fields {
+            type Value = Envelope;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a request")
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Envelope, A::Error> {
+                use serde::de::Error;
+                let (mut id, mut who, mut rest) = (None, None, serde_json::Map::new());
+                // The entry's id, as an older build sent it: a second `id`, a string.
+                let mut older = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "id" => match map.next_value::<Value>()? {
+                            Value::Number(n) if id.is_none() => {
+                                id = Some(n.as_u64().ok_or_else(|| A::Error::custom("the id is not a whole number"))?)
+                            }
+                            Value::String(entry) if older.is_none() => older = Some(entry),
+                            _ => return Err(A::Error::duplicate_field("id")),
+                        },
+                        "who" if who.is_none() => who = Some(map.next_value::<Who>()?),
+                        _ if key == "who" || rest.contains_key(&key) => {
+                            return Err(A::Error::custom(format!("duplicate field `{key}`")))
+                        }
+                        _ => {
+                            let value = map.next_value::<Value>()?;
+                            rest.insert(key, value);
+                        }
+                    }
+                }
+                let id = id.ok_or_else(|| A::Error::missing_field("id"))?;
+                if let Some(entry) = older {
+                    if rest.contains_key("entry") {
+                        return Err(A::Error::duplicate_field("entry"));
+                    }
+                    rest.insert("entry".into(), Value::String(entry));
+                }
+                let request = Request::deserialize(Value::Object(rest)).map_err(A::Error::custom)?;
+                Ok(Envelope { id, who: who.unwrap_or_default(), request })
+            }
+        }
+        deserializer.deserialize_map(Fields)
+    }
+}
+
+/// A message's own id, for the refusal of what could not be read as a request: its first `id`
+/// that is a whole number; 0 when there is none, or it is not JSON.
+pub fn id_of(frame: &[u8]) -> u64 {
+    struct First;
+    impl<'de> serde::de::Visitor<'de> for First {
+        type Value = u64;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an object")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<u64, A::Error> {
+            let mut found = None;
+            while let Some(key) = map.next_key::<std::borrow::Cow<str>>()? {
+                if key == "id" && found.is_none() {
+                    found = map.next_value::<Value>()?.as_u64();
+                } else {
+                    map.next_value::<serde::de::IgnoredAny>()?;
+                }
+            }
+            Ok(found.unwrap_or(0))
+        }
+    }
+    let mut reader = serde_json::Deserializer::from_slice(frame);
+    serde::Deserializer::deserialize_map(&mut reader, First).unwrap_or(0)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -70,6 +149,8 @@ pub enum Request {
     /// Answers [`GetAnswer`].
     Get {
         session: String,
+        /// The entry's: `entry` on the wire, as `id` is the envelope's (and so in the others).
+        #[serde(rename = "entry")]
         id: String,
     },
     /// Add (empty id) or change an entry. Answers [`IdAnswer`].
@@ -79,12 +160,14 @@ pub enum Request {
     },
     Delete {
         session: String,
+        #[serde(rename = "entry")]
         id: String,
     },
     /// The current code. With no session, asks for a touch. Answers [`TotpAnswer`].
     Totp {
         #[serde(default)]
         session: Option<String>,
+        #[serde(rename = "entry")]
         id: String,
     },
     /// Fields of one entry, for typing them. With no session, asks for a touch.
@@ -92,6 +175,7 @@ pub enum Request {
     Reveal {
         #[serde(default)]
         session: Option<String>,
+        #[serde(rename = "entry")]
         id: String,
         fields: Vec<Field>,
     },
@@ -121,6 +205,7 @@ pub enum Request {
     Type {
         #[serde(default)]
         session: Option<String>,
+        #[serde(rename = "entry")]
         id: String,
         fields: Vec<Field>,
         #[serde(default)]
@@ -603,6 +688,99 @@ mod tests {
         assert_eq!(ok, r#"{"id":3,"ok":{"id":"x"}}"#);
         let err = serde_json::to_string(&Reply::err(4, Refusal::new(Code::NotSameLan, "no"))).unwrap();
         assert_eq!(err, r#"{"id":4,"err":{"code":"not_same_lan","message":"no"}}"#);
+    }
+
+    /// Every request as [`crate::socket::Client::ask`] writes it, read back as the local socket
+    /// reads it (through a `Value`, for the id of a refusal) and as the devices' channel does
+    /// (straight from the bytes). Several requests have an `id` of their own beside the
+    /// envelope's: neither may take the other's.
+    #[test]
+    fn every_request_survives_the_envelope() {
+        let s = || "s".to_string();
+        let entry = Entry { id: "e1".into(), title: "t".into(), password: "pw".into(), ..Entry::default() };
+        let requests = vec![
+            Request::Status,
+            Request::Setup { name: "n".into() },
+            Request::Open,
+            Request::Close { session: s() },
+            Request::List { session: s() },
+            Request::Get { session: s(), id: "e1".into() },
+            Request::Put { session: s(), entry },
+            Request::Delete { session: s(), id: "e1".into() },
+            Request::Totp { session: Some(s()), id: "e1".into() },
+            Request::Totp { session: None, id: "e1".into() },
+            Request::Reveal { session: None, id: "e1".into(), fields: vec![Field::Password] },
+            Request::Fill { origin: "https://a.b".into() },
+            Request::Save { origin: "https://a.b".into(), title: "t".into(), username: "u".into(), password: "p".into() },
+            Request::ProfileUnlock { profile: "p".into() },
+            Request::PasskeyCreate(PasskeyCreate {
+                origin: "https://a.b".into(),
+                rp_id: "a.b".into(),
+                rp_name: String::new(),
+                user_id: "AA".into(),
+                user_name: "u".into(),
+                user_display: String::new(),
+                client_data_hash: "AA".into(),
+                exclude: vec![],
+                algs: vec![-7],
+            }),
+            Request::PasskeyGet(PasskeyGet {
+                origin: "https://a.b".into(),
+                rp_id: "a.b".into(),
+                client_data_hash: "AA".into(),
+                allow: vec![],
+                conditional: false,
+            }),
+            Request::Type { session: None, id: "e1".into(), fields: vec![Field::Username, Field::Tab], window: Some(3) },
+            Request::Target,
+            Request::RecoveryNew { session: s() },
+            Request::Recover { code: "c".into() },
+            Request::Devices { session: s() },
+            Request::ForgetDevice { session: s(), fp: "f".into(), recovery_code: None },
+            Request::ForgetDevice { session: s(), fp: "f".into(), recovery_code: Some("c".into()) },
+            Request::Settings { session: s(), set: Some(Settings::default()) },
+            Request::Pair { name: "n".into() },
+            Request::Find,
+            Request::PairWith { fp: "f".into() },
+            Request::PairConfirm { fp: "f".into(), ok: true },
+            Request::HolderRequest { name: "n".into() },
+            Request::HolderApprove { session: s(), fp: "f".into(), code: "123456".into() },
+            Request::HolderRefuse { session: s(), fp: "f".into() },
+        ];
+        for request in requests {
+            let shown = format!("{request:?}");
+            let env = Envelope { id: 41, who: Who { app: "SpatiKey".into(), device: String::new() }, request };
+            let json = serde_json::to_vec(&env).unwrap();
+            let text = String::from_utf8_lossy(&json).to_string();
+            let value: Value = serde_json::from_slice(&json).unwrap_or_else(|e| panic!("{text}: not JSON: {e}"));
+            assert_eq!(id_of(&json), 41, "{text}: the refusal's id");
+            let local: Envelope = serde_json::from_value(value).unwrap_or_else(|e| panic!("{text}: through a value: {e}"));
+            let remote: Envelope = serde_json::from_slice(&json).unwrap_or_else(|e| panic!("{text}: from the bytes: {e}"));
+            for read in [local, remote] {
+                assert_eq!((read.id, read.who.app.as_str()), (41, "SpatiKey"), "{text}");
+                assert_eq!(format!("{:?}", read.request), shown, "{text}");
+            }
+        }
+    }
+
+    /// What builds before 2026-11-18 wrote for the requests naming an entry: the envelope's id and
+    /// the entry's, both as `id`. Read, so that a newer service answers an older window or device.
+    #[test]
+    fn the_older_two_ids_are_read() {
+        let old = br#"{"id":41,"who":{"app":"SpatiKey","device":""},"op":"get","session":"s","id":"e1"}"#;
+        assert_eq!(id_of(old), 41);
+        let env: Envelope = serde_json::from_slice(old).unwrap();
+        assert_eq!(env.id, 41);
+        assert!(matches!(env.request, Request::Get { ref session, ref id } if session == "s" && id == "e1"));
+        // The entry's id first is read the same.
+        let first: Envelope = serde_json::from_slice(br#"{"op":"delete","id":"e2","session":"s","id":7}"#).unwrap();
+        assert!(matches!(first.request, Request::Delete { ref id, .. } if id == "e2") && first.id == 7);
+        // Two envelope ids, or none, is still not a request.
+        assert!(serde_json::from_slice::<Envelope>(br#"{"id":1,"id":2,"op":"status"}"#).is_err());
+        assert!(serde_json::from_slice::<Envelope>(br#"{"op":"status"}"#).is_err());
+        assert!(serde_json::from_slice::<Envelope>(br#"{"id":1,"op":"get","session":"s","entry":"a","id":"b"}"#).is_err());
+        assert_eq!(id_of(b"not json"), 0);
+        assert_eq!(id_of(br#"{"op":"get","id":"e1"}"#), 0);
     }
 
     #[test]
