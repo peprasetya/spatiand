@@ -676,8 +676,30 @@ impl Player {
                 let index = ffi::av_find_best_stream(format, kind, -1, related, ptr::null_mut(), 0);
                 (index >= 0).then_some(index as usize)
             };
-            let video_stream = best(ffi::AVMEDIA_TYPE_VIDEO, -1);
+            let mut video_stream = best(ffi::AVMEDIA_TYPE_VIDEO, -1);
             let audio_stream = best(ffi::AVMEDIA_TYPE_AUDIO, video_stream.map_or(-1, |v| v as c_int));
+            // The pictures' decoder: the platform's, or software's. Where neither will decode
+            // them, the sound is still played if there is any; and if not, the file is closed.
+            let mut pictures_decoder = None;
+            if let Some(index) = video_stream {
+                let stream = streams[index];
+                let wanted = std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() != Ok("0");
+                let opened = open_decoder(stream, wanted).or_else(|e| {
+                    log::warn!("{e}; trying without the platform's decoder");
+                    open_decoder(stream, false)
+                });
+                match opened {
+                    Ok(decoder) => pictures_decoder = Some(decoder),
+                    Err(e) if audio_stream.is_none() => {
+                        ffi::avformat_close_input(&mut format);
+                        return Err(format!("{url}: its pictures cannot be decoded: {e}"));
+                    }
+                    Err(e) => {
+                        log::warn!("{url}: its pictures cannot be decoded ({e}); its sound is played alone");
+                        video_stream = None;
+                    }
+                }
+            }
 
             let mut info = Info::default();
             let start = if (*format).start_time != ffi::AV_NOPTS_VALUE { (*format).start_time as f64 / ffi::AV_TIME_BASE as f64 } else { 0.0 };
@@ -758,7 +780,7 @@ impl Player {
 
             let mut threads = Vec::new();
             let mut hardware = None;
-            if let Some(index) = video_stream {
+            if let (Some(index), Some((decoder, on_gpu))) = (video_stream, pictures_decoder) {
                 let stream = streams[index];
                 let parameters = (*stream).codecpar;
                 info.width = (*parameters).width.max(0) as u32;
@@ -773,11 +795,6 @@ impl Player {
                     info.frame_rate = timing::frame_rate(&[(stated.num, stated.den), shared.container_rate]);
                 }
                 (info.hints, info.eyes_swapped) = read_hints(stream);
-                let wanted = std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() != Ok("0");
-                let (decoder, on_gpu) = open_decoder(stream, wanted).or_else(|e| {
-                    log::warn!("{e}; trying without the platform's decoder");
-                    open_decoder(stream, false)
-                })?;
                 info.hardware = HARDWARE.filter(|_| on_gpu).map(|(_, _, name)| name);
                 if on_gpu {
                     hardware = Some((SendPointer(stream), start, threads.len()));
