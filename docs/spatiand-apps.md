@@ -843,7 +843,7 @@ Measured on the Beam Pro with `cargo ndk build --example rate` run as the app fr
 
 The codec service took 27-31% of a core besides. Of what is left in the player, most is the
 window's picture read back (`spatiand_app::gl`: Android's handover was `wl_shm` when this was
-measured; it is a hardware buffer since 2026-11-18, not measured again yet); the test
+measured; it is a hardware buffer since 2026-11-18, and measured on the phone that day: docs/beam-pro.md); the test
 clips (`testsrc2`) are easy for a software decoder, a real film's software decode costs more.
 SpatiReel itself, as a window of the room on the stand-in display (`tools/beam-stand-in`), the
 HEVC clip on MediaCodec: 53% of a core, the room presenting 46-50 frames a second meanwhile;

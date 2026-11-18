@@ -281,6 +281,7 @@ are checked by `cargo ndk check` and tests, not seen on the device:
   socket; when the room has not offered the modifier or a buffer cannot be had, the picture is read
   back and sent as `wl_shm` as before, said once in the log, and `SPATIAND_APP_COPY=1` asks for
   that. It compiled and was not run on a phone when it was written.
+  Run on the Beam Pro later the same day (2026-11-18, stand-in display, no glasses): SpatiShelf, SpatiQuill and SpatiReel each logged that their pictures go as hardware buffers and drew rightly; SpatiReel playing a 1080p60 H.264 film for 40 s, against the same build with `SPATIAND_APP_COPY=1`: the room at 60 frames a second where the copy gave about 52, SpatiReel 45 % of a core where it took 70 %, the room 65 % where it took 94 %, SpatiReel's memory 85 MB where it was 140 MB; file descriptors and memory flat over 90 s and after three open-and-close rounds. Not run: a resize, the glasses, and SpatiPal, SpatiKey and SpatiLoupe on the phone.
 * **The waiting screen** says what the Deck's says, from the same code (`waiting.rs`,
   `phone_message`, with the glasses this build knows from `spatiand-hmd`'s `devices.toml`); after
   glasses have been in the session an unplug says "Glasses disconnected / Your windows are still
