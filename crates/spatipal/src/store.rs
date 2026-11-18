@@ -27,9 +27,26 @@ pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// Written whole, through a temporary, and **the wearer's alone** (0600): chats and settings are
+/// what they said. A file left readable to others by an older SpatiPal is replaced by one that is
+/// not, as the temporary takes its place.
 fn write(path: &Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
     let partial = path.with_extension("part");
-    std::fs::write(&partial, text).and_then(|_| std::fs::rename(&partial, path)).map_err(|e| format!("{}: {e}", path.display()))
+    let written = (|| {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&partial)?;
+        // A temporary left from before keeps the mode it was made with: made the wearer's too.
+        #[cfg(unix)]
+        file.set_permissions(<std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600))?;
+        file.write_all(text.as_bytes())?;
+        drop(file);
+        std::fs::rename(&partial, path)
+    })();
+    written.map_err(|e| format!("{}: {e}", path.display()))
 }
 
 // --- settings ---
@@ -214,6 +231,25 @@ mod tests {
     fn chats_begun_in_the_same_second_have_their_own_files() {
         let ids: std::collections::HashSet<String> = (0..50).map(|_| Chat::new().id).collect();
         assert_eq!(ids.len(), 50);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn what_is_kept_is_the_wearer_s_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("spatipal-store-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("chat.json");
+        // Left readable by an older one, the file and a temporary beside it.
+        std::fs::write(&path, "old").unwrap();
+        std::fs::write(path.with_extension("part"), "").unwrap();
+        for p in [&path, &path.with_extension("part")] {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        write(&path, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
