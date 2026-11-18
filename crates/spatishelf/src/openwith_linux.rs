@@ -482,7 +482,7 @@ fn as_uri(file: &str) -> String {
         return file.to_string();
     }
     let mut out = String::from("file://");
-    for b in file.bytes() {
+    for &b in std::os::unix::ffi::OsStrExt::as_bytes(crate::proto::os_of(file).as_os_str()) {
         if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
             out.push(b as char);
         } else {
@@ -560,7 +560,9 @@ pub fn launch(app: &App, files: &[String], _room: &mut spatiand_app::App) -> Res
         // Chromium and Electron programs pick X11 unless told: the room's own rule.
         let extra = spatiand_platform::launch::wayland_arguments(&program, &words);
         let mut command = std::process::Command::new(&program);
-        command.args(&words).args(extra);
+        // Each word as its own bytes: a file named in bytes that are not UTF-8 is held as text
+        // (`proto::text_of`), and the program is given the name itself.
+        command.args(words.iter().map(|w| crate::proto::os_of(w))).args(extra);
         crate::detached(command).map_err(|e| format!("{program}: {e}"))?;
     }
     Ok(())
@@ -669,6 +671,12 @@ mod tests {
         assert_eq!(commands(&e("\"/opt/My App/run\" --x=100%%"), &files[..1]), [vec!["/opt/My App/run", "--x=100%", "/home/me/a b.mp4"]]);
         // A code for nothing (no files): gone, not an empty word.
         assert_eq!(commands(&e("dolphin %u"), &[]), [vec!["dolphin"]]);
+        // A name not UTF-8, held as text: its address is of its own bytes, and the word given
+        // to the program is them again.
+        let held = crate::proto::text_of(std::os::unix::ffi::OsStrExt::from_bytes(b"/tmp/caf\xe9.mp4"));
+        let words = commands(&e("app %u %f"), std::slice::from_ref(&held));
+        assert_eq!(words[0][1], "file:///tmp/caf%E9.mp4");
+        assert_eq!(std::os::unix::ffi::OsStrExt::as_bytes(crate::proto::os_of(&words[0][2]).as_os_str()), b"/tmp/caf\xe9.mp4");
     }
 
     /// A made-up machine: two folders of desktop entries, a mime database and mimeapps lists.

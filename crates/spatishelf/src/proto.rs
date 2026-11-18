@@ -5,7 +5,77 @@ use std::io::{self, Read, Write};
 
 use serde::{Deserialize, Serialize};
 
-/// A place: a folder on this machine, or one on a remote (`remote:path`).
+// --- this machine's names, whatever their bytes ---------------------------------------
+//
+// A name on Linux or Android is bytes, not always UTF-8 (a file from an old disk, a zip from
+// elsewhere: b"caf\xe9.txt"); a place and an item's name here are text, as JSON carries them
+// between the window and the tab, and to another SpatiShelf. So a local path is held as text
+// that turns back into its own bytes: valid UTF-8 as it is, and each byte that is not (always
+// 0x80 or above) as one character of the last private-use plane, U+10FF80 + (byte - 0x80). A
+// real character of that range (U+10FF80..U+10FFFF, which nobody names files with) is held
+// as its four bytes so held, so that the text is the bytes' and nothing else's. Every name
+// that is UTF-8 -- every one on a Mac, every remote's -- is its own text, unchanged. What
+// opens, renames or moves a thing turns the text back with `os_of`/`path_of`; what shows it,
+// with `shown` (the bytes read lossily, U+FFFD for what is not UTF-8).
+
+/// The first character a byte not UTF-8 is held as: U+10FF80 for 0x80.
+const HELD: u32 = 0x10FF00;
+
+fn held(byte: u8) -> char {
+    char::from_u32(HELD + byte as u32).expect("in the last plane")
+}
+
+fn is_held(c: char) -> bool {
+    c as u32 >= HELD + 0x80
+}
+
+/// A name or path of this machine as text, whatever its bytes (see above).
+pub fn text_of(name: &std::ffi::OsStr) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = String::with_capacity(name.len());
+    for chunk in name.as_bytes().utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if is_held(c) {
+                let mut four = [0u8; 4];
+                out.extend(c.encode_utf8(&mut four).bytes().map(held));
+            } else {
+                out.push(c);
+            }
+        }
+        out.extend(chunk.invalid().iter().map(|&b| held(b)));
+    }
+    out
+}
+
+/// A name or path held as text, as its own bytes again.
+pub fn os_of(text: &str) -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    let mut out = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        if is_held(c) {
+            out.push((c as u32 - HELD) as u8);
+        } else {
+            out.extend_from_slice(c.encode_utf8(&mut [0u8; 4]).as_bytes());
+        }
+    }
+    std::ffi::OsString::from_vec(out)
+}
+
+pub fn path_of(text: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(os_of(text))
+}
+
+/// A name or path held as text, as it is shown: what is not UTF-8 in it as U+FFFD.
+pub fn shown(text: &str) -> std::borrow::Cow<'_, str> {
+    use std::os::unix::ffi::OsStrExt;
+    if !text.chars().any(is_held) {
+        return text.into();
+    }
+    String::from_utf8_lossy(os_of(text).as_bytes()).into_owned().into()
+}
+
+/// A place: a folder on this machine, or one on a remote (`remote:path`). A local path is
+/// held as `text_of` writes it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Place {
     Local(String),
@@ -44,6 +114,19 @@ impl Place {
         }
     }
 
+    /// Its name as it is shown (see `shown`).
+    pub fn shown_name(&self) -> String {
+        shown(&self.name()).into_owned()
+    }
+
+    /// The path of a place on this machine, as its own bytes.
+    pub fn path(&self) -> Option<std::path::PathBuf> {
+        match self {
+            Place::Local(p) => Some(path_of(p)),
+            _ => None,
+        }
+    }
+
     /// Whether `other` is somewhere inside this folder (not this folder itself).
     pub fn holds(&self, other: &Place) -> bool {
         let mut at = other.parent();
@@ -56,10 +139,11 @@ impl Place {
         false
     }
 
-    /// As a person or a Spatiand application writes it: a path, or `remote:path`.
+    /// As a person or a Spatiand application writes it: a path, or `remote:path`. (Shown: a
+    /// name that is not UTF-8 cannot be written, and is written lossily.)
     pub fn text(&self) -> String {
         match self {
-            Place::Local(p) => p.clone(),
+            Place::Local(p) => shown(p).into_owned(),
             Place::Remote(r, p) => format!("{r}:{p}"),
             Place::Trash => "Trash".into(),
         }
@@ -72,7 +156,7 @@ impl Place {
         while let Some(place) = at {
             let name = match &place {
                 Place::Local(p) if p == "/" => "/".to_string(),
-                _ => place.name(),
+                _ => place.shown_name(),
             };
             at = place.parent();
             steps.push((name, place));
@@ -308,6 +392,30 @@ impl Gather {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_not_utf8_are_held_as_text_and_come_back_as_their_bytes() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let os = |b: &[u8]| std::ffi::OsStr::from_bytes(b).to_os_string();
+        for bytes in [&b"caf\xe9.txt"[..], b"\xff\xfe", b"/home/me/caf\xc3\xa9/\x80", "a\u{10FFFF}b\u{10FF80}".as_bytes(), b"plain", b""] {
+            let text = text_of(&os(bytes));
+            assert_eq!(os_of(&text).into_vec(), bytes, "{bytes:?} back from {text:?}");
+        }
+        // UTF-8 is its own text, and shown as it is.
+        assert_eq!(text_of(&os("café/ü.txt".as_bytes())), "café/ü.txt");
+        assert_eq!(shown("café"), "café");
+        // What is not is shown lossily, and two names that differ only there stay two.
+        assert_eq!(shown(&text_of(&os(b"caf\xe9.txt"))), "caf\u{FFFD}.txt");
+        assert_ne!(text_of(&os(b"\xff\xfe")), text_of(&os(b"\xfe\xff")));
+        assert_ne!(text_of(&os("\u{10FF80}".as_bytes())), text_of(&os(b"\x80")), "a real character of the held range is not a byte");
+        // A place of such a name: joined, named, its parent, its path.
+        let dir = Place::Local("/tmp".into());
+        let file = dir.join(&text_of(&os(b"\xff\xfe")));
+        assert_eq!(file.path().unwrap().as_os_str().as_bytes(), b"/tmp/\xff\xfe");
+        assert_eq!(file.parent(), Some(dir));
+        assert_eq!(file.shown_name(), "\u{FFFD}\u{FFFD}");
+        assert_eq!(file.text(), "/tmp/\u{FFFD}\u{FFFD}");
+    }
 
     #[test]
     fn places_go_up_and_down() {

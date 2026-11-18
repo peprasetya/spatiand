@@ -75,10 +75,12 @@ pub const PLACES_FORM: &str = "application/x-spatiand-places";
 const URI_FORM: &str = "text/uri-list";
 const TEXT_FORM: &str = "text/plain;charset=utf-8";
 
-/// A path as a `file:` address, every byte but the plain ones written as `%XX`.
+/// A path as a `file:` address, every byte but the plain ones written as `%XX` -- the path's
+/// own bytes, a name's that are not UTF-8 too.
 fn file_uri(path: &str) -> String {
+    use std::os::unix::ffi::OsStrExt;
     let mut out = String::from("file://");
-    for b in path.bytes() {
+    for &b in crate::proto::os_of(path).as_bytes() {
         if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
             out.push(b as char);
         } else {
@@ -98,8 +100,8 @@ fn uri_paths(list: &str) -> Vec<String> {
         .map(|rest| if rest.starts_with('/') { rest } else { rest.find('/').map_or("", |i| &rest[i..]) })
         .filter(|p| !p.is_empty())
         // Unescaped from the bytes (a `%` before a letter of two bytes, "50%é", is not cut
-        // through).
-        .map(|p| String::from_utf8_lossy(&crate::trash::unescape(p)).into_owned())
+        // through), and held as `proto::text_of` holds them, bytes not UTF-8 and all.
+        .map(|p| crate::proto::text_of(std::os::unix::ffi::OsStrExt::from_bytes(&crate::trash::unescape(p))))
         .collect()
 }
 
@@ -561,7 +563,7 @@ impl Shelf {
         match (from, to) {
             (Place::Local(a), Place::Local(b)) => {
                 use std::os::unix::fs::MetadataExt;
-                let device = |p: &str| std::fs::metadata(p).map(|m| m.dev()).ok();
+                let device = |p: &str| std::fs::metadata(crate::proto::path_of(p)).map(|m| m.dev()).ok();
                 device(a).is_none() || device(a) != device(b)
             }
             (Place::Remote(a, _), Place::Remote(b, _)) => a != b,
@@ -590,7 +592,7 @@ impl Shelf {
         // from their menu, after asking -- never by a drop.
         if to == Place::Trash {
             let trashes = crate::trash::trashes();
-            let local: Vec<Place> = items.into_iter().filter(|p| matches!(p, Place::Local(path) if !trashes.hold(std::path::Path::new(path)))).collect();
+            let local: Vec<Place> = items.into_iter().filter(|p| matches!(p, Place::Local(path) if !trashes.hold(&crate::proto::path_of(path)))).collect();
             if local.is_empty() {
                 self.say("Only this machine's things go into its Trash: delete a remote's from its menu.");
                 return;
@@ -710,8 +712,11 @@ impl Shelf {
         let em = if self.view == View::Grid { theme::ROW_EM * 0.62 } else { theme::ROW_EM * 0.7 };
         let mut field = Field::sized(em);
         field.focused = true;
-        field.set(name.clone());
-        field.select(0, stem_chars(&name, folder));
+        // As it is shown: a name that is not UTF-8 is typed over as its lossy form, and a name
+        // kept as it was is not renamed at all (`finish_rename`).
+        let written = crate::proto::shown(&name).into_owned();
+        field.set(written.clone());
+        field.select(0, stem_chars(&written, folder));
         if let Some(at) = at {
             self.tabs[self.active].cursor = at;
         }
@@ -723,7 +728,7 @@ impl Shelf {
     pub(crate) fn finish_rename(&mut self) {
         let Some(r) = self.renaming.take() else { return };
         let name = r.field.text.trim().to_string();
-        if name.is_empty() || name == r.name {
+        if name.is_empty() || name == crate::proto::shown(&r.name) {
             return;
         }
         if name.contains('/') {
@@ -1087,6 +1092,16 @@ mod uri_tests {
         // A % not escaping anything, its two after it cutting a letter of two bytes: kept, not a
         // panic.
         assert_eq!(uri_paths("file:///tmp/50%1é.txt\nfile:///tmp/%é\nfile:///tmp/a%"), vec!["/tmp/50%1é.txt".to_string(), "/tmp/%é".into(), "/tmp/a%".into()]);
+    }
+
+    #[test]
+    fn a_name_not_utf8_goes_out_as_its_bytes_and_comes_back() {
+        let held = crate::proto::text_of(std::os::unix::ffi::OsStrExt::from_bytes(b"/tmp/caf\xe9.txt"));
+        let forms = drag_forms(&[Place::Local(held.clone())], |_, _| None);
+        let uris = String::from_utf8_lossy(&forms[1].1).into_owned();
+        assert_eq!(uris, "file:///tmp/caf%E9.txt\r\n");
+        assert_eq!(String::from_utf8_lossy(&forms[2].1), "/tmp/caf\u{FFFD}.txt", "the text, lossily");
+        assert_eq!(uri_paths(&uris), vec![held], "dropped back, the same file");
     }
 
     #[test]

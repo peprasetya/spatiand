@@ -362,8 +362,8 @@ impl ShelfTab {
             return "Stopped".into();
         }
         match &self.place {
-            Place::Local(p) if Some(PathBuf::from(p)) == home() => "Home".into(),
-            place => place.name(),
+            Place::Local(p) if Some(proto::path_of(p)) == home() => "Home".into(),
+            place => place.shown_name(),
         }
     }
 
@@ -371,7 +371,7 @@ impl ShelfTab {
     fn in_trash(&self) -> bool {
         match &self.place {
             Place::Trash => true,
-            Place::Local(p) => trash::is_within(std::path::Path::new(p)),
+            Place::Local(p) => trash::is_within(&proto::path_of(p)),
             Place::Remote(..) => false,
         }
     }
@@ -394,12 +394,12 @@ fn places() -> Vec<(String, Place)> {
         return out;
     }
     let Some(home) = home() else { return vec![("Computer".into(), Place::Local("/".into()))] };
-    out.push(("Home".to_string(), Place::Local(home.to_string_lossy().into_owned())));
+    out.push(("Home".to_string(), Place::Local(proto::text_of(home.as_os_str()))));
     let films = if cfg!(target_os = "macos") { "Movies" } else { "Videos" };
     for (name, folder) in [("Desktop", "Desktop"), ("Documents", "Documents"), ("Downloads", "Downloads"), ("Pictures", "Pictures"), ("Films", films), ("Music", "Music")] {
         let path = home.join(folder);
         if path.is_dir() {
-            out.push((name.to_string(), Place::Local(path.to_string_lossy().into_owned())));
+            out.push((name.to_string(), Place::Local(proto::text_of(path.as_os_str()))));
         }
     }
     out.push(("Computer".to_string(), Place::Local("/".into())));
@@ -1022,7 +1022,7 @@ impl Shelf {
                 // A remote has no trash here, and what is in the trash already can only go for
                 // good: those are asked about.
                 let trashes = trash::trashes();
-                let local = chosen.iter().all(|p| matches!(p, Place::Local(path) if !trashes.hold(std::path::Path::new(path))));
+                let local = chosen.iter().all(|p| matches!(p, Place::Local(path) if !trashes.hold(&proto::path_of(path))));
                 if local && !self.tab().in_trash() {
                     let id = self.next_op;
                     self.next_op += 1;
@@ -1158,7 +1158,7 @@ impl Shelf {
             Action::TerminalHere => {
                 if let (Place::Local(folder), Some(program)) = (self.tab().place.clone(), own_program("spatiquill")) {
                     let mut command = Command::new(program);
-                    command.env("SPATIQUILL_FOLDER", &folder).arg(&folder);
+                    command.env("SPATIQUILL_FOLDER", proto::os_of(&folder)).arg(proto::os_of(&folder));
                     if let Err(e) = detached(command) {
                         self.fail(format!("SpatiQuill would not start: {e}"));
                     }
@@ -1590,7 +1590,7 @@ impl Shelf {
     /// in it, as listed.
     fn description(&mut self) -> spatiand_app::Description {
         let tab = self.tab();
-        let names: Vec<String> = tab.shown.iter().filter(|&&i| !tab.is_note(i)).filter_map(|&i| tab.items.get(i)).map(|item| item.name.clone()).collect();
+        let names: Vec<String> = tab.shown.iter().filter(|&&i| !tab.is_note(i)).filter_map(|&i| tab.items.get(i)).map(|item| proto::shown(&item.name).into_owned()).collect();
         spatiand_app::Description {
             kind: "files".into(),
             app: "SpatiShelf".into(),
@@ -2145,7 +2145,7 @@ impl Shelf {
                     look::face(p, gl, face, item.kind, picture, 14.0);
                     let name = Rect::new(cell.x + 2.0, face.bottom() + 8.0, cell.w - 4.0, 28.0);
                     if renaming != Some(index) {
-                        p.label(gl, &item.name, name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.5);
+                        p.label(gl, &proto::shown(&item.name), name, theme::ROW_EM * 0.62, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.5);
                     }
                     let detail = match &item.trashed {
                         Some(t) => format!("from {}", origin_folder(t)),
@@ -2186,7 +2186,7 @@ impl Shelf {
                     }
                     look::face(p, gl, icon, item.kind, picture, 8.0);
                     if renaming != Some(index) {
-                        p.label(gl, &item.name, name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.0);
+                        p.label(gl, &proto::shown(&item.name), name, theme::ROW_EM * 0.7, if selected || is_cursor { theme::ink() } else { theme::ink_row() }, 0.0);
                     }
                     match &item.trashed {
                         Some(t) => {
@@ -2431,7 +2431,7 @@ fn menu_rect(at: (f32, f32), rows: usize, size: (u32, u32)) -> Rect {
 /// Where a thing in the trash came from, as its folder, the home folder written `~`.
 fn origin_folder(trashed: &proto::Trashed) -> String {
     let Some(origin) = trashed.origin.as_deref() else { return "where, not known".into() };
-    let folder = std::path::Path::new(origin).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let folder = std::path::Path::new(origin).parent().map(|p| proto::shown(&p.to_string_lossy()).into_owned()).unwrap_or_default();
     match home().map(|h| h.to_string_lossy().into_owned()) {
         Some(h) if folder == h => "~".into(),
         Some(h) if folder.starts_with(&format!("{h}/")) => format!("~{}", &folder[h.len()..]),
@@ -2548,9 +2548,9 @@ fn main() {
         let start = match asked.as_deref() {
             Some(text) => match spatiand_storage::virtual_place(text) {
                 Some((remote, path)) => Place::Remote(remote, path),
-                None => Place::Local(std::fs::canonicalize(text).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| text.to_string())),
+                None => Place::Local(std::fs::canonicalize(text).map(|p| proto::text_of(p.as_os_str())).unwrap_or_else(|_| text.to_string())),
             },
-            None => Place::Local(home().map(|h| h.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())),
+            None => Place::Local(home().map(|h| proto::text_of(h.as_os_str())).unwrap_or_else(|| "/".into())),
         };
         let mut side = List::default();
         side.focused = false;

@@ -101,7 +101,7 @@ impl Shelf {
     /// A path for the system to tell the kind of a thing by: a remote's by its name alone.
     fn kind_path(place: &Place) -> PathBuf {
         match place {
-            Place::Local(p) => PathBuf::from(p),
+            Place::Local(p) => crate::proto::path_of(p),
             _ => PathBuf::from(place.name()),
         }
     }
@@ -224,7 +224,7 @@ impl Shelf {
         let mut command = Command::new(path);
         match place {
             Place::Local(p) => {
-                command.arg(p);
+                command.arg(crate::proto::os_of(p));
             }
             // SpatiLoupe knows remotes itself; SpatiReel is given the stream.
             Place::Remote(r, p) if program == "spatireel" => {
@@ -239,8 +239,8 @@ impl Shelf {
         }
         if program == "spatiquill" {
             command.env("SPATIQUILL_FOLDER", match place {
-                Place::Local(p) => p.clone(),
-                _ => String::new(),
+                Place::Local(p) => crate::proto::os_of(p),
+                _ => Default::default(),
             });
         }
         detached(command)

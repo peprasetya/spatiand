@@ -42,7 +42,7 @@ fn is_package(name: &str) -> bool {
 }
 
 fn list_local(path: &str) -> Result<(Vec<Item>, Option<u64>), String> {
-    let read = std::fs::read_dir(path).map_err(|e| match e.kind() {
+    let read = std::fs::read_dir(proto::path_of(path)).map_err(|e| match e.kind() {
         io::ErrorKind::PermissionDenied => "This folder may not be opened.".to_string(),
         io::ErrorKind::NotFound => "This folder is not there any more.".to_string(),
         _ => e.to_string(),
@@ -50,7 +50,7 @@ fn list_local(path: &str) -> Result<(Vec<Item>, Option<u64>), String> {
     let mut items: Vec<Item> = read
         .flatten()
         .map(|entry| {
-            let name = entry.file_name().to_string_lossy().into_owned();
+            let name = proto::text_of(&entry.file_name());
             let meta = std::fs::metadata(entry.path()).or_else(|_| entry.metadata());
             let folder = meta.as_ref().is_ok_and(|m| m.is_dir()) && !is_package(&name);
             let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -72,7 +72,7 @@ fn list_trash() -> Result<(Vec<Item>, Option<u64>), String> {
             size: e.size,
             modified: e.deleted,
             hidden: false,
-            trashed: Some(crate::proto::Trashed { file: e.file.to_string_lossy().into_owned(), origin: e.origin.map(|o| o.to_string_lossy().into_owned()), deleted: e.deleted }),
+            trashed: Some(crate::proto::Trashed { file: crate::proto::text_of(e.file.as_os_str()), origin: e.origin.map(|o| crate::proto::text_of(o.as_os_str())), deleted: e.deleted }),
             name: e.name,
         })
         .collect();
@@ -81,7 +81,7 @@ fn list_trash() -> Result<(Vec<Item>, Option<u64>), String> {
 }
 
 fn free_space(path: &str) -> Option<u64> {
-    let c = std::ffi::CString::new(path).ok()?;
+    let c = std::ffi::CString::new(std::os::unix::ffi::OsStringExt::into_vec(proto::os_of(path))).ok()?;
     let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
     if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
         return None;
@@ -180,7 +180,7 @@ fn picture(place: &Place, kind: Kind, size: u32, storage: &Mutex<Option<Storage>
                 return still(path);
             }
             use image::ImageDecoder;
-            let reader = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+            let reader = image::ImageReader::open(proto::path_of(path)).ok()?.with_guessed_format().ok()?;
             let mut decoder = reader.into_decoder().ok()?;
             let orientation = decoder.orientation().ok();
             let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
@@ -235,7 +235,7 @@ fn whole(place: &Place) -> String {
 fn is_dir(place: &Place, storage: &Storage) -> bool {
     match place {
         Place::Trash => false,
-        Place::Local(p) => Path::new(p).is_dir(),
+        Place::Local(p) => proto::path_of(p).is_dir(),
         Place::Remote(r, p) => {
             let (fs, name) = fs_and_name(&Place::Remote(r.clone(), p.clone()));
             storage.rc("operations/stat", json!({"fs": fs, "remote": name})).ok().and_then(|v| v.get("item").and_then(|i| i.get("IsDir")).and_then(|b| b.as_bool())).unwrap_or(false)
@@ -246,7 +246,7 @@ fn is_dir(place: &Place, storage: &Storage) -> bool {
 /// A name in `folder` not yet taken: "a.jpg", then "a 2.jpg", "a 3.jpg". Something there by
 /// the name is anything at all, a link that leads nowhere included.
 fn free_name(folder: &Path, name: &str) -> PathBuf {
-    folder.join(free_among(name, |n| Ok::<_, ()>(folder.join(n).symlink_metadata().is_ok())).unwrap_or_else(|_| name.to_string()))
+    folder.join(proto::os_of(&free_among(name, |n| Ok::<_, ()>(folder.join(proto::os_of(n)).symlink_metadata().is_ok())).unwrap_or_else(|_| name.to_string())))
 }
 
 /// The first of "a.jpg", "a 2.jpg", "a 3.jpg" that `taken` says is free; its error if it
@@ -274,7 +274,7 @@ fn free_among<E>(name: &str, mut taken: impl FnMut(&str) -> Result<bool, E>) -> 
 fn found(place: &Place, storage: &Storage) -> Result<Option<serde_json::Value>, String> {
     match place {
         Place::Trash => Ok(None),
-        Place::Local(p) => Ok(Path::new(p).symlink_metadata().ok().map(|_| json!({"Name": place.name()}))),
+        Place::Local(p) => Ok(proto::path_of(p).symlink_metadata().ok().map(|_| json!({"Name": place.name()}))),
         Place::Remote(..) => {
             let (fs, name) = fs_and_name(place);
             let answer = storage.rc("operations/stat", json!({"fs": fs, "remote": name}))?;
@@ -333,8 +333,8 @@ fn rclone_job(storage: &Storage, method: &str, mut input: serde_json::Value, wha
 fn transfer(item: &Place, into: &Place, moving: bool, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, u64, &str)) -> Result<(), String> {
     let name = item.name();
     if let (Place::Local(from), Place::Local(to)) = (item, into) {
-        let from = Path::new(from);
-        let target = free_name(Path::new(to), &name);
+        let from = &proto::path_of(from);
+        let target = free_name(&proto::path_of(to), &name);
         if target.starts_with(from) {
             return Err(format!("{name} cannot go inside itself"));
         }
@@ -382,7 +382,7 @@ fn delete(place: &Place, storage: &Mutex<Option<Storage>>) -> Result<(), String>
     match place {
         Place::Trash => Ok(()),
         // From the trash, with what it knew of it; anywhere else, just gone.
-        Place::Local(p) => crate::trash::purge(Path::new(p)),
+        Place::Local(p) => crate::trash::purge(&proto::path_of(p)),
         Place::Remote(..) => {
             let storage = storage_or(storage)?;
             if is_dir(place, &storage) {
@@ -426,18 +426,18 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
             transfer(item, &to, true, storage, report)?;
             // Taken out of the trash by a move: what the trash knew of it goes too.
             if let Place::Local(p) = item {
-                crate::trash::moved_out(Path::new(p));
+                crate::trash::moved_out(&proto::path_of(p));
             }
             Ok(())
         }),
         Op::Trash(items) => each(&items, |item| match item {
-            Place::Local(p) => crate::trash::put(Path::new(p)),
+            Place::Local(p) => crate::trash::put(&proto::path_of(p)),
             Place::Remote(..) => Err("A remote has no trash here: delete it instead.".into()),
             Place::Trash => Ok(()),
         }),
         Op::Delete(items) => each(&items, |item| delete(item, storage)),
         Op::Restore(items) => each(&items, |item| match item {
-            Place::Local(p) => crate::trash::restore(Path::new(p)).map(|_| ()),
+            Place::Local(p) => crate::trash::restore(&proto::path_of(p)).map(|_| ()),
             _ => Err("That is not in the Trash.".into()),
         }),
         Op::EmptyTrash => crate::trash::empty(),
@@ -454,18 +454,18 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
             match &item {
                 Place::Trash => Err("The Trash keeps its name.".into()),
                 Place::Local(p) => {
-                    let to = Path::new(p).with_file_name(&name);
+                    let to = proto::path_of(p).with_file_name(proto::os_of(&name));
                     // Anything by the name, a link leading nowhere too -- unless it is the thing
                     // itself, found by another case of its name on a disk that does not tell
                     // them apart (Photo.jpg to photo.jpg).
                     use std::os::unix::fs::MetadataExt;
                     let same = |a: &std::fs::Metadata, b: &std::fs::Metadata| a.dev() == b.dev() && a.ino() == b.ino();
                     if let Ok(there) = to.symlink_metadata() {
-                        if !Path::new(p).symlink_metadata().is_ok_and(|own| same(&own, &there)) {
+                        if !proto::path_of(p).symlink_metadata().is_ok_and(|own| same(&own, &there)) {
                             return Err(format!("There is already something called {name} here."));
                         }
                     }
-                    std::fs::rename(p, to).map_err(|e| e.to_string())
+                    std::fs::rename(proto::path_of(p), to).map_err(|e| e.to_string())
                 }
                 Place::Remote(..) => {
                     let storage = storage_or(storage)?;
@@ -492,7 +492,7 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
         Op::Mkdir { name, .. } if name.contains('/') || name.trim().is_empty() => Err("A name may not be empty or have a / in it.".into()),
         Op::Mkdir { inside, name } => match &inside {
             Place::Trash => Err("No folder is made in the Trash.".into()),
-            Place::Local(p) => std::fs::create_dir(Path::new(p).join(&name)).map_err(|e| e.to_string()),
+            Place::Local(p) => std::fs::create_dir(proto::path_of(p).join(proto::os_of(&name))).map_err(|e| e.to_string()),
             Place::Remote(..) => {
                 let storage = storage_or(storage)?;
                 let target = inside.join(&name);
@@ -763,6 +763,52 @@ mod tests {
         let error = run_op(Op::Move { from: vec![place("x"), place("gone"), place("y")], to: place("dst/new") }, &kept, &mut quiet).unwrap_err();
         assert!(error.starts_with("1 of 3 could not be done; the first: "), "{error}");
         assert!(dir.join("dst/new/x").exists() && dir.join("dst/new/y").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn names_not_utf8_are_listed_and_worked_on_by_their_own_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = std::env::temp_dir().join(format!("spatishelf-bytes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("dst")).unwrap();
+        let os = |b: &[u8]| std::ffi::OsStr::from_bytes(b).to_os_string();
+        std::fs::write(dir.join(os(b"caf\xe9.txt")), b"latin-1").unwrap();
+        std::fs::write(dir.join(os(b"\xff\xfe")), b"bytes").unwrap();
+        let folder = Place::Local(dir.to_string_lossy().into_owned());
+        let kept = Mutex::new(None);
+        let mut quiet = |_: u64, _: u64, _: &str| {};
+        // Listed by names that are their bytes, shown lossily.
+        let (items, _) = list_local(&dir.to_string_lossy()).unwrap();
+        let cafe = items.iter().find(|i| proto::shown(&i.name) == "caf\u{FFFD}.txt").unwrap();
+        let ff = items.iter().find(|i| proto::shown(&i.name) == "\u{FFFD}\u{FFFD}").unwrap();
+        let cafe = folder.join(&cafe.name);
+        let ff = folder.join(&ff.name);
+        // The path to open is the file's own.
+        assert_eq!(std::fs::read(cafe.path().unwrap()).unwrap(), b"latin-1");
+        // Copied and moved, by the same bytes.
+        run_op(Op::Copy { from: vec![cafe.clone()], to: folder.join("dst") }, &kept, &mut quiet).unwrap();
+        assert_eq!(std::fs::read(dir.join("dst").join(os(b"caf\xe9.txt"))).unwrap(), b"latin-1");
+        run_op(Op::Copy { from: vec![cafe.clone()], to: folder.join("dst") }, &kept, &mut quiet).unwrap();
+        assert!(dir.join("dst").join(os(b"caf\xe9 2.txt")).exists(), "numbered beside, its bytes kept");
+        run_op(Op::Move { from: vec![ff.clone()], to: folder.join("dst") }, &kept, &mut quiet).unwrap();
+        assert_eq!(std::fs::read(dir.join("dst").join(os(b"\xff\xfe"))).unwrap(), b"bytes");
+        assert!(dir.join(os(b"\xff\xfe")).symlink_metadata().is_err());
+        // Renamed to a valid name, and from a valid name to one that is not.
+        run_op(Op::Rename { item: cafe.clone(), name: "cafe.txt".into() }, &kept, &mut quiet).unwrap();
+        assert_eq!(std::fs::read(dir.join("cafe.txt")).unwrap(), b"latin-1");
+        run_op(Op::Rename { item: folder.join("cafe.txt"), name: proto::text_of(&os(b"caf\xe9.txt")) }, &kept, &mut quiet).unwrap();
+        assert_eq!(std::fs::read(dir.join(os(b"caf\xe9.txt"))).unwrap(), b"latin-1");
+        // Into a trash and back, the info file escaping the bytes.
+        let can = crate::trash::Can { root: dir.join("Trash"), top: None };
+        let put = can.put(&cafe.path().unwrap(), "2026-11-18T09:08:07", false).unwrap();
+        let info = std::fs::read_to_string(can.info().join(os(b"caf\xe9.txt.trashinfo"))).unwrap();
+        assert!(info.contains("caf%E9.txt"), "{info}");
+        let listed = can.list();
+        let trashed = Place::Local(proto::text_of(listed[0].file.as_os_str()));
+        assert_eq!(trashed.path().unwrap(), put);
+        can.restore(&trashed.path().unwrap()).unwrap();
+        assert_eq!(std::fs::read(dir.join(os(b"caf\xe9.txt"))).unwrap(), b"latin-1");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

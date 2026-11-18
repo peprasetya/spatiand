@@ -65,7 +65,7 @@ impl Debounce {
 /// The folders on this machine a place is, to be watched: a folder itself, the trash's.
 pub fn folders_of(place: &Place) -> Vec<PathBuf> {
     match place {
-        Place::Local(p) => vec![PathBuf::from(p)],
+        Place::Local(p) => vec![crate::proto::path_of(p)],
         Place::Trash => crate::trash::folders(),
         Place::Remote(..) => Vec::new(),
     }
