@@ -469,31 +469,31 @@ All fourteen done on 2026-11-18 (the commits in the last column). What the per-a
 
 ### SpatiReel
 
-| # | Where | Now | Rule | Change | Size |
-|---|---|---|---|---|---|
-| 1 | `screens.rs:317-333`, `:465-467`, `:621-626`, `:698` | A server is taken away by pressing Delete, or its button, twice within 4 s ("Press again to remove") | 12 | One press asks `Confirm::careful(format!("Forget {name}? Its films are not touched; SpatiReel signs out of it."), "Forget", "Cancel")`; drop `removing` | M |
-| 2 | `screens.rs:297`, `:622` | "Remove a server", "Remove" | 18 | `"[Enter] Open  [Delete] Forget a server"`, `"Forget"` | S |
-| 3 | `play.rs:841-842` | "Next Episode" | 18 | `"Next episode"` (both lines) | S |
-| 4 | `play.rs:848-856`, `:991-1004` | Own menu card: a rim and a literal ground `[0.043, 0.05, 0.072, 0.97]` | 12, 2 | `ui::Menu` [SDK 2] | S after |
-| 5 | `screens.rs:611-650`, `:826-838` | Own screen heads | 4 | `look::top` [SDK 6] | S |
-| 6 | `play.rs:92-150` | Own `Clock` | 17 | `ui::AutoHide` [SDK 10] | S |
-| 7 | `source/local.rs:16-23` | Own "This Mac" words | 18 | `look::this_device()` [SDK 12] | S |
-| 8 | `screens.rs:654` | In a local folder the foot shows the path and no keys | 18 | `"[Enter] Open  [Backspace] Up  [Esc] Home"` there too; the path goes beside the title as `beside` | S |
-| 9 | `play.rs:807` | The shade behind the controls is a literal `[0.02, 0.025, 0.04, 0.78]` | 2 | `{ let mut g = theme::ground(); g[3] = 0.78; g }` | S |
+| # | Where | Now | Rule | Change | Size | Done |
+|---|---|---|---|---|---|---|
+| ~~1~~ | `screens.rs:317-333`, `:465-467`, `:621-626`, `:698` | A server is taken away by pressing Delete, or its button, twice within 4 s ("Press again to remove") | 12 | One press asks `Confirm::careful(format!("Forget {name}? Its films are not touched; SpatiReel signs out of it."), "Forget", "Cancel")`; drop `removing` | M | done, `b3671b5` |
+| ~~2~~ | `screens.rs:297`, `:622` | "Remove a server", "Remove" | 18 | `"[Enter] Open  [Delete] Forget a server"`, `"Forget"` | S | done, `b3671b5` |
+| ~~3~~ | `play.rs:841-842` | "Next Episode" | 18 | `"Next episode"` (both lines) | S | done, `bbeba22` |
+| ~~4~~ | `play.rs:848-856`, `:991-1004` | Own menu card: a rim and a literal ground `[0.043, 0.05, 0.072, 0.97]` | 12, 2 | `ui::Menu` [SDK 2] | S | done by the SDK work, checked, `9d7f31c` |
+| ~~5~~ | `screens.rs:611-650`, `:826-838` | Own screen heads | 4 | `look::top` [SDK 6] | S | done by the SDK work, checked, `a6e3d65` |
+| ~~6~~ | `play.rs:92-150` | Own `Clock` | 17 | `ui::AutoHide` [SDK 10] | S | done by the SDK work, checked, `ba2e002` |
+| ~~7~~ | `source/local.rs:16-23` | Own "This Mac" words | 18 | `look::this_device()` [SDK 12] | S | done by the SDK work, checked, `a1b54dc` |
+| ~~8~~ | `screens.rs:654` | In a local folder the foot shows the path and no keys | 18 | `"[Enter] Open  [Backspace] Up  [Esc] Home"` there too; the path goes beside the title as `beside` | S | done, `b3671b5` |
+| ~~9~~ | `play.rs:807` | The shade behind the controls is a literal `[0.02, 0.025, 0.04, 0.78]` | 2 | `{ let mut g = theme::ground(); g[3] = 0.78; g }` | S | done, `bbeba22` |
 
 ### SpatiLoupe
 
-| # | Where | Now | Rule | Change | Size |
-|---|---|---|---|---|---|
-| 1 | `view.rs:30` | The controls stay 3.2 s | 17 | `ui::CONTROLS_SHOWN` (3 s) [SDK 10] | S |
-| 2 | `view.rs:1367` | Double click is a literal 400 ms | 16 | `ui::DOUBLE_CLICK` [SDK 7] | S |
-| 3 | `swipe.rs:25` | `DECIDE_AFTER` 8.0 | 16 | `ui::DRAG_AFTER` [SDK 7] | S |
-| 4 | `folder.rs:123-137` | Own `size_words` | 18 | `look::size` [SDK 5] | S |
-| 5 | `folder.rs:395-414` | Own screen head | 4 | `look::top` [SDK 6] | S |
-| 6 | `view.rs:1791` | What a search found is washed in literal teal and blue | 2 | `[look::TEAL[0], look::TEAL[1], look::TEAL[2], 0.45]`, `[look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.25]` | S |
-| 7 | `view.rs:1707` | The SDK's default tile tint copied as a literal | 2 | Make it `pub const TILE_TINT` in `app/ui/widgets.rs:361` and use it | S |
-| 8 | `view.rs:1114-1117` | What went wrong is centred, and stays until the next file | 13 | Left, as `look::foot`; cleared 8 s after it was set | S |
-| 9 | `view.rs:1049-1093` | The top bar, the strip and the hint are placed 28 and 24 to 26 from the window's edge | 4 | Leave: they float over a picture. Listed so that a later job does not "fix" it | - |
+| # | Where | Now | Rule | Change | Size | Done |
+|---|---|---|---|---|---|---|
+| ~~1~~ | `view.rs:30` | The controls stay 3.2 s | 17 | `ui::CONTROLS_SHOWN` (3 s) [SDK 10] | S | done by the SDK work, checked, `ba2e002` |
+| ~~2~~ | `view.rs:1367` | Double click is a literal 400 ms | 16 | `ui::DOUBLE_CLICK` [SDK 7] | S | done, `add6d26` |
+| ~~3~~ | `swipe.rs:25` | `DECIDE_AFTER` 8.0 | 16 | `ui::DRAG_AFTER` [SDK 7] | S | done, `add6d26` |
+| ~~4~~ | `folder.rs:123-137` | Own `size_words` | 18 | `look::size` [SDK 5] | S | done by the SDK work, checked, `56baea9` |
+| ~~5~~ | `folder.rs:395-414` | Own screen head | 4 | `look::top` [SDK 6] | S | done by the SDK work, checked, `a6e3d65` |
+| ~~6~~ | `view.rs:1791` | What a search found is washed in literal teal and blue | 2 | `[look::TEAL[0], look::TEAL[1], look::TEAL[2], 0.45]`, `[look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.25]` | S | done, `add6d26` |
+| ~~7~~ | `view.rs:1707` | The SDK's default tile tint copied as a literal | 2 | Make it `pub const TILE_TINT` in `app/ui/widgets.rs:361` and use it | S | done, `add6d26` |
+| ~~8~~ | `view.rs:1114-1117` | What went wrong is centred, and stays until the next file | 13 | Left, as `look::foot`; cleared 8 s after it was set | S | done, `add6d26` |
+| 9 | `view.rs:1049-1093` | The top bar, the strip and the hint are placed 28 and 24 to 26 from the window's edge | 4 | Leave: they float over a picture. Listed so that a later job does not "fix" it | - | left as it is, on purpose |
 
 ### The room's own UI
 
