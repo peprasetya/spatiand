@@ -283,6 +283,9 @@ pub struct Paper {
     asked: HashMap<usize, u32>,
     /// How far down the column the top of the window is, in logical pixels.
     scroll: f32,
+    /// How far the column is moved sideways from the middle, in logical pixels: a page zoomed
+    /// wider than the window is moved about in.
+    across: f32,
     zoom: f32,
     /// Which search is the one wanted: a search's answer under an older number -- one asked
     /// before the text was changed, or the field closed -- is not this one's.
@@ -314,6 +317,7 @@ impl Paper {
             drawn: HashMap::new(),
             asked: HashMap::new(),
             scroll: 0.0,
+            across: 0.0,
             zoom: 1.0,
             finds: 0,
             contents: None,
@@ -359,6 +363,24 @@ impl Paper {
 
     fn scroll_by(&mut self, by: f32, area: Rect) {
         self.scroll = (self.scroll + by).clamp(0.0, (self.length(area) - area.h).max(0.0));
+    }
+
+    /// How far the column may be moved sideways either way: a page wider than the window to its
+    /// edges and a little more, one that fits not at all.
+    fn across_room(&self, area: Rect) -> f32 {
+        let width = self.width(area);
+        if width > area.w { (width - area.w) * 0.5 + PAGE_GAP } else { 0.0 }
+    }
+
+    /// Whether the pages are wider than the window: moved about in sideways.
+    fn wide(&self, area: Rect) -> bool {
+        self.across_room(area) > 0.0
+    }
+
+    /// Move the column sideways by `by`: more than nought shows more of the pages' right.
+    fn pan_by(&mut self, by: f32, area: Rect) {
+        let room = self.across_room(area);
+        self.across = (self.across - by).clamp(-room, room);
     }
 
     fn show_page(&mut self, page: usize, area: Rect) {
@@ -1222,7 +1244,10 @@ impl View {
                 object.orbit.yaw -= dx * 0.008;
                 object.orbit.pitch = (object.orbit.pitch + dy * 0.006).clamp(-1.45, 1.45);
             }
-            Doc::Pdf(paper) => paper.scroll_by(-dy, all),
+            Doc::Pdf(paper) => {
+                paper.scroll_by(-dy, all);
+                paper.pan_by(-dx, all);
+            }
             _ => {}
         }
     }
@@ -1252,7 +1277,10 @@ impl View {
                 }
             }
             Doc::Model(object) => object.orbit.zoom = (object.orbit.zoom * (-dy * 0.003).exp()).clamp(0.3, 6.0),
-            Doc::Pdf(paper) => paper.scroll_by(dy, all),
+            Doc::Pdf(paper) => {
+                paper.scroll_by(dy, all);
+                paper.pan_by(dx, all);
+            }
             _ => {}
         }
     }
@@ -1324,6 +1352,13 @@ impl View {
                     return Want::Nothing;
                 }
                 return Want::Leave;
+            }
+            // A document zoomed wider than the window is moved about in by them.
+            Key::Left | Key::Right if matches!(&self.doc, Doc::Pdf(paper) if paper.wide(all)) => {
+                if let Doc::Pdf(paper) = &mut self.doc {
+                    paper.pan_by(if key == Key::Left { -90.0 } else { 90.0 }, all);
+                }
+                return Want::Nothing;
             }
             Key::Left => return self.slide_by(-1),
             Key::Right => return self.slide_by(1),
@@ -1559,7 +1594,9 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
         paper.show_page(page, all);
     }
     let width = paper.width(all);
-    let left = all.x + (all.w - width) * 0.5;
+    // Zoomed out again, or the window wider: the column kept within its room.
+    paper.pan_by(0.0, all);
+    let left = all.x + (all.w - width) * 0.5 + paper.across;
     let layout = paper.layout(all);
     let pixels = (width * p.scale()).round() as u32;
     let mut visible = Vec::new();
@@ -2078,6 +2115,31 @@ mod tests {
         tell.send(pdf::Answer::Found { found: vec![pdf::Found { page: 1, rects: Vec::new() }], ticket }).unwrap();
         view.answers();
         assert_eq!(paper(&mut view).found.len(), 1);
+    }
+
+    #[test]
+    fn a_document_zoomed_wider_than_the_window_moves_sideways() {
+        let (mut view, _tell, _asked) = reading();
+        let all = view.bounds;
+        // Fitted, it does not move.
+        view.input(&Input::Scroll { dx: 40.0, dy: 0.0 });
+        assert_eq!(paper(&mut view).across, 0.0);
+        for _ in 0..6 {
+            view.input(&key(Key::Char('='), "+"));
+        }
+        assert!(paper(&mut view).wide(all));
+        // A scroll to the right shows more of the right: the column goes left.
+        view.input(&Input::Scroll { dx: 40.0, dy: 0.0 });
+        assert_eq!(paper(&mut view).across, -40.0);
+        view.input(&key(Key::Right, ""));
+        assert_eq!(paper(&mut view).across, -130.0);
+        assert!(view.carousel.resting(), "the arrow moved the page, not to the next file");
+        // As far as its edge, and no further.
+        for _ in 0..100 {
+            view.input(&key(Key::Left, ""));
+        }
+        let room = paper(&mut view).across_room(all);
+        assert_eq!(paper(&mut view).across, room);
     }
 
     #[test]
