@@ -138,9 +138,11 @@ impl Bus {
             }
             // Each of the voice's channels to the output's of the same name; a mono voice to
             // the front two, as a voice from the middle.
+            // Only places the output has: a count of channels with no names of its own here (a
+            // device of four) is given the twelve's names, which run past its frame.
             let to: Vec<Vec<(usize, f32)>> = channel_names(own as u16)
                 .iter()
-                .map(|n| match names.iter().position(|m| m == n) {
+                .map(|n| match names.iter().position(|m| m == n).filter(|&i| i < channels as usize) {
                     Some(i) => vec![(i, 1.0)],
                     None if *n == "MONO" && channels >= 2 => vec![(0, std::f32::consts::FRAC_1_SQRT_2), (1, std::f32::consts::FRAC_1_SQRT_2)],
                     None => Vec::new(),
@@ -174,6 +176,15 @@ enum Going {
 }
 
 #[cfg(not(target_os = "linux"))]
+impl Going {
+    /// The machine's own sound device, which has the channels it has: a voice into it is made
+    /// for those, and does not ask for it to be opened again with more.
+    fn is_device(&self) -> bool {
+        matches!(self, Going::Device(_))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
 impl Drop for Going {
     fn drop(&mut self) {
         if let Going::Room(stop) = self {
@@ -192,6 +203,14 @@ unsafe impl Send for Going {}
 struct Going {
     child: std::process::Child,
     stop: std::sync::Arc<AtomicBool>,
+}
+
+#[cfg(target_os = "linux")]
+impl Going {
+    /// `pw-cat` takes whatever channels it is opened with, and the sink places them.
+    fn is_device(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -236,7 +255,7 @@ impl Sound {
         let own = crate::audio::nearest_placeable(wanted.max(1));
         let mut out = bus.out.lock().unwrap();
         let needed = covering(bus.voices.lock().unwrap().iter().map(|v| v.channels).chain([own]));
-        let fits = matches!(&*out, Some((_, _, channels)) if *channels == needed) && !bus.dead.load(Ordering::Relaxed);
+        let fits = matches!(&*out, Some((going, _, channels)) if *channels == needed || going.is_device()) && !bus.dead.load(Ordering::Relaxed);
         if !fits {
             // Closed first: the old output's thread stops before the new one starts.
             *out = None;
@@ -248,6 +267,14 @@ impl Sound {
             *out = Some((going, rate, channels));
         }
         let rate = out.as_ref().map_or(48_000, |(_, rate, _)| *rate);
+        // Into the machine's device (no room to hand the sound to), the voice is made for the
+        // device's own channels, and the decoder's resampler mixes the track down (or up) to them
+        // as FFmpeg mixes: a 5.1 film into a stereo device lost its centre -- the dialogue --
+        // its LFE and its rears, each placed only where the device had a channel of its name.
+        let own = match out.as_ref() {
+            Some((going, _, channels)) if going.is_device() => *channels,
+            _ => own,
+        };
         let inner = Sound::inner(rate, own);
         bus.voices.lock().unwrap().push(inner.clone());
         drop(out);
@@ -635,5 +662,30 @@ impl Stream {
     /// be quiet). What the output already has -- a few hundredths of a second -- is still heard.
     pub fn clear(&self) {
         self.sound.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A voice of more channels than an output whose count has no names here (a device of four)
+    /// is mixed into the channels it has, and nothing is written past them: it indexed past the
+    /// frame, and past the end of the buffer at its last.
+    #[test]
+    fn a_voice_is_mixed_only_into_the_channels_there_are() {
+        let bus = Bus::default();
+        let voice = Sound::inner(48_000, 6);
+        {
+            let mut waiting = voice.waiting.lock().unwrap();
+            let samples = vec![0.5f32; 6 * 64];
+            waiting.samples = samples.len();
+            waiting.blocks.push_back((samples, 0.0, 0));
+        }
+        bus.voices.lock().unwrap().push(voice);
+        let mut out = vec![0f32; 4 * 64];
+        bus.mix(&mut out, 4, Instant::now(), &mut Vec::new());
+        // FL, FR, FC and LFE are the device's four, by the names the twelve give them.
+        assert!(out.iter().all(|&v| (v - 0.5).abs() < 1e-6), "{:?}", &out[..8]);
     }
 }
