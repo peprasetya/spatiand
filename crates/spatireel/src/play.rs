@@ -37,6 +37,15 @@ pub enum Staging {
     Sky { half: bool, eyes: EyeLayout },
     /// In the window, as a view out from the middle of the sphere.
     Look { half: bool },
+    /// Nothing to see -- a file of sound alone -- so the window is the controls.
+    Sound,
+}
+
+impl Staging {
+    /// The window is the controls and nothing else.
+    fn controls_alone(self) -> bool {
+        matches!(self, Staging::Sky { .. } | Staging::Sound)
+    }
 }
 
 fn eyes_of(layout: &VideoLayout) -> EyeLayout {
@@ -163,7 +172,13 @@ fn fitted(aspect: f32) -> (u32, u32) {
 /// most of the machine.
 const EYE_MOST: (f32, f32) = (1920.0, 1080.0);
 
-/// `frame`, scaled down (never up) so that each eye of it fits [`EYE_MOST`].
+/// The least of a picture worth drawing into, per eye, across or down (whichever comes first):
+/// what the controls and the subtitles are drawn at. A small film's own frame (320 x 180) had
+/// them drawn at its size, blurred to nothing when the window was made large.
+const EYE_LEAST: (f32, f32) = (1280.0, 720.0);
+
+/// `frame`, scaled down so that each eye of it fits [`EYE_MOST`], or up so that it is no
+/// smaller than [`EYE_LEAST`].
 fn capped(frame: (u32, u32), eyes: EyeLayout) -> (u32, u32) {
     let (w, h) = (frame.0.max(2) as f32, frame.1.max(2) as f32);
     let (eye_w, eye_h) = match eyes {
@@ -171,7 +186,8 @@ fn capped(frame: (u32, u32), eyes: EyeLayout) -> (u32, u32) {
         EyeLayout::TopBottom => (w, h / 2.0),
         _ => (w, h),
     };
-    let scale = (EYE_MOST.0 / eye_w).min(EYE_MOST.1 / eye_h).min(1.0);
+    let up = (EYE_LEAST.0 / eye_w).min(EYE_LEAST.1 / eye_h).max(1.0);
+    let scale = (EYE_MOST.0 / eye_w).min(EYE_MOST.1 / eye_h).min(up);
     let even = |v: f32| (((v * scale) / 2.0).round() * 2.0).max(2.0) as u32;
     (even(w), even(h))
 }
@@ -405,7 +421,7 @@ impl Playing {
         // paused, the frame is what is being looked at.
         // `SPATIREEL_CONTROLS=stay` is for a picture of them: a snapshot is taken long after
         // they would have gone.
-        matches!(self.staging, Staging::Sky { .. })
+        self.staging.controls_alone()
             || self.menu.is_some()
             || self.clock.on(Instant::now())
             || std::env::var("SPATIREEL_CONTROLS").as_deref() == Ok("stay")
@@ -465,7 +481,9 @@ impl Playing {
 
     /// Put the windows the way this film, looked at this way, wants them.
     fn arrange(&mut self, app: &mut App, window: WindowId) {
-        let staging = staging(&self.layout, app.mode(), app.in_the_room(), self.sky_refused);
+        // A file with no pictures has only its controls to show.
+        let pictured = self.player.info().width > 0 && self.player.info().height > 0;
+        let staging = if pictured { staging(&self.layout, app.mode(), app.in_the_room(), self.sky_refused) } else { Staging::Sound };
         let (aspect, frame) = self.eye_shape();
         let (picture, shape) = match staging {
             // The file's own frame, and the window the shape of one eye of it.
@@ -477,8 +495,8 @@ impl Playing {
             }
             // With the film all round, the window is the controls -- and grows upwards from
             // its foot, which stays where it was, to hold the menu while that is open.
-            Staging::Sky { .. } if self.menu.is_some() => (CONTROLS_WITH_MENU, CONTROLS_WITH_MENU),
-            Staging::Sky { .. } => (CONTROLS_ALONE, CONTROLS_ALONE),
+            Staging::Sky { .. } | Staging::Sound if self.menu.is_some() => (CONTROLS_WITH_MENU, CONTROLS_WITH_MENU),
+            Staging::Sky { .. } | Staging::Sound => (CONTROLS_ALONE, CONTROLS_ALONE),
             Staging::Look { .. } => (fitted(16.0 / 9.0), fitted(16.0 / 9.0)),
         };
         let wanted = (staging, picture, shape, self.swapped);
@@ -603,9 +621,9 @@ impl Playing {
                 Staging::Window { .. } => this.screen.draw(gl, size, whole, [0.0, 0.0, 1.0, 1.0]),
                 Staging::OneEye => this.screen.draw(gl, size, whole, one_eye),
                 Staging::Look { half } => this.screen.look(gl, size, whole, one_eye, half, gaze),
-                Staging::Sky { .. } => {}
+                Staging::Sky { .. } | Staging::Sound => {}
             }
-            let alone = matches!(staging, Staging::Sky { .. });
+            let alone = staging.controls_alone();
             if !shown && !alone && cue.is_none() {
                 return;
             }
@@ -924,7 +942,7 @@ impl Playing {
                 // A press on the picture itself, with the controls on show (and not only just
                 // brought back by this same hand) and no menu being put away by it, may be a tap
                 // that puts them away; it never pauses or plays.
-                let alone = matches!(self.staging, Staging::Sky { .. });
+                let alone = self.staging.controls_alone();
                 let on_picture = !self.panel.contains(self.pointer.0, self.pointer.1);
                 let meant = was_shown && self.clock.settled(now) && !alone && !menu_was_open && on_picture;
                 self.tap = meant.then_some(self.pointer);
@@ -1043,6 +1061,10 @@ mod tests {
         assert_eq!(capped((1920, 2160), EyeLayout::TopBottom), (1920, 2160));
         // Smaller than that, it is left alone.
         assert_eq!(capped((1280, 720), EyeLayout::Mono), (1280, 720));
+        // Smaller still, it is drawn larger, for the controls' and the subtitles' sake.
+        assert_eq!(capped((320, 180), EyeLayout::Mono), (1280, 720));
+        assert_eq!(capped((180, 320), EyeLayout::Mono), (406, 720));
+        assert_eq!(capped((640, 180), EyeLayout::SideBySide), (2560, 720));
     }
 
     #[test]
