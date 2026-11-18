@@ -395,10 +395,25 @@ fn record(
     give_back: mpsc::Sender<usize>,
 ) -> Result<Duration, String> {
     let mut scratch: Vec<f32> = Vec::new();
-    let mut pump = |writer: &mut Writer, until: Duration| -> Result<(), String> {
+    // Per track: what was last written was silence for a stretch with nothing in it.
+    let mut silent = vec![false; sources.len()];
+    // **Sound that comes again after such a stretch is put where it began**, `now` less what is
+    // waiting of it, and not where the silence so far ends ([`LAG`] behind), which put it up to
+    // that much early.
+    let mut pump = |writer: &mut Writer, until: Duration, now: Duration| -> Result<(), String> {
         for (track, source) in sources.iter().enumerate() {
             let waiting = source.ring.available() / source.channels;
+            if silent[track] && waiting > 0 {
+                let begun = (now.as_secs_f64() * rate as f64) as i64 - waiting as i64;
+                let behind = begun - writer.audio_frames(track);
+                if behind > 0 {
+                    scratch.clear();
+                    scratch.resize(behind as usize * source.channels, 0.0);
+                    writer.audio(track, &scratch).map_err(|e| e.to_string())?;
+                }
+            }
             if waiting > 0 {
+                silent[track] = false;
                 scratch.resize(waiting * source.channels, 0.0);
                 source.ring.read(&mut scratch);
                 writer.audio(track, &scratch).map_err(|e| e.to_string())?;
@@ -410,6 +425,7 @@ fn record(
                 scratch.clear();
                 scratch.resize(behind as usize * source.channels, 0.0);
                 writer.audio(track, &scratch).map_err(|e| e.to_string())?;
+                silent[track] = true;
             }
         }
         Ok(())
@@ -429,14 +445,15 @@ fn record(
             Ok(Message::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        pump(writer, started.elapsed())?;
+        let now = started.elapsed();
+        pump(writer, now, now)?;
     }
     let ended = started.elapsed();
     for packet in encoder.finish().map_err(|e| e.to_string())? {
         writer.video(&packet).map_err(|e| e.to_string())?;
     }
     // Whatever sound is still waiting, and then the last of each track up to the end.
-    pump(writer, ended + LAG)?;
+    pump(writer, ended + LAG, ended)?;
     Ok(ended)
 }
 

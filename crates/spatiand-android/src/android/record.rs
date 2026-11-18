@@ -61,6 +61,8 @@ struct Sound {
     ring: Arc<Ring>,
     /// Frames written, which is also the track's clock.
     frames: u64,
+    /// What was last written was silence for a stretch with nothing in it.
+    silent: bool,
 }
 
 /// A recording in progress.
@@ -120,14 +122,15 @@ impl Recorder {
             }
         };
         let sounds = vec![
-            Sound { title: "What you heard (binaural stereo, after the HRTF)", channels: 2, ring: heard.clone(), frames: 0 },
+            Sound { title: "What you heard (binaural stereo, after the HRTF)", channels: 2, ring: heard.clone(), frames: 0, silent: false },
             Sound {
                 title: "Surround 7.1.4, before the HRTF (FL FR FC LFE BL BR SL SR TFL TFR TBL TBR)",
                 channels: spatiand_audio::server::SURROUND_CHANNELS,
                 ring: surround.clone(),
                 frames: 0,
+                silent: false,
             },
-            Sound { title: "Microphone", channels: 1, ring: mic, frames: 0 },
+            Sound { title: "Microphone", channels: 1, ring: mic, frames: 0, silent: false },
         ];
 
         // --- the file ---
@@ -338,9 +341,10 @@ fn record(
 
         // --- sound ---
         if let Some(w) = writer.as_mut() {
-            let clock = if stopping { ended_at } else { started.elapsed().saturating_sub(LAG) };
+            let now = if stopping { ended_at } else { started.elapsed() };
+            let clock = if stopping { ended_at } else { now.saturating_sub(LAG) };
             for (i, sound) in sounds.iter_mut().enumerate() {
-                pump(w, i + 2, sound, clock, stopping).map_err(|e| e.to_string())?;
+                pump(w, i + 2, sound, clock, now, stopping).map_err(|e| e.to_string())?;
             }
         }
 
@@ -357,7 +361,7 @@ fn record(
         return Err("nothing was recorded".into());
     };
     for (i, sound) in sounds.iter_mut().enumerate() {
-        pump(&mut w, i + 2, sound, ended_at, true).map_err(|e| e.to_string())?;
+        pump(&mut w, i + 2, sound, ended_at, ended_at, true).map_err(|e| e.to_string())?;
     }
     w.finish(ended_at.as_millis() as i64).map_err(|e| e.to_string())?;
     drop(video);
@@ -367,8 +371,23 @@ fn record(
 /// Write what one track's ring holds, in blocks of at least 20 ms, and silence for any stretch
 /// the clock has passed with nothing in it -- a microphone that started late, an output that
 /// played nothing -- so every track stays with the picture.
-fn pump(w: &mut super::mkv::Writer, track: usize, sound: &mut Sound, clock: Duration, all: bool) -> std::io::Result<()> {
+///
+/// **Sound that comes again after such a stretch is put where it began**, `now` less what is
+/// waiting of it, and not where the silence so far ends (`clock`, [`LAG`] behind `now`), which
+/// put it up to that much early.
+fn pump(w: &mut super::mkv::Writer, track: usize, sound: &mut Sound, clock: Duration, now: Duration, all: bool) -> std::io::Result<()> {
     let block = RATE as usize / 50;
+    let waiting = (sound.ring.available() / sound.channels) as u64;
+    if sound.silent && waiting > 0 {
+        let begun = ((now.as_secs_f64() * RATE as f64) as u64).saturating_sub(waiting);
+        while sound.frames < begun {
+            let frames = ((begun - sound.frames) as usize).min(RATE as usize / 5);
+            let ms = (sound.frames * 1000 / RATE as u64) as i64;
+            w.audio(track, ms, &vec![0f32; frames * sound.channels])?;
+            sound.frames += frames as u64;
+        }
+        sound.silent = false;
+    }
     loop {
         let waiting = sound.ring.available() / sound.channels;
         if waiting == 0 || (waiting < block && !all) {
@@ -380,6 +399,7 @@ fn pump(w: &mut super::mkv::Writer, track: usize, sound: &mut Sound, clock: Dura
         let ms = (sound.frames * 1000 / RATE as u64) as i64;
         w.audio(track, ms, &samples)?;
         sound.frames += frames as u64;
+        sound.silent = false;
     }
     let due = (clock.as_secs_f64() * RATE as f64) as u64;
     while sound.frames < due {
@@ -387,6 +407,7 @@ fn pump(w: &mut super::mkv::Writer, track: usize, sound: &mut Sound, clock: Dura
         let ms = (sound.frames * 1000 / RATE as u64) as i64;
         w.audio(track, ms, &vec![0f32; frames * sound.channels])?;
         sound.frames += frames as u64;
+        sound.silent = true;
     }
     Ok(())
 }

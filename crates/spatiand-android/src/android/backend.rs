@@ -2318,6 +2318,14 @@ pub fn run(
             display.flush_clients()?;
             event_loop.dispatch(Some(Duration::ZERO), runtime)?;
         }
+        // **The window has gone (or the glasses, or the session is ending): a recording going
+        // is stopped properly**, giving back its GL objects (on the Mac its IOSurfaces) while
+        // the context they belong to is still here; dropped, they leaked. The file is finished
+        // by its thread either way.
+        if let Some(r) = recorder.take() {
+            r.stop(&mut renderer);
+            shell.set_recording(false);
+        }
     }
 
     if let Some(x) = hmd.as_mut() {
