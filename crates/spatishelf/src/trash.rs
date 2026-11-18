@@ -445,9 +445,11 @@ pub fn top_can(top: &Path, android: bool) -> Can {
     Can { root: top.join(format!(".Trash-{}", uid())), top: Some(top.to_path_buf()) }
 }
 
-/// The top of the disk `path` is on: the last folder up from it on the same disk.
+/// The top of the disk `path` is on: the last folder up from it on the same disk. A link is on
+/// the disk it is on, not the one it leads to: it is the link that is put in the trash.
 pub fn top_of(path: &Path) -> Option<PathBuf> {
-    let dev = device(path)?;
+    use std::os::unix::fs::MetadataExt;
+    let dev = path.symlink_metadata().ok().map(|m| m.dev())?;
     let mut at = path.parent()?.to_path_buf();
     if device(&at) != Some(dev) {
         return Some(path.to_path_buf());
@@ -856,6 +858,17 @@ mod tests {
             assert_eq!(top_of(Path::new("/proc/cpuinfo")), Some(PathBuf::from("/proc")));
         }
         assert_eq!(top_of(Path::new("/no/such/thing")), None);
+        // A link to another disk is on its own: not the top of a disk, and one leading nowhere
+        // has a disk too.
+        let dir = scratch("toplink");
+        std::os::unix::fs::symlink("/proc/cpuinfo", dir.join("cpu")).unwrap();
+        std::os::unix::fs::symlink("/no/such/thing", dir.join("nowhere")).unwrap();
+        let top = top_of(&dir).unwrap();
+        if Path::new("/proc/cpuinfo").exists() {
+            assert_eq!(top_of(&dir.join("cpu")), Some(top.clone()));
+        }
+        assert_eq!(top_of(&dir.join("nowhere")), Some(top));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
