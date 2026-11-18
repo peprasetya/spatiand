@@ -102,19 +102,96 @@ fn rgba_of(data: &gltf::image::Data) -> Option<Vec<u8>> {
     .filter(|rgba: &Vec<u8>| rgba.len() == pixels * 4)
 }
 
+/// The most any one file a .gltf names beside itself may be: a buffer or a picture.
+const NAMED_FILE_BYTES: u64 = 2 << 30;
+
+/// How deep the nodes may hang from one another, and how many may be visited all told: a node
+/// that is its own child, or children shared over and over, is a file that never ends.
+const NODE_DEPTH: usize = 64;
+const NODE_VISITS: usize = 100_000;
+
+/// `%41` as `A`: what a URI's path is as a file's name. `None` if it is not text then.
+fn unescaped(uri: &str) -> Option<String> {
+    let bytes = uri.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Whether the files a .gltf names -- its buffers and pictures -- are files in its own folder or
+/// below it: what it is opened for is to show an object, not to read whatever path it names
+/// (`/dev/zero`, a key in the home folder), and a name gltf cannot decode would panic in it.
+fn named_files_are_its_own(document: &gltf::Document, folder: &Path) -> Result<(), String> {
+    let own = folder.canonicalize().map_err(|e| format!("{}: {e}", folder.display()))?;
+    let buffers = document.buffers().filter_map(|b| match b.source() {
+        gltf::buffer::Source::Uri(uri) => Some(uri),
+        gltf::buffer::Source::Bin => None,
+    });
+    let images = document.images().filter_map(|i| match i.source() {
+        gltf::image::Source::Uri { uri, .. } => Some(uri),
+        gltf::image::Source::View { .. } => None,
+    });
+    for uri in buffers.chain(images) {
+        if uri.starts_with("data:") {
+            continue;
+        }
+        if uri.contains(':') {
+            return Err(if uri.starts_with("file:") { "it points at a file elsewhere on this machine".into() } else { "it points at files on the network".into() });
+        }
+        let name = unescaped(uri).ok_or("it names a file that is not a file's name")?;
+        let at = folder.join(&name).canonicalize().map_err(|_| format!("{name}, which it needs, is not there"))?;
+        if !at.starts_with(&own) {
+            return Err(format!("it points at {name}, outside its own folder"));
+        }
+        let meta = std::fs::metadata(&at).map_err(|e| format!("{name}: {e}"))?;
+        if !meta.is_file() {
+            return Err(format!("it points at {name}, which is not a file"));
+        }
+        if meta.len() > NAMED_FILE_BYTES {
+            return Err(format!("{name} is too large"));
+        }
+    }
+    Ok(())
+}
+
+/// The document, its buffers and its pictures. A remote's object is read whole and taken apart in
+/// memory: a GLB carries everything it needs; a .gltf that points at other files can only be
+/// opened from this machine, and only files beside it.
+fn import(path: &Path) -> Result<(gltf::Document, Vec<gltf::buffer::Data>, Vec<gltf::image::Data>), String> {
+    let words = |e: gltf::Error| match e {
+        gltf::Error::UnsupportedScheme => "it points at files on the network".to_string(),
+        gltf::Error::ExternalReferenceInSliceImport => "it points at other files, which are only read from this machine".to_string(),
+        gltf::Error::Validation(_) => "it is not a well-formed glTF file".to_string(),
+        e => e.to_string(),
+    };
+    let remote = crate::place::remote(path).is_some();
+    let bytes = crate::place::read(path)?;
+    let gltf::Gltf { document, blob } = gltf::Gltf::from_slice(&bytes).map_err(words)?;
+    drop(bytes);
+    let folder = if remote { None } else { Some(path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."))) };
+    if let Some(folder) = folder {
+        named_files_are_its_own(&document, folder)?;
+    }
+    let buffers = gltf::import_buffers(&document, folder, blob).map_err(words)?;
+    let images = gltf::import_images(&document, folder, &buffers).map_err(words)?;
+    Ok((document, buffers, images))
+}
+
 impl Scene {
     pub fn read(path: &Path) -> Result<Scene, String> {
         // A remote's object is read whole and taken apart in memory: a GLB carries everything
         // it needs; a .gltf that points at other files can only be opened from this machine.
-        let imported = match crate::place::remote(path) {
-            Some(_) => crate::place::read(path).map_err(|e| gltf::Error::Io(std::io::Error::other(e))).and_then(|bytes| gltf::import_slice(&bytes)),
-            None => gltf::import(path),
-        };
-        let (document, buffers, images) = imported.map_err(|e| match e {
-            gltf::Error::UnsupportedScheme => "it points at files on the network".to_string(),
-            gltf::Error::Validation(_) => "it is not a well-formed glTF file".to_string(),
-            e => e.to_string(),
-        })?;
+        let (document, buffers, images) = import(path)?;
         for required in document.extensions_required() {
             if !["KHR_materials_emissive_strength", "KHR_materials_unlit", "KHR_texture_transform", "KHR_mesh_quantization"].contains(&required) {
                 return Err(format!("it needs {required}, which SpatiLoupe does not read"));
@@ -193,11 +270,16 @@ impl Scene {
         let mut pieces = Vec::new();
         let (mut low, mut high) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
         let scene = document.default_scene().or_else(|| document.scenes().next()).ok_or("there is nothing in it")?;
-        let mut stack: Vec<(gltf::Node, Mat4)> = scene.nodes().map(|n| (n, Mat4::IDENTITY)).collect();
-        while let Some((node, parent)) = stack.pop() {
+        let mut stack: Vec<(gltf::Node, Mat4, usize)> = scene.nodes().map(|n| (n, Mat4::IDENTITY, 0)).collect();
+        let mut visits = 0usize;
+        while let Some((node, parent, depth)) = stack.pop() {
+            visits += 1;
+            if depth > NODE_DEPTH || visits > NODE_VISITS {
+                return Err("its nodes never end: one is inside itself, or they are shared over and over".into());
+            }
             let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
             for child in node.children() {
-                stack.push((child, world));
+                stack.push((child, world, depth + 1));
             }
             let Some(mesh) = node.mesh() else { continue };
             for primitive in mesh.primitives() {
@@ -834,6 +916,57 @@ mod tests {
         for n in normals {
             assert!((Vec3::from(n) - Vec3::Y).length() < 1e-5, "{n:?}");
         }
+    }
+
+    /// A .gltf of one triangle, its buffer at `uri`, its one node's children `children`.
+    fn triangle(uri: &str, children: &str) -> String {
+        format!(
+            r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],
+            "nodes":[{{"mesh":0{children}}}],
+            "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}}}}]}}],
+            "buffers":[{{"uri":"{uri}","byteLength":36}}],
+            "bufferViews":[{{"buffer":0,"byteLength":36}}],
+            "accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}}]}}"#
+        )
+    }
+
+    fn corners() -> Vec<u8> {
+        [0.0f32, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0].iter().flat_map(|f| f.to_le_bytes()).collect()
+    }
+
+    fn folder(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("spatiloupe-model-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_object_reads_the_files_beside_it_and_none_elsewhere() {
+        let dir = folder("files");
+        std::fs::create_dir_all(dir.join("object/parts")).unwrap();
+        std::fs::write(dir.join("object/parts/corners.bin"), corners()).unwrap();
+        std::fs::write(dir.join("outside.bin"), corners()).unwrap();
+        let object = dir.join("object");
+        std::fs::write(object.join("beside.gltf"), triangle("parts/corners.bin", "")).unwrap();
+        assert_eq!(Scene::read(&object.join("beside.gltf")).map(|s| s.triangles), Ok(1));
+        // Up and out of its folder, by name or by path, and something that is not a file.
+        for (name, uri) in [("up.gltf", "../outside.bin"), ("absolute.gltf", "/dev/zero"), ("named.gltf", "file:///dev/zero"), ("folder.gltf", "parts"), ("broken.gltf", "%FF%FE")] {
+            std::fs::write(object.join(name), triangle(uri, "")).unwrap();
+            let read = Scene::read(&object.join(name)).map(|s| s.triangles);
+            assert!(read.is_err(), "{uri}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_node_inside_itself_is_an_error_not_a_walk_for_ever() {
+        let dir = folder("cycle");
+        std::fs::write(dir.join("corners.bin"), corners()).unwrap();
+        std::fs::write(dir.join("cycle.gltf"), triangle("corners.bin", r#","children":[0]"#)).unwrap();
+        let read = Scene::read(&dir.join("cycle.gltf")).map(|s| s.triangles);
+        assert!(read.as_ref().is_err_and(|e| e.contains("never end")), "{read:?}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
