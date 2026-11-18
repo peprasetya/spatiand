@@ -17,7 +17,9 @@
 //  **Found by what is observed, not by reading the switch**: where macOS keeps it is not
 //  documented, and no preference domain on macOS 27 holds it (com.apple.ncprefs is gone). So
 //  Notification Center's own log is read (`log show`, which an ordinary user may run) for banners
-//  muted since the app started, every few minutes until one is found or the reminder is put away.
+//  muted since the previous look (never before the app started): every 3 minutes, every 30 after
+//  ten looks found nothing, until one is found or the reminder is put away. Only a banner muted
+//  in the latest look reminds, so one from before the switch was turned on does not.
 //  The Settings window keeps its plain line about the switch either way.
 //
 //  With the glasses on (Room.inGlasses) the alert would be on a screen the wearer does not see:
@@ -30,9 +32,15 @@ import AppKit
 import CSpatiand
 
 enum NotificationReminder {
-    /// How often the log is looked at.
-    private static let every: TimeInterval = 180
+    /// How often the log is looked at at first, and after this many looks that found nothing.
+    static let every: TimeInterval = 180
+    static let backedOff: TimeInterval = 1800
+    static let cleanBeforeBackingOff = 10
+    /// How far a look reaches back before the previous one, so that nothing falls between two.
+    static let margin: TimeInterval = 15
     private static var started = Date()
+    private static var lastLook: Date?
+    private static var clean = 0
     private static var done = false
     private static var timer: Timer?
 
@@ -40,18 +48,41 @@ enum NotificationReminder {
     static func start() {
         started = Date()
         guard !Settings.mirroringReminderDeclined else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: every, repeats: true) { _ in look() }
         // A first look a minute in, once the virtual screen and the room have settled.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 60) { look() }
+        schedule(after: 60)
+    }
+
+    /// Where a look begins: only the time since the previous look (with a small margin), never
+    /// before the app's start. So a banner muted before the wearer turned the switch on, or
+    /// before the app was started, does not bring the reminder, and a look never scans more
+    /// than one interval of the log.
+    static func lookStart(previous: Date?, started: Date) -> Date {
+        guard let previous else { return started }
+        return max(started, previous.addingTimeInterval(-margin))
+    }
+
+    /// How long until the next look, after `clean` looks in a row that found nothing.
+    static func delay(afterClean clean: Int) -> TimeInterval {
+        clean < cleanBeforeBackingOff ? every : backedOff
+    }
+
+    private static func schedule(after seconds: TimeInterval) {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: false) { _ in look() }
     }
 
     private static func look() {
         guard !done, !Settings.mirroringReminderDeclined else { stop(); return }
-        let minutes = max(1, Int(Date().timeIntervalSince(started) / 60) + 1)
+        let now = Date()
+        let from = lookStart(previous: lastLook, started: started)
+        lastLook = now
         DispatchQueue.global(qos: .utility).async {
-            let muted = mutedSince(minutes: minutes)
+            let muted = muted(from: from)
             DispatchQueue.main.async {
-                if muted && !done && !Settings.mirroringReminderDeclined { remind() }
+                guard !done, !Settings.mirroringReminderDeclined else { stop(); return }
+                if muted { remind(); return }
+                clean += 1
+                schedule(after: delay(afterClean: clean))
             }
         }
     }
@@ -61,12 +92,21 @@ enum NotificationReminder {
         timer = nil
     }
 
-    /// Whether Notification Center's log has a banner muted because a display is shared in the
-    /// last `minutes`.
-    static func mutedSince(minutes: Int) -> Bool {
+    /// `log show --start`'s form of a moment: local time, to the second.
+    static func logTime(_ date: Date) -> String {
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.timeZone = .current
+        format.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return format.string(from: date)
+    }
+
+    /// Whether Notification Center's log has a banner muted because a display is shared since
+    /// `from`.
+    static func muted(from: Date) -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
-        process.arguments = ["show", "--last", "\(minutes)m", "--style", "compact", "--predicate",
+        process.arguments = ["show", "--start", logTime(from), "--style", "compact", "--predicate",
                              "process == \"NotificationCenter\" AND eventMessage CONTAINS \"muted by display state (displayShared)\""]
         let out = Pipe()
         process.standardOutput = out
@@ -104,9 +144,12 @@ enum NotificationReminder {
         let alert = NSAlert()
         alert.messageText = "Notifications are hidden while Spatiand runs"
         alert.informativeText = "macOS shows no notification banner while a display is mirrored or shared, and Spatiand\u{2019}s virtual screen counts as shared. So notifications from this Mac\u{2019}s apps cannot be shown in the room, nor on another device this Mac is used from.\n\nTurn on System Settings \u{203A} Notifications \u{203A} \u{201C}Allow notifications when mirroring or sharing the display\u{201D}."
-        alert.addButton(withTitle: "Open Notifications Settings")
+        let open = alert.addButton(withTitle: "Open Notifications Settings")
         alert.addButton(withTitle: "Don\u{2019}t Remind Me")
-        alert.addButton(withTitle: "Not Now")
+        let notNow = alert.addButton(withTitle: "Not Now")
+        // Return answers Not Now: a Return typed for something else opens nothing.
+        open.keyEquivalent = ""
+        notNow.keyEquivalent = "\r"
         NSApp.activate(ignoringOtherApps: true)
         let answer = alert.runModal()
         if answer == .alertSecondButtonReturn {

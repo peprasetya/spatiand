@@ -655,6 +655,28 @@ if CommandLine.arguments.contains("--selftest-notice-room") {
     application.run()
 }
 
+if CommandLine.arguments.contains("--selftest-reminder") {
+    // NotificationReminder's arithmetic: which stretch of the log each look reads, and how often.
+    let start = Date(timeIntervalSince1970: 1_000_000)
+    var failed = 0
+    func check(_ ok: Bool, _ what: String) { print("\(ok ? "PASSED" : "FAILED"): \(what)"); if !ok { failed += 1 } }
+    check(NotificationReminder.lookStart(previous: nil, started: start) == start, "the first look reads from the app's start")
+    let previous = start.addingTimeInterval(3600)
+    check(NotificationReminder.lookStart(previous: previous, started: start) == previous.addingTimeInterval(-NotificationReminder.margin),
+          "a later look reads only since the previous one, with the margin")
+    check(NotificationReminder.lookStart(previous: start.addingTimeInterval(5), started: start) == start, "never before the app's start")
+    check(NotificationReminder.delay(afterClean: 1) == NotificationReminder.every, "every 3 minutes at first")
+    check(NotificationReminder.delay(afterClean: NotificationReminder.cleanBeforeBackingOff - 1) == NotificationReminder.every, "still 3 minutes before backing off")
+    check(NotificationReminder.delay(afterClean: NotificationReminder.cleanBeforeBackingOff) == NotificationReminder.backedOff, "every 30 minutes after ten clean looks")
+    check(NotificationReminder.logTime(start).count == 19, "log show's time form: \(NotificationReminder.logTime(start))")
+    check(NotificationReminder.mutedIn("2026-11-18 10:00:00.0 Df NotificationCenter[512:1] banner muted by display state (displayShared)"), "a muted line is found")
+    check(!NotificationReminder.mutedIn("Filtering the log data using \"eventMessage CONTAINS muted by display state (displayShared)\""), "log's own predicate line is not")
+    // The real log since a minute ago, read as a look does (true or false, but no hang).
+    let read = NotificationReminder.muted(from: Date().addingTimeInterval(-60))
+    print("the last minute's log: \(read ? "muted banners" : "none muted")")
+    exit(failed == 0 ? 0 : 1)
+}
+
 if CommandLine.arguments.contains("--selftest-notice") {
     // Post a notification of our own and say what is read of the banner it makes.
     let script = Process()
