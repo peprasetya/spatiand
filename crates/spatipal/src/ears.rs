@@ -135,6 +135,8 @@ enum Said {
     Phrase { job: u64, drafted: bool, samples: Vec<i16>, began: Instant, ended: Instant },
     /// Whisper's text for a job.
     Written { job: u64, text: Result<(String, f32), String> },
+    /// The microphone's thread has ended: the ears were stopped, or the room's microphone closed.
+    Closed,
 }
 
 /// Start listening to `microphone` (16 kHz mono 16-bit, from the room).
@@ -156,8 +158,14 @@ pub fn start(
     let busy = voice.clone();
     std::thread::Builder::new()
         .name("ears".into())
-        .spawn(move || cut(microphone, busy, stopped, said_tx))
+        .spawn(move || {
+            cut(microphone, busy, stopped, said_tx.clone());
+            // The judge holds a sender to its own channel (for Whisper's helpers), so the
+            // channel never ends by itself: it is told.
+            let _ = said_tx.send(Said::Closed);
+        })
         .expect("a thread for the ears");
+    let judge_stopped = stop.clone();
 
     let listen_once = once.clone();
     std::thread::Builder::new()
@@ -171,6 +179,7 @@ pub fn start(
                 voice,
                 conversation,
                 once: listen_once,
+                stopped: judge_stopped,
                 heard,
                 wake: Box::new(wake),
                 written_tx: written,
@@ -357,6 +366,8 @@ struct Judge {
     voice: Voice,
     conversation: Arc<Conversation>,
     once: Arc<AtomicBool>,
+    /// The ears were stopped: nothing more is told.
+    stopped: Arc<AtomicBool>,
     heard: Sender<Heard>,
     wake: Box<dyn Fn() + Send>,
     /// For Whisper's helpers to answer by.
@@ -379,7 +390,13 @@ struct Judge {
 impl Judge {
     fn run(&mut self, said: Receiver<Said>) {
         while let Ok(next) = said.recv() {
+            // Stopped (dropped, or started again with other settings): a phrase still being
+            // written is not this one's to tell.
+            if self.stopped.load(Ordering::Relaxed) {
+                return;
+            }
             let listened = match next {
+                Said::Closed => return,
                 Said::Began => {
                     self.hearing = true;
                     self.tell(Heard::Ear(Ear::Hearing))
