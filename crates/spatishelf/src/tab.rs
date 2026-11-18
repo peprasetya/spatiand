@@ -243,17 +243,44 @@ fn is_dir(place: &Place, storage: &Storage) -> bool {
     }
 }
 
-/// A name in `folder` not yet taken: "a.jpg", then "a 2.jpg", "a 3.jpg".
+/// A name in `folder` not yet taken: "a.jpg", then "a 2.jpg", "a 3.jpg". Something there by
+/// the name is anything at all, a link that leads nowhere included.
 fn free_name(folder: &Path, name: &str) -> PathBuf {
-    let first = folder.join(name);
-    if !first.exists() {
-        return first;
+    folder.join(free_among(name, |n| Ok::<_, ()>(folder.join(n).symlink_metadata().is_ok())).unwrap_or_else(|_| name.to_string()))
+}
+
+/// The first of "a.jpg", "a 2.jpg", "a 3.jpg" that `taken` says is free; its error if it
+/// cannot say.
+fn free_among<E>(name: &str, mut taken: impl FnMut(&str) -> Result<bool, E>) -> Result<String, E> {
+    if !taken(name)? {
+        return Ok(name.to_string());
     }
     let (stem, ending) = match name.rsplit_once('.') {
         Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
         _ => (name.to_string(), String::new()),
     };
-    (2..).map(|n| folder.join(format!("{stem} {n}{ending}"))).find(|p| !p.exists()).unwrap()
+    for n in 2.. {
+        let candidate = format!("{stem} {n}{ending}");
+        if !taken(&candidate)? {
+            return Ok(candidate);
+        }
+    }
+    unreachable!()
+}
+
+/// What is at a place, if anything: a remote's asked with `operations/stat`, whose `item` is
+/// null when nothing is there (rclone's StatJSON, a missing folder on the way included); this
+/// machine's by lstat, so that a link leading nowhere is something.
+fn found(place: &Place, storage: &Storage) -> Result<Option<serde_json::Value>, String> {
+    match place {
+        Place::Trash => Ok(None),
+        Place::Local(p) => Ok(Path::new(p).symlink_metadata().ok().map(|_| json!({"Name": place.name()}))),
+        Place::Remote(..) => {
+            let (fs, name) = fs_and_name(place);
+            let answer = storage.rc("operations/stat", json!({"fs": fs, "remote": name}))?;
+            Ok(answer.get("item").filter(|i| !i.is_null()).cloned())
+        }
+    }
 }
 
 /// A thing copied as it is: a folder with what is in it, a link as the link it is -- not what
@@ -333,6 +360,9 @@ fn transfer(item: &Place, into: &Place, moving: bool, storage: &Mutex<Option<Sto
     let storage = storage_or(storage)?;
     let dir = is_dir(item, &storage);
     let what = format!("{} {name}", if moving { "Moving" } else { "Copying" });
+    // Beside what is there by the name already, numbered, as on this machine: rclone's copies
+    // and moves write over a file of the name and merge into a folder of it.
+    let name = free_among(&name, |n| found(&into.join(n), &storage).map(|f| f.is_some()))?;
     if dir {
         let target = whole(&into.join(&name));
         let method = if moving { "sync/move" } else { "sync/copy" };
@@ -406,16 +436,32 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
                 Place::Trash => Err("The Trash keeps its name.".into()),
                 Place::Local(p) => {
                     let to = Path::new(p).with_file_name(&name);
-                    if to.exists() {
-                        return Err(format!("There is already something called {name} here."));
+                    // Anything by the name, a link leading nowhere too -- unless it is the thing
+                    // itself, found by another case of its name on a disk that does not tell
+                    // them apart (Photo.jpg to photo.jpg).
+                    use std::os::unix::fs::MetadataExt;
+                    let same = |a: &std::fs::Metadata, b: &std::fs::Metadata| a.dev() == b.dev() && a.ino() == b.ino();
+                    if let Ok(there) = to.symlink_metadata() {
+                        if !Path::new(p).symlink_metadata().is_ok_and(|own| same(&own, &there)) {
+                            return Err(format!("There is already something called {name} here."));
+                        }
                     }
                     std::fs::rename(p, to).map_err(|e| e.to_string())
                 }
                 Place::Remote(..) => {
                     let storage = storage_or(storage)?;
                     let (fs, old) = fs_and_name(&item);
+                    // rclone's moves write over a file of the name and merge into a folder of
+                    // it: refused, as here. A remote that does not tell cases apart finds the
+                    // thing itself by its new case, and says its own name for it.
+                    let parent = item.parent().unwrap_or(item.clone());
+                    if let Some(there) = found(&parent.join(&name), &storage)? {
+                        let itself = name.to_lowercase() == old.to_lowercase() && there.get("Name").and_then(|n| n.as_str()) == Some(old.as_str());
+                        if !itself {
+                            return Err(format!("There is already something called {name} here."));
+                        }
+                    }
                     if is_dir(&item, &storage) {
-                        let parent = item.parent().unwrap_or(item.clone());
                         rclone_job(&storage, "sync/move", json!({"srcFs": whole(&item), "dstFs": whole(&parent.join(&name)), "deleteEmptySrcDirs": true}), "Renaming", report)
                     } else {
                         storage.rc("operations/movefile", json!({"srcFs": fs, "srcRemote": old, "dstFs": fs, "dstRemote": name})).map(|_| ())
@@ -602,6 +648,35 @@ mod tests {
         std::fs::write(dir.join("a 2.jpg"), b"").unwrap();
         assert_eq!(free_name(&dir, "a.jpg"), dir.join("a 3.jpg"));
         assert_eq!(free_name(&dir, "b.jpg"), dir.join("b.jpg"));
+        // A link that leads nowhere is something there.
+        std::os::unix::fs::symlink("/no/such/thing", dir.join("c.jpg")).unwrap();
+        assert_eq!(free_name(&dir, "c.jpg"), dir.join("c 2.jpg"));
+        let _ = std::fs::remove_dir_all(&dir);
+        // A remote's, as the storage service answers, and its error when it cannot.
+        let there = ["Film.mkv", "Film 2.mkv", "Notes"];
+        assert_eq!(free_among("Film.mkv", |n| Ok::<_, String>(there.contains(&n))), Ok("Film 3.mkv".into()));
+        assert_eq!(free_among("Notes", |n| Ok::<_, String>(there.contains(&n))), Ok("Notes 2".into()));
+        assert_eq!(free_among("new.txt", |n| Ok::<_, String>(there.contains(&n))), Ok("new.txt".into()));
+        assert_eq!(free_among("Film.mkv", |_| Err::<bool, _>("no answer".to_string())), Err("no answer".into()));
+    }
+
+    #[test]
+    fn a_rename_takes_no_name_already_there() {
+        let dir = std::env::temp_dir().join(format!("spatishelf-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), b"a").unwrap();
+        std::fs::write(dir.join("b.txt"), b"b").unwrap();
+        std::os::unix::fs::symlink("/no/such/thing", dir.join("dangling")).unwrap();
+        let kept = Mutex::new(None);
+        let place = |p: &str| Place::Local(dir.join(p).to_string_lossy().into_owned());
+        let mut quiet = |_: u64, _: u64, _: &str| {};
+        assert!(run_op(Op::Rename { item: place("a.txt"), name: "b.txt".into() }, &kept, &mut quiet).is_err());
+        assert!(run_op(Op::Rename { item: place("a.txt"), name: "dangling".into() }, &kept, &mut quiet).is_err(), "a link leading nowhere is not replaced");
+        assert!(dir.join("dangling").symlink_metadata().unwrap().file_type().is_symlink());
+        // Only its case changed: itself, not something else there.
+        run_op(Op::Rename { item: place("a.txt"), name: "A.txt".into() }, &kept, &mut quiet).unwrap();
+        assert_eq!(std::fs::read(dir.join("A.txt")).unwrap(), b"a");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
