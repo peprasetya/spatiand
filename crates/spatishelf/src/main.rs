@@ -1477,6 +1477,13 @@ impl Shelf {
                 }
                 return;
             }
+            // A key the field took without changing its words (Backspace at its start, Delete
+            // at its end, Control-A, -C, Left) is the field's still, not the folder's: it would
+            // go up, trash, or choose and copy files. Up, Down and the page keys move in what is
+            // found.
+            if self.filter_field.focused && matches!(input, Input::Key { key, .. } if !matches!(key, Key::Up | Key::Down | Key::PageUp | Key::PageDown)) {
+                return;
+            }
         }
         if let Input::Key { key, text, modifiers } = &input {
             self.key(*key, text.as_deref().unwrap_or(""), *modifiers);
