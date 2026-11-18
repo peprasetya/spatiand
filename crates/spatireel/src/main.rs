@@ -458,8 +458,11 @@ impl Reel {
             // are laid out again at the new size. Not while a film is in the window: its picture
             // is the film's own, which the room or the Mac scales to fit.
             Event::Resized { window, width, height } if *window == self.window => {
-                self.home_size = ((*width).max(640), (*height).max(400));
+                // The library's size is the wearer's only when it is the library that was
+                // resized: a film's window resized is the film's, and the library came back
+                // at that shape.
                 if self.playing.is_none() {
+                    self.home_size = ((*width).max(640), (*height).max(400));
                     self.app.resize(self.window, self.home_size);
                 }
             }
