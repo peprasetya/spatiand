@@ -66,12 +66,13 @@ pub fn source(path: &Path) -> String {
     }
 }
 
-/// A folder's things: (name to show, where it is, is a folder, bytes). Where it is is the
-/// system's own name for it: a name that is not UTF-8 is shown as near as it can be, and opened
-/// by what it is.
-pub fn list(folder: &Path) -> Result<Vec<(String, PathBuf, bool, u64)>, String> {
+/// A folder's things: (name to show, where it is, is a folder, bytes, when it was last changed).
+/// Where it is is the system's own name for it: a name that is not UTF-8 is shown as near as it
+/// can be, and opened by what it is. When it was changed is only to be compared: a remote's own
+/// words for it (rclone's ModTime), or this machine's time as seconds and nanoseconds.
+pub fn list(folder: &Path) -> Result<Vec<(String, PathBuf, bool, u64, String)>, String> {
     match remote(folder) {
-        Some((r, p)) => Ok(storage()?.list(&r, &p)?.into_iter().map(|e| (e.name.clone(), join(folder, &e.name), e.is_dir, e.size.max(0) as u64)).collect()),
+        Some((r, p)) => Ok(storage()?.list(&r, &p)?.into_iter().map(|e| (e.name.clone(), join(folder, &e.name), e.is_dir, e.size.max(0) as u64, e.modified)).collect()),
         None => {
             let read = std::fs::read_dir(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
             Ok(read
@@ -79,10 +80,19 @@ pub fn list(folder: &Path) -> Result<Vec<(String, PathBuf, bool, u64)>, String> 
                 .filter_map(|entry| {
                     let path = entry.path();
                     let meta = std::fs::metadata(&path).ok()?;
-                    Some((entry.file_name().to_string_lossy().into_owned(), path, meta.is_dir(), meta.len()))
+                    Some((entry.file_name().to_string_lossy().into_owned(), path, meta.is_dir(), meta.len(), modified(&meta)))
                 })
                 .collect())
         }
+    }
+}
+
+/// When a file on this machine was last changed, as words only to be compared: none where the
+/// system does not say.
+pub fn modified(meta: &std::fs::Metadata) -> String {
+    match meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) {
+        Some(d) => format!("{}.{:09}", d.as_secs(), d.subsec_nanos()),
+        None => String::new(),
     }
 }
 

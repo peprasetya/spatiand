@@ -2253,7 +2253,7 @@ mod tests {
 
     /// The picture at `at` of `files`, read and fitted.
     fn viewing(files: usize, at: usize) -> View {
-        let entry = Entry { name: "b.jpg".into(), path: PathBuf::from("/nowhere/b.jpg"), kind: Kind::Picture, size: 1 };
+        let entry = Entry { name: "b.jpg".into(), path: PathBuf::from("/nowhere/b.jpg"), kind: Kind::Picture, size: 1, modified: String::new() };
         let mut view = View::new(entry, at, 1, (0..files).collect());
         view.pictured(Ok(picture(2000, 1500)));
         view
@@ -2318,7 +2318,7 @@ mod tests {
 
     /// A PDF of two pages being read, its thread played by the test.
     fn reading() -> (View, std::sync::mpsc::Sender<pdf::Answer>, std::sync::mpsc::Receiver<Ask>) {
-        let entry = Entry { name: "a.pdf".into(), path: PathBuf::from("/nowhere/a.pdf"), kind: Kind::Pdf, size: 1 };
+        let entry = Entry { name: "a.pdf".into(), path: PathBuf::from("/nowhere/a.pdf"), kind: Kind::Pdf, size: 1, modified: String::new() };
         let mut view = View::new(entry, 0, 1, vec![0]);
         let (pdf, tell, asked) = Pdf::played();
         view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));

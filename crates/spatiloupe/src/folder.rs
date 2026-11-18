@@ -24,6 +24,9 @@ pub struct Entry {
     pub kind: Kind,
     /// Bytes, for a file.
     pub size: u64,
+    /// When it was last changed, as its listing gives it: only compared, so that a file written
+    /// again at the same size is not taken for the one already seen.
+    pub modified: String,
 }
 
 pub fn kind_of(path: &Path) -> Option<Kind> {
@@ -62,7 +65,7 @@ pub fn home() -> PathBuf {
 pub fn list(folder: &Path) -> Result<Vec<Entry>, String> {
     let mut entries: Vec<Entry> = crate::place::list(folder)?
         .into_iter()
-        .filter_map(|(name, path, is_dir, size)| {
+        .filter_map(|(name, path, is_dir, size, modified)| {
             if name.starts_with('.') {
                 return None;
             }
@@ -74,7 +77,7 @@ pub fn list(folder: &Path) -> Result<Vec<Entry>, String> {
             } else {
                 kind_of(&path)?
             };
-            Some(Entry { name, path, kind, size })
+            Some(Entry { name, path, kind, size, modified })
         })
         .collect();
     entries.sort_by(|a, b| (a.kind != Kind::Folder).cmp(&(b.kind != Kind::Folder)).then_with(|| natural(&a.name, &b.name)));
@@ -248,8 +251,9 @@ impl Folder {
         match result {
             Err(e) => self.state = State::Failed(e),
             Ok(entries) => {
-                // Listed again: what was there and is the same keeps its tile, picture and all,
-                // and the cursor stays on what it was on.
+                // Listed again: what was there and is the same -- its kind, its size and when it
+                // was last changed -- keeps its tile, picture and all, and the cursor stays on what
+                // it was on.
                 let on = self.cursor_on.take().or_else(|| self.entries.get(self.grid.cursor).map(|e| e.path.clone()));
                 let mut had: std::collections::HashMap<PathBuf, (Entry, Tile, Option<Seen>)> = std::collections::HashMap::new();
                 for ((entry, tile), seen) in self.entries.drain(..).zip(self.tiles.drain(..)).zip(self.seen.drain(..)) {
@@ -460,7 +464,7 @@ mod tests {
     }
 
     fn entry(name: &str, size: u64) -> Entry {
-        Entry { name: name.into(), path: PathBuf::from("/f").join(name), kind: kind_of(Path::new(name)).unwrap_or(Kind::Folder), size }
+        Entry { name: name.into(), path: PathBuf::from("/f").join(name), kind: kind_of(Path::new(name)).unwrap_or(Kind::Folder), size, modified: "1".into() }
     }
 
     #[test]
@@ -483,6 +487,40 @@ mod tests {
         // c is new as it is now, and asked for again; b, with no picture yet, too.
         assert_eq!(folder.asked, [false, false, false, false]);
         assert_eq!(folder.tiles.len(), 4);
+    }
+
+    #[test]
+    fn a_file_written_again_at_the_same_size_gets_a_new_tile() {
+        let mut folder = Folder::new(PathBuf::from("/f"), 1);
+        folder.listed(Ok(vec![entry("a.jpg", 5), entry("b.jpg", 5)]));
+        for tile in &mut folder.tiles {
+            tile.detail = Some("seen".into());
+        }
+        // b written again, the same number of bytes, a second later.
+        let mut b = entry("b.jpg", 5);
+        b.modified = "2".into();
+        folder.listed(Ok(vec![entry("a.jpg", 5), b]));
+        assert_eq!(folder.tiles[0].detail.as_deref(), Some("seen"));
+        assert_ne!(folder.tiles[1].detail.as_deref(), Some("seen"));
+    }
+
+    #[test]
+    fn a_file_s_change_is_in_its_listing() {
+        let dir = std::env::temp_dir().join(format!("spatiloupe-changed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.jpg");
+        std::fs::write(&file, b"one").unwrap();
+        let before = list(&dir).unwrap().remove(0);
+        assert!(!before.modified.is_empty());
+        // Written again, as long, with a later time.
+        std::fs::write(&file, b"two").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options().write(true).open(&file).unwrap().set_modified(later).unwrap();
+        let after = list(&dir).unwrap().remove(0);
+        assert_eq!(before.size, after.size);
+        assert_ne!(before, after);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

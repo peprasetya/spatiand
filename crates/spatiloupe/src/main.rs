@@ -343,10 +343,12 @@ impl Loupe {
                             None => {
                                 // Not in the list -- a hidden file, or a kind it does not know by
                                 // name (then tried as a picture): shown anyway, as what it is.
-                                let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                                let meta = std::fs::metadata(&path).ok();
+                                let size = meta.as_ref().map_or(0, |m| m.len());
+                                let modified = meta.as_ref().map(place::modified).unwrap_or_default();
                                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                                 let kind = folder::kind_of(&path).unwrap_or(Kind::Picture);
-                                let index = self.folder.add(folder::Entry { name, path, kind, size });
+                                let index = self.folder.add(folder::Entry { name, path, kind, size, modified });
                                 self.open(index);
                             }
                         }
