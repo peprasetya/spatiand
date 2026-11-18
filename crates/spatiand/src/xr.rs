@@ -437,7 +437,13 @@ fn ask_system(json: String, answer: std::os::fd::OwnedFd) {
     match SYSTEM_ASKER.get() {
         Some(asker) => asker(json, answer),
         // Here a client asks the system itself (desktop entries, Launch Services).
+        // The descriptor is the client's: written without waiting, since this is the
+        // compositor's thread and a pipe nobody reads would otherwise hold every window.
+        // The answer is a few bytes, written whole into a pipe with room or not at all.
         None => {
+            use std::os::fd::AsRawFd;
+            let fd = answer.as_raw_fd();
+            unsafe { libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK) };
             let mut file = std::fs::File::from(answer);
             let _ = std::io::Write::write_all(&mut file, br#"{"error":"Here an application asks the system itself."}"#);
         }
@@ -842,6 +848,28 @@ pub fn within(outer: [f32; 4], inner: [f32; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asking_the_system_into_a_full_pipe_does_not_wait() {
+        // A client that fills the pipe it hands over and never reads it must not hold the
+        // compositor's thread (where no system asker is installed, as on the Deck).
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+        let mut ends = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(ends.as_mut_ptr()) }, 0);
+        let (read, write) = unsafe { (OwnedFd::from_raw_fd(ends[0]), OwnedFd::from_raw_fd(ends[1])) };
+        let fd = write.as_raw_fd();
+        unsafe { libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) };
+        let chunk = [0u8; 4096];
+        while unsafe { libc::write(fd, chunk.as_ptr().cast(), chunk.len()) } > 0 {}
+        unsafe { libc::fcntl(fd, libc::F_SETFL, 0) };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            ask_system("{}".into(), write);
+            let _ = tx.send(());
+        });
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok(), "the answer waited for a reader");
+        drop(read);
+    }
 
     #[test]
     fn a_surface_nobody_configured_is_a_mono_window() {
