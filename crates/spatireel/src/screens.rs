@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{theme, Button, Icon, Field, Grid, Input, Painter, Rect, Shape, Strip, Texture, Tile, Typed};
+use spatiand_app::ui::{theme, Button, Confirm, Icon, Field, Grid, Input, Painter, Rect, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
 use spatiand_media::still::Still;
 
@@ -166,8 +166,8 @@ pub struct Home {
     /// Pictures of films no longer on the shelf, to be let go of at the next drawing.
     left: Vec<Texture>,
     pub trouble: Option<String>,
-    /// Delete pressed once on this source, and when: pressed again soon, it is removed.
-    removing: Option<(usize, Instant)>,
+    /// Delete pressed on this source: the question whether to forget it, and which it is about.
+    asking: Option<(usize, Confirm)>,
 }
 
 impl Home {
@@ -215,7 +215,7 @@ impl Home {
             arrived: Vec::new(),
             left: Vec::new(),
             trouble: None,
-            removing: None,
+            asking: None,
         };
         home.shelf.shape = Shape::Wide;
         home.sources.shape = Shape::Wide;
@@ -294,7 +294,7 @@ impl Home {
         }
         let mut all = p.bounds().inset(theme::PAD);
         look::header(p, gl, &mut all, "SpatiReel", "");
-        let hint = if self.on_films { "[Enter] Play from where it was left" } else { "[Enter] Open  [Delete] Remove a server" };
+        let hint = if self.on_films { "[Enter] Play from where it was left" } else { "[Enter] Open  [Delete] Forget a server" };
         look::foot(p, gl, &mut all, hint, self.trouble.as_deref());
         if !self.films.is_empty() {
             look::shelf(p, gl, &mut all, "Continue watching", self.on_films);
@@ -307,9 +307,27 @@ impl Home {
         let width = 258.0;
         let strip = all.take_top(Strip::height(Shape::Wide, width).min(all.h));
         self.sources.draw(p, gl, strip, &self.places, width);
+        if let Some((_, confirm)) = &mut self.asking {
+            confirm.draw(p, gl, p.bounds());
+        }
     }
 
     fn input(&mut self, input: &Input, sources: &[Entry]) -> Act {
+        // A question is being asked: it takes everything until it is answered.
+        if let Some((at, confirm)) = &mut self.asking {
+            let at = *at;
+            return match confirm.input(input) {
+                Some(yes) => {
+                    self.asking = None;
+                    if yes {
+                        Act::Forget(at)
+                    } else {
+                        Act::Nothing
+                    }
+                }
+                None => Act::Nothing,
+            };
+        }
         if let Input::Key { key, .. } = input {
             match key {
                 Key::Up => self.focus(true),
@@ -321,22 +339,12 @@ impl Home {
                         return Act::Dismiss;
                     }
                     if matches!(self.kinds.get(at), Some(Kind::Server(_))) {
-                        // Twice, as the server's own Remove button is: once is easily a slip.
-                        if self.removing.is_some_and(|(was, since)| was == at && since.elapsed() < Duration::from_secs(4)) {
-                            self.removing = None;
-                            return Act::Forget(at);
-                        }
-                        self.removing = Some((at, Instant::now()));
                         let name = self.places.get(at).map_or(String::new(), |t| t.title.clone());
-                        self.trouble = Some(format!("Press Delete again to remove {name}"));
+                        self.asking = Some((at, Confirm::careful(format!("Forget {name}? Its films are not touched; SpatiReel signs out of it."), "Forget", "Cancel")));
                         return Act::Nothing;
                     }
                 }
-                _ => {
-                    if self.removing.take().is_some() {
-                        self.trouble = None;
-                    }
-                }
+                _ => {}
             }
         }
         // A press on a shelf gives it the keys as well.
@@ -421,10 +429,10 @@ pub struct Browse {
     left: Vec<Texture>,
     home: Button,
     up: Button,
-    /// A server's own page has a way to remove it: pressed once it asks, twice it is done.
+    /// A server's own page has a way to forget it, which asks first.
     server: bool,
     remove: Button,
-    removing: Option<Instant>,
+    asking: Option<Confirm>,
     pub trouble: Option<String>,
 }
 
@@ -456,14 +464,9 @@ impl Browse {
             up: Button::default(),
             server,
             remove: Button::default(),
-            removing: None,
+            asking: None,
             trouble: None,
         }
-    }
-
-    /// Whether the remove button is waiting for its second press: for a few seconds only.
-    fn asking_to_remove(&self) -> bool {
-        self.removing.is_some_and(|since| since.elapsed() < Duration::from_secs(4))
     }
 
     pub fn folder(&self) -> Option<&Item> {
@@ -614,9 +617,15 @@ impl Browse {
         } else {
             self.folder().map_or(self.label.clone(), |item| item.title.clone())
         };
-        let beside = if title != self.label { self.label.clone() } else { String::new() };
+        let beside = if self.local {
+            self.path().display().to_string()
+        } else if title != self.label {
+            self.label.clone()
+        } else {
+            String::new()
+        };
         let can_remove = self.can_remove();
-        let remove_label = if self.asking_to_remove() { "Press again to remove" } else { "Remove" };
+        let remove_label = "Forget";
         let can_go_up = self.local || !self.trail.is_empty();
         let sorting = matches!(self.state, State::Ready) && !self.local && self.items.len() > 1;
         let updated = self.items.iter().any(|item| item.modified > 0);
@@ -650,13 +659,15 @@ impl Browse {
                 top.take_right(8.0);
             }
         });
-        let hint = if self.local { self.path().display().to_string() } else { "[Enter] Open  [Backspace] Up  [Esc] Home".to_string() };
-        look::foot(p, gl, &mut all, &hint, self.trouble.as_deref());
+        look::foot(p, gl, &mut all, "[Enter] Open  [Backspace] Up  [Esc] Home", self.trouble.as_deref());
         match &self.state {
             State::Loading(since) => look::waiting(p, gl, all, *since),
             State::Failed(why) => look::message(p, gl, all, why, look::trouble()),
             State::Ready if self.tiles.is_empty() => look::message(p, gl, all, "Nothing here to watch.", theme::ink_detail()),
             State::Ready => self.grid.draw(p, gl, all, &self.tiles),
+        }
+        if let Some(confirm) = &mut self.asking {
+            confirm.draw(p, gl, p.bounds());
         }
     }
 
@@ -685,6 +696,20 @@ impl Browse {
     }
 
     fn input(&mut self, input: &Input) -> Act {
+        // A question is being asked: it takes everything until it is answered.
+        if let Some(confirm) = &mut self.asking {
+            return match confirm.input(input) {
+                Some(yes) => {
+                    self.asking = None;
+                    if yes {
+                        Act::Forget(self.source)
+                    } else {
+                        Act::Nothing
+                    }
+                }
+                None => Act::Nothing,
+            };
+        }
         if matches!(self.state, State::Ready) && !self.local {
             for (at, sort) in Sort::ALL.into_iter().enumerate() {
                 let usable = sort != Sort::Updated || self.dated();
@@ -695,15 +720,8 @@ impl Browse {
             }
         }
         if self.can_remove() && self.remove.input(input) {
-            if self.asking_to_remove() {
-                return Act::Forget(self.source);
-            }
-            self.removing = Some(Instant::now());
+            self.asking = Some(Confirm::careful(format!("Forget {}? Its films are not touched; SpatiReel signs out of it.", self.label), "Forget", "Cancel"));
             return Act::Nothing;
-        }
-        if matches!(input, Input::Key { .. }) {
-            // A key is not the second press; a press elsewhere leaves the screen or lapses.
-            self.removing = None;
         }
         if self.home.input(input) || matches!(input, Input::Key { key: Key::Escape, .. }) {
             return Act::Home;
