@@ -1087,3 +1087,37 @@ test room on a scratch folder connected to a test Mac host that used the Mac's r
 scratch list -- newer -- went into the owner's: two made-up devices, removed again with
 `spatiand-host --forget-device`. `--serve-host` with `SPATIAND_HOST_DIR` now keeps its settings
 beside that identity. Give every test end `SPATIAND_APPS_CONFIG`.
+
+## Later on 2026-11-18: what a session may do to a locked Mac, and the rest of the list
+
+Found by reading the host and the room against what the section above promised; each is a test or
+a build on littleotter, **none was run between two real machines**.
+
+* **A locked Mac takes nothing from a session** (25e2e6b): no key, pointer, menu, launch, close,
+  resize, bringing forward or notification press, and no picture or sound of its windows, until
+  unlocked; each is answered `Held(Locked)` (once for a run of pointer and key messages). Before,
+  only new windows were held back, and windows already shown kept being captured and sent, and a
+  launch opened the application on the locked Mac. **Still open:** the clipboard sync goes on.
+* **A room never lists its own machine among the computers** (1793c8d): on the Mac the room and
+  the host are one identity, and the paired list had come to name the Mac, which the room dialled
+  every second to be refused ("not a machine"). A host paired again at another address or under
+  another name replaces its old entry (every entry with the same fingerprint).
+* **Menus.** A session's menu list closes when the window it was opened from closes, a host's or
+  one of the Mac's own (2c61215); a press before the next level has come is passed over for up to
+  2 s, and a host passes over a choice made in a level it has since left; levels are numbered in an
+  appended optional field, and an older peer still works (85c844f).
+* **The catalogue** of a Mac host is sent to a session that attaches while it is being listed
+  (4d98dbb). With "Show this Mac's notifications" off, no banner is read and none is said to a
+  session (6f44f67); a press on a card whose banner has gone brings nothing in (8bb4a23).
+* **A password copied** on the phone or the Mac is not offered to the room or its hosts, and a
+  copy the session marks with `x-kde-passwordManagerHint` is put on them marked secret (d701ba7);
+  such copies are still offered to hosts and the phone, as the clipboard is meant to be shared.
+* **Notifications on the Deck**: one sent again with the same `replaces_id` and words after its
+  card expired, was pressed or was pushed off is shown again (a91a12d); a notification of many `<`
+  no longer costs the room time squared, each part being cut to its first 8 KB (0adadce).
+* **The room's own answer to a client's `ask_system`** (Deck and Mac, no system asker installed)
+  is written without waiting, so a client that hands over a full pipe nobody reads no longer
+  freezes every window (aa1b361).
+* **A `.spatiapp`** cannot reach outside its own folder, nor fill the disk before anyone has said
+  yes to it: the program and icon must be plain files inside the application's folder, unpacking
+  is entry by entry and stops past 100 000 entries or 8 GB (c4eda3b).
