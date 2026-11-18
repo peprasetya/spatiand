@@ -76,6 +76,13 @@ impl Source for Local {
         })
     }
 
+    /// The folder a file is in. An address played as it is (no file) is in none.
+    fn folder_of(&self, item: &Item) -> Option<Item> {
+        let path = Local::path_of(item);
+        let folder = path.parent().filter(|_| path.is_file()).filter(|folder| folder.is_dir())?;
+        Some(Item { folder: true, ..Local::item(folder) })
+    }
+
     // Where this machine's films were left is not kept: `watching` and `unfinished` are the
     // trait's own, which do nothing.
 }

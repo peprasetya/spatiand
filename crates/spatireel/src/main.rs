@@ -16,6 +16,7 @@
 //! ```
 
 mod library;
+mod next;
 mod play;
 mod screens;
 mod source;
@@ -65,6 +66,15 @@ struct Watched {
     told: Instant,
     /// Whether it was paused when last told, so that pausing is told at once.
     paused: bool,
+    /// Which asking opened it.
+    ticket: u64,
+    /// The episode after it: not known yet (`None`), then known to be that one or none. Found
+    /// once, soon after it opens, for both the Next Episode button and its end.
+    next: Option<Option<Item>>,
+    /// The listing of its folder that the next was found in, for the one after that.
+    listing: Option<next::Listing>,
+    /// It is over, its source told so, and the next episode is being opened by this asking.
+    chaining: Option<u64>,
 }
 
 struct Reel {
@@ -82,6 +92,9 @@ struct Reel {
     ticket: u64,
     /// The film being opened, by its asking's number.
     opening: Option<u64>,
+    /// The listing of the folder the film being opened was chosen in, by that asking's number:
+    /// its next episode is looked for there before its folder is listed again.
+    held: Option<(u64, next::Listing)>,
     looked_for_servers: Option<Instant>,
     ready: bool,
     dirty: bool,
@@ -207,38 +220,107 @@ impl Reel {
     /// Open a film on a thread of its own, and play it when it is open (`Done::Opened`): a long
     /// film's index may take many seconds to fetch, and a program that stops answering the room
     /// for as long is one the room lets go of.
-    fn open(&mut self, source: Arc<dyn Source>, item: Item) {
+    ///
+    /// `chained` is an episode opened because the one before it ended (`chain`): it is taken up
+    /// where it was left unless that was at its credits, and then from its beginning. `held` is
+    /// the listing of the folder it was chosen in, if it was.
+    fn open(&mut self, source: Arc<dyn Source>, item: Item, chained: bool, held: Option<next::Listing>) -> u64 {
         let ticket = self.ticket();
         self.opening = Some(ticket);
-        self.screen.trouble(format!("Opening {}\u{2026}", item.title));
+        self.held = held.map(|listing| (ticket, listing));
+        if !chained {
+            self.screen.trouble(format!("Opening {}\u{2026}", item.title));
+        }
         self.work.alone(move || {
-            let result = source.play(&item).and_then(|play| Playing::open_player(&play, item.resume).map(|player| (player, play)));
+            let mut item = item;
+            let result = source.play(&item).and_then(|play| {
+                let player = if chained {
+                    let mut player = Playing::open_player(&play, 0.0)?;
+                    item.resume = next::start_at(item.resume, player.info().duration);
+                    if item.resume > 5.0 {
+                        player.seek(item.resume);
+                    }
+                    player
+                } else {
+                    Playing::open_player(&play, item.resume)?
+                };
+                Ok((player, play))
+            });
             Some(Done::Opened { ticket, source, item, result })
         });
+        ticket
     }
 
-    fn begin(&mut self, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, play: &source::Play) -> Result<(), String> {
+    fn begin(&mut self, ticket: u64, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, play: &source::Play) -> Result<(), String> {
         let playing = Playing::new(self.app.gl()?, player, play, &item.name, &item.title, item.layout)?;
         self.app.set_title(self.window, &item.title);
+        log::info!("{}: playing, from {:.0} s", item.title, item.resume);
         let (told, started) = (source.clone(), item.clone());
         self.work.report(move || told.watching(&started, Watching::Started));
-        self.playing = Some((playing, Watched { source, item, told: Instant::now(), paused: false }));
+        // The episode after it, looked for once, now, off this thread: in the listing it was
+        // chosen from if it was, its folder listed if not.
+        let held = self.held.take().filter(|(asked, _)| *asked == ticket).map(|(_, listing)| listing);
+        let (finder, current) = (source.clone(), item.clone());
+        self.work.call(move || {
+            let (next, listing) = next::find(&*finder, &current, held);
+            Some(Done::Next { ticket, next, listing })
+        });
+        self.playing = Some((playing, Watched { source, item, told: Instant::now(), paused: false, ticket, next: None, listing: None, chaining: None }));
         self.dirty = true;
         Ok(())
     }
 
-    fn stop(&mut self, finished: bool) {
-        let Some((mut playing, watched)) = self.playing.take() else { return };
-        let (seconds, duration) = (playing.player().position(), playing.player().info().duration);
-        let what = if finished { Watching::Finished } else { Watching::Stopped { seconds, duration } };
-        // Told before anything is listed again, so that the list has it: both go through
-        // threads, and the one that lists is asked to wait for this.
-        let (source, item) = (watched.source, watched.item);
+    /// The film playing is over -- played to its end, or the wearer pressed Next Episode -- and
+    /// there is an episode after it: its source is told it is finished, and the next is opened
+    /// while it stays on show, saying what comes next, so that no library comes between the two.
+    /// False if there is no next episode.
+    fn chain(&mut self) -> bool {
+        let Some((playing, watched)) = self.playing.as_mut() else { return false };
+        if watched.chaining.is_some() {
+            return true;
+        }
+        let Some(Some(next)) = watched.next.clone() else { return false };
+        let (source, item) = (watched.source.clone(), watched.item.clone());
+        log::info!("{}: over; the next episode, {}, is opened", item.title, next.title);
+        let told = source.clone();
         self.work.call(move || {
-            source.watching(&item, what);
+            told.watching(&item, Watching::Finished);
             None
         });
+        playing.player().set_paused(true);
+        playing.announce(&format!("Next: {}", next.title));
+        let listing = watched.listing.clone();
+        let ticket = self.open(source, next, true, listing);
+        if let Some((_, watched)) = self.playing.as_mut() {
+            watched.chaining = Some(ticket);
+        }
+        self.dirty = true;
+        true
+    }
+
+    fn stop(&mut self, finished: bool) {
+        let Some((mut playing, watched)) = self.playing.take() else { return };
+        if watched.chaining.is_some() {
+            // Already told it is finished; and the next episode being opened is not wanted now:
+            // dropped when it comes.
+            self.opening = None;
+        } else {
+            let (seconds, duration) = (playing.player().position(), playing.player().info().duration);
+            let what = if finished { Watching::Finished } else { Watching::Stopped { seconds, duration } };
+            // Told before anything is listed again, so that the list has it: both go through
+            // threads, and the one that lists is asked to wait for this.
+            let (source, item) = (watched.source, watched.item);
+            self.work.call(move || {
+                source.watching(&item, what);
+                None
+            });
+        }
         playing.close(&mut self.app, self.window, &mut self.painter);
+        self.back_to_library();
+    }
+
+    /// The window the library's again, and what is on show in it listed afresh.
+    fn back_to_library(&mut self) {
         self.app.resize(self.window, self.home_size);
         self.app.set_title(self.window, "SpatiReel");
         // What was just left is now part watched: a list drawn before is stale.
@@ -259,6 +341,10 @@ impl Reel {
     /// Tell the film's source how far it has got, every ten seconds and whenever it is paused.
     fn keep_place(&mut self) {
         let Some((playing, watched)) = self.playing.as_mut() else { return };
+        // Over, and told so: no place in it to tell.
+        if watched.chaining.is_some() {
+            return;
+        }
         let paused = playing.player().paused();
         if watched.told.elapsed() < Duration::from_secs(10) && paused == watched.paused {
             return;
@@ -282,7 +368,11 @@ impl Reel {
             }
             Act::Play { source, item } => {
                 let Some(entry) = self.sources.get(source) else { return };
-                self.open(entry.source.clone(), item);
+                let held = match &self.screen {
+                    Screen::Browse(browse) => browse.listing(),
+                    _ => None,
+                };
+                self.open(entry.source.clone(), item, false, held);
             }
             Act::Add => {
                 let add = Add::new(self.store.lock().unwrap().vibrefy_last.clone());
@@ -383,17 +473,35 @@ impl Reel {
                     }
                 }
                 Done::Opened { ticket, source, item, result } => {
-                    // Asked for and then given up on (another film chosen, or the program
-                    // closing): dropped here, which closes it.
-                    if self.opening != Some(ticket) || self.playing.is_some() {
+                    // Asked for and then given up on (another film chosen, the next episode
+                    // stopped while it opened, or the program closing): dropped here, which
+                    // closes it.
+                    let chained = self.playing.as_ref().is_some_and(|(_, watched)| watched.chaining == Some(ticket));
+                    if self.opening != Some(ticket) || (self.playing.is_some() && !chained) {
                         continue;
                     }
                     self.opening = None;
+                    if chained {
+                        // The episode that ended gives way to the next in the same window.
+                        if let Some((old, _)) = self.playing.take() {
+                            old.close(&mut self.app, self.window, &mut self.painter);
+                        }
+                    }
                     self.screen.trouble(String::new());
-                    if let Err(e) = result.and_then(|(player, play)| self.begin(source, item.clone(), player, &play)) {
+                    if let Err(e) = result.and_then(|(player, play)| self.begin(ticket, source, item.clone(), player, &play)) {
                         log::warn!("{}: {e}", item.title);
+                        if chained {
+                            self.back_to_library();
+                        }
                         self.screen.trouble(format!("{} would not play: {e}", item.title));
                         self.drop_expired();
+                    }
+                }
+                Done::Next { ticket, next, listing } => {
+                    if let Some((playing, watched)) = self.playing.as_mut().filter(|(_, watched)| watched.ticket == ticket) {
+                        playing.offer(next.as_ref().map(|next| next.title.clone()));
+                        watched.next = Some(next);
+                        watched.listing = listing;
                     }
                 }
                 Done::Found(found) => {
@@ -445,6 +553,16 @@ impl Reel {
         }
     }
 
+    /// What the window shows, for dictation and the assistant: the film and where it is, and the
+    /// next episode while it is offered.
+    fn description(&mut self) -> spatiand_app::Description {
+        let (title, text) = match self.playing.as_mut() {
+            Some((playing, _)) => (playing.name.clone(), playing.said()),
+            None => ("SpatiReel".to_string(), String::new()),
+        };
+        spatiand_app::Description { kind: "video".into(), app: "SpatiReel".into(), title, text, ..Default::default() }
+    }
+
     fn handle(&mut self, event: Event) -> bool {
         match &event {
             Event::CloseRequested { window } if *window == self.window => return false,
@@ -465,6 +583,12 @@ impl Reel {
                     self.home_size = ((*width).max(640), (*height).max(400));
                     self.app.resize(self.window, self.home_size);
                 }
+            }
+            // Dictation and the assistant ask what is on show.
+            Event::Describe { window } => {
+                let description = self.description();
+                self.app.describe(*window, &description);
+                return true;
             }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
             // Dark or light: drawn again in the theme's new colours.
@@ -502,11 +626,14 @@ impl Reel {
         }
         let Some(input) = Input::of(&event, 1.0) else { return true };
         match self.playing.as_mut() {
-            Some((playing, _)) => {
-                if playing.input(&input) == Outcome::Close {
-                    self.stop(false);
+            Some((playing, _)) => match playing.input(&input) {
+                Outcome::Close => self.stop(false),
+                // Watched to the credits: finished, and on to the next.
+                Outcome::Next => {
+                    self.chain();
                 }
-            }
+                Outcome::Nothing => {}
+            },
             None => {
                 let act = self.screen.input(&input, &self.sources);
                 self.act(act);
@@ -526,20 +653,31 @@ impl Reel {
         }
         if self.playing.is_some() {
             self.keep_place();
-            let (playing, _) = self.playing.as_mut().unwrap();
-            if playing.player().ended() {
+            let (playing, watched) = self.playing.as_mut().unwrap();
+            // Over and its next being opened: it stays on show until the next is.
+            if playing.player().ended() && watched.chaining.is_none() {
+                let known = watched.next.is_some();
+                let title = playing.name.clone();
                 // Stopped short by what could not be read: left where it was, not finished, and
                 // the wearer told why.
                 match playing.player().failed() {
                     Some(why) => {
-                        let title = playing.name.clone();
                         log::warn!("{title}: {why}");
                         self.stop(false);
                         self.screen.trouble(format!("{title} stopped: {why}"));
                     }
-                    None => self.stop(true),
+                    // Played to its end: the next episode if there is one, once it is known
+                    // whether there is (a film of seconds may end before), and home if not.
+                    None if known => {
+                        if !self.chain() {
+                            log::info!("{title}: played to its end, and no episode after it");
+                            self.stop(true);
+                        }
+                    }
+                    None => {}
                 }
-            } else {
+            }
+            if let Some((playing, _)) = self.playing.as_mut() {
                 playing.dirty |= std::mem::take(&mut self.dirty);
                 playing.draw(&mut self.app, self.window, &mut self.painter)?;
                 return Ok(());
@@ -619,6 +757,7 @@ fn main() {
             playing: None,
             ticket: 0,
             opening: None,
+            held: None,
             looked_for_servers: None,
             ready: false,
             dirty: true,
@@ -656,7 +795,7 @@ fn main() {
                 }
                 // Opened as one chosen is, on a thread of its own: an address that never answers
                 // kept the window from ever being shown.
-                reel.open(local, item);
+                reel.open(local, item, false, None);
             }
             None => {}
         }

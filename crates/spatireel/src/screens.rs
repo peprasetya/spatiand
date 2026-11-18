@@ -470,6 +470,12 @@ impl Browse {
         self.trail.last().map(|(item, _)| item)
     }
 
+    /// The folder on show and what is in it, once listed: what a film chosen here is beside.
+    pub fn listing(&self) -> Option<crate::next::Listing> {
+        let folder = self.folder()?;
+        (!self.items.is_empty()).then(|| (folder.key.clone(), self.items.clone()))
+    }
+
     pub fn enter(&mut self, folder: Item, cursor: usize) {
         self.trail.push((folder, cursor));
     }

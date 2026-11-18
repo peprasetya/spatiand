@@ -133,6 +133,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"watching": watching})
         if path == "/progress":
             key, seconds = form.get("media", ""), float(form.get("time", 0))
+            # What a client said, for a test that checks what it reported and in what order.
+            sys.stderr.write("  progress %s = %s\n" % (key, form.get("time", "")))
             if seconds < -10:
                 progress.pop(key, None)
             else:

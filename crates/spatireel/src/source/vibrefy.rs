@@ -50,6 +50,7 @@ fn item(media: &MediaItem) -> Item {
         pictured: media.has_artwork(),
         modified: media.modified,
         path: None,
+        parent: None,
     }
 }
 
@@ -180,6 +181,16 @@ impl Source for Server {
         Ok(Play { url: self.client.stream_url(&item.key).map_err(|e| e.to_string())?, options: Vec::new(), path: None })
     }
 
+    /// The folder a film is in is its library path up to its name, as the web player's
+    /// `sibling_path` takes it: listed as any folder is (`/files/<folder>`).
+    fn folder_of(&self, item: &Item) -> Option<Item> {
+        if item.folder || item.key.starts_with('\u{1}') || item.key.is_empty() {
+            return None;
+        }
+        let key = vibrefy_api::episodes::sibling_path(&item.key, "");
+        Some(Item { key: key.trim_end_matches('/').to_string(), folder: true, ..Item::default() })
+    }
+
     fn watching(&self, item: &Item, what: Watching) {
         let key = format!("files/{}", item.key);
         let seconds = match what {
@@ -190,5 +201,21 @@ impl Source for Server {
         if let Err(e) = self.heard(self.client.save_progress(&key, seconds)) {
             log::warn!("{}: {e}", self.label());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_film_is_in_the_folder_its_library_path_names() {
+        let server = Server::new(Account { address: "http://127.0.0.1:9".into(), account: None, cookies: BTreeMap::new() });
+        let film = |key: &str| Item { key: key.into(), ..Item::default() };
+        let folder = |key: &str| server.folder_of(&film(key)).map(|folder| folder.key);
+        assert_eq!(folder("TV/Show/Show s01e01.mkv").as_deref(), Some("TV/Show"));
+        assert_eq!(folder("Show s01e01.mkv").as_deref(), Some(""));
+        // What the source makes up is in no folder.
+        assert_eq!(folder(WATCHING), None);
     }
 }

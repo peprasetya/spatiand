@@ -87,6 +87,9 @@ pub struct Item {
     /// things: `key` is that name made text, which for a name that is not UTF-8 is the name of
     /// nothing.
     pub path: Option<std::path::PathBuf>,
+    /// The key of the folder it is in, where the source says and it is not in the key itself
+    /// (a Jellyfin's or a DLNA server's): what is listed for the episode after it (`next`).
+    pub parent: Option<String>,
 }
 
 /// Numbers in no particular order, which is all a shuffle wants: no dependency for it.
@@ -149,6 +152,11 @@ pub trait Source: Send + Sync {
     fn list(&self, folder: Option<&Item>) -> Result<Vec<Item>, String>;
     fn picture(&self, item: &Item) -> Option<Picture>;
     fn play(&self, item: &Item) -> Result<Play, String>;
+    /// The folder `item` is in, as a folder to [`list`](Source::list), for what is beside it --
+    /// the episode after it (`crate::next`). Nothing where the source cannot tell.
+    fn folder_of(&self, _item: &Item) -> Option<Item> {
+        None
+    }
     /// Nothing, for a source that keeps no place: DLNA.
     fn watching(&self, _item: &Item, _what: Watching) {}
     /// The films begun and not finished, most lately watched first: what the home screen

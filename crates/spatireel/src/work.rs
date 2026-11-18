@@ -33,6 +33,9 @@ pub enum Done {
     Found(Vec<dlna::Found>),
     /// A film opened, or not: which asking, what was asked to play, and from where.
     Opened { ticket: u64, source: std::sync::Arc<dyn crate::source::Source>, item: Item, result: Result<(spatiand_media::player::Player, crate::source::Play), String> },
+    /// The episode after the film opened by asking `ticket`, or none; and the listing of the
+    /// folder it was found in, for the one after that.
+    Next { ticket: u64, next: Option<Item>, listing: Option<crate::next::Listing> },
 }
 
 type Job = Box<dyn FnOnce() -> Option<Done> + Send>;

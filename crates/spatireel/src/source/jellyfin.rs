@@ -173,6 +173,8 @@ pub fn item(value: &Value) -> Option<Item> {
         pictured: value["ImageTags"]["Primary"].is_string(),
         modified: 0,
         path: None,
+        // The folder an episode is in is its season (or its show, where it has no seasons).
+        parent: ["ParentId", "SeasonId", "SeriesId"].iter().find_map(|field| value[*field].as_str()).map(str::to_string),
     })
 }
 
@@ -222,7 +224,7 @@ impl Server {
     }
 }
 
-const FIELDS: &str = "Fields=PrimaryImageAspectRatio,Path,Video3DFormat&EnableImageTypes=Primary&ImageTypeLimit=1";
+const FIELDS: &str = "Fields=PrimaryImageAspectRatio,Path,ParentId,Video3DFormat&EnableImageTypes=Primary&ImageTypeLimit=1";
 
 impl Source for Server {
     fn label(&self) -> String {
@@ -269,6 +271,14 @@ impl Source for Server {
         })
     }
 
+    /// The folder the server says a film is in (`ParentId`), listed as any folder is. A film is
+    /// known there by its file's name where the server gives its path (`item`), which is what the
+    /// next episode is chosen by; by the name the server gives it otherwise.
+    fn folder_of(&self, item: &Item) -> Option<Item> {
+        let key = item.parent.clone().filter(|parent| !parent.is_empty() && !item.folder)?;
+        Some(Item { key, folder: true, ..Item::default() })
+    }
+
     fn watching(&self, item: &Item, what: Watching) {
         let ticks = |seconds: f64| (seconds.max(0.0) * TICKS) as i64;
         match what {
@@ -308,9 +318,17 @@ mod tests {
         let episode = item(&json!({
             "Id": "e1", "Name": "Pilot", "Type": "Episode", "IndexNumber": 1, "ParentIndexNumber": 2, "SeriesName": "The Show",
             "RunTimeTicks": 6000000000i64, "UserData": { "PlaybackPositionTicks": 1500000000i64 },
-            "Path": "/media/The Show/S02E01.HSBS.mkv", "ImageTags": { "Primary": "abc" }, "PrimaryImageAspectRatio": 1.7777
+            "Path": "/media/The Show/S02E01.HSBS.mkv", "ImageTags": { "Primary": "abc" }, "PrimaryImageAspectRatio": 1.7777,
+            "ParentId": "season2", "SeasonId": "season2-too", "SeriesId": "show"
         }))
         .unwrap();
+        // The next episode is looked for in its season, by its file's name.
+        assert_eq!(episode.parent.as_deref(), Some("season2"));
+        let server = Server::new(Account { flavour: Flavour::Jellyfin, address: "http://h".into(), user: "u".into(), user_id: "1".into(), token: "t".into(), device: "d".into() });
+        assert_eq!(server.folder_of(&episode).map(|folder| folder.key).as_deref(), Some("season2"));
+        let no_parent = item(&json!({ "Id": "e2", "Name": "Show S01E02", "Type": "Episode", "SeriesId": "show" })).unwrap();
+        assert_eq!(no_parent.parent.as_deref(), Some("show"));
+        assert_eq!(no_parent.name, "Show S01E02");
         assert_eq!(episode.title, "1. Pilot");
         assert_eq!(episode.detail.as_deref(), Some("The Show \u{b7} Season 2"));
         assert!(!episode.folder && episode.pictured);

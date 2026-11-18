@@ -122,6 +122,8 @@ pub fn browsed(answer: &str) -> Result<Vec<Item>, String> {
                     name: title,
                     aspect: Some(16.0 / 9.0),
                     pictured: !art.is_empty(),
+                    // The container it was listed in, which is what is beside it.
+                    parent: node.attribute("parentID").map(|parent| format!("c{parent}")),
                     ..Item::default()
                 });
             }
@@ -174,6 +176,13 @@ impl Source for Server {
         Some(Picture::Encoded(bytes))
     }
 
+    /// The container a film was listed in (its `parentID`), whose children are what is beside
+    /// it. A film is known there by its title, which is usually its file's name.
+    fn folder_of(&self, item: &Item) -> Option<Item> {
+        let key = item.parent.clone().filter(|_| !item.folder)?;
+        Some(Item { key, folder: true, ..Item::default() })
+    }
+
     fn play(&self, item: &Item) -> Result<Play, String> {
         let url = item.key.strip_prefix('i').and_then(|rest| rest.split('\u{1}').next()).ok_or("not a film")?;
         Ok(Play { url: url.to_string(), options: Vec::new(), path: None })
@@ -205,7 +214,7 @@ mod tests {
     fn a_browse_gives_folders_and_films_and_leaves_out_what_is_neither() {
         let didl = r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
             <container id="64" parentID="0"><dc:title>Films &amp; Shows</dc:title></container>
-            <item id="64$1"><dc:title>Gravity.HSBS.mkv</dc:title><upnp:albumArtURI>http://h/art/1.jpg</upnp:albumArtURI>
+            <item id="64$1" parentID="64"><dc:title>Gravity.HSBS.mkv</dc:title><upnp:albumArtURI>http://h/art/1.jpg</upnp:albumArtURI>
               <res protocolInfo="http-get:*:video/x-matroska:*">http://h/MediaItems/1.mkv</res></item>
             <item id="64$2"><dc:title>Song</dc:title><res protocolInfo="http-get:*:audio/mpeg:*">http://h/2.mp3</res></item>
             </DIDL-Lite>"#;
@@ -220,6 +229,9 @@ mod tests {
         assert_eq!(items[1].detail.as_deref(), Some("3D"));
         let server = Server::new(Found { name: "x".into(), control: "http://h/ctl".into() });
         assert_eq!(server.play(&items[1]).unwrap().url, "http://h/MediaItems/1.mkv");
+        // What is beside a film is its container's children: listed by the container's key.
+        assert_eq!(server.folder_of(&items[1]).map(|folder| folder.key).as_deref(), Some("c64"));
+        assert_eq!(server.folder_of(&items[0]), None);
     }
 
     use crate::source::test_server::{hops, reply, serve};

@@ -235,6 +235,8 @@ pub enum Outcome {
     Nothing,
     /// Back to the library.
     Close,
+    /// On to the next episode: Next Episode pressed, or N.
+    Next,
 }
 
 /// The rows of the menu that corrects what the film was taken to be.
@@ -299,6 +301,12 @@ pub struct Playing {
     skip: Button,
     back: Button,
     options: Button,
+    /// The episode after this one, by its title, where there is one: offered at the controls'
+    /// right end near the end of this one (`next::near_end`).
+    next: Option<String>,
+    next_button: Button,
+    /// The controls have come up by themselves for the offer, which they do once.
+    offer_shown: bool,
     menu: Option<(List, Vec<(Row, Option<Choice>)>)>,
     /// Where the seek bar was drawn, to turn a press on it into a time.
     bar: Rect,
@@ -401,6 +409,9 @@ impl Playing {
             skip: Button::default(),
             back: Button::default(),
             options: Button::default(),
+            next: None,
+            next_button: Button::default(),
+            offer_shown: false,
             menu: None,
             bar: Rect::default(),
             seeking: false,
@@ -419,6 +430,38 @@ impl Playing {
 
     pub fn sky(&self) -> Option<WindowId> {
         self.sky
+    }
+
+    /// The episode after this one, by its title, now that it is known whether there is one.
+    pub fn offer(&mut self, next: Option<String>) {
+        self.next = next;
+        self.dirty = true;
+    }
+
+    /// Whether Next Episode is on offer now: there is a next episode, and this one is at its
+    /// credits.
+    fn offered(&self) -> bool {
+        let info = self.player.info();
+        self.next.is_some() && crate::next::near_end(self.player.position(), info.duration, info.duration_guessed)
+    }
+
+    /// This one is over and `said` is what comes next: it is the name on the controls, which
+    /// come up to show it, and nothing more is offered.
+    pub fn announce(&mut self, said: &str) {
+        self.name = said.to_string();
+        self.next = None;
+        self.clock.wake(Instant::now());
+        self.dirty = true;
+    }
+
+    /// What is on show, in words: where the film is, and the next episode while it is offered.
+    pub fn said(&self) -> String {
+        let info = self.player.info();
+        let mut said = format!("{}, at {}.", self.name, times(self.player.position(), info.duration, info.duration_guessed));
+        if let (true, Some(next)) = (self.offered(), self.next.as_ref()) {
+            said.push_str(&format!(" Next Episode is offered: {next}. N or the Next Episode button plays it."));
+        }
+        said
     }
 
     /// The room would not give the film the sky.
@@ -579,6 +622,13 @@ impl Playing {
     fn draw_over_film(&mut self, app: &mut App, window: WindowId, painter: &mut Option<Painter>) -> Result<bool, String> {
         self.arrange(app, window);
         let (picture, new) = self.player.picture();
+        // Next Episode offered: the controls come up by themselves to show it, once, and go
+        // as they always do.
+        let offered = self.offered();
+        if offered && !self.offer_shown {
+            self.offer_shown = true;
+            self.clock.wake(Instant::now());
+        }
         let shown = self.controls_shown();
         let cues = self.cues();
         let words_changed = cues.len() != self.words_shown.len() || cues.iter().zip(&self.words_shown).any(|(now, before)| !Arc::ptr_eq(now, before));
@@ -682,7 +732,7 @@ impl Playing {
                     this.words(p, gl, &cues, shift, if shown { 230.0 } else { 0.0 });
                 }
                 if shown || alone {
-                    this.controls(p, gl, &name, position, duration, paused, alone);
+                    this.controls(p, gl, &name, position, duration, paused, alone, offered);
                 }
                 p.end(gl);
             }
@@ -744,7 +794,7 @@ impl Playing {
 
     /// The controls: over the foot of the film, or all the window is.
     #[allow(clippy::too_many_arguments)]
-    fn controls(&mut self, p: &mut Painter, gl: &Gl, name: &str, position: f64, duration: f64, paused: bool, alone: bool) {
+    fn controls(&mut self, p: &mut Painter, gl: &Gl, name: &str, position: f64, duration: f64, paused: bool, alone: bool, offered: bool) {
         let all = p.bounds();
         if alone {
             p.fill(gl, all, 0.0, theme::ground());
@@ -785,8 +835,15 @@ impl Playing {
         row.take_left(22.0);
         let width = Button::icon_width(p, gl, "Picture and sound");
         self.options.draw_icon(p, gl, row.take_left(width), Icon::Options, "Picture and sound");
+        // At the right end: Next Episode while it is offered, and the library.
+        let mut right = row.right();
+        if offered {
+            let width = Button::icon_width(p, gl, "Next Episode");
+            self.next_button.draw_icon(p, gl, Rect { x: right - width, w: width, ..row }, Icon::Forward, "Next Episode");
+            right -= width + 10.0;
+        }
         let width = Button::icon_width(p, gl, "Library");
-        self.back.draw_icon(p, gl, Rect { x: row.right() - width, w: width, ..row }, Icon::Back, "Library");
+        self.back.draw_icon(p, gl, Rect { x: right - width, w: width, ..row }, Icon::Back, "Library");
 
         if let Some((list, rows)) = self.menu.as_mut() {
             let rows: Vec<Row> = rows.iter().map(|(row, _)| row.clone()).collect();
@@ -968,6 +1025,10 @@ impl Playing {
             if self.back.input(input) {
                 return Outcome::Close;
             }
+            // Only while it is on show: where it was last drawn is not a button now.
+            if self.next_button.input(input) && self.offered() {
+                return Outcome::Next;
+            }
         }
         match input {
             Input::Press { pressed: true, .. } => {
@@ -1009,6 +1070,10 @@ impl Playing {
                 if *letter == Some('m') && plain {
                     self.open_menu();
                     return Outcome::Nothing;
+                }
+                // N for Next Episode, while it is offered, by the key's place as M is.
+                if *letter == Some('n') && plain && self.offered() {
+                    return Outcome::Next;
                 }
                 match key {
                     Key::Space | Key::Enter if !plain => {}
