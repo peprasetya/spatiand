@@ -32,10 +32,16 @@ pub fn is_film(path: &Path) -> bool {
         .is_some_and(|e| FILMS.iter().any(|known| e.eq_ignore_ascii_case(known)))
 }
 
+/// A Mac's package -- an application, a Photos or TV library -- which Finder shows as one thing
+/// and SpatiReel does not go into. Only on a Mac, and only by these endings: any folder whose
+/// name's last part ended in "library" was passed over everywhere ("St. Louis Library"), and on
+/// Linux and Android a folder called "v1.app" or "Old.bundle" too.
 fn is_package(name: &str) -> bool {
+    const PACKAGES: &[&str] = &[
+        "app", "bundle", "framework", "plugin", "kext", "theater", "photoslibrary", "photolibrary", "migratedphotolibrary", "aplibrary", "musiclibrary", "tvlibrary", "imovielibrary", "fcpbundle",
+    ];
     let Some((_, ending)) = name.rsplit_once('.') else { return false };
-    let ending = ending.to_lowercase();
-    ending.ends_with("library") || ["app", "theater", "bundle", "framework", "photoslibrary", "plugin", "kext"].contains(&ending.as_str())
+    cfg!(target_os = "macos") && PACKAGES.contains(&ending.to_lowercase().as_str())
 }
 
 /// Where a film really is, when it is somewhere else: a `.strm` file is one line saying where,
@@ -138,6 +144,15 @@ mod tests {
         assert!(is_film(Path::new("camera.h264")) && is_film(Path::new("clip.HEVC")));
         assert!(!is_film(Path::new("cover.jpg")));
         assert!(!is_film(Path::new("README")));
+    }
+
+    #[test]
+    fn only_a_mac_s_packages_are_passed_over() {
+        assert!(!is_package("St. Louis Library"));
+        assert!(!is_package("Lib.Library"));
+        assert!(!is_package("Season 1"));
+        assert_eq!(is_package("TV Library.tvlibrary"), cfg!(target_os = "macos"));
+        assert_eq!(is_package("v1.app"), cfg!(target_os = "macos"));
     }
 
     #[test]
