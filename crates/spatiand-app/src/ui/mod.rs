@@ -12,11 +12,13 @@
 //! scrolled), are drawn into a rectangle each frame, and are handed what the wearer did as
 //! [`Input`].
 
+mod hide;
 mod icons;
 pub mod look;
 mod paint;
 mod widgets;
 
+pub use hide::{AutoHide, CONTROLS_SHOWN};
 pub use icons::{coverage as icon_coverage, draw as draw_icon, Icon};
 pub use paint::{Painter, Texture};
 pub use widgets::{Button, Confirm, Field, Grid, List, Row, Shape, Strip, Tabs, Tile, Typed, DOUBLE_CLICK, DOUBLE_CLICK_SLOP, DRAG_AFTER};

@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use spatiand_app::glow::{self, HasContext};
-use spatiand_app::ui::{draw_icon, look, theme, Button, Color, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
+use spatiand_app::ui::{draw_icon, look, theme, AutoHide, Button, Color, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
 
 use crate::folder::{Entry, Kind};
@@ -25,9 +25,6 @@ use crate::pdf::{self, Ask, Pdf};
 use crate::picture::Picture;
 use crate::stereo::Eyes;
 use crate::swipe::{Carousel, Glide, Reach, Scrolled};
-
-/// How long the controls stay after the wearer last did anything.
-const CHROME_STAYS: Duration = Duration::from_millis(3200);
 
 /// The gap between the file looked at and the one beside it on the carousel, beyond the window's
 /// own width: with the room a fitted picture leaves around itself, about what a phone leaves
@@ -541,7 +538,8 @@ pub struct View {
     layout: Button,
     info_button: Button,
     info: bool,
-    last_stir: Instant,
+    /// When the controls are on show; their fade is this view's own.
+    clock: AutoHide,
     hands_heard: bool,
     pointer: (f32, f32),
     pressed_at: Option<(f32, f32, Instant)>,
@@ -583,7 +581,7 @@ impl View {
             layout: Button::default(),
             info_button: Button::default(),
             info: false,
-            last_stir: Instant::now(),
+            clock: AutoHide::new(Instant::now()),
             hands_heard: false,
             pointer: (0.0, 0.0),
             pressed_at: None,
@@ -655,8 +653,9 @@ impl View {
         }
     }
 
+    /// A press, a key, a scroll, a picture arriving: the controls on show from now.
     fn stir(&mut self) {
-        self.last_stir = Instant::now();
+        self.clock.wake(Instant::now());
     }
 
     /// How much of the controls is to be seen, 0 to 1.
@@ -665,16 +664,14 @@ impl View {
         if matches!(self.doc, Doc::Pdf(_) | Doc::Loading(_) | Doc::Failed(_)) || self.info {
             return 1.0;
         }
-        let idle = self.last_stir.elapsed();
-        if idle < CHROME_STAYS {
-            1.0
-        } else {
-            (1.0 - (idle - CHROME_STAYS).as_secs_f32() / 0.5).max(0.0)
+        match self.clock.off_since(Instant::now()) {
+            None => 1.0,
+            Some(gone) => (1.0 - gone.as_secs_f32() / 0.5).max(0.0),
         }
     }
 
     pub fn animating(&self) -> bool {
-        let fading = self.chrome() > 0.0 && self.chrome() < 1.0 || self.last_stir.elapsed() < CHROME_STAYS + Duration::from_millis(600);
+        let fading = self.chrome() > 0.0 && self.chrome() < 1.0 || self.clock.off_since(Instant::now()).is_none_or(|gone| gone < Duration::from_millis(600));
         let moving = match &self.doc {
             Doc::Loading(_) => true,
             // A moving picture is not drawn over and over for it: `next_wake` wakes the program
@@ -1199,7 +1196,7 @@ impl View {
     /// pointer motion alone (which sweeps with the head) does not bring them.
     pub fn hands(&mut self) {
         self.hands_heard = true;
-        self.stir();
+        self.clock.stir(Instant::now());
     }
 
     pub fn input(&mut self, input: &Input) -> Want {
@@ -2020,6 +2017,7 @@ impl View {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spatiand_app::ui::CONTROLS_SHOWN;
 
     fn picture(width: u32, height: u32) -> Picture {
         Picture {
@@ -2237,7 +2235,7 @@ mod tests {
         if let Doc::Picture(shown) = &mut view.doc {
             shown.drawn_at = Some(Instant::now() - FADES_IN);
         }
-        view.last_stir = Instant::now() - CHROME_STAYS - Duration::from_secs(2);
+        view.clock = AutoHide::new(Instant::now() - CONTROLS_SHOWN - Duration::from_secs(2));
         assert!(!view.animating(), "not drawn every 16 ms");
         let wake = view.next_wake().expect("woken for the next frame");
         assert!(wake > Duration::from_millis(400) && wake <= Duration::from_millis(500), "{wake:?}");
@@ -2447,7 +2445,7 @@ mod tests {
         view.bar = Rect::new(28.0, 24.0, 1384.0, 80.0);
         // In the room, where the pointer sweeping with the head does not bring them back.
         view.hands_heard = true;
-        view.last_stir = Instant::now() - CHROME_STAYS - Duration::from_secs(2);
+        view.clock = AutoHide::new(Instant::now() - CONTROLS_SHOWN - Duration::from_secs(2));
         assert_eq!(view.chrome(), 0.0);
         view.input(&Input::Pointer { x: 60.0, y: 60.0 });
         let press = |pressed| Input::Press { pressed, modifiers: spatiand_app::Modifiers::default() };

@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
-use spatiand_app::ui::{theme, Button, Input, List, Painter, Rect, Row, Texture, Icon};
+use spatiand_app::ui::{theme, AutoHide, Button, Input, List, Painter, Rect, Row, Texture, Icon, CONTROLS_SHOWN};
 use spatiand_media::subs::{self, Cue, Words};
 use spatiand_app::{Anchor, App, EyeLayout, Gl, Key, Layer, Mode, WindowId};
 use spatiand_media::hints;
@@ -89,71 +89,9 @@ const WINDOW: (f32, f32) = (1920.0, 1080.0);
 /// The controls on their own, with the film all round.
 const CONTROLS_ALONE: (u32, u32) = (1280, 250);
 const CONTROLS_WITH_MENU: (u32, u32) = (1280, 860);
-const CONTROLS_SHOWN: Duration = Duration::from_secs(3);
-/// How long after a tap has put the controls away the hands that made it are not taken to want
-/// them back: the room says `hands` for the tap's press and release a frame or a few later.
-const PUT_AWAY_DEAF: Duration = Duration::from_millis(600);
 /// How far the pointer may go between a press and its release on the picture for the two to be
 /// a tap, rather than the view being turned.
 const TAP_SLACK: f32 = 12.0;
-/// How long the controls must have been on show for a tap on the picture to put them away.
-const TAP_SETTLED: Duration = Duration::from_millis(300);
-
-/// When the controls over the film are on show: for [`CONTROLS_SHOWN`] after the wearer last
-/// did something, and then not -- paused as much as playing, since a film is often paused to
-/// look at something in the frame -- or until a tap on the picture puts them away at once.
-#[derive(Debug, Clone, Copy)]
-struct Clock {
-    until: Instant,
-    /// When they last came on show.
-    since: Instant,
-    /// Put away by a tap: until then, the hands that made it do not bring them back.
-    deaf_until: Instant,
-}
-
-impl Clock {
-    fn new(now: Instant) -> Clock {
-        Clock { until: now + CONTROLS_SHOWN, since: now, deaf_until: now }
-    }
-
-    fn on(&self, now: Instant) -> bool {
-        now < self.until
-    }
-
-    /// On show, and for long enough that a tap on the picture is meant for them: not brought
-    /// back a moment ago by the very hand that is tapping -- the move to get there, or the
-    /// room's `hands` for the press arriving before the press itself.
-    fn settled(&self, now: Instant) -> bool {
-        self.on(now) && now.saturating_duration_since(self.since) >= TAP_SETTLED
-    }
-
-    /// A press, a key, a scroll: on show from now.
-    fn wake(&mut self, now: Instant) {
-        if !self.on(now) {
-            self.since = now;
-        }
-        self.until = now + CONTROLS_SHOWN;
-    }
-
-    /// The hands stirred (or, in a room too old to say, the pointer moved): the same, unless a
-    /// tap has only just put the controls away.
-    fn stir(&mut self, now: Instant) {
-        if now >= self.deaf_until {
-            self.wake(now);
-        }
-    }
-
-    /// A tap on the picture: gone at once.
-    fn put_away(&mut self, now: Instant) {
-        self.until = now;
-        self.deaf_until = now + PUT_AWAY_DEAF;
-    }
-
-    /// How long until they go by themselves, while they are on show.
-    fn left(&self, now: Instant) -> Option<Duration> {
-        self.on(now).then(|| self.until - now)
-    }
-}
 
 /// Whether a press at `from` let go at `to` is a tap.
 fn is_tap(from: (f32, f32), to: (f32, f32)) -> bool {
@@ -280,7 +218,7 @@ pub struct Playing {
     /// The pointer is held down on the picture, turning the view: where it was last.
     turning: Option<(f32, f32)>,
     pointer: (f32, f32),
-    clock: Clock,
+    clock: AutoHide,
     /// Where a press on the picture, with the controls on show, began: let go there, it puts
     /// them away.
     tap: Option<(f32, f32)>,
@@ -397,7 +335,7 @@ impl Playing {
             gaze: Gaze::default(),
             turning: None,
             pointer: (0.0, 0.0),
-            clock: Clock::new(Instant::now()),
+            clock: AutoHide::new(Instant::now()),
             tap: None,
             drawn_shown: None,
             panel: Rect::default(),
@@ -1175,58 +1113,6 @@ mod tests {
         assert_eq!(capped((320, 180), EyeLayout::Mono), (1280, 720));
         assert_eq!(capped((180, 320), EyeLayout::Mono), (406, 720));
         assert_eq!(capped((640, 180), EyeLayout::SideBySide), (2560, 720));
-    }
-
-    #[test]
-    fn the_controls_go_by_themselves_and_come_back_for_the_hands() {
-        let start = Instant::now();
-        let mut clock = Clock::new(start);
-        assert!(clock.on(start));
-        assert_eq!(clock.left(start), Some(CONTROLS_SHOWN));
-        // Nothing done for the while they stay: gone, whatever the film is doing.
-        let later = start + CONTROLS_SHOWN;
-        assert!(!clock.on(later));
-        assert_eq!(clock.left(later), None);
-        // The hands stir: back, for as long again.
-        clock.stir(later);
-        assert!(clock.on(later + CONTROLS_SHOWN - Duration::from_millis(1)));
-        assert!(!clock.on(later + CONTROLS_SHOWN));
-    }
-
-    #[test]
-    fn a_tap_puts_the_controls_away_and_its_own_hands_do_not_bring_them_back() {
-        let start = Instant::now();
-        let mut clock = Clock::new(start);
-        let tapped = start + Duration::from_millis(500);
-        clock.put_away(tapped);
-        assert!(!clock.on(tapped));
-        // The room's word that the hands stirred, for the tap itself, a few frames on.
-        clock.stir(tapped + Duration::from_millis(120));
-        assert!(!clock.on(tapped + Duration::from_millis(120)));
-        // The hands moving afterwards bring them back.
-        let moved = tapped + PUT_AWAY_DEAF;
-        clock.stir(moved);
-        assert!(clock.on(moved));
-        // A second tap, a press, a key: back at once, however soon.
-        clock.put_away(moved);
-        clock.wake(moved + Duration::from_millis(50));
-        assert!(clock.on(moved + Duration::from_millis(50)));
-    }
-
-    #[test]
-    fn a_tap_puts_away_only_controls_that_were_already_there() {
-        let start = Instant::now();
-        let mut clock = Clock::new(start);
-        assert!(!clock.settled(start));
-        assert!(clock.settled(start + TAP_SETTLED));
-        // Gone, then brought back by the hand on its way to tap: that tap is not for them.
-        let back = start + CONTROLS_SHOWN + Duration::from_secs(1);
-        clock.stir(back);
-        assert!(clock.on(back) && !clock.settled(back + Duration::from_millis(50)));
-        assert!(clock.settled(back + TAP_SETTLED));
-        // Kept on show by more stirring, they stay settled.
-        clock.stir(back + Duration::from_secs(1));
-        assert!(clock.settled(back + Duration::from_secs(1)));
     }
 
     #[test]
