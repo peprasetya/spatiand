@@ -44,6 +44,8 @@ use voice::Voice;
 
 const APP_ID: &str = "id.prasetya.spatiand.spatipal";
 const WINDOW: (u32, u32) = (1500, 1000);
+/// How long after the room's microphone failed it is asked for again.
+const LISTEN_AGAIN: Duration = Duration::from_secs(30);
 /// The trouble line when the brain's thread has gone.
 const BRAIN_GONE: &str = "Its answering stopped with a fault: quit SpatiPal and start it again.";
 
@@ -103,6 +105,8 @@ struct Pal {
     warm_due: Option<Instant>,
     /// Whether its voice was busy when the window was last drawn.
     drawn_speaking: bool,
+    /// When to ask the room for its microphone again, after it would not give it.
+    listen_again: Option<Instant>,
     name: Arc<Mutex<String>>,
     waker: Waker,
     woken: std::fs::File,
@@ -679,7 +683,11 @@ impl Pal {
             if let Ok(said) = serde_json::from_str::<Value>(json) {
                 if let Some(trouble) = said.get("trouble").and_then(Value::as_str) {
                     self.say_trouble(trouble);
+                    // Its microphone would not open: deaf for now, and asked for again in a
+                    // while (the room says nothing when it could open it again).
                     self.ears = None;
+                    self.ear = Ear::Quiet;
+                    self.listen_again = Some(Instant::now() + LISTEN_AGAIN);
                 }
             }
             return true;
@@ -778,6 +786,10 @@ impl Pal {
             }
             if self.leaving && self.answering.is_none() && !self.voice.busy() && !self.leave() {
                 return Ok(());
+            }
+            if self.listen_again.is_some_and(|at| Instant::now() >= at) {
+                self.listen_again = None;
+                self.tend_ears();
             }
             if self.warm_due.is_some_and(|at| Instant::now() >= at) {
                 self.warm(true);
@@ -908,6 +920,7 @@ fn main() {
             warmed: None,
             warm_due: None,
             drawn_speaking: false,
+            listen_again: None,
             name,
             waker,
             woken,
