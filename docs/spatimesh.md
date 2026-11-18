@@ -58,7 +58,10 @@ example.com and Wikipedia and drew Wikipedia's page right, in Android's fonts th
 Names went by DNS over HTTPS to OpenDNS, Cromite's default, and never to the 8.8.8.8 of Termux's change. Learnt:
 its libc++ must be the one of the NDK it was built against, Chromium's, newer than the r28c one the APK carries
 (`std::__hash_memory`), so it is to be linked in whole; libdbus looks for a system bus at its build folder's path.
-Not yet: carried in the APK, a window in the room, sound, video, the GPU.
+Not yet on that day: carried in the APK, a window in the room, sound, video, the GPU. All five have
+been done since (the next paragraphs and docs/beam-pro.md): SpatiMesh is in the APK, opens as a window
+of the room on the Beam Pro, with sound, video decoded by MediaCodec and its frames handed to the room
+as hardware buffers.
 
 **In the APK (2026-11-08).** `third_party/chromium/build.sh package` (with `CHROMIUM_TARGET=android`) makes
 `spatimesh-android.tar.gz`: the program stripped (283 MB), the NSS and NSPR it brings, Chromium's minigbm, and its

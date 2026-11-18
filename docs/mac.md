@@ -324,7 +324,9 @@ sound from an application's window, and a host's windows.
 
 Only with stand-in glasses in a window, or only against a test client: a screen in the room and
 its pointer; a device using this Mac's screens; the virtual screen at sizes other than
-1920 × 1080; a HiDPI screen sent at the size it looks. Not tried at all: an Apple Silicon Mac.
+1920 × 1080; a HiDPI screen sent at the size it looks. That was the Intel MacBook Pro this was first built on. Since 2026-11-09 the room also runs on an
+Apple Silicon Mac mini (M-series, macOS 27), which has been the owner's daily machine in the glasses
+since; what was measured there is in the dated sections below and in docs/state.md.
 
 **The glasses run at 60 Hz on a Mac**, not the Deck's 72: macOS does not offer the two-eye
 mode at 72.

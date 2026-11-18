@@ -1,7 +1,10 @@
 Spatiand — installing
 =====================
 
-A 3D spatial desktop for a Steam Deck driving XREAL Air glasses.
+A 3D spatial desktop for XR glasses. This file is about installing a release on a
+Steam Deck, the first system it ran on and the only one with a packaged release.
+The XREAL Beam Pro and a Mac are built from the source: see "On the Beam Pro and
+on a Mac" at the end.
 
 What you need
 -------------
@@ -80,3 +83,27 @@ Turning things off
 `~/.config/spatiand/session.env` is read into the session's environment if it
 exists. `RUST_LOG=debug` there is the way to get more out of the log on a
 machine whose only screen is the thing being debugged.
+
+On the Beam Pro and on a Mac
+----------------------------
+
+Neither has a packaged release: each is built from the source and installed by
+the one who built it.
+
+  * XREAL Beam Pro (Android 14). `android/build.sh install` builds the APK and
+    installs it on the device adb is talking to; it needs the Android SDK's
+    build-tools and the NDK (no Gradle), and `SPATIAND_CHROMIUM_ANDROID` pointing
+    at a packaged SpatiMesh if the browser is to be inside. No root is needed or
+    used. What the phone must allow (display over other apps, notification
+    access, wireless debugging for the phone's own apps) and what does not work
+    there is in docs/beam-pro.md.
+
+  * A Mac (Apple Silicon or Intel). `mac/make-app.sh` builds the release, signs
+    it and puts it at ~/Applications/Spatiand.app; `SPATIAND_APP_DEST` names
+    another place, and `SPATIAND_SPATIMESH_APP` the SpatiMesh to carry inside
+    (without it the app is installed with no browser). It is signed for the Mac
+    it was built on and is not notarised. The permissions macOS asks for and its
+    notifications switch are in docs/mac.md.
+
+`prefs.toml`, described above, is the same file on all three, in each system's
+own settings folder.
