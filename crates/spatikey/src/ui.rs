@@ -34,7 +34,8 @@ pub struct View<'a> {
 }
 
 impl View<'_> {
-    /// Whether this is a Mac with Touch ID: one that opens the vault itself, or could.
+    /// Whether this device has biometrics of its own (a Mac's Touch ID, a phone's fingerprint):
+    /// one that opens the vault itself, or could.
     pub fn on_mac(&self) -> bool {
         self.status.opens_here || self.status.can_set_up
     }
@@ -63,6 +64,14 @@ pub fn sensor(kind: &str) -> &'static str {
     match kind {
         "android-biometric" => "your fingerprint",
         _ => "Touch ID",
+    }
+}
+
+/// A sensor by its name, in the middle of a sentence: "Touch ID", "the fingerprint sensor".
+fn sensor_named(kind: &str) -> &'static str {
+    match sensor(kind) {
+        "Touch ID" => "Touch ID",
+        _ => "the fingerprint sensor",
     }
 }
 
@@ -320,21 +329,32 @@ pub fn grouped(code: &str) -> String {
 }
 
 /// What a refusal means, in words for the wearer: what happened, and what to do about it. `mac`
-/// is the Mac that approves -- this one, on a Mac (`on_mac`).
-pub fn meaning(refusal: &Refusal, mac: &str, on_mac: bool) -> String {
-    let theirs = if on_mac { "this Mac".to_string() } else { mac.to_string() };
+/// is the device that approves; `here`, the kind of this device's own sensor when it is this one
+/// (a Mac's Touch ID, a phone's fingerprint), named by it and called "this device".
+pub fn meaning(refusal: &Refusal, mac: &str, here: Option<&str>) -> String {
+    let on_mac = here.is_some();
+    let theirs = if on_mac { "this device".to_string() } else { mac.to_string() };
+    // This device's sensor, as a sentence begins with it.
+    let sensor = match here.map(sensor) {
+        Some("Touch ID") | None => "Touch ID",
+        Some(_) => "The fingerprint sensor",
+    };
     let said = refusal.message.trim();
     let with_said = |plain: &str| if said.is_empty() { plain.to_string() } else { format!("{plain} ({said})") };
     match refusal.code {
         Code::NoVault if on_mac => "There is no SpatiKey vault yet: set it up first.".into(),
         Code::NoVault => format!("There is no SpatiKey vault yet: set it up in SpatiKey on {mac} first."),
-        Code::VaultExists => "There is a SpatiKey vault already. Its recovery code sets Touch ID up for it on this Mac.".into(),
-        Code::Denied if on_mac => "Touch ID was cancelled, or did not know the finger. Nothing was opened.".into(),
+        Code::VaultExists => format!("There is a SpatiKey vault already. Its recovery code sets {} up for it on this device.", here.map_or("Touch ID", sensor_named)),
+        Code::Denied if on_mac => format!("{sensor} was cancelled, or did not know the finger. Nothing was opened."),
         Code::Denied => format!("Touch ID on {mac} was cancelled, or did not know the finger. Nothing was opened."),
-        Code::TouchIdUnavailable => format!("Touch ID cannot be used on {theirs} now: its lid may be shut, it may be locked, or no finger is enrolled."),
-        Code::FingerprintsChanged if on_mac => {
-            "The fingers enrolled in Touch ID have changed, so this Mac's key to SpatiKey was retired. The recovery code sets Touch ID up again.".into()
+        Code::TouchIdUnavailable if on_mac && sensor != "Touch ID" => {
+            format!("{sensor} cannot be used on this device now: it may be locked, or no finger is enrolled.")
         }
+        Code::TouchIdUnavailable => format!("Touch ID cannot be used on {theirs} now: its lid may be shut, it may be locked, or no finger is enrolled."),
+        Code::FingerprintsChanged if on_mac => format!(
+            "The fingers enrolled in {} have changed, so this device's key to SpatiKey was retired. The recovery code sets it up again.",
+            here.map_or("Touch ID", sensor_named)
+        ),
         Code::FingerprintsChanged => {
             format!("The fingers enrolled in Touch ID on {mac} have changed, so its key to SpatiKey was retired. Set Touch ID up again on {mac} with the recovery code.")
         }
@@ -484,15 +504,19 @@ mod tests {
             Code::NotSameLan, Code::NoMatch, Code::Excluded, Code::BadRequest, Code::BadSession, Code::NotHere, Code::Timeout, Code::Failed, Code::Stale,
         ];
         for code in codes {
-            for on_mac in [true, false] {
-                let words = meaning(&Refusal::new(code, ""), "darkPhoenix", on_mac);
+            for here in [Some("mac-touch-id"), Some("android-biometric"), None] {
+                let words = meaning(&Refusal::new(code, ""), "darkPhoenix", here);
                 assert!(words.len() > 20, "{code:?}: {words}");
                 assert!(!words.contains('_'), "{code:?} reads as a code: {words}");
             }
         }
-        // On a device the Mac is named; on the Mac it is "this Mac".
-        assert!(meaning(&Refusal::new(Code::NotReachable, ""), "darkPhoenix", false).starts_with("darkPhoenix"));
-        assert!(meaning(&Refusal::new(Code::TouchIdUnavailable, ""), "darkPhoenix", true).contains("this Mac"));
+        // On a device the Mac is named; on the device itself it is "this device", by its sensor.
+        assert!(meaning(&Refusal::new(Code::NotReachable, ""), "darkPhoenix", None).starts_with("darkPhoenix"));
+        assert!(meaning(&Refusal::new(Code::TouchIdUnavailable, ""), "darkPhoenix", Some("mac-touch-id")).contains("this device"));
+        for code in [Code::Denied, Code::TouchIdUnavailable, Code::FingerprintsChanged, Code::VaultExists] {
+            let phone = meaning(&Refusal::new(code, ""), "darkPhoenix", Some("android-biometric"));
+            assert!(!phone.contains("Touch ID") && !phone.contains("Mac"), "{code:?}: {phone}");
+        }
     }
 
     #[test]

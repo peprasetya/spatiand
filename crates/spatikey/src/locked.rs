@@ -82,11 +82,12 @@ impl SetUp {
             "SpatiKey keeps your passwords, passkeys and two-factor codes in one vault, encrypted, on every Spatiand you link.",
             theme::ink(),
         );
+        let sensor = view.sensor();
         ui::prose(
             p,
             gl,
             &mut column,
-            "Only Touch ID on this Mac opens it. The Steam Deck and the Beam Pro ask this Mac each time, and only while they are on the same network as it, never over Tailscale.",
+            &format!("Only {sensor} on this device opens it, and the devices you add later with their own. The Steam Deck and the Beam Pro ask one of them each time, and only while they are on the same network as it, never over Tailscale."),
             theme::ink_row(),
         );
         ui::prose(
@@ -735,7 +736,8 @@ impl Locked {
 
     fn label(view: &View) -> String {
         if view.status.opens_here || view.on_mac() {
-            "Open with Touch ID".into()
+            // The sensor of this device, by its name: a phone holding the vault has no Touch ID.
+            format!("Open with {}", view.sensor())
         } else {
             format!("Ask {}", view.mac)
         }

@@ -57,6 +57,8 @@ const LOOK_FOR_MAC: Duration = Duration::from_secs(15);
 const LOOK_FOR_ADDED: Duration = Duration::from_secs(3);
 /// What a recovery code that replaces another is shown with.
 const REPLACES: &str = "This replaces your recovery code: the one before it no longer opens the vault. Save this one in its place.";
+/// How often an open settings page looks again for devices asking to be added.
+const LOOK_FOR_ASKING: Duration = Duration::from_secs(3);
 /// How often, at most, the service is told that an open SpatiKey is being used: well inside the
 /// shortest time it may be set to stay open.
 const KEEP_OPEN: Duration = Duration::from_secs(5);
@@ -211,8 +213,15 @@ impl SpatiKey {
         self.ask(asked, request);
     }
 
+    /// Whether this device has biometrics of its own: a Mac with Touch ID, a phone that holds.
     fn on_mac(&self) -> bool {
         self.status.opens_here || self.status.can_set_up
+    }
+
+    /// The kind of this device's own sensor, when it opens the vault itself or could: what the
+    /// words for a refusal name.
+    fn here(&self) -> Option<&str> {
+        self.on_mac().then_some(self.status.kind.as_str())
     }
 
     fn say(&mut self, said: impl Into<String>) {
@@ -325,7 +334,8 @@ impl SpatiKey {
             }
             Want::SetUp => {
                 let name = self.status.name.clone();
-                self.ask_waiting(Asked::Setup, Request::Setup { name }, "Touch ID on this Mac");
+                let words = format!("{} on this device", ui::sensor(&self.status.kind));
+                self.ask_waiting(Asked::Setup, Request::Setup { name }, words);
             }
             Want::CodeSaved { after, code } => {
                 // The service's copy, kept until now in case this window went first, goes.
@@ -380,7 +390,8 @@ impl SpatiKey {
                 }
             }
             Want::Recover(code) => {
-                self.ask_waiting(Asked::Recover, Request::Recover { code: code.to_string() }, "Touch ID on this Mac");
+                let words = format!("{} on this device", ui::sensor(&self.status.kind));
+                self.ask_waiting(Asked::Recover, Request::Recover { code: code.to_string() }, words);
             }
             Want::Find => self.ask_waiting(Asked::Find, Request::Find, "Looking for Macs on this network"),
             Want::PairWith(mac) => {
@@ -486,7 +497,14 @@ impl SpatiKey {
         match asked {
             Asked::Status { route } => {
                 let Some(status) = read::<StatusAnswer>(value) else { return };
+                // A request to be added that goes without this device being added was turned
+                // down: said, rather than the screen going quietly back to asking.
+                let turned_down = !self.status.request_code.is_empty() && status.request_code.is_empty() && !status.opens_here;
                 self.status = status;
+                if turned_down && matches!(self.screen, Screen::Join(_)) {
+                    self.said = None;
+                    self.trouble = Some(format!("Turned down: {} did not add this device. It can ask again.", ui::holders_named(&self.status)));
+                }
                 self.mac = mac_of(&self.status);
                 let unsettled = matches!(self.screen, Screen::Waiting(_) | Screen::Away(_));
                 // A device that asked to be added, and has been: it opens SpatiKey itself now.
@@ -693,7 +711,7 @@ impl SpatiKey {
         if refusal.code == Code::BadSession && self.session.is_some() {
             let kept = self.keep_editor();
             self.lock();
-            let mut said = ui::meaning(&refusal, &self.mac, self.on_mac());
+            let mut said = ui::meaning(&refusal, &self.mac, self.here());
             if kept {
                 said.push_str(" The entry you were changing is kept: it is back when SpatiKey opens.");
             }
@@ -744,7 +762,7 @@ impl SpatiKey {
                 self.ask_list();
             }
             Asked::Status { route: true } if matches!(self.screen, Screen::Waiting(_)) => {
-                self.screen = Screen::Away(Away::new(ui::meaning(&refusal, &self.mac, self.on_mac())));
+                self.screen = Screen::Away(Away::new(ui::meaning(&refusal, &self.mac, self.here())));
                 return;
             }
             Asked::PairWith(_) => {
@@ -752,7 +770,16 @@ impl SpatiKey {
                     pair.stage = Stage::Found;
                 }
             }
-            Asked::Open if refusal.code == Code::FingerprintsChanged => self.fingers_changed = true,
+            // A refused opening may mean things stand otherwise now -- this device removed from
+            // the holders, a vault gone: the screen follows from how they stand.
+            Asked::Open => {
+                if refusal.code == Code::FingerprintsChanged {
+                    self.fingers_changed = true;
+                }
+                self.ask(Asked::Status { route: true }, Request::Status);
+            }
+            // That asking refused as well: what was said of the opening stays.
+            Asked::Status { route: true } if self.trouble.is_some() => return,
             // A code that is not the vault's is said as that, not as a finger refused: the
             // service answers it `no_match` (one before 2026-11-18 said `denied`, which reads as
             // a cancelled touch -- it cannot be told from one here).
@@ -770,7 +797,7 @@ impl SpatiKey {
             _ => {}
         }
         self.said = None;
-        self.trouble = Some(ui::meaning(&refusal, &self.mac, self.on_mac()));
+        self.trouble = Some(ui::meaning(&refusal, &self.mac, self.here()));
     }
 
     /// Tell the service that this window is in use. The service closes a session by its own
@@ -813,6 +840,14 @@ impl SpatiKey {
                 return;
             }
             self.keep_open(&session);
+            // A device asking to be added shows in settings while they are open.
+            if matches!(&self.screen, Screen::Settings(page) if !page.confirming())
+                && self.asker.out == 0
+                && self.looked.elapsed() >= LOOK_FOR_ASKING
+            {
+                self.looked = Instant::now();
+                self.ask(Asked::Devices, Request::Devices { session: session.clone() });
+            }
             let mut code = None;
             if let Screen::Entry(page) = &mut self.screen {
                 if page.wants_code() {

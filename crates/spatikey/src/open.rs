@@ -1138,6 +1138,11 @@ impl SettingsPage {
         SettingsPage { back: Button::default(), lines: { let mut lines = ui::keyed_list(); lines.cursor = 1; lines }, confirm: None }
     }
 
+    /// A question is up over the page: what it asks about is not to move under it.
+    pub fn confirming(&self) -> bool {
+        self.confirm.is_some()
+    }
+
     fn lines(view: &View) -> Vec<(Line, Row)> {
         let heading = |text: String| (Line::Heading, Row::heading(text));
         let settings = view.settings;
@@ -1186,7 +1191,9 @@ impl SettingsPage {
         lines.push(heading("Recovery code".into()));
         lines.push((Line::NewCode, Row::with("New recovery code", "replaces the old one").icon(Icon::Refresh)));
         if view.on_mac() {
-            lines.push((Line::Recover, Row::with("Set up Touch ID again", "with the recovery code").icon(Icon::Pencil)));
+            // This device's own sensor, by its name: a phone holding the vault has no Touch ID.
+            let again = if view.sensor() == "Touch ID" { "Set up Touch ID again" } else { "Set up the fingerprint again" };
+            lines.push((Line::Recover, Row::with(again, "with the recovery code").icon(Icon::Pencil)));
         }
         lines
     }
