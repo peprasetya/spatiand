@@ -90,6 +90,7 @@ fn read_as(path: &Path, largest: u32, may_move: bool) -> Result<Picture, String>
 }
 
 /// The same, from what has already been read: a picture that came over the network.
+#[cfg(test)]
 pub fn read_bytes(path: &Path, bytes: &[u8], largest: u32) -> Result<Picture, String> {
     read_bytes_as(path, bytes, largest, true)
 }
