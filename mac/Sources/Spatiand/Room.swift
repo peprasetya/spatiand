@@ -360,8 +360,8 @@ final class Room {
     private func watchApplications() {
         guard applicationWatch == nil else { return }
         let changed: FSEventStreamCallback = { _, _, _, _, _, _ in
-            // On the main queue, where the stream is scheduled.
-            if Room.shared.running { Room.shared.listApplications() }
+            // On the main queue, where the stream is scheduled; the listing itself is not.
+            if Room.shared.running { Room.shared.relistApplications() }
         }
         guard let stream = FSEventStreamCreate(kCFAllocatorDefault, changed, nil, Self.applicationRoots as CFArray,
                                                FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 3.0,
@@ -372,9 +372,36 @@ final class Room {
         FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
         FSEventStreamStart(stream)
         applicationWatch = stream
+        // **A folder that is not there yet is watched for**: FSEvents may never tell of what is
+        // put in a folder made after the stream was. ~/Applications is often made later (by the
+        // first application installed for this user only): the home folder itself, not what is
+        // under it, is watched until it is there, and then the stream is made again with it.
+        let mine = NSString("~/Applications").expandingTildeInPath
+        if homeWatch == nil, !FileManager.default.fileExists(atPath: mine) {
+            let fd = open(NSHomeDirectory(), O_EVTONLY)
+            if fd >= 0 {
+                let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: .write, queue: .main)
+                source.setEventHandler { [weak self] in
+                    guard let self, FileManager.default.fileExists(atPath: mine) else { return }
+                    self.homeWatch?.cancel()
+                    self.homeWatch = nil
+                    guard self.applicationWatch != nil else { return }
+                    self.unwatchApplications()
+                    self.watchApplications()
+                    if self.running { self.relistApplications() }
+                }
+                source.setCancelHandler { close(fd) }
+                source.resume()
+                homeWatch = source
+            }
+        }
     }
 
+    private var homeWatch: DispatchSourceFileSystemObject?
+
     private func unwatchApplications() {
+        homeWatch?.cancel()
+        homeWatch = nil
         guard let stream = applicationWatch else { return }
         FSEventStreamStop(stream)
         FSEventStreamInvalidate(stream)
@@ -383,13 +410,38 @@ final class Room {
     }
 
     /// Every application on this Mac, for the launcher: its name, its bundle, and its icon as a
-    /// picture in a file, made once.
+    /// picture in a file, made once and again when the application is newer.
     private func listApplications() {
-        let found = Self.applications()
+        told(Self.applications())
+    }
+
+    private func told(_ found: [Installed]) {
         sp_apps_begin()
         for app in found { sp_app(app.title, app.path, app.icon) }
         sp_apps_end()
         print("launcher: \(found.count) applications of this Mac")
+    }
+
+    /// **Listed again off the main thread**: eighty bundles and their icons, asked for every three
+    /// seconds while an updater writes inside one, held the pointer and keys while they were
+    /// read. One listing at a time; what changes during one is one more after it.
+    private var relisting = false
+    private var relistAgain = false
+
+    private func relistApplications() {
+        guard !relisting else { relistAgain = true; return }
+        relisting = true
+        DispatchQueue.global(qos: .utility).async {
+            let found = Self.applications()
+            DispatchQueue.main.async { [self] in
+                relisting = false
+                if running { told(found) }
+                if relistAgain {
+                    relistAgain = false
+                    relistApplications()
+                }
+            }
+        }
     }
 
     /// One application installed on this Mac: what it is called, where it is, its bundle's
@@ -428,9 +480,17 @@ final class Room {
             let bundle = Bundle(path: path)?.bundleIdentifier
             let key = (bundle ?? title).replacingOccurrences(of: "/", with: "_")
             let icon = cache + "/" + key + ".png"
-            if !FileManager.default.fileExists(atPath: icon) { Self.writeIcon(of: path, to: icon) }
+            // Made again when the application is newer than its picture: one updated since (a new
+            // icon), or copied while it was last looked at (the generic one, from a bundle
+            // half there).
+            if Self.modified(icon) < max(Self.modified(path), Self.modified(path + "/Contents/Info.plist")) { Self.writeIcon(of: path, to: icon) }
             return Installed(title: title, path: path, bundle: bundle, icon: FileManager.default.fileExists(atPath: icon) ? icon : nil)
         }
+    }
+
+    /// When a file was last changed; long ago when it is not there.
+    static func modified(_ path: String) -> Date {
+        ((try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date) ?? .distantPast
     }
 
     static func writeIcon(of path: String, to file: String) {
@@ -442,6 +502,8 @@ final class Room {
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
         NSGraphicsContext.restoreGraphicsState()
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: file))
+        // Whole or not at all: this is read by the room and, at the same moment, by the host's
+        // catalogue, which lists on a queue of its own.
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: file), options: .atomic)
     }
 }
