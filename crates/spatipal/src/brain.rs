@@ -588,17 +588,33 @@ fn remembered(history: &[Said]) -> &[Said] {
 
 /// Whether what the wearer said is a yes (`Some(true)`), a no (`Some(false)`), or neither: in
 /// either language, as briefly as people say it.
+///
+/// **A yes is only a yes**: every word a yes or what comes with one ("yes please", "ya, tekan
+/// aja", "go ahead") -- "Please scroll down instead" is not one, nor "Okay, don't close it". A
+/// no anywhere in it is a no. Anything else is neither: what was held is let go, and it is
+/// answered as a request of its own.
 fn agreement(text: &str) -> Option<bool> {
-    let words: Vec<String> = text.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase()).filter(|w| !w.is_empty()).collect();
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| w.replace('\u{2019}', "'").trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
     if words.is_empty() || words.len() > 6 {
         return None;
     }
-    const YES: &[&str] = &["ya", "iya", "yes", "yep", "yup", "yeah", "boleh", "oke", "ok", "okay", "lanjut", "lanjutkan", "silakan", "silahkan", "sure", "betul", "benar", "setuju", "gas", "go", "tekan", "tutup", "please"];
-    const NO: &[&str] = &["tidak", "nggak", "ngga", "gak", "enggak", "jangan", "no", "nope", "batal", "batalkan", "cancel", "stop", "tunggu", "wait"];
-    let first = words[0].as_str();
-    if NO.contains(&first) || words.iter().any(|w| w == "jangan" || w == "batal") {
+    const YES: &[&str] = &[
+        "ya", "iya", "yes", "yep", "yup", "yeah", "boleh", "oke", "ok", "okay", "lanjut", "lanjutkan", "silakan", "silahkan", "sure", "betul", "benar", "setuju", "gas", "go",
+        "do", "tekan", "tutup", "please", "press", "close",
+    ];
+    // What may come with a yes, and is not one by itself.
+    const WITH: &[&str] = &["it", "ahead", "that", "now", "enter", "aja", "saja", "dong", "deh", "sih", "lah", "you", "thanks", "thank", "makasih", "tolong", "sekarang"];
+    const NO: &[&str] = &[
+        "tidak", "nggak", "ngga", "gak", "ga", "enggak", "tak", "belum", "jangan", "batal", "batalkan", "no", "nope", "nah", "not", "don't", "dont", "never", "nevermind",
+        "cancel", "stop", "tunggu", "wait", "hold",
+    ];
+    if words.iter().any(|w| NO.contains(&w.as_str()) || w.ends_with("n't")) {
         Some(false)
-    } else if YES.contains(&first) {
+    } else if words.iter().any(|w| YES.contains(&w.as_str())) && words.iter().all(|w| YES.contains(&w.as_str()) || WITH.contains(&w.as_str())) {
         Some(true)
     } else {
         None
@@ -683,6 +699,27 @@ mod tests {
         assert_eq!(agreement("No"), Some(false));
         assert_eq!(agreement("ya tapi jangan sekarang"), Some(false));
         assert_eq!(agreement("buka browser dan cari cuaca hari ini di Jakarta"), None);
+        assert_eq!(agreement("Go ahead."), Some(true));
+        assert_eq!(agreement("Okay, do it"), Some(true));
+    }
+
+    #[test]
+    fn a_yes_is_only_a_yes() {
+        // Begun with a yes-word, but asking something else: neither, and what was held goes.
+        assert_eq!(agreement("Please scroll down instead"), None);
+        assert_eq!(agreement("Sure, but the other one"), None);
+        assert_eq!(agreement("tutup yang lain"), None);
+        assert_eq!(agreement("tekan escape"), None);
+        assert_eq!(agreement("go back"), None);
+        // A no anywhere in it is a no.
+        assert_eq!(agreement("Okay, don't close it"), Some(false));
+        assert_eq!(agreement("Okay, don\u{2019}t"), Some(false));
+        assert_eq!(agreement("please not that one"), Some(false));
+        assert_eq!(agreement("yes, wait"), Some(false));
+        assert_eq!(agreement("ok I won't"), Some(false));
+        assert_eq!(agreement("ya tidak usah"), Some(false));
+        assert_eq!(agreement("oke batal"), Some(false));
+        assert_eq!(agreement("never mind"), Some(false));
     }
 }
 
