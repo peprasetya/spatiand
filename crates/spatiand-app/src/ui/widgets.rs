@@ -348,9 +348,9 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
         p.glow(gl, frame, theme::ROW_RADIUS, [0.30, 0.62, 1.0, 0.42], 22.0);
         p.fill(gl, frame.inset(-3.0), theme::ROW_RADIUS + 3.0, theme::mark());
     } else if selected {
-        p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, [1.0, 1.0, 1.0, 0.28]);
+        p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, theme::wash(0.28));
     } else if hover {
-        p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, [1.0, 1.0, 1.0, 0.16]);
+        p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, theme::wash(0.16));
     }
     match tile.picture {
         Some(texture) => p.cover(gl, texture, frame, theme::ROW_RADIUS, theme::ink()),
@@ -973,7 +973,7 @@ impl Field {
             };
             let (a, b) = (width(p, from), width(p, to));
             let wash = Rect::new(text.x + a - slide, rect.y + rect.h * 0.18, (b - a).max(2.0), rect.h * 0.64);
-            p.fill(gl, wash, 2.0, if self.focused { [0.42, 0.68, 1.0, 0.42] } else { theme::selected_away() });
+            p.fill(gl, wash, 2.0, if self.focused { let mut c = theme::selected(); c[3] = 0.42; c } else { theme::selected_away() });
         }
         if !self.text.is_empty() {
             let (_, h) = p.measure(gl, &shown, em, wide);

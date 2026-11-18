@@ -182,8 +182,9 @@ pub fn keys(p: &mut Painter, gl: &Gl, line: Rect, hint: &str, align: f32, alpha:
                     let w = cap_w(p, gl, key);
                     let cap = Rect::new(x, cap_y, w, cap_h);
                     // A key: a lighter rim, a face, and a shade along its foot for depth.
-                    p.fill(gl, cap, 7.0, faded([1.0, 1.0, 1.0, 0.16]));
-                    p.fill(gl, cap.inset(1.0), 6.0, faded([0.10, 0.115, 0.16, 0.95]));
+                    p.fill(gl, cap, 7.0, faded(theme::wash(0.16)));
+                    p.fill(gl, cap.inset(1.0), 6.0, faded(theme::ground()));
+                    p.fill(gl, cap.inset(1.0), 6.0, faded(theme::raised()));
                     p.fill(gl, Rect::new(cap.x + 3.0, cap.bottom() - 3.0, cap.w - 6.0, 2.0), 1.0, faded([0.0, 0.0, 0.0, 0.35]));
                     p.label(gl, key, Rect { y: cap.y - 1.0, ..cap }, cap_em, faded(theme::ink_detail()), 0.5);
                     x += w;
