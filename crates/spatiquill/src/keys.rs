@@ -84,6 +84,13 @@ pub fn tab_chord(letter: Option<char>, m: Modifiers, alternate: bool) -> Option<
     }
 }
 
+/// Whether a chord with these held is SpatiQuill's own (new window, zoom, a tab by number,
+/// moving a tab): the logo key, Control and Shift together, and a Mac's Command -- which reaches
+/// the terminal as the right Control (`Modifiers::command`), as `clip` and `tab_chord` read it.
+pub fn own_chord(m: Modifiers) -> bool {
+    m.logo || m.command || (m.control && m.shift)
+}
+
 /// What a paste sends the program: lines ended as Return ends them, and, for a program that
 /// asked for bracketed paste (`TermMode::BRACKETED_PASTE`), between its brackets -- with any
 /// Escape taken out, so pasted text cannot end the bracket early and be run as typed.
@@ -280,6 +287,16 @@ mod tests {
         assert_eq!(tab_chord(Some('w'), Modifiers { alt: true, ..command() }, false), None);
         assert_eq!(tab_chord(Some('q'), command(), false), None);
         assert_eq!(tab_chord(None, command(), false), None);
+    }
+
+    #[test]
+    fn a_macs_command_makes_spatiquills_own_chords() {
+        assert!(own_chord(command()));
+        assert!(own_chord(held(true, true, false, false)));
+        assert!(own_chord(held(false, false, false, true)));
+        // The left Control alone is the program's: Control-N, Control-- go to it.
+        assert!(!own_chord(held(false, true, false, false)));
+        assert!(!own_chord(Modifiers::default()));
     }
 
     #[test]
