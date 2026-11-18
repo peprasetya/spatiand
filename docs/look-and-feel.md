@@ -22,7 +22,7 @@ glasses show about 48 of them to a degree.
 | Use | Size | Symbol |
 |---|---|---|
 | An app's name at the head of its first screen | 40 | `theme::TITLE_EM`, drawn by `look::header` |
-| A screen's title beside its Back button | 36 | `theme::TITLE_EM * 0.9` |
+| A screen's title beside its Back button | 36 | `theme::TITLE_EM * 0.9`, drawn by `look::top` |
 | A pane's or dialog's title | 32 | `theme::TITLE_EM * 0.8` |
 | A row's label, a field's text | 36 | `theme::ROW_EM` |
 | A button's or a tab's label | 31 | `theme::ROW_EM * 0.86` (`Button::draw`, `Tabs::draw`) |
@@ -89,14 +89,16 @@ Every colour is a function of `ui::theme`, which answers for dark or light:
 - No widget has a drawn border. An edge is `look::glass` (a soft shadow of 26, a gradient, a 1.5
   highlight along the top). The focus mark of a field is a 3 high line of `theme::mark()` along
   its foot. A tile with the keys stands in a 3 wide ring of `theme::mark()` with a glow.
-- A pane over the window: the window dimmed with black at 35% (`Confirm::draw`), the pane filled
-  with `theme::ground()` and then `look::glass(.., 24.0, 1.0)`.
+- A pane over the window: the window dimmed with black at 35% (`look::scrim`), the pane filled
+  with `theme::ground()` and then `look::glass(.., 24.0, 1.0)`. The blue light round what is lit
+  is `theme::glow(alpha)`.
 
 ### 4. Spacing
 
 - Window margin `theme::PAD` (42). Row gap `theme::ROW_GAP` (4). Tile gap `theme::TILE_GAP`
   (22). Inset of a row's text `theme::ROW_INSET` (24). Inside a pane 28. Between buttons in a
-  row 12. Under a screen's head: 12, the rule (2, `look::rule`), 16 to 24.
+  row 12. Under a screen's head: 12, the rule (2, `look::rule`), 18 (`look::header`, and
+  `look::top` / `look::top_with` for a screen with a way back).
 - `Rect::take_top` / `take_left` do the layout; there is no other grid.
 
 ### 5. Minimum hit size
@@ -110,12 +112,15 @@ Every colour is a function of `ui::theme`, which answers for dark or light:
 ### 6. Tab bars
 
 - A line of views of one thing (SpatiKey's All / Logins / Passkeys / Codes): `ui::Tabs`.
-- A bar of closable tabs (SpatiShelf, SpatiQuill): 66 high (`BAR`); each tab's face 50 high,
-  radius 14; the active one a gradient `theme::wash(0.11)` to `wash(0.05)`, a blue glow, and
-  `look::rule` along its foot; a dot of 8 at the left (teal: active, hint grey: idle, amber
-  `[1.0, 0.85, 0.4]`: busy or rung, `look::trouble()`: stopped, violet: a remote); the label at
-  `ROW_EM * 0.72`; a close cross on the active and the hovered tab; a "+" of 44 after the last.
-  Both apps draw this themselves, alike to the pixel: SDK consolidation 1.
+- A bar of closable tabs (SpatiShelf, SpatiQuill): `ui::TabBar`, `TabBar::HEIGHT` (66) high;
+  each tab's face 50 high, 110 to 330 wide as they fit, scrolled along when more are open than
+  fit; radius 14; the active one a gradient `theme::wash(0.11)` to `wash(0.05)`, a blue glow, and
+  `look::rule` along its foot; a dot of 8 at the left (`TabLook::dot`: teal active, hint grey
+  idle, `look::AMBER` busy or rung, `look::trouble()` stopped, violet a remote); the label at
+  `ROW_EM * 0.72`; a close cross on the active and the hovered tab (none on the last one where
+  `keep_last` is set); a "+" after the last. The cross and the "+" take presses 44 across; a
+  press acts as it goes down (`TabSaid::Chose` / `Close` / `New`). Dragging a tab along the bar
+  and tearing it off are SpatiQuill's own (`TabBar::dragged`).
 
 ### 7. Toolbars and drawn icons
 
@@ -171,9 +176,9 @@ Every colour is a function of `ui::theme`, which answers for dark or light:
 
 ### 11. Scrollbars and scrolling
 
-- A track `theme::SCROLL_WIDTH` (5) wide at the right edge, `scroll_track()`, with a thumb of
-  `scroll_thumb()`, ends rounded; never under 20 long (`SCROLL_WIDTH * 4`). It shows only when
-  there is more than fits and is not dragged.
+- `look::scrollbar`: a track `theme::SCROLL_WIDTH` (5) wide at the right edge,
+  `scroll_track()`, with a thumb of `scroll_thumb()`, ends rounded; never under 20 long
+  (`SCROLL_WIDTH * 4`). It shows only when there is more than fits and is not dragged.
 - A wheel or two fingers scroll what is under the pointer; a list by whole rows, a grid by
   pixels; the cursor comes with the view. No momentum of the app's own (the carousel in
   SpatiLoupe is its own thing). Arrow keys bring the cursor back on show.
@@ -181,17 +186,18 @@ Every colour is a function of `ui::theme`, which answers for dark or light:
 ### 12. Menus, questions, dialogs
 
 - **Context menu**: right click, or a press held 800 ms without moving (`shelf/hand.rs:21`: a
-  head pointer has no right button). Placed at the pointer, kept 12 inside the window; a shadow,
-  `theme::ground()`, `look::glass(.., 20.0, 1.0)`, a `ui::List` inset 10. Rows: an icon, a verb,
-  the key that does the same as the trailing word. Escape or a press outside closes it and does
-  nothing else; arrows and Enter work it.
+  head pointer has no right button). `ui::Menu`: placed at the pointer, kept 12 inside the
+  window, as wide as its widest row (320 to 620); a shadow, `theme::ground()`,
+  `look::glass(.., 20.0, 1.0)`, a `ui::List` inset 10. Rows: an icon, a verb, the key that does
+  the same (`look::chord`) as the trailing word. Escape or a press outside closes it
+  (`MenuSaid::Closed`) and does nothing else; arrows and Enter work it.
 - **A question** is `ui::Confirm::new(text, yes, no)`: the text says what will happen and what
   is lost; **the no is on the left, the yes on the right**; the yes is labelled with the verb
   ("Delete", "Quit", "Forget"), **the no is "Cancel"**; Escape is no; Return answers with the
   lit button; arrows and Tab go between the two; Space is not an answer.
 - **The safe answer is lit to begin with when the yes destroys or ends something** (delete,
-  empty, forget, remove, quit or close with work running). The SDK lights the yes always;
-  SpatiKey's own copy lights the no: see Decisions 1 and SDK consolidation 3.
+  empty, forget, remove, quit or close with work running): `ui::Confirm::careful(text, yes,
+  no)`. Every other question is `Confirm::new`, the yes lit (Decisions 1, settled so).
 - A pane that only shows something closes with **Done** at its foot right (Escape and Enter do
   the same). A screen reached from another has **Back** (or the place's name: "Library",
   "Folder", "Home") at its head left, and Escape goes back.
@@ -202,6 +208,7 @@ Every colour is a function of `ui::theme`, which answers for dark or light:
   ending in a full stop: "This folder is empty.", "Nothing here to watch."
 - **Waiting**: `look::waiting` (three dots) in the middle; with words, the words end in an
   ellipsis: "Loading…".
+- **A tab whose program stopped**: `look::stopped(.., why, what_now)` in the middle of the tab.
 - **What went wrong**: at the foot, `look::foot(.., Some(trouble))` in `look::trouble()`,
   wrapped, for **8 seconds** (`shelf/main.rs:2238`, `quill/main.rs:1133`, the room's
   `notices::GLANCE`). **What was done**: the same line in `ink_hint()` for **5 seconds**
@@ -247,7 +254,8 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 
 - Nothing binds Cmd-Z: there is no undo anywhere. That is the norm, not a gap to fill here.
 - **Key repeat**: the SDK repeats held keys itself (`app/lib.rs:704`). `Input::of` drops a
-  repeated Escape (`app/ui/mod.rs:185`). A key that toggles, confirms or destroys must not act
+  repeated Escape and Enter, and hands a repeated Space on as the character only, so a field
+  still types spaces but nothing is pressed again (`app/ui/mod.rs`). A key that toggles, confirms or destroys must not act
   on repeat (`reel/main.rs:624`, `key/main.rs:966`); arrows, Backspace and typing repeat.
 
 ### 16. Pointer and pad
@@ -256,9 +264,9 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
   from the keys alone (`app/ui/widgets.rs:6`).
 - **One press opens** in a `List`, `Grid`, `Strip` (on release). **Two presses open** only
   where one press chooses for something else: SpatiShelf's files. Two presses are within
-  **450 ms** and 6 of each other (`widgets.rs:775`).
-- A press becomes a drag after the pointer has gone 7 to 8 (`shelf/hand.rs:19`,
-  `loupe/swipe.rs:25`); see Decisions 3.
+  **450 ms** and 6 of each other (`ui::DOUBLE_CLICK`, `ui::DOUBLE_CLICK_SLOP`).
+- A press becomes a drag after the pointer has gone **8** (`ui::DRAG_AFTER`; Decisions 3,
+  settled so). SpatiReel's 12 for a tap on the picture stays.
 - Right click: the context menu, where there is one (SpatiShelf, SpatiQuill).
 - Wheel: scrolls; in SpatiLoupe zooms a picture; in SpatiReel wakes the controls.
 
@@ -266,11 +274,11 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 
 SpatiReel's player and SpatiLoupe's picture and object views (a PDF's controls stay):
 
-- They stay **3 seconds** after the wearer last did something (`reel/play.rs:92`
-  `CONTROLS_SHOWN`), then go; SpatiLoupe fades them over half a second.
+- `ui::AutoHide`: they stay **3 seconds** (`ui::CONTROLS_SHOWN`) after the wearer last did
+  something (`wake`), then go; SpatiLoupe fades them over half a second (`off_since`).
 - **What wakes them**: a press, a key, a scroll, and the room saying the hands stirred
   (`Event::Hands`). Pointer motion alone does not, once the room has ever said `Hands`: the
-  pointer sweeps with the head.
+  pointer sweeps with the head (`AutoHide::stir`).
 - **A press where a hidden control is only brings the controls back; it presses nothing**
   (`reel/play.rs:1008-1011`, `loupe/view.rs:1319`).
 - They are not hidden while a menu, a pane or a field of theirs is open.
@@ -296,20 +304,20 @@ SpatiReel's player and SpatiLoupe's picture and object views (a PDF's controls s
 - **Too long**: a label is cut at the end by its rectangle (`Painter::label` clips); a trail of
   folders keeps its last five and starts with "…" (`shelf/main.rs:1951`). Nothing is cut in the
   middle today.
-- **Dates**: "Today 14:47", "4 Oct", "4 Oct 2025" (`shelf/look.rs:93` `when`): 24 hours, day
-  before month, the month as three letters.
+- **Dates**: "Today 14:47", "4 Oct", "4 Oct 2025" (`look::when` of `look::local`): 24 hours,
+  day before month, the month as three letters.
 - **Sizes**: "812 bytes", "1.2 MB", "34 GB": thousands, one decimal under ten
-  (`shelf/look.rs:66` `size`).
+  (`look::size`).
 - **Durations**: "1:15", "1:02:03"; a position and a length "1:15 / 9:58"; a length only judged
   "0:06 / about 0:58"; a length not known is left out (`reel/play.rs:206-229`). A span in words:
   "1 minute", "5 minutes" (`key/ui.rs:403`).
 - **Counts**: "1 item", "3 items".
 - **Chords** in menus and hints: "Ctrl+C", "Shift+Delete" elsewhere and "⌘C", "⇧⌘N" on the Mac
-  (`shelf/hand.rs:206` `keys`). **Keys** in a foot hint: `"[Enter] Open  [Esc] Back"` drawn as
+  (`look::chord`). **Keys** in a foot hint: `"[Enter] Open  [Esc] Back"` drawn as
   keycaps by `look::keys`; a capitalised verb after the keys, two spaces between groups; the
   names are Enter, Esc, Tab, Space, Backspace, Delete, PgUp, PgDn.
 - **Platform names**: this machine is "This Mac" / "This device" (Android) / "This computer"
-  (`reel/source/local.rs:16-23`). A sensor is named by the holder's kind: `key/ui.rs:63`
+  (`look::this_device`). A sensor is named by the holder's kind: `key/ui.rs:63`
   `sensor()` ("Touch ID", "your fingerprint") and `sensor_named()` mid-sentence. Where a
   password is to be kept: `key/ui.rs:81` `keeper()` ("Apple Passwords", "your password
   manager"). The file manager: "Finder" on the Mac, "the file manager" elsewhere.
@@ -342,22 +350,46 @@ shrinks to a call, once SDK consolidation n is done: do those first.
 
 ### SDK consolidation (do first)
 
-| # | Where | Now | Change | Size |
-|---|---|---|---|---|
-| 1 | `shelf/main.rs:1979-2026`, `quill/main.rs:1366-1453` | Each draws the same closable tab bar by hand; widths differ (Shelf 150 to 320, Quill 110 to 330 and scrolling) | Add `ui::TabBar` to `app/ui/widgets.rs` from SpatiQuill's (it has `bar_tabs` and its tests): `draw(p, gl, bar, &[TabLook { label, dot: Color }], active, focused)`, `input` answering `Chose(i)`, `Close(i)`, `New`; widths 110 to 330; close and "+" hit rectangles 44; `TabBar::HEIGHT = 66.0`. Both apps use it; drag-to-tear stays SpatiQuill's | L |
-| 2 | `shelf/main.rs:2276-2294`, `:2422-2429`, `:1356-1370`; `quill/main.rs:217-225`, `:1074-1124`, `:1230-1237`; `reel/play.rs:848-856`, `:991-1004` | Three context menus built from a `List` on a hand-drawn pane; widths 620, 420, 640; SpatiReel's has a rim and a literal ground instead of glass | Add `ui::Menu { at, list }`: `rect(rows, size)` (as wide as its widest row, 320 to 620, 12 inside the window, no taller than it), `draw` (shadow, `theme::ground()`, `look::glass(.., 20.0, 1.0)`, list inset 10), `input` answering `Chose(i)` / `Closed` (Escape, a press outside). All three use it | M |
-| 3 | `app/ui/widgets.rs:1297-1299`, `key/ui.rs:454-517` | The SDK's `Confirm` lights the yes; SpatiKey has its own copy that lights the no, centred, radius 34, a scrim of ground at 72% | Add `Confirm::careful(text, yes, no)` (as `new`, `on_yes: false`). Delete SpatiKey's copy; it uses `ui::Confirm::careful` (its `draw(p, gl)` calls become `draw(p, gl, p.bounds())`) | M |
-| 4 | `app/ui/widgets.rs:142-149`, `:453-459`; `shelf/main.rs:2208-2214`; `quill/main.rs:1205-1209` | Four copies of the scrollbar; the apps' thumbs are at least 30, the SDK's 20 | Add `look::scrollbar(p, gl, track: Rect, shown: f32, total: f32, offset: f32)` with the SDK's numbers; all four call it | S |
-| 5 | `shelf/look.rs:66-115`, `loupe/folder.rs:123-137`, `key/ui.rs:413-423`, `pal/time.rs:61-69` | `size` twice (identical); a date four ways: "Today 14:47" / "4 Oct" / "4 Oct 2025" (Shelf), "29 Oct 2026" always (Key), "14:47" / "4/10" (Pal) | Move Shelf's `size`, `local` and `when` (with its test) to `app/ui/look.rs` as `look::size`, `look::when`; the four call them | S |
-| 6 | `key/ui.rs:248-259`, `reel/screens.rs:611-650`, `:826-838`, `loupe/folder.rs:395-414` | A screen's head (a Back button, the title at `TITLE_EM * 0.9`, a quieter word beside, the rule) built four times; the gaps under it are 12/2/16, 12/2/22, 14/2/24 | Move SpatiKey's `top` to `look::top(p, gl, all, back, back_label, back_icon, title, beside) -> Rect` with gaps 12 / 2 / 18 (as `look::header`); the four call it | M |
-| 7 | `app/ui/widgets.rs:775-776` | `DOUBLE_CLICK` (450 ms) and `DOUBLE_CLICK_SLOP` (6) are private; three apps wrote their own (400, 400, 450) | Make them `pub`, re-export from `ui`; add `pub const DRAG_AFTER: f32 = 8.0` (Decisions 3) | S |
-| 8 | `app/ui/widgets.rs:348`, `:1247`; `shelf/main.rs:1991`, `:2138`, `:2000`, `:2296`, `:2314`, `:2343`; `shelf/hand.rs:980-999`; `quill/main.rs:1221`, `:1425`, `:1436` | The blue glow `[0.30, 0.62, 1.0, a]`, the scrim `[0, 0, 0, 0.35]` and the busy amber `[1.0, 0.85, 0.4, 1.0]` are literals in each place | Add `theme::glow(alpha) -> Color`, `look::scrim(p, gl, all)` and `pub const AMBER: Color` in `look.rs`; replace the literals | S |
-| 9 | `shelf/hand.rs:206-208` | `keys(letter)` ("⌘C" / "Ctrl+C") is SpatiShelf's alone | Move to `look::chord(keys: &str) -> String`; SpatiShelf and SpatiQuill use it | S |
-| 10 | `reel/play.rs:92-150` (`Clock`), `loupe/view.rs:30`, `:658-674` | Two clocks for controls that hide; 3.0 s and 3.2 s | Move SpatiReel's `Clock` and its tests to `ui::AutoHide` with `pub const CONTROLS_SHOWN = 3 s`; SpatiLoupe uses its `wake` / `stir` / `on` and keeps its own fade | M |
-| 11 | `shelf/main.rs:2047-2054`, `quill/main.rs:1195-1203` | "This tab stopped" pane twice: 680x200 and 720x220, different line heights | Add `look::stopped(p, gl, area, why, what_now)` with SpatiQuill's numbers; both call it | S |
-| 12 | `reel/source/local.rs:16-23` | "This Mac" / "This device" / "This computer" is SpatiReel's alone | Move to `look::this_device() -> &'static str` | S |
-| 13 | `app/ui/widgets.rs:351`, `:353`, `:976`; `app/ui/look.rs:185-187` | Inside the SDK: a tile's cursor and hover rings are white at 28% and 16% (not seen on the light ground); a field's selection is a literal blue; a keycap is literal dark | `theme::wash(0.28)`, `theme::wash(0.16)`; the selection `{ let mut c = theme::selected(); c[3] = 0.42; c }`; the keycap's rim `theme::wash(0.16)`, face `theme::raised()` over `theme::ground()` | S |
-| 14 | `app/ui/mod.rs:185` | `Input::of` drops a repeated Escape only; a held Enter answers a question that came up under it | Drop `repeat: true` for `Key::Enter` and `Key::Space` too. (SpatiQuill reads raw `Event::Key` for the terminal, `quill/main.rs:663`, and is not touched; check `Field` users want no repeated Enter: none does) | S |
+| # | Where | Now | Change | Size | Done |
+|---|---|---|---|---|---|
+| ~~1~~ | `shelf/main.rs:1979-2026`, `quill/main.rs:1366-1453` | Each draws the same closable tab bar by hand; widths differ (Shelf 150 to 320, Quill 110 to 330 and scrolling) | Add `ui::TabBar` to `app/ui/widgets.rs` from SpatiQuill's (it has `bar_tabs` and its tests): `draw(p, gl, bar, &[TabLook { label, dot: Color }], active, focused)`, `input` answering `Chose(i)`, `Close(i)`, `New`; widths 110 to 330; close and "+" hit rectangles 44; `TabBar::HEIGHT = 66.0`. Both apps use it; drag-to-tear stays SpatiQuill's | L | done, `b19a657` |
+| ~~2~~ | `shelf/main.rs:2276-2294`, `:2422-2429`, `:1356-1370`; `quill/main.rs:217-225`, `:1074-1124`, `:1230-1237`; `reel/play.rs:848-856`, `:991-1004` | Three context menus built from a `List` on a hand-drawn pane; widths 620, 420, 640; SpatiReel's has a rim and a literal ground instead of glass | Add `ui::Menu { at, list }`: `rect(rows, size)` (as wide as its widest row, 320 to 620, 12 inside the window, no taller than it), `draw` (shadow, `theme::ground()`, `look::glass(.., 20.0, 1.0)`, list inset 10), `input` answering `Chose(i)` / `Closed` (Escape, a press outside). All three use it | M | done, `9d7f31c` |
+| ~~3~~ | `app/ui/widgets.rs:1297-1299`, `key/ui.rs:454-517` | The SDK's `Confirm` lights the yes; SpatiKey has its own copy that lights the no, centred, radius 34, a scrim of ground at 72% | Add `Confirm::careful(text, yes, no)` (as `new`, `on_yes: false`). Delete SpatiKey's copy; it uses `ui::Confirm::careful` (its `draw(p, gl)` calls become `draw(p, gl, p.bounds())`) | M | done, `d505867` |
+| ~~4~~ | `app/ui/widgets.rs:142-149`, `:453-459`; `shelf/main.rs:2208-2214`; `quill/main.rs:1205-1209` | Four copies of the scrollbar; the apps' thumbs are at least 30, the SDK's 20 | Add `look::scrollbar(p, gl, track: Rect, shown: f32, total: f32, offset: f32)` with the SDK's numbers; all four call it | S | done, `de5b8ed` |
+| ~~5~~ | `shelf/look.rs:66-115`, `loupe/folder.rs:123-137`, `key/ui.rs:413-423`, `pal/time.rs:61-69` | `size` twice (identical); a date four ways: "Today 14:47" / "4 Oct" / "4 Oct 2025" (Shelf), "29 Oct 2026" always (Key), "14:47" / "4/10" (Pal) | Move Shelf's `size`, `local` and `when` (with its test) to `app/ui/look.rs` as `look::size`, `look::when`; the four call them | S | done, `56baea9` |
+| ~~6~~ | `key/ui.rs:248-259`, `reel/screens.rs:611-650`, `:826-838`, `loupe/folder.rs:395-414` | A screen's head (a Back button, the title at `TITLE_EM * 0.9`, a quieter word beside, the rule) built four times; the gaps under it are 12/2/16, 12/2/22, 14/2/24 | Move SpatiKey's `top` to `look::top(p, gl, all, back, back_label, back_icon, title, beside) -> Rect` with gaps 12 / 2 / 18 (as `look::header`); the four call it | M | done, `a6e3d65` |
+| ~~7~~ | `app/ui/widgets.rs:775-776` | `DOUBLE_CLICK` (450 ms) and `DOUBLE_CLICK_SLOP` (6) are private; three apps wrote their own (400, 400, 450) | Make them `pub`, re-export from `ui`; add `pub const DRAG_AFTER: f32 = 8.0` (Decisions 3) | S | done, `b2329c8` |
+| ~~8~~ | `app/ui/widgets.rs:348`, `:1247`; `shelf/main.rs:1991`, `:2138`, `:2000`, `:2296`, `:2314`, `:2343`; `shelf/hand.rs:980-999`; `quill/main.rs:1221`, `:1425`, `:1436` | The blue glow `[0.30, 0.62, 1.0, a]`, the scrim `[0, 0, 0, 0.35]` and the busy amber `[1.0, 0.85, 0.4, 1.0]` are literals in each place | Add `theme::glow(alpha) -> Color`, `look::scrim(p, gl, all)` and `pub const AMBER: Color` in `look.rs`; replace the literals | S | done, `f853578` |
+| ~~9~~ | `shelf/hand.rs:206-208` | `keys(letter)` ("⌘C" / "Ctrl+C") is SpatiShelf's alone | Move to `look::chord(keys: &str) -> String`; SpatiShelf and SpatiQuill use it | S | done, `a1b54dc` |
+| ~~10~~ | `reel/play.rs:92-150` (`Clock`), `loupe/view.rs:30`, `:658-674` | Two clocks for controls that hide; 3.0 s and 3.2 s | Move SpatiReel's `Clock` and its tests to `ui::AutoHide` with `pub const CONTROLS_SHOWN = 3 s`; SpatiLoupe uses its `wake` / `stir` / `on` and keeps its own fade | M | done, `ba2e002` |
+| ~~11~~ | `shelf/main.rs:2047-2054`, `quill/main.rs:1195-1203` | "This tab stopped" pane twice: 680x200 and 720x220, different line heights | Add `look::stopped(p, gl, area, why, what_now)` with SpatiQuill's numbers; both call it | S | done, `ccf2c66` |
+| ~~12~~ | `reel/source/local.rs:16-23` | "This Mac" / "This device" / "This computer" is SpatiReel's alone | Move to `look::this_device() -> &'static str` | S | done, `a1b54dc` |
+| ~~13~~ | `app/ui/widgets.rs:351`, `:353`, `:976`; `app/ui/look.rs:185-187` | Inside the SDK: a tile's cursor and hover rings are white at 28% and 16% (not seen on the light ground); a field's selection is a literal blue; a keycap is literal dark | `theme::wash(0.28)`, `theme::wash(0.16)`; the selection `{ let mut c = theme::selected(); c[3] = 0.42; c }`; the keycap's rim `theme::wash(0.16)`, face `theme::raised()` over `theme::ground()` | S | done, `bb19c91` |
+| ~~14~~ | `app/ui/mod.rs:185` | `Input::of` drops a repeated Escape only; a held Enter answers a question that came up under it | Drop `repeat: true` for `Key::Enter` and `Key::Space` too. (SpatiQuill reads raw `Event::Key` for the terminal, `quill/main.rs:663`, and is not touched; check `Field` users want no repeated Enter: none does) | S | done, `f34cefd` |
+
+All fourteen done on 2026-11-18 (the commits in the last column). What the per-app jobs should know:
+
+- These per-app rows were done with them and are only to be checked: SpatiShelf 1, 2, 3, 16, 18;
+  SpatiQuill 1, 2, 3, 7, 9, 11; SpatiPal 2; SpatiKey 1, 9, 10; SpatiReel 4, 5, 6, 7; SpatiLoupe 1,
+  4, 5. Still the apps' own, with the SDK's symbol now there to call: SpatiShelf 13, 14
+  (`ui::DOUBLE_CLICK`, `ui::DRAG_AFTER`), SpatiQuill 5, SpatiLoupe 2, 3, SpatiKey 13
+  (`look::this_device`), SpatiPal 6 (`look::scrollbar`) and 7 (`look::top`), and every
+  `Confirm::careful` row (SpatiShelf 4-7, SpatiQuill 10, SpatiPal 1, SpatiKey 5, SpatiReel 1).
+- SpatiKey's own questions in `open.rs` are all `Confirm::careful` now, as its copy lit the no for
+  all of them; whether "Add it", "Turn down", "Make a new code" and "Load it" should keep the no
+  lit (they destroy nothing) is SpatiKey's row to decide, with their "Keep it" / "Not now" words.
+- `look::top` caps a title at 60% of its row (SpatiKey's), and `look::top_with` lets a screen
+  put its own buttons in the head first (SpatiReel's library, SpatiLoupe's folder at the top).
+- `ui::Menu::draw` takes the rows each frame and the rectangle it is kept inside; SpatiReel's
+  player passes the room above its controls, so its menu opens at their left, its foot on them.
+- Row 13 was looked at in the headless test room (the SDK's `gallery` example on its grid,
+  `SPATIAND_LOOK=light`): the ring of the tile the cursor is on while the grid has not the keys
+  was white on the light ground before (247 on 247, not there) and is a grey ring now (199);
+  in the dark look it is as it was. The keycaps and a field's chosen text are changed from the
+  code and not yet seen: the gallery shows neither.
+- `ui::TabBar` takes the pointer from `input`; SpatiShelf hands it `self.pointer` before
+  drawing, SpatiQuill on every move. SpatiQuill keeps `placed` (ids in the bar's order) for its
+  drag and tear.
 
 ### SpatiShelf
 
