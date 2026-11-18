@@ -2,7 +2,7 @@
 
 The plan for Spatiand's first-party applications, as agreed on 2026-10-13, and at its end what
 has been built of it. It is written so that a session which was not part of the discussion can build from
-it: what was decided, what each application must do, what already exists to build on, what is
+it (the look and words they share are in [look-and-feel.md](look-and-feel.md)): what was decided, what each application must do, what already exists to build on, what is
 still open, and the order to build in.
 
 ## Context
@@ -165,12 +165,12 @@ snapshot backend, pictures going over as dmabufs.
 * The Beam Pro: the programs in the APK (`android/build.sh`), FFmpeg built for Android,
   MediaCodec, an `AHardwareBuffer` handed over the socket, `SPATIAND_APPS_DIR` set from the
   native library directory, and the phantom-process monitor switched off.
-* Subtitles while a film is the sky (they are drawn over a window, and the sky is not one).
+* (Lifted 2026-11-18: subtitles are drawn into a film in the sky's own surface, see below.)
 * Dolby Vision that has no HDR10-compatible layer (profile 5) is shown with the wrong colours.
 * Signing in to Vibrefy by any way but a code.
 * On a Mac the room does not yet place an application's sound at its window.
-* The pose channel is not in the SDK yet: SpatiLoupe's objects are drawn in stereo for an
-  assumed window (1.3 m wide, 1.6 m away), not from the head's real place.
+* The pose channel is in the SDK since 2026-11-17 ("the head, for an application that draws its own
+  eyes" below); SpatiLoupe does not use it yet: its objects are drawn in stereo for an assumed window (1.3 m wide, 1.6 m away), not from the head's real place.
 
 ## Step 5, built 2026-10-14: the storage service, SpatiShelf, SpatiLoupe, SpatiQuill
 
@@ -937,8 +937,8 @@ raw stream (the code is the shared player's and was type-checked for Android; no
 those three); raw AV1 (`.obu`: FFmpeg's demuxer for it allows no seeking by bytes, so it plays at
 its rate and cannot be moved in; no software AV1 to try it with here); an H.264 stream with no
 timing in its SPS (none could be made with the encoders here; HEVC with none takes the same
-path); H.264 coded as separate fields. SpatiShelf does not yet take `.h264`/`.hevc` for films
-(its list of endings is its own); SpatiReel's own library does.
+path); H.264 coded as separate fields. SpatiShelf and SpatiReel's library both take
+`.h264`, `.264`, `.h265`, `.265`, `.hevc`, `.m2v`, `.ivf` and `.obu` for films since 2026-11-18 (bde5d2e).
 
 ## 2026-11-17: the head, for an application that draws its own eyes
 
@@ -1002,3 +1002,73 @@ host's tokens end to end (the host keeps `token - 1` as the viewport a picture w
 unchanged code; no session was streaming to one); `render_size`, which only a host sends; the
 ring being handed over after `unavailable` when glasses are plugged in (the room's `Waiting`,
 which needs glasses to appear).
+
+## 2026-11-17 and 11-18: what the applications do now
+
+A day of review and of the owner's requests (the checklist is [look-and-feel.md](look-and-feel.md),
+whose rows are struck with the commit that did each). **Everything below was checked by tests and
+in headless rooms; none of it was run in the glasses**; what was run on a device is said in
+docs/state.md.
+
+**The SDK** (`crates/spatiand-app`) gained: `ui::TabBar`, `ui::Menu`, `look::top`, `look::stopped`,
+`look::scrollbar`, `look::size`, `look::local`, `look::when`, `look::chord`, `look::this_device`,
+`look::scrim`, `look::AMBER`, `theme::glow`, `ui::AutoHide`, `Confirm::careful` (a question whose
+yes destroys starts on its no), `ui::DOUBLE_CLICK` (450 ms), `ui::DOUBLE_CLICK_SLOP` and
+`ui::DRAG_AFTER` (8); its own colours follow the light look and a tile's picture is drawn in its
+own colours; a held Enter or Space presses once; letter shortcuts are the key's place on any
+layout (`ui::Input::Key::letter`), so Command-Q, Control-A, -C, -X, -V and every app's own
+chords work on a Russian, Greek or Hebrew layout; the pose channel (above). Press-twice-to-delete
+is gone from SpatiPal and SpatiReel: a chat is deleted, a server forgotten, by a question.
+
+**SpatiReel.** Plays the next episode by itself when one ends, till the last, by the rule Vibrefy's
+web player uses (`vibrefy_api::episodes`, for every source with a path). A raw stream plays at
+its own pace (above). Interlaced films are made whole by FFmpeg's deinterlacer where the picture
+is (`bwdif` in software, `deinterlace_vaapi` on the Deck; on MediaCodec's and VideoToolbox's
+frames a shader blend, a **workaround**: the proper one is FFmpeg with Metal on the Mac,
+`yadif_videotoolbox`). A phone's film taken upright plays upright, a film with non-square
+pixels is shown at its shape. Subtitles show their words and none of their markup, a disc's
+picture subtitles are placed on the film, and a film in the sky has them drawn into its surface.
+A film whose name is not UTF-8 plays; the `.srt` beside a film is its own (its name and `.srt`),
+not any that begins with it. A file whose pictures cannot be decoded plays as sound if it has
+any; a seek that fails no longer leaves the film at its end; a film from a server waits out a
+network that drops for up to a minute; one that never answers gives up; a film the reader could
+not read to its end is stopped where it got to and not marked watched. A song taken up past its
+start shows its cover; a film into the machine's own sound device is mixed down to its channels;
+its controls are drawn at a readable size whatever the film. Its GPU objects are let go when a
+film closes and when a screen is replaced. A Mac's packages (`.app` and the like) are passed over
+only on a Mac. Ten-bit films decoded by VideoToolbox stay on the GPU (docs/mac.md).
+
+**SpatiLoupe** (opens non-UTF-8 names, on Linux and Android, by their own bytes): reads EXIF of a
+HEIC or AVIF on a remote folder; applies the display matrix (iPhone photos right way up) and
+`KHR_texture_transform`; shows a Radiance HDR or OpenEXR as light (Reinhard); draws an SVG's
+text and pictures; shows a picture smaller than its window at its own size; reads a moving
+picture within bounds (a tile is its first frame); lists its folder again when it changes; moves
+a PDF zoomed wider than the window sideways; answers the room's `Describe`; takes a word in a
+name for a stereo packing only if the picture bears it out and no longer takes an Ultra HDR
+JPEG's gain map for the right eye; opens a glTF only as far as its own folder; its workers
+outlive a panic; Shift-R turns anticlockwise.
+
+**SpatiQuill:** characters of no width (combining accents, variation selectors, joiners) are kept;
+Control chords work on non-Latin layouts and a Mac's Command-N, -+, -- , -0, -1 to -9 and -M no
+longer go to the shell; a selection dragged while a program writes no longer slides; mouse and
+focus reports are right; from the eighth tab on, tabs narrow to 110 px and stay reachable; a
+tab dragged along the bar no longer flickers; a window no longer redraws on every event; a folder
+or dropped file whose name is not UTF-8, or a `%` before a two-byte letter, no longer panics;
+`tmux` tabs and `gitstatusd` no longer ask before closing; a program replaced while running no
+longer stops new tabs.
+
+**SpatiShelf:** works on non-UTF-8 names by their own bytes; asks before opening more than ten
+things; does the rest of a selection when one cannot be done; writes over nothing already there,
+on a remote as here; follows no links and waits on no pipes when copying; the Trash is found for
+a link's own disk, copying into it no longer puts the originals there, and a thing taken from a
+disk with no trash leaves no orphan; a remote that does not answer keeps nothing else waiting;
+a folder that could not be watched is tried again; on the Mac it remembers where trashed things
+came from while their disk is away.
+
+**SpatiPal:** many faults of its hearing, voice, chats and reminders were fixed (the commits
+`ef48ac4` to `3f3f69b`); chats, settings and reminders are written 0600 and a chat no longer saves
+over another machine's; its log no longer carries what the model typed or what was said in the
+room that was not meant for it. It never sees SpatiKey's windows (docs/spatikey.md).
+
+**Not checked on hardware, and open:** deinterlacing through MediaCodec and VideoToolbox frames;
+raw AV1 (`.obu`) cannot be seeked; the Android frame handover (docs/beam-pro.md).
