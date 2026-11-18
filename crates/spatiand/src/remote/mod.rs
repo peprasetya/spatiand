@@ -316,6 +316,12 @@ fn word(text: String) {
     *notice_slot() = Some(HostNotice { host: String::new(), text, at: std::time::Instant::now(), lasts: WORD_FOR });
 }
 
+/// The room's own word about itself, on the same card for the same few seconds, on every
+/// platform: a recording that stopped by itself, and why.
+pub fn room_word(text: String) {
+    word(text)
+}
+
 /// What the card says of the hosts, if anything: that one the wearer asked something of is
 /// locked, for as long as it is waited for; else what one has just notified of, if it is recent
 /// enough to be worth a glance.

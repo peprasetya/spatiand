@@ -2087,6 +2087,15 @@ pub fn run(
             }
 
             // --- the recording ---
+            // One that stopped by itself (the storage full) is stopped here too: the room says
+            // so, and no longer says it is recording.
+            if let Some(why) = recorder.as_ref().and_then(|r| r.failed()) {
+                if let Some(r) = recorder.take() {
+                    r.stop(&mut renderer);
+                }
+                shell.set_recording(false);
+                crate::remote::room_word(format!("The recording stopped: {why}. What was recorded until then is kept."));
+            }
             if record_toggle {
                 match recorder.take() {
                     Some(r) => {

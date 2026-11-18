@@ -25,7 +25,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use smithay::backend::egl::{EGLContext, EGLDisplay};
@@ -76,6 +76,8 @@ pub struct Recorder {
     stop: Arc<AtomicBool>,
     /// The recorder's thread has ended in an error: no more pictures are made for it.
     failed: Arc<AtomicBool>,
+    /// Why, for the wearer.
+    why: Arc<Mutex<String>>,
     _microphone: Option<spatiand_audio::server::Capture>,
 }
 
@@ -141,6 +143,8 @@ impl Recorder {
         let stopping = stop.clone();
         let failed = Arc::new(AtomicBool::new(false));
         let failing = failed.clone();
+        let why = Arc::new(Mutex::new(String::new()));
+        let saying = why.clone();
         let shown = path.clone();
         let size_now = (size.0 as u32, size.1 as u32);
         std::thread::Builder::new()
@@ -156,6 +160,7 @@ impl Recorder {
                     // and must not stay where nothing shows it.
                     Err(e) => {
                         log::warn!("recording: {} is incomplete: {e}", shown.display());
+                        *saying.lock().unwrap_or_else(|e| e.into_inner()) = e;
                         failing.store(true, Ordering::SeqCst);
                         codec::unfinished(&shown);
                     }
@@ -173,8 +178,16 @@ impl Recorder {
             frames: 0,
             stop,
             failed,
+            why,
             _microphone: microphone,
         })
+    }
+
+    /// **The recording has stopped by itself** (the storage full, most likely), and why: the
+    /// frame loop then stops it, so that the room no longer says it is recording, and says so.
+    /// What was written up to then is finished and kept.
+    pub fn failed(&self) -> Option<String> {
+        self.failed.load(Ordering::SeqCst).then(|| self.why.lock().unwrap_or_else(|e| e.into_inner()).clone())
     }
 
     /// Whether this frame is one to record. Asked once a frame, before it is drawn.
@@ -245,17 +258,38 @@ impl Drop for Recorder {
 }
 
 /// The recorder's thread: take coded pictures out, write them and the sound as it comes,
-/// finish the file.
+/// finish the file -- **also when something failed on the way**, so that what was written up
+/// to then is a file that says how long it is, with its last pictures in it.
 fn run(
+    video: codec::Output,
+    sounds: Vec<Sound>,
+    file: std::fs::File,
+    size: (u32, u32),
+    started: Instant,
+    stop: &AtomicBool,
+) -> Result<f64, String> {
+    let mut writer: Option<super::mkv::Writer> = None;
+    let result = record(video, sounds, file, size, started, stop, &mut writer);
+    if result.is_err() {
+        if let Some(w) = writer.take() {
+            if let Err(e) = w.finish(started.elapsed().as_millis() as i64) {
+                log::warn!("recording: could not finish the file either: {e}");
+            }
+        }
+    }
+    result
+}
+
+fn record(
     mut video: codec::Output,
     mut sounds: Vec<Sound>,
     file: std::fs::File,
     size: (u32, u32),
     started: Instant,
     stop: &AtomicBool,
+    writer: &mut Option<super::mkv::Writer>,
 ) -> Result<f64, String> {
     let mut file = Some(file);
-    let mut writer: Option<super::mkv::Writer> = None;
     // Pictures out before the stream's parameter sets, which the file's header needs.
     let mut held: Vec<(i64, bool, Vec<u8>)> = Vec::new();
     let mut stopping_since: Option<Instant> = None;
@@ -292,7 +326,7 @@ fn run(
                         for (ms, key, data) in held.drain(..) {
                             w.video(1, ms, key, &data).map_err(|e| e.to_string())?;
                         }
-                        writer = Some(w);
+                        *writer = Some(w);
                     }
                 }
                 Coded::Picture { ms, key, data } => match writer.as_mut() {
@@ -319,7 +353,7 @@ fn run(
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    let Some(mut w) = writer else {
+    let Some(mut w) = writer.take() else {
         return Err("nothing was recorded".into());
     };
     for (i, sound) in sounds.iter_mut().enumerate() {

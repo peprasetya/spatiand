@@ -301,6 +301,11 @@ impl Output {
             if index == ndk::AMEDIACODEC_INFO_OUTPUT_FORMAT_CHANGED as isize {
                 continue;
             }
+            // -1 is nothing yet and -3 buffers changed (-2 above); below that is the codec's
+            // error, which was taken for "nothing yet" and left the recording going for ever.
+            if index < ndk::AMEDIACODEC_INFO_OUTPUT_BUFFERS_CHANGED as isize {
+                return Err(format!("the video encoder failed ({index})"));
+            }
             if index < 0 {
                 break;
             }

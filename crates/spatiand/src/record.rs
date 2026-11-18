@@ -33,7 +33,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use smithay::backend::allocator::dmabuf::{Dmabuf, DmabufFlags};
@@ -89,6 +89,8 @@ pub struct Recorder {
     frames: u64,
     skipped: u64,
     captures: Vec<Child>,
+    /// Why the recorder's thread ended before it was stopped (the storage full), when it has.
+    failed: Arc<Mutex<Option<String>>>,
 }
 
 impl Recorder {
@@ -204,6 +206,8 @@ impl Recorder {
         }
         let started = Instant::now();
         let shown = path.clone();
+        let failed = Arc::new(Mutex::new(None));
+        let failing = failed.clone();
         let thread = std::thread::Builder::new()
             .name("recorder".into())
             .spawn(move || {
@@ -213,7 +217,10 @@ impl Recorder {
                         seconds,
                         shown.display()
                     ),
-                    Err(e) => log::warn!("recording: {} is incomplete: {e}", shown.display()),
+                    Err(e) => {
+                        log::warn!("recording: {} is incomplete: {e}", shown.display());
+                        *failing.lock().unwrap_or_else(|e| e.into_inner()) = Some(e);
+                    }
                 }
             });
         if let Err(e) = thread {
@@ -233,7 +240,15 @@ impl Recorder {
             frames: 0,
             skipped: 0,
             captures,
+            failed,
         })
+    }
+
+    /// **The recording has stopped by itself** (the storage full, most likely), and why: the
+    /// frame loop then stops it, so that the room no longer says it is recording, and says so.
+    /// What was written up to then is finished and kept.
+    pub fn failed(&self) -> Option<String> {
+        self.failed.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Offer the frame just drawn into `fbo`. Taken when one is due, and copied on the GPU.
@@ -351,7 +366,9 @@ fn blit(
     Ok(sync)
 }
 
-/// The recorder's thread: encode what arrives, write the sound as it comes, finish the file.
+/// The recorder's thread: encode what arrives, write the sound as it comes, finish the file --
+/// **also when something failed on the way**, so that what was written up to then is a file
+/// that says how long it is.
 fn run(
     mut encoder: VideoEncoder,
     mut writer: Writer,
@@ -361,6 +378,22 @@ fn run(
     messages: mpsc::Receiver<Message>,
     give_back: mpsc::Sender<usize>,
 ) -> Result<f64, String> {
+    let recorded = record(&mut encoder, &mut writer, sources, rate, started, messages, give_back);
+    let finished = writer.finish().map_err(|e| e.to_string());
+    let ended = recorded?;
+    finished?;
+    Ok(ended.as_secs_f64())
+}
+
+fn record(
+    encoder: &mut VideoEncoder,
+    writer: &mut Writer,
+    sources: Vec<Source>,
+    rate: u32,
+    started: Instant,
+    messages: mpsc::Receiver<Message>,
+    give_back: mpsc::Sender<usize>,
+) -> Result<Duration, String> {
     let mut scratch: Vec<f32> = Vec::new();
     let mut pump = |writer: &mut Writer, until: Duration| -> Result<(), String> {
         for (track, source) in sources.iter().enumerate() {
@@ -396,16 +429,15 @@ fn run(
             Ok(Message::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        pump(&mut writer, started.elapsed())?;
+        pump(writer, started.elapsed())?;
     }
     let ended = started.elapsed();
     for packet in encoder.finish().map_err(|e| e.to_string())? {
         writer.video(&packet).map_err(|e| e.to_string())?;
     }
     // Whatever sound is still waiting, and then the last of each track up to the end.
-    pump(&mut writer, ended + LAG)?;
-    writer.finish().map_err(|e| e.to_string())?;
-    Ok(ended.as_secs_f64())
+    pump(writer, ended + LAG)?;
+    Ok(ended)
 }
 
 /// Capture `target` into `ring` as float samples, with `pw-record`. `monitor` records what a

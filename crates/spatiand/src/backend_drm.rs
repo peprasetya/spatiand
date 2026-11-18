@@ -3864,6 +3864,15 @@ pub fn run(
             // Owed until a frame is actually drawn: a request made on a turn that drew nothing
             // would otherwise read back the previous frame's pixels, or be lost.
             // --- the recording ---
+            // One that stopped by itself (the storage full) is stopped here too: the room says
+            // so, and no longer says it is recording.
+            if let Some(why) = recorder.as_ref().and_then(|r| r.failed()) {
+                if let Some(r) = recorder.take() {
+                    r.stop(&spatial_audio);
+                }
+                shell.set_recording(false);
+                crate::remote::room_word(format!("The recording stopped: {why}. What was recorded until then is kept."));
+            }
             if record_toggle {
                 match recorder.take() {
                     Some(r) => {
