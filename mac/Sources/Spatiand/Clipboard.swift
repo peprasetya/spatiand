@@ -56,7 +56,17 @@ final class ClipboardSync {
         offer()
     }
 
+    /// What a password manager puts beside a password it copies (nspasteboard.org's convention):
+    /// such a copy stays on this Mac, and a secret from the room is put here marked so.
+    private let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    /// What a Wayland source offers beside a secret it copies (KDE's convention, which password
+    /// managers follow): crates/spatiand/src/remote/local_board.rs's SECRET_HINT.
+    private let secretHint = "x-kde-passwordmanagerhint"
+
     private func offer() {
+        // A password copied in a password manager is not offered to the room and its hosts, as on
+        // the Beam Pro (PhoneClipboard.java).
+        if board.types?.contains(concealed) == true { return }
         if let text = board.string(forType: .string), !text.isEmpty {
             let bytes = text.utf8.count
             offeredText = text
@@ -91,7 +101,12 @@ final class ClipboardSync {
                 // Already what is there: writing it again would only tell the next end it changed, and two
                 // ends of one pasteboard (a client and a host on one Mac) would pass it back and forth for ever.
                 if board.string(forType: .string) == text { return }
-                put { board.setString(text, forType: .string) }
+                let secret = types.contains { $0.lowercased() == secretHint }
+                put {
+                    let written = board.setString(text, forType: .string)
+                    if secret { board.setData(Data(), forType: concealed) }
+                    return written
+                }
             } else if types.contains(where: { $0.lowercased() == "image/png" }),
                       ((offer["bytes"] as? NSNumber)?.intValue ?? Int.max) <= eagerImage {
                 send?(["Clipboard": ["Want": ["mime_type": "image/png"]]])

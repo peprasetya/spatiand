@@ -38,7 +38,9 @@ fn say(what: Clipboard) {
         SAID.lock().unwrap().push(answer);
     }
     match put {
-        Some(Put::Text(text)) => java_put_text(&text),
+        Some(Put::Text(text)) => java_put_text(&text, false),
+        // Marked sensitive on the phone: not shown in Android's clipboard preview.
+        Some(Put::Secret(text)) => java_put_text(&text, true),
         Some(Put::Png(png)) => java_put_image(&png),
         None => {}
     }
@@ -64,9 +66,10 @@ pub fn copied_png(png: Vec<u8>) {
     }
 }
 
-fn java_put_text(text: &str) {
+fn java_put_text(text: &str, secret: bool) {
+    let name = if secret { c"putClipboardSecret" } else { c"putClipboardText" };
     jni::with_shell(|env, class| unsafe {
-        let Some(method) = jni::shell_method(env, class, c"putClipboardText", c"(Ljava/lang/String;)V") else { return };
+        let Some(method) = jni::shell_method(env, class, name, c"(Ljava/lang/String;)V") else { return };
         let args = [jvalue { l: jni::new_string(env, text) }];
         ((**env).v1_1.CallStaticVoidMethodA)(env, class, method, args.as_ptr());
     });

@@ -920,6 +920,9 @@ public final class ShellHelper extends Binder {
     String clipText() throws Exception {
         android.content.ClipData clip = clipboard().getPrimaryClip();
         if (clip == null || clip.getItemCount() == 0) return null;
+        // A password copied in a password manager is not offered to the room (PhoneClipboard).
+        android.os.PersistableBundle extras = clip.getDescription().getExtras();
+        if (extras != null && extras.getBoolean("android.content.extra.IS_SENSITIVE", false)) return null;
         android.content.ClipData.Item item = clip.getItemAt(0);
         CharSequence text = item.getText();
         if (text == null && item.getHtmlText() != null) {

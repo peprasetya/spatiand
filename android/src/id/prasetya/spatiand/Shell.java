@@ -229,7 +229,12 @@ final class Shell {
 
     /** The room copied this: on the phone's clipboard with it (crates/.../clipboard.rs). */
     static void putClipboardText(String text) {
-        PhoneClipboard.putText(text);
+        PhoneClipboard.putText(text, false);
+    }
+
+    /** The room copied this secret (a password): on the phone's clipboard marked sensitive. */
+    static void putClipboardSecret(String text) {
+        PhoneClipboard.putText(text, true);
     }
 
     static void putClipboardImage(byte[] png) {

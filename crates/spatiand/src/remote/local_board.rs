@@ -12,7 +12,12 @@
 //! * a picture (PNG) is offered by its size and sent when asked for; one offered by the session
 //!   is fetched at once up to [`EAGER_IMAGE`], since a phone's clipboard cannot wait on a paste;
 //! * what the session put there is not offered back to it, or two ends would pass one copy back
-//!   and forth for ever.
+//!   and forth for ever;
+//! * text the session marks secret -- offered with [`SECRET_HINT`], as a password manager
+//!   copies it -- is put there as secret ([`Put::Secret`]: on Android, marked sensitive, so the
+//!   phone does not show it in its clipboard preview). What the platform marks secret on its
+//!   own clipboard is not offered to the session at all: the platform's side does not say it
+//!   (`PhoneClipboard.java`, the Mac's `Clipboard.swift`).
 
 use spatiand_stream::control::Clipboard;
 
@@ -23,11 +28,16 @@ pub const EAGER_IMAGE: usize = 8 << 20;
 
 const TEXT: &str = "text/plain;charset=utf-8";
 const PNG: &str = "image/png";
+/// The form a Wayland source offers beside its text to say the text is a secret (its bytes say
+/// "secret"): KDE's convention, which password managers follow.
+pub const SECRET_HINT: &str = "x-kde-passwordManagerHint";
 
 /// What to put on the machine's own clipboard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Put {
     Text(String),
+    /// Text the session marked secret (a password): put there marked so.
+    Secret(String),
     Png(Vec<u8>),
 }
 
@@ -38,12 +48,14 @@ pub struct Board {
     offered_png: Option<Vec<u8>>,
     /// What the session last put on the machine's clipboard, which is not offered back to it.
     put: Option<Put>,
+    /// Whether what the session offered last is secret, for its text sent later.
+    secret: bool,
 }
 
 impl Board {
     /// The machine's clipboard holds this text now: what to say to the session, if anything.
     pub fn copied_text(&mut self, text: String) -> Option<Clipboard> {
-        if text.is_empty() || self.put.as_ref() == Some(&Put::Text(text.clone())) {
+        if text.is_empty() || self.put_text() == Some(text.as_str()) {
             return None;
         }
         let bytes = text.len();
@@ -78,14 +90,14 @@ impl Board {
     pub fn said(&mut self, what: Clipboard) -> (Option<Put>, Option<Clipboard>) {
         match what {
             Clipboard::Offer { mime_types, text, bytes } => {
+                self.secret = mime_types.iter().any(|t| t.eq_ignore_ascii_case(SECRET_HINT));
                 if let Some(text) = text {
                     // Already there: written again, it would only come back as a new copy.
-                    if self.offered_text.as_deref() == Some(text.as_str())
-                        || self.put.as_ref() == Some(&Put::Text(text.clone()))
-                    {
+                    if self.offered_text.as_deref() == Some(text.as_str()) || self.put_text() == Some(text.as_str()) {
                         return (None, None);
                     }
-                    return (Some(self.putting(Put::Text(text))), None);
+                    let put = self.text_put(text);
+                    return (Some(self.putting(put)), None);
                 }
                 let has = |m: &str| mime_types.iter().any(|t| t.eq_ignore_ascii_case(m));
                 if has(PNG) && bytes as usize <= EAGER_IMAGE {
@@ -110,10 +122,28 @@ impl Board {
                     if self.offered_text.as_deref() == Some(text.as_str()) {
                         return (None, None);
                     }
-                    return (Some(self.putting(Put::Text(text))), None);
+                    let put = self.text_put(text);
+                    return (Some(self.putting(put)), None);
                 }
                 (None, None)
             }
+        }
+    }
+
+    /// Text to put there, secret if the session's offer said so.
+    fn text_put(&self, text: String) -> Put {
+        if self.secret {
+            Put::Secret(text)
+        } else {
+            Put::Text(text)
+        }
+    }
+
+    /// The text the session last put there, secret or not.
+    fn put_text(&self) -> Option<&str> {
+        match &self.put {
+            Some(Put::Text(text) | Put::Secret(text)) => Some(text),
+            _ => None,
         }
     }
 
@@ -210,6 +240,23 @@ mod tests {
         assert_eq!(board.said(Clipboard::Want { mime_type: PNG.into() }).1, Some(Clipboard::Data { mime_type: PNG.into(), bytes: vec![9; 10] }));
         // Text is not what it holds.
         assert_eq!(board.said(Clipboard::Want { mime_type: TEXT.into() }).1, None);
+    }
+
+    #[test]
+    fn text_the_session_marks_secret_is_put_there_as_secret() {
+        let mut board = Board::default();
+        let secret = vec![TEXT.into(), SECRET_HINT.into()];
+        let (put, _) = board.said(Clipboard::Offer { mime_types: secret.clone(), text: Some("hunter2".into()), bytes: 7 });
+        assert_eq!(put, Some(Put::Secret("hunter2".into())));
+        assert_eq!(board.copied_text("hunter2".into()), None, "not offered back");
+        // Too long to come with its offer: secret when it comes.
+        let (_, want) = board.said(Clipboard::Offer { mime_types: secret, text: None, bytes: (EAGER_TEXT + 1) as u32 });
+        assert_eq!(want, Some(Clipboard::Want { mime_type: TEXT.into() }));
+        let (put, _) = board.said(Clipboard::Data { mime_type: TEXT.into(), bytes: b"long".to_vec() });
+        assert_eq!(put, Some(Put::Secret("long".into())));
+        // The next plain copy is plain.
+        let (put, _) = board.said(Clipboard::Offer { mime_types: vec![TEXT.into()], text: Some("plain".into()), bytes: 5 });
+        assert_eq!(put, Some(Put::Text("plain".into())));
     }
 
     #[test]

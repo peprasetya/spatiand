@@ -9,6 +9,7 @@ import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.PersistableBundle;
 import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
@@ -97,6 +98,8 @@ final class PhoneClipboard {
         }
         ClipData clip = board.getPrimaryClip();
         if (clip == null || clip.getItemCount() == 0) return;
+        // A password copied in a password manager is not offered to the room and its hosts.
+        if (sensitive(clip.getDescription())) return;
         ClipData.Item item = clip.getItemAt(0);
         Uri uri = item.getUri();
         String type = uri == null ? null : context.getContentResolver().getType(uri);
@@ -138,10 +141,31 @@ final class PhoneClipboard {
 
     // --- what the room copied, put on the phone's clipboard ---
 
-    static void putText(String text) {
+    /**
+     * Text copied in the room; `secret` when the room's copy said it is one (a password manager's):
+     * marked sensitive, so Android does not show it in its clipboard preview.
+     */
+    static void putText(String text, boolean secret) {
         PhoneClipboard c = running;
         if (c == null) return;
-        c.handler.post(() -> c.put(ClipData.newPlainText("Spatiand", text)));
+        c.handler.post(() -> {
+            ClipData clip = ClipData.newPlainText("Spatiand", text);
+            if (secret) {
+                PersistableBundle extras = new PersistableBundle();
+                extras.putBoolean(IS_SENSITIVE, true);
+                clip.getDescription().setExtras(extras);
+            }
+            c.put(clip);
+        });
+    }
+
+    /** ClipDescription.EXTRA_IS_SENSITIVE (Android 13), read and written by any version. */
+    static final String IS_SENSITIVE = "android.content.extra.IS_SENSITIVE";
+
+    /** Whether the clip's owner marked it sensitive (a password): such a clip stays on the phone. */
+    static boolean sensitive(ClipDescription d) {
+        PersistableBundle extras = d == null ? null : d.getExtras();
+        return extras != null && extras.getBoolean(IS_SENSITIVE, false);
     }
 
     /**
