@@ -579,22 +579,30 @@ impl Pal {
             return;
         }
         self.reminders_looked = Instant::now();
-        let mut all = store::reminders();
         let now = store::now();
-        let mut changed = false;
-        for r in all.iter_mut().filter(|r| !r.done && r.due <= now) {
-            r.done = true;
-            changed = true;
-            // Long overdue -- the room was off -- is still said, as late.
-            let late = now - r.due > 600;
-            let line = if late { format!("A reminder I could not give earlier: {}", r.text) } else { format!("Reminder: {}", r.text) };
+        // Marked said and saved first, under the reminders' lock: the brain may be setting one.
+        let due = store::change_reminders(|all| {
+            let mut due = Vec::new();
+            for r in all.iter_mut().filter(|r| !r.done && r.due <= now) {
+                r.done = true;
+                // Long overdue -- the room was off -- is still said, as late.
+                let late = now - r.due > 600;
+                due.push(if late { format!("A reminder I could not give earlier: {}", r.text) } else { format!("Reminder: {}", r.text) });
+            }
+            due
+        });
+        let due = match due {
+            Ok(due) => due,
+            Err(why) => {
+                log::warn!("reminders: {why}");
+                return;
+            }
+        };
+        for line in due {
             log::info!("{line}");
             self.voice.say(&line);
             let _ = self.app.room_ask(&json!({"do": "notice", "text": format!("{}\n{}", self.settings.name, line)}).to_string(), channel().0);
             self.conversation.touch();
-        }
-        if changed {
-            let _ = store::save_reminders(&all);
         }
     }
 

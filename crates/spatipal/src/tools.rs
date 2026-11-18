@@ -327,18 +327,16 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
         }
         "set_reminder" => {
             let text = get("text").as_str().unwrap_or_default().trim().to_string();
-            let due = match (get("in_minutes").as_f64(), get("at").as_str()) {
-                (Some(m), _) => Some(store::now() + (m.max(0.0) * 60.0) as u64),
-                (None, Some(at)) => crate::time::parse_local(at, store::now()),
-                _ => None,
-            };
+            let due = due(get("in_minutes").as_f64(), get("at").as_str(), store::now());
             match due {
                 Some(due) if !text.is_empty() => {
-                    let mut all = store::reminders();
-                    let id = all.iter().map(|r| r.id).max().unwrap_or(0) + 1;
-                    all.push(Reminder { id, text: text.clone(), due, done: false });
-                    match store::save_reminders(&all) {
-                        Ok(()) => done(format!("Reminder {id} set for {}.", crate::time::spoken(due)), Some(format!("set a reminder for {}", crate::time::spoken(due)))),
+                    let added = store::change_reminders(|all| {
+                        let id = all.iter().map(|r| r.id).max().unwrap_or(0) + 1;
+                        all.push(Reminder { id, text: text.clone(), due, done: false });
+                        id
+                    });
+                    match added {
+                        Ok(id) => done(format!("Reminder {id} set for {}.", crate::time::spoken(due)), Some(format!("set a reminder for {}", crate::time::spoken(due)))),
                         Err(e) => done(format!("The reminder could not be kept: {e}"), None),
                     }
                 }
@@ -355,18 +353,29 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
         }
         "cancel_reminder" => {
             let id = get("id").as_u64().unwrap_or(0);
-            let mut all = store::reminders();
-            let before = all.len();
-            all.retain(|r| r.id != id);
-            if all.len() == before {
-                return done(format!("There is no reminder {id}."), None);
-            }
-            match store::save_reminders(&all) {
-                Ok(()) => done(format!("Reminder {id} cancelled."), Some("cancelled a reminder".into())),
+            let cancelled = store::change_reminders(|all| {
+                let before = all.len();
+                all.retain(|r| r.id != id);
+                all.len() != before
+            });
+            match cancelled {
+                Ok(true) => done(format!("Reminder {id} cancelled."), Some("cancelled a reminder".into())),
+                Ok(false) => done(format!("There is no reminder {id}."), None),
                 Err(e) => done(format!("The reminder could not be cancelled: {e}"), None),
             }
         }
         other => done(format!("There is no tool {other:?}."), None),
+    }
+}
+
+/// When a reminder is due: in a number of minutes, or at a time. Minutes of 0 or less beside a
+/// time are the model filling in both: the time is meant.
+fn due(in_minutes: Option<f64>, at: Option<&str>, now: u64) -> Option<u64> {
+    match (in_minutes, at) {
+        (Some(m), _) if m > 0.0 => Some(now.saturating_add((m * 60.0) as u64)),
+        (_, Some(at)) => crate::time::parse_local(at, now),
+        (Some(_), None) => Some(now),
+        (None, None) => None,
     }
 }
 
@@ -443,6 +452,18 @@ mod tests {
 
     fn call(name: &str, arguments: Value) -> ToolCall {
         ToolCall { id: "1".into(), name: name.into(), arguments: arguments.to_string() }
+    }
+
+    #[test]
+    fn a_reminder_is_due_when_it_was_asked_for() {
+        let now = 1_000_000;
+        assert_eq!(due(Some(10.0), None, now), Some(now + 600));
+        // Huge minutes: as late as can be, not an overflow.
+        assert_eq!(due(Some(1e300), None, now), Some(u64::MAX));
+        // in_minutes 0 beside a time: the time.
+        assert_eq!(due(Some(0.0), Some("20:00"), now), crate::time::parse_local("20:00", now));
+        assert_eq!(due(Some(0.0), None, now), Some(now));
+        assert_eq!(due(None, None, now), None);
     }
 
     #[test]

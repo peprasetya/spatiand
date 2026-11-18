@@ -204,14 +204,39 @@ pub struct Reminder {
     pub done: bool,
 }
 
+/// The reminders, to read; none when they cannot be.
 pub fn reminders() -> Vec<Reminder> {
-    std::fs::read(folder().join("reminders.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    read_reminders(&folder().join("reminders.json")).unwrap_or_default()
 }
 
-pub fn save_reminders(all: &[Reminder]) -> Result<(), String> {
-    // Long said, long gone: kept a week for "what did you remind me of".
-    let keep: Vec<&Reminder> = all.iter().filter(|r| !r.done || r.due + 7 * 86_400 > now()).collect();
-    write(&folder().join("reminders.json"), &serde_json::to_string_pretty(&keep).map_err(|e| e.to_string())?)
+/// The reminders' file, read: none when there is no file yet, and an error -- **not** none --
+/// when there is one that cannot be read, so that it is not saved over with what is left of it.
+fn read_reminders(path: &Path) -> Result<Vec<Reminder>, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("{} is not readable ({e}): left as it is", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Change the reminders: read, changed by `change`, and saved if it changed anything -- one at a
+/// time, from whichever thread (the brain's sets and cancels them, the window's says them).
+pub fn change_reminders<R>(change: impl FnOnce(&mut Vec<Reminder>) -> R) -> Result<R, String> {
+    change_reminders_at(&folder().join("reminders.json"), change)
+}
+
+fn change_reminders_at<R>(path: &Path, change: impl FnOnce(&mut Vec<Reminder>) -> R) -> Result<R, String> {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _held = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let mut all = read_reminders(path)?;
+    let before = all.clone();
+    let result = change(&mut all);
+    if all != before {
+        // Long said, long gone: kept a week for "what did you remind me of".
+        let keep: Vec<&Reminder> = all.iter().filter(|r| !r.done || r.due.saturating_add(7 * 86_400) > now()).collect();
+        write(path, &serde_json::to_string_pretty(&keep).map_err(|e| e.to_string())?)?;
+    }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -231,6 +256,22 @@ mod tests {
     fn chats_begun_in_the_same_second_have_their_own_files() {
         let ids: std::collections::HashSet<String> = (0..50).map(|_| Chat::new().id).collect();
         assert_eq!(ids.len(), 50);
+    }
+
+    #[test]
+    fn reminders_that_cannot_be_read_are_not_saved_over() {
+        let dir = std::env::temp_dir().join(format!("spatipal-reminders-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("reminders.json");
+        let added = |all: &mut Vec<Reminder>| all.push(Reminder { id: 1, text: "call".into(), due: u64::MAX, done: false });
+        // No file yet: there are none, and one is added.
+        change_reminders_at(&path, added).unwrap();
+        assert_eq!(read_reminders(&path).unwrap().len(), 1);
+        // Half a file (a synchronisation under way): refused, and left as it is.
+        std::fs::write(&path, "[{\"id\": 1, \"te").unwrap();
+        assert!(change_reminders_at(&path, added).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "[{\"id\": 1, \"te");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
