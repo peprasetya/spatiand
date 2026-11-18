@@ -117,6 +117,11 @@ pub fn tell(what: Asked, text: &str) {
     call(what, 0, 0.0, 0.0, 0.0, text);
 }
 
+/// The same, under a number the answer comes back with.
+pub fn tell_numbered(what: Asked, id: u32, text: &str) {
+    call(what, id, 0.0, 0.0, 0.0, text);
+}
+
 pub fn tell_number(what: Asked, a: f64) {
     call(what, 0, a, 0.0, 0.0, "");
 }
@@ -749,13 +754,14 @@ pub extern "C" fn sp_bluetooth_end() {
     super::bluetooth::list_end();
 }
 
-/// What [`Asked::BluetoothDo`] came to: `error` null for done, or why not.
+/// What [`Asked::BluetoothDo`] numbered `action` (its `id`) came to: `error` null for done, or
+/// why not.
 ///
 /// # Safety
 /// `error` must be a valid C string or null.
 #[no_mangle]
-pub unsafe extern "C" fn sp_bluetooth_done(error: *const c_char) {
-    super::bluetooth::done((!error.is_null()).then(|| text(error)));
+pub unsafe extern "C" fn sp_bluetooth_done(action: u32, error: *const c_char) {
+    super::bluetooth::done(action, (!error.is_null()).then(|| text(error)));
 }
 
 /// How many pixels a point of this Mac's screen is: 2 on a Retina display.

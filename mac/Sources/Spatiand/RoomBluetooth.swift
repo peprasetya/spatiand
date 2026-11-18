@@ -35,50 +35,57 @@ enum RoomBluetooth {
     }
 
     /// Do what the page asked: `connect AA:BB:..`, `disconnect ..`, `forget ..`, `power on|off`.
-    /// Answered with sp_bluetooth_done, once, whatever happens.
-    static func act(_ text: String) {
+    /// Answered with sp_bluetooth_done under `number`, once, whatever happens.
+    static func act(_ text: String, number: UInt32) {
+        let done = { (error: String?) in sp_bluetooth_done(number, error) }
         let parts = text.split(separator: " ", maxSplits: 1).map(String.init)
-        guard parts.count == 2 else { sp_bluetooth_done("Not understood: \(text)"); return }
+        guard parts.count == 2 else { done("Not understood: \(text)"); return }
         let (verb, argument) = (parts[0], parts[1])
         if verb == "power" {
-            power(argument == "on")
+            power(argument == "on", done)
             return
         }
         guard let device = IOBluetoothDevice(addressString: argument) else {
-            sp_bluetooth_done("No device \(argument).")
+            done("No device \(argument).")
             return
         }
         switch verb {
         case "connect":
-            Connecting.start(device)
+            Connecting.start(device, done)
         case "disconnect":
-            let status = device.closeConnection()
-            sp_bluetooth_done(status == kIOReturnSuccess ? nil : "It would not disconnect (\(status)).")
+            // **Not on the main thread**: closeConnection waits for the device to let go, which
+            // one out of reach takes seconds to do -- the room's pointer and keys with it.
+            disconnecting.async {
+                let status = device.closeConnection()
+                done(status == kIOReturnSuccess ? nil : "It would not disconnect (\(status)).")
+            }
         case "forget":
             // Not public: IOBluetoothDevice's own `remove`, which System Settings' Forget is.
             let remove = Selector(("remove"))
             if device.responds(to: remove) {
                 device.perform(remove)
-                sp_bluetooth_done(nil)
+                done(nil)
             } else {
-                sp_bluetooth_done("This macOS does not let it be forgotten from here: use System Settings.")
+                done("This macOS does not let it be forgotten from here: use System Settings.")
             }
         default:
-            sp_bluetooth_done("Not understood: \(text)")
+            done("Not understood: \(text)")
         }
     }
 
+    fileprivate static let disconnecting = DispatchQueue(label: "spatiand.bluetooth.disconnect", qos: .userInitiated)
+
     /// Bluetooth on or off, through IOBluetooth's own preference call (not public; see the top).
-    private static func power(_ on: Bool) {
+    private static func power(_ on: Bool, _ done: @escaping (String?) -> Void) {
         typealias SetPower = @convention(c) (Int32) -> Void
         guard let framework = dlopen("/System/Library/Frameworks/IOBluetooth.framework/IOBluetooth", RTLD_LAZY),
               let symbol = dlsym(framework, "IOBluetoothPreferenceSetControllerPowerState") else {
-            sp_bluetooth_done("This macOS does not let Bluetooth be switched from here: use System Settings.")
+            done("This macOS does not let Bluetooth be switched from here: use System Settings.")
             return
         }
         unsafeBitCast(symbol, to: SetPower.self)(on ? 1 : 0)
         // The controller takes a moment to come up or go down; the compositor judges by the list.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { sp_bluetooth_done(nil) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { done(nil) }
     }
 
     /// A connect, which IOBluetooth finishes later on the main run loop: the answer is given
@@ -86,10 +93,15 @@ enum RoomBluetooth {
     private final class Connecting: NSObject {
         private static var going: [Connecting] = []
         private var answered = false
+        private let done: (String?) -> Void
 
-        static func start(_ device: IOBluetoothDevice) {
-            if device.isConnected() { sp_bluetooth_done(nil); return }
-            let connecting = Connecting()
+        private init(_ done: @escaping (String?) -> Void) {
+            self.done = done
+        }
+
+        static func start(_ device: IOBluetoothDevice, _ done: @escaping (String?) -> Void) {
+            if device.isConnected() { done(nil); return }
+            let connecting = Connecting(done)
             going.append(connecting)
             // A page timeout in slots of 0.625 ms: the most there is, about 41 s, which the
             // fifteen below cut short.
@@ -98,7 +110,12 @@ enum RoomBluetooth {
                 connecting.answer("It did not connect (\(status)).")
                 return
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { connecting.answer("It did not answer.") }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                // Given up on: the page still under way is called off, or the device would
+                // connect later by itself, after the room said it had not.
+                if !connecting.answered { RoomBluetooth.disconnecting.async { _ = device.closeConnection() } }
+                connecting.answer("It did not answer.")
+            }
         }
 
         @objc func connectionComplete(_ device: IOBluetoothDevice!, status: IOReturn) {
@@ -109,7 +126,7 @@ enum RoomBluetooth {
             guard !answered else { return }
             answered = true
             Connecting.going.removeAll { $0 === self }
-            sp_bluetooth_done(error)
+            done(error)
         }
     }
 }

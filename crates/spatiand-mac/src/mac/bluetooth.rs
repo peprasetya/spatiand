@@ -34,9 +34,12 @@ struct Answers {
     /// Being said now, between `sp_bluetooth_begin` and `sp_bluetooth_end`.
     saying: Vec<DeviceRow>,
     saying_powered: Option<bool>,
-    /// The last action's answer: an error, or none for done.
+    /// The answer to the action waited for: an error, or none for done.
     done: Option<Option<String>>,
-    acts: u64,
+    /// The number of the last action asked for, and of the last one answered: an answer that
+    /// comes after its action was given up on is not taken for the next one's.
+    acts: u32,
+    answered: u32,
 }
 
 static ANSWERS: Mutex<Answers> = Mutex::new(Answers {
@@ -47,6 +50,7 @@ static ANSWERS: Mutex<Answers> = Mutex::new(Answers {
     saying_powered: None,
     done: None,
     acts: 0,
+    answered: 0,
 });
 static ANSWERED: Condvar = Condvar::new();
 
@@ -89,11 +93,16 @@ pub fn act(action: &BluetoothAction) -> Result<(), String> {
         BluetoothAction::Power(on) => format!("power {}", if *on { "on" } else { "off" }),
         BluetoothAction::Add | BluetoothAction::None => return Ok(()),
     };
-    let before = ANSWERS.lock().unwrap().acts;
-    ffi::tell(ffi::Asked::BluetoothDo, &text);
+    let number = {
+        let mut answers = ANSWERS.lock().unwrap();
+        answers.acts = answers.acts.wrapping_add(1).max(1);
+        answers.done = None;
+        answers.acts
+    };
+    ffi::tell_numbered(ffi::Asked::BluetoothDo, number, &text);
     let deadline = Instant::now() + ACT_WAIT;
     let mut answers = ANSWERS.lock().unwrap();
-    while answers.acts == before {
+    while answers.answered != number {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
             return Err("The Mac did not answer.".into());
@@ -165,10 +174,14 @@ pub fn list_end() {
     ANSWERED.notify_all();
 }
 
-pub fn done(error: Option<String>) {
+pub fn done(action: u32, error: Option<String>) {
     let mut answers = ANSWERS.lock().unwrap();
+    if action != answers.acts {
+        log::info!("bluetooth: a late answer to an action given up on: {error:?}");
+        return;
+    }
     answers.done = Some(error);
-    answers.acts += 1;
+    answers.answered = action;
     ANSWERED.notify_all();
 }
 

@@ -296,7 +296,7 @@ final class Room {
         case SP_BLUETOOTH_LIST:
             DispatchQueue.main.async { RoomBluetooth.say() }
         case SP_BLUETOOTH_DO:
-            DispatchQueue.main.async { RoomBluetooth.act(text) }
+            DispatchQueue.main.async { RoomBluetooth.act(text, number: id) }
         case SP_SAVED:
             print("saved \(text)")
         case SP_CLIPBOARD:
