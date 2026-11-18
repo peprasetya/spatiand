@@ -139,12 +139,17 @@ impl Card {
 pub fn plain(text: &str) -> String {
     let mut stripped = String::with_capacity(text.len());
     let mut rest = text;
+    let mut unclosed = false;
     while let Some(i) = rest.find('<') {
         stripped.push_str(&rest[..i]);
         let after = &rest[i + 1..];
         let tag = after.chars().next().is_some_and(|c| c == '/' || c.is_ascii_alphabetic());
-        match after.find('>') {
-            Some(j) if tag => {
+        // Looked for only after what may be a tag, and not again once there is none further: a
+        // text of many '<' would be read over and over to its end.
+        let close = if tag && !unclosed { after.find('>') } else { None };
+        unclosed |= tag && close.is_none();
+        match close {
+            Some(j) => {
                 stripped.push(' ');
                 rest = &after[j + 1..];
             }
@@ -193,6 +198,22 @@ fn entities(text: &str) -> String {
     out
 }
 
+/// Bytes of each part of a notification read: far more than a line shows, markup and all (a
+/// D-Bus message may be up to 128 MB).
+const READ: usize = 8 << 10;
+
+/// The start of `text`, cut at [`READ`] on a character's edge.
+fn head(text: &str) -> &str {
+    if text.len() <= READ {
+        return text;
+    }
+    let mut end = READ;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
 fn limit(line: String) -> String {
     if line.chars().count() <= LINE {
         return line;
@@ -206,7 +227,7 @@ fn limit(line: String) -> String {
 /// The card: who it is from, then what it says. An application that gave no name is named by its
 /// summary (its title), and its body is what it says.
 pub fn words(app: &str, summary: &str, body: &str) -> String {
-    let (app, summary, body) = (plain(app), plain(summary), plain(body));
+    let (app, summary, body) = (plain(head(app)), plain(head(summary)), plain(head(body)));
     let (first, second) = if !app.is_empty() {
         // `notify-send -a Firefox Firefox ...`: the name once is enough.
         let summary = if summary == app { String::new() } else { summary };
@@ -244,6 +265,23 @@ mod tests {
         assert_eq!(plain("<a href=\"x\">link</a>&lt;tag&gt; &quot;q&quot; &apos;s&apos;"), "link <tag> \"q\" 's'");
         assert_eq!(plain("line\n\n  two<br/>three"), "line two three");
         assert_eq!(plain("&#233;t&#xE9; &bogus; & alone"), "été &bogus; & alone");
+    }
+
+    #[test]
+    fn a_huge_notification_is_read_only_as_far_as_shows() {
+        // Many '<' and no '>': each was searched to the end, n² in all.
+        let body = "< ".repeat(4 << 20);
+        let started = Instant::now();
+        assert_eq!(plain(&body[..20]), "< < < < < < < < < <");
+        let said = words("App", "", &body);
+        assert!(said.lines().nth(1).unwrap().ends_with('\u{2026}'));
+        let tags = "<b".repeat(4 << 20);
+        words("App", &tags, &tags);
+        assert_eq!(plain(&tags[..8]), "<b<b<b<b");
+        assert!(plain(&tags).len() == tags.len());
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert_eq!(head("é".repeat(READ).as_str()).len(), READ);
+        assert_eq!(head("aé".repeat(READ).as_str()).len(), READ - 1);
     }
 
     #[test]
