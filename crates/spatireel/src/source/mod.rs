@@ -83,6 +83,10 @@ pub struct Item {
     pub pictured: bool,
     /// When it last changed, in any one unit, where the source says: what "last updated" orders by.
     pub modified: i64,
+    /// Where it is on this machine, by the system's own name for it, for this machine's own
+    /// things: `key` is that name made text, which for a name that is not UTF-8 is the name of
+    /// nothing.
+    pub path: Option<std::path::PathBuf>,
 }
 
 /// Numbers in no particular order, which is all a shuffle wants: no dependency for it.
@@ -122,6 +126,8 @@ pub struct Play {
     pub url: String,
     /// What FFmpeg is to be told about fetching it.
     pub options: Vec<(String, String)>,
+    /// A file on this machine, by the system's own name for it, which is what is opened.
+    pub path: Option<std::path::PathBuf>,
 }
 
 /// What is happening to a film, for a source that keeps the wearer's place.

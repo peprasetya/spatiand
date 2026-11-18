@@ -49,6 +49,7 @@ fn item(media: &MediaItem) -> Item {
         layout: None,
         pictured: media.has_artwork(),
         modified: media.modified,
+        path: None,
     }
 }
 
@@ -176,7 +177,7 @@ impl Source for Server {
         if self.client.session_id().is_none() {
             self.heard(self.client.browse(""))?;
         }
-        Ok(Play { url: self.client.stream_url(&item.key).map_err(|e| e.to_string())?, options: Vec::new() })
+        Ok(Play { url: self.client.stream_url(&item.key).map_err(|e| e.to_string())?, options: Vec::new(), path: None })
     }
 
     fn watching(&self, item: &Item, what: Watching) {

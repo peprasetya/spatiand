@@ -641,10 +641,30 @@ impl Player {
     /// As [`Player::open`], with what FFmpeg is to be told about how to fetch it: `headers`
     /// for a server that wants a cookie with every request, say.
     pub fn open_with(url: &str, options: &[(String, String)]) -> Result<Player, String> {
+        let name = CString::new(url).map_err(|_| "a name with a nul in it".to_string())?;
+        Player::open_named(name, url, options)
+    }
+
+    /// A file on this machine by the system's own name for it: one whose name is not UTF-8 (an
+    /// old camera card's, a copied disc's) is opened as it is, where its name made text with
+    /// replacement marks would be the name of nothing.
+    pub fn open_file(path: &std::path::Path) -> Result<Player, String> {
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStrExt;
+            CString::new(path.as_os_str().as_bytes())
+        };
+        #[cfg(not(unix))]
+        let name = CString::new(path.to_string_lossy().into_owned());
+        let name = name.map_err(|_| "a name with a nul in it".to_string())?;
+        Player::open_named(name, &path.display().to_string(), &[])
+    }
+
+    /// Open `name`, called `url` where it is shown or looked at for what it is.
+    fn open_named(name: CString, url: &str, options: &[(String, String)]) -> Result<Player, String> {
         crate::trusted_certificates();
         // The film's sound is an output of its own.
         let group = &crate::SoundGroup::new();
-        let name = CString::new(url).map_err(|_| "a name with a nul in it".to_string())?;
         unsafe {
             let mut told: *mut ffi::AVDictionary = ptr::null_mut();
             let network = url.starts_with("http://") || url.starts_with("https://");

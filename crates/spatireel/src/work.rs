@@ -32,7 +32,7 @@ pub enum Done {
     /// Servers on the network that answered.
     Found(Vec<dlna::Found>),
     /// A film opened, or not: which asking, what was asked to play, and from where.
-    Opened { ticket: u64, source: std::sync::Arc<dyn crate::source::Source>, item: Item, result: Result<(spatiand_media::player::Player, String), String> },
+    Opened { ticket: u64, source: std::sync::Arc<dyn crate::source::Source>, item: Item, result: Result<(spatiand_media::player::Player, crate::source::Play), String> },
 }
 
 type Job = Box<dyn FnOnce() -> Option<Done> + Send>;

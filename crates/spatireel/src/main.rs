@@ -22,7 +22,7 @@ mod source;
 mod store;
 mod work;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -212,13 +212,13 @@ impl Reel {
         self.opening = Some(ticket);
         self.screen.trouble(format!("Opening {}\u{2026}", item.title));
         self.work.alone(move || {
-            let result = source.play(&item).and_then(|play| Playing::open_player(&play.url, &play.options, item.resume).map(|player| (player, play.url)));
+            let result = source.play(&item).and_then(|play| Playing::open_player(&play, item.resume).map(|player| (player, play)));
             Some(Done::Opened { ticket, source, item, result })
         });
     }
 
-    fn begin(&mut self, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, url: &str) -> Result<(), String> {
-        let playing = Playing::new(self.app.gl()?, player, url, &item.name, &item.title, item.layout)?;
+    fn begin(&mut self, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, play: &source::Play) -> Result<(), String> {
+        let playing = Playing::new(self.app.gl()?, player, play, &item.name, &item.title, item.layout)?;
         self.app.set_title(self.window, &item.title);
         let (told, started) = (source.clone(), item.clone());
         self.work.report(move || told.watching(&started, Watching::Started));
@@ -390,7 +390,7 @@ impl Reel {
                     }
                     self.opening = None;
                     self.screen.trouble(String::new());
-                    if let Err(e) = result.and_then(|(player, url)| self.begin(source, item.clone(), player, &url)) {
+                    if let Err(e) = result.and_then(|(player, play)| self.begin(source, item.clone(), player, &play)) {
                         log::warn!("{}: {e}", item.title);
                         self.screen.trouble(format!("{} would not play: {e}", item.title));
                         self.drop_expired();
@@ -640,9 +640,10 @@ fn main() {
                     reel.browse(0, Some(Local::item(folder)));
                 }
                 let mut item = Local::item(&path);
-                if !Path::new(&item.key).exists() {
+                if !path.exists() {
                     // Not a file: an address, played as it is.
                     item.key = path.to_string_lossy().into_owned();
+                    item.path = None;
                 }
                 // Opened as one chosen is, on a thread of its own: an address that never answers
                 // kept the window from ever being shown.

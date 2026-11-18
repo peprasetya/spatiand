@@ -585,7 +585,7 @@ impl Browse {
 
     /// Where this machine's folders are now, when that is what is being browsed.
     fn path(&self) -> std::path::PathBuf {
-        self.folder().map_or_else(library::home, |item| item.key.clone().into())
+        self.folder().map_or_else(library::home, |item| item.path.clone().unwrap_or_else(|| item.key.clone().into()))
     }
 
     fn draw(&mut self, p: &mut Painter, gl: &Gl) {

@@ -38,16 +38,14 @@ fn is_package(name: &str) -> bool {
     ending.ends_with("library") || ["app", "theater", "bundle", "framework", "photoslibrary", "plugin", "kext"].contains(&ending.as_str())
 }
 
-/// Where a film really is. A `.strm` file is one line saying where: the convention every
-/// media server shares for a film that is a stream somewhere else.
-pub fn source(path: &Path) -> String {
+/// Where a film really is, when it is somewhere else: a `.strm` file is one line saying where,
+/// the convention every media server shares for a film that is a stream elsewhere.
+pub fn pointed_to(path: &Path) -> Option<String> {
     let is_pointer = path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("strm"));
-    if is_pointer {
-        if let Some(line) = std::fs::read_to_string(path).ok().and_then(|text| text.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string)) {
-            return line;
-        }
+    if !is_pointer {
+        return None;
     }
-    path.to_string_lossy().into_owned()
+    std::fs::read_to_string(path).ok().and_then(|text| text.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
 }
 
 /// Where films are kept on this kind of machine, if such a place exists; the home folder if

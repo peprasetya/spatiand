@@ -176,7 +176,7 @@ impl Source for Server {
 
     fn play(&self, item: &Item) -> Result<Play, String> {
         let url = item.key.strip_prefix('i').and_then(|rest| rest.split('\u{1}').next()).ok_or("not a film")?;
-        Ok(Play { url: url.to_string(), options: Vec::new() })
+        Ok(Play { url: url.to_string(), options: Vec::new(), path: None })
     }
 }
 

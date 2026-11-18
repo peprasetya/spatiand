@@ -172,6 +172,7 @@ pub fn item(value: &Value) -> Option<Item> {
         layout: value["Video3DFormat"].as_str().and_then(layout_of),
         pictured: value["ImageTags"]["Primary"].is_string(),
         modified: 0,
+        path: None,
     })
 }
 
@@ -264,6 +265,7 @@ impl Source for Server {
         Ok(Play {
             url: self.url(&format!("/Videos/{}/stream?static=true&MediaSourceId={}&api_key={}", item.key, item.key, self.account.token)),
             options: Vec::new(),
+            path: None,
         })
     }
 

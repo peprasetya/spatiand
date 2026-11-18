@@ -24,6 +24,8 @@ use spatiand_media::hints;
 use spatiand_media::player::Player;
 use spatiand_media::screen::{Gaze, Screen};
 use spatiand_media::still::Upright;
+
+use crate::source::Play;
 use spatiand_media::{Eye, Packing, Projection, StereoLayout, VideoLayout};
 
 /// Where the film's picture is.
@@ -318,8 +320,7 @@ pub struct Playing {
 
 /// The `.srt` that goes with a film on this machine: the one with its name, or with its
 /// name and a language after it (`Film.en.srt`, `Film.pt-BR.forced.srt`).
-fn beside(film: &str) -> Vec<Cue> {
-    let path = std::path::Path::new(film);
+fn beside(path: &std::path::Path) -> Vec<Cue> {
     let (Some(folder), Some(stem)) = (path.parent(), path.file_stem().and_then(|s| s.to_str())) else { return Vec::new() };
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
     let mut found: Vec<std::path::PathBuf> = entries.flatten().map(|entry| entry.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| goes_with(stem, n))).collect();
@@ -344,8 +345,11 @@ impl Playing {
     /// Open what is at `url`, and take it up `resume` seconds in. It may take a long time -- a
     /// long film's index is fetched first -- so it is not done on the thread that answers the
     /// room.
-    pub fn open_player(url: &str, options: &[(String, String)], resume: f64) -> Result<Player, String> {
-        let mut player = Player::open_with(url, options)?;
+    pub fn open_player(play: &Play, resume: f64) -> Result<Player, String> {
+        let mut player = match &play.path {
+            Some(path) => Player::open_file(path)?,
+            None => Player::open_with(&play.url, &play.options)?,
+        };
         if resume > 5.0 {
             player.seek(resume);
         }
@@ -355,7 +359,7 @@ impl Playing {
     /// Play `player`, opened from `url`. `name` is the file's name, for what it says of the
     /// film's layout; `said` is a layout the film's source vouches for, which outranks the name;
     /// `title` is what the wearer calls it.
-    pub fn new(gl: &Gl, mut player: Player, url: &str, name: &str, title: &str, said: Option<VideoLayout>) -> Result<Playing, String> {
+    pub fn new(gl: &Gl, mut player: Player, play: &Play, name: &str, title: &str, said: Option<VideoLayout>) -> Result<Playing, String> {
         // `SPATIREEL_SPEED=1.5` starts at that pace, for a test that cannot reach the menu.
         if let Some(speed) = std::env::var("SPATIREEL_SPEED").ok().and_then(|s| s.parse().ok()) {
             player.set_speed(speed);
@@ -367,7 +371,7 @@ impl Playing {
         let layout = said.map_or(named, |said| VideoLayout { projection: named.projection, ..said });
         let swapped = info.eyes_swapped;
         let name = title;
-        let beside = beside(url);
+        let beside = play.path.as_deref().map(beside).unwrap_or_default();
         let said = if beside.is_empty() { Said::Nothing } else { Said::Beside };
         log::info!("{name}: taken to be {:?}, {:?}, {:?}", layout.projection, layout.stereo, layout.packing);
         Ok(Playing {
