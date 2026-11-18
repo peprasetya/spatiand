@@ -102,14 +102,11 @@ fn read_bytes_as(path: &Path, bytes: &[u8], largest: u32, may_move: bool) -> Res
     picture.about = about(bytes);
     // A second image after the first: a stereo camera's MPO, and some phones' JPEGs.
     if matches!(kind.as_str(), "mpo" | "jpg" | "jpeg") {
-        if let Some(second) = stereo::mpo_second(bytes) {
-            if let Ok(right) = image::load_from_memory_with_format(second, image::ImageFormat::Jpeg) {
-                let right = fit(right, largest).to_rgba8();
-                // Only a second image the same shape as the first is the other eye; a phone's
-                // depth map or a small preview is not.
-                let same = (right.width() as i64 * picture.height as i64 - right.height() as i64 * picture.width as i64).abs()
-                    < (picture.width as i64 * picture.height as i64) / 50;
-                if same {
+        if let Some((second, what)) = stereo::mpo_second(bytes) {
+            let size = ImageReader::with_format(Cursor::new(second), image::ImageFormat::Jpeg).into_dimensions().ok();
+            if size.is_some_and(|size| other_eye(what, size, picture.original)) {
+                if let Ok(right) = image::load_from_memory_with_format(second, image::ImageFormat::Jpeg) {
+                    let right = fit(right, largest).to_rgba8();
                     let (w, h) = right.dimensions();
                     picture.right = Some((w, h, right.into_raw()));
                     picture.eyes = Eyes::Pair;
@@ -260,6 +257,18 @@ fn drawn(bytes: &[u8], largest: u32) -> Result<Picture, String> {
     Ok(Picture::of(image, (size.width().round() as u32, size.height().round() as u32)))
 }
 
+/// Whether an MPO's second image, `second` pixels, is the other eye of a first of `first`. One the
+/// index calls a disparity image is, if it is the first's shape; one it does not -- a phone's
+/// Ultra HDR gain map (the first's shape at a quarter its size), its depth map, a preview -- only
+/// if it is the first's size as well, near enough.
+fn other_eye(what: u32, second: (u32, u32), first: (u32, u32)) -> bool {
+    let (sw, sh) = (second.0 as i64, second.1 as i64);
+    let (fw, fh) = (first.0 as i64, first.1 as i64);
+    let same_shape = (sw * fh - sh * fw).abs() < (fw * fh) / 50;
+    let near = |a: i64, b: i64| (a - b).abs() * 50 <= b.max(1);
+    same_shape && (what == stereo::DISPARITY || (near(sw, fw) && near(sh, fh)))
+}
+
 /// What the camera wrote down, in the words a person would use.
 fn about(bytes: &[u8]) -> Vec<(String, String)> {
     let Ok(exif) = exif::Reader::new().read_from_container(&mut Cursor::new(bytes)) else { return Vec::new() };
@@ -348,6 +357,17 @@ mod tests {
         let read = read_bytes(Path::new("huge.gif"), &bytes, 360);
         assert!(read.is_err(), "refused, not decoded");
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn an_ultra_hdr_gain_map_is_not_the_right_eye() {
+        // A phone's gain map: the photograph's shape, a quarter its size, of no MP type.
+        assert!(!other_eye(0, (1000, 750), (4000, 3000)));
+        // A second image of the first's size is the other eye, whatever it is called; one the
+        // index calls a disparity image needs only the shape.
+        assert!(other_eye(0, (4000, 3000), (4000, 3000)));
+        assert!(other_eye(stereo::DISPARITY, (1920, 1440), (4000, 3000)));
+        assert!(!other_eye(stereo::DISPARITY, (3000, 3000), (4000, 3000)));
     }
 
     #[test]

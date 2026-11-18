@@ -210,9 +210,14 @@ pub fn guess(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Eyes {
     Eyes::Mono
 }
 
-/// The second image of an MPO -- a 3D camera's pair -- as JPEG bytes, from the index the
-/// first image's APP2 "MPF" segment carries (CIPA DC-007).
-pub fn mpo_second(bytes: &[u8]) -> Option<&[u8]> {
+/// What the MP index says a second image is (CIPA DC-007's MP type, the low 24 bits of its
+/// entry's attributes): [`DISPARITY`] for one eye of a stereo pair.
+pub const DISPARITY: u32 = 0x02_0002;
+
+/// The second image of an MPO -- a 3D camera's pair -- as JPEG bytes, and what its index says it
+/// is, from the index the first image's APP2 "MPF" segment carries (CIPA DC-007). A phone's
+/// Ultra HDR JPEG keeps its gain map the same way: what it is is told by its type and its size.
+pub fn mpo_second(bytes: &[u8]) -> Option<(&[u8], u32)> {
     if bytes.get(..2)? != [0xFF, 0xD8] {
         return None;
     }
@@ -238,7 +243,7 @@ pub fn mpo_second(bytes: &[u8]) -> Option<&[u8]> {
     None
 }
 
-fn second_from_index<'a>(bytes: &'a [u8], base: usize, tiff: &[u8]) -> Option<&'a [u8]> {
+fn second_from_index<'a>(bytes: &'a [u8], base: usize, tiff: &[u8]) -> Option<(&'a [u8], u32)> {
     let little = match tiff.get(..2)? {
         b"II" => true,
         b"MM" => false,
@@ -264,11 +269,12 @@ fn second_from_index<'a>(bytes: &'a [u8], base: usize, tiff: &[u8]) -> Option<&'
                 return None;
             }
             let second = list + 16;
+            let kind = u32_at(second)? & 0x00FF_FFFF;
             let size = u32_at(second + 4)? as usize;
             let offset = u32_at(second + 8)? as usize;
             let start = base + offset;
             let image = bytes.get(start..start + size)?;
-            return (image.get(..2) == Some(&[0xFF, 0xD8])).then_some(image);
+            return (image.get(..2) == Some(&[0xFF, 0xD8])).then_some((image, kind));
         }
     }
     None
@@ -383,6 +389,6 @@ mod tests {
         bytes.extend_from_slice(&tiff);
         bytes.extend_from_slice(&[0xFF, 0xD9]);
         bytes.extend_from_slice(&[0xFF, 0xD8, 0xFF, 0xD9]);
-        assert_eq!(mpo_second(&bytes), Some(&[0xFF, 0xD8, 0xFF, 0xD9][..]));
+        assert_eq!(mpo_second(&bytes), Some((&[0xFF, 0xD8, 0xFF, 0xD9][..], 0)));
     }
 }
