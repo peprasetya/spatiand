@@ -119,8 +119,13 @@ impl Mime {
         if let Some(kind) = self.by_name(&name) {
             return kind;
         }
+        // Only a file is read: opened not waiting (a pipe's opening waits for a writer, its
+        // reading for something written, and this is the window's thread).
         let mut head = vec![0u8; 512];
-        let read = std::fs::File::open(path).and_then(|mut f| std::io::Read::read(&mut f, &mut head)).unwrap_or(0);
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path).ok().filter(|f| f.metadata().is_ok_and(|m| m.is_file()));
+        let Some(mut file) = file else { return "application/octet-stream".into() };
+        let read = std::io::Read::read(&mut file, &mut head).unwrap_or(0);
         head.truncate(read);
         let text = !head.contains(&0) && (std::str::from_utf8(&head).is_ok() || std::str::from_utf8(&head[..read.saturating_sub(3)]).is_ok());
         if text { "text/plain".into() } else { "application/octet-stream".into() }
@@ -621,6 +626,10 @@ mod tests {
         assert_eq!(m.of(&dir.join("notes"), false), "text/plain");
         assert_eq!(m.of(&dir.join("blob"), false), "application/octet-stream");
         assert_eq!(m.of(&dir, true), "inode/directory");
+        // A pipe is not waited on: no writer will come.
+        let fifo = std::ffi::CString::new(dir.join("pipe").to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        assert_eq!(m.of(&dir.join("pipe"), false), "application/octet-stream");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
