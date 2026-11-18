@@ -225,6 +225,9 @@ pub struct Info {
     pub duration_guessed: bool,
     pub width: u32,
     pub height: u32,
+    /// How wide each of the frame's pixels is, over how tall: 1 for square ones, and 0 where
+    /// not known (taken as 1). A DVD's 720 x 576 frame shown at 16:9 is 64/45.
+    pub sample_aspect: f64,
     pub frame_rate: f64,
     pub video_codec: String,
     /// The platform's decoder is doing the work, and its name.
@@ -789,6 +792,8 @@ impl Player {
                 info.width = (*parameters).width.max(0) as u32;
                 info.height = (*parameters).height.max(0) as u32;
                 info.video_codec = text(ffi::avcodec_get_name((*parameters).codec_id)).unwrap_or_default();
+                let sample = ffi::av_guess_sample_aspect_ratio(format, stream, ptr::null_mut());
+                info.sample_aspect = if sample.num > 0 && sample.den > 0 { sample.num as f64 / sample.den as f64 } else { 1.0 };
                 let rate = ffi::av_guess_frame_rate(format, stream, ptr::null_mut());
                 info.frame_rate = if rate.den > 0 { rate.num as f64 / rate.den as f64 } else { 0.0 };
                 // A container that keeps no times has no rate of its own to guess from: the

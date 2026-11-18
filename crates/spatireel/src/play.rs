@@ -175,6 +175,15 @@ fn capped(frame: (u32, u32), eyes: EyeLayout) -> (u32, u32) {
     (even(w), even(h))
 }
 
+/// The shape one eye of a `frame` of pixels `sample_aspect` times as wide as tall is seen at:
+/// the frame as it is shown, not as it is stored. Taken as stored, a DVD's 720 x 576 frame meant
+/// for 16:9 was shown squeezed at 5:4.
+fn eye_aspect(layout: &VideoLayout, frame: (u32, u32), sample_aspect: f64) -> f32 {
+    let sample = if sample_aspect.is_finite() && sample_aspect > 0.0 { sample_aspect } else { 1.0 };
+    let shown = ((frame.0 as f64 * sample).round() as u32).max(1);
+    layout.eye_aspect(shown, frame.1)
+}
+
 fn clock(seconds: f64) -> String {
     let seconds = seconds.max(0.0) as u64;
     let (h, m, s) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
@@ -434,9 +443,8 @@ impl Playing {
     /// The size of one eye's picture as it should be seen, in the film's own pixels down.
     fn eye_shape(&self) -> (f32, (u32, u32)) {
         let info = self.player.info();
-        let (fw, fh) = (info.width.max(2), info.height.max(2));
-        let aspect = self.layout.eye_aspect(fw, fh);
-        (aspect, (fw, fh))
+        let frame = (info.width.max(2), info.height.max(2));
+        (eye_aspect(&self.layout, frame, info.sample_aspect), frame)
     }
 
     /// Put the windows the way this film, looked at this way, wants them.
@@ -1076,6 +1084,19 @@ mod tests {
         assert!(is_tap((100.0, 100.0), (100.0, 100.0)));
         assert!(is_tap((100.0, 100.0), (108.0, 106.0)));
         assert!(!is_tap((100.0, 100.0), (140.0, 100.0)));
+    }
+
+    #[test]
+    fn a_frame_of_pixels_that_are_not_square_is_seen_at_the_shape_it_is_shown() {
+        let flat = layout(Projection::Flat, StereoLayout::Mono);
+        assert!((eye_aspect(&flat, (720, 576), 64.0 / 45.0) - 16.0 / 9.0).abs() < 0.01);
+        assert!((eye_aspect(&flat, (720, 576), 16.0 / 15.0) - 4.0 / 3.0).abs() < 0.01);
+        // Square pixels, or none said.
+        assert!((eye_aspect(&flat, (1920, 1080), 1.0) - 16.0 / 9.0).abs() < 0.01);
+        assert!((eye_aspect(&flat, (1920, 1080), 0.0) - 16.0 / 9.0).abs() < 0.01);
+        // A half-width pair squeezed into a DVD's frame: each eye the whole frame's shape.
+        let pair = layout(Projection::Flat, StereoLayout::SideBySide);
+        assert!((eye_aspect(&pair, (720, 576), 64.0 / 45.0) - 16.0 / 9.0).abs() < 0.01);
     }
 
     #[test]
