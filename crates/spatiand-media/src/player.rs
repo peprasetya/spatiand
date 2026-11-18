@@ -32,6 +32,10 @@ use crate::timing::{self, Landing};
 /// How many decoded pictures wait to be shown. Each is a frame of GPU or main memory, and a
 /// 4K one is not small: enough to ride out an uneven decode, no more.
 const PICTURES_AHEAD: usize = 4;
+/// How many pictures are held outside a decoder or a deinterlacer on the GPU, which its pool
+/// must keep room for: those waiting to be shown, the one on show and the one the screen lets
+/// go of.
+pub(crate) const PICTURES_HELD: c_int = PICTURES_AHEAD as c_int + 3;
 /// How much of the film the reader keeps ahead of the decoders, in the film's seconds: enough
 /// to ride out a network's stumble, no more. Every second of it is a second of the film held in
 /// memory and, from a server, fetched at whatever pace the network allows; it was "512 packets
@@ -147,6 +151,9 @@ pub struct Picture {
     /// When it is to be shown, in seconds from the start of the film.
     pub time: f64,
     pub colour: Colour,
+    /// Two fields woven, which nothing has made whole: to be drawn with them blended
+    /// (`crate::deinterlace`).
+    pub fields: bool,
     serial: u64,
     /// A [`Pixels::HardwareBuffer`] picture's place in its reader, given back when dropped.
     #[cfg(target_os = "android")]
@@ -566,7 +573,7 @@ unsafe fn open_decoder(stream: *mut ffi::AVStream, hardware: bool) -> Result<(De
             // shown, the one on show and the one the screen lets go of, as the room's own decoder
             // keeps room (spatiand-video). Without it VA-API's pool is only the codec's
             // references, and the held pictures take surfaces it needs.
-            (*context).extra_hw_frames = PICTURES_AHEAD as c_int + 3;
+            (*context).extra_hw_frames = PICTURES_HELD;
             on_gpu = true;
         }
     }
@@ -1609,6 +1616,20 @@ unsafe fn drawn(frame: *mut ffi::AVFrame, decoder: &Decoder, complained: &mut bo
 fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>, generation: u64) {
     unsafe {
         let cover = (*stream.0).disposition & ffi::AV_DISPOSITION_ATTACHED_PIC as c_int != 0;
+        // A film the container says is interlaced: its pictures are, whatever the decoder says
+        // of each (MediaCodec's say nothing). `SPATIAND_MEDIA_DEINTERLACE=0` shows them woven,
+        // `=blend` has their fields blended as they are drawn, as where there is no deinterlacer.
+        let order = (*(*stream.0).codecpar).field_order;
+        let woven = order != ffi::AV_FIELD_UNKNOWN && order != ffi::AV_FIELD_PROGRESSIVE;
+        let asked = std::env::var("SPATIAND_MEDIA_DEINTERLACE");
+        let deinterlacing = asked.as_deref() != Ok("0");
+        let blend_asked = asked.as_deref() == Ok("blend");
+        let mut deinterlacer: Option<crate::deinterlace::Deinterlacer> = None;
+        // Pictures of this shape have no deinterlacer to go through: their fields are blended
+        // as they are drawn.
+        let mut blend_only = blend_asked;
+        // What the deinterlacer has made, waiting to be taken as a decoder's picture would be.
+        let mut made: VecDeque<*mut ffi::AVFrame> = VecDeque::new();
         let mut frame = ffi::av_frame_alloc();
         let mut scaler: *mut ffi::SwsContext = ptr::null_mut();
         let mut serial = shared.serial.load(Ordering::Relaxed);
@@ -1628,6 +1649,11 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                 ffi::avcodec_flush_buffers(decoder.context);
                 serial = packet_serial;
                 count.restart();
+                // What the deinterlacer holds is from before the move.
+                deinterlacer = None;
+                for mut old in made.drain(..) {
+                    ffi::av_frame_free(&mut old);
+                }
             }
             let ending = packet.is_none();
             if let Some(packet) = packet.as_ref() {
@@ -1641,7 +1667,60 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
             if sent < 0 && !ending && !std::mem::replace(&mut complained, true) {
                 log::warn!("a picture would not decode: {}", error_text(sent));
             }
-            while ffi::avcodec_receive_frame(decoder.context, frame) >= 0 {
+            let mut flushed = false;
+            loop {
+                // The next picture: what the deinterlacer has made, or the decoder's next -- put
+                // through the deinterlacer first if it is two fields woven -- or, at the end, what
+                // the deinterlacer was still holding.
+                let mut fields = false;
+                if let Some(mut done) = made.pop_front() {
+                    ffi::av_frame_move_ref(frame, done);
+                    ffi::av_frame_free(&mut done);
+                } else if ffi::avcodec_receive_frame(decoder.context, frame) >= 0 {
+                    let interlaced = deinterlacing && ((*frame).flags & ffi::AV_FRAME_FLAG_INTERLACED as c_int != 0 || woven);
+                    if interlaced {
+                        if deinterlacer.as_ref().is_some_and(|d| !d.fits(frame)) {
+                            deinterlacer = None;
+                            blend_only = blend_asked;
+                        }
+                        if deinterlacer.is_none() && !blend_only {
+                            match crate::deinterlace::Deinterlacer::new(frame, (*decoder.context).pkt_timebase) {
+                                Ok(Some(made)) => deinterlacer = Some(made),
+                                Ok(None) => {
+                                    log::info!("the film is interlaced: its fields are blended as they are drawn (no deinterlacer for pictures where these are)");
+                                    blend_only = true;
+                                }
+                                Err(e) => {
+                                    log::warn!("{e}; the film's fields are blended as they are drawn");
+                                    blend_only = true;
+                                }
+                            }
+                        }
+                        if let Some(d) = deinterlacer.as_mut() {
+                            match d.run(frame) {
+                                Ok(out) => {
+                                    made.extend(out);
+                                    ffi::av_frame_unref(frame);
+                                    continue;
+                                }
+                                Err(e) => {
+                                    log::warn!("{e}; the film's fields are blended as they are drawn");
+                                    deinterlacer = None;
+                                    blend_only = true;
+                                }
+                            }
+                        }
+                        fields = true;
+                    }
+                } else if ending && !std::mem::replace(&mut flushed, true) {
+                    if let Some(d) = deinterlacer.as_mut() {
+                        made.extend(d.run(ptr::null_mut()).unwrap_or_default());
+                        deinterlacer = None;
+                    }
+                    continue;
+                } else {
+                    break;
+                }
                 // Stopped, nothing more is made: the room for pictures is not waited for then,
                 // and every picture the decoder still held went on into the queue -- on Android
                 // into the reader, until every one of its pictures was held.
@@ -1696,6 +1775,7 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                     height,
                     time,
                     colour,
+                    fields,
                     serial,
                     #[cfg(target_os = "android")]
                     image,
@@ -1717,6 +1797,9 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                     shared.video_out.store(true, Ordering::Relaxed);
                 }
             }
+        }
+        for mut old in made.drain(..) {
+            ffi::av_frame_free(&mut old);
         }
         ffi::av_frame_free(&mut frame);
         ffi::sws_freeContext(scaler);

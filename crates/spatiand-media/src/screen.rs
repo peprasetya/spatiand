@@ -43,6 +43,8 @@ uniform int u_planes;
 uniform mat3 u_matrix;
 uniform vec3 u_offset;
 uniform float u_deep;
+// Not 0: the picture is two fields woven, nothing has made it whole, and this is a line's height.
+uniform float u_fields;
 
 vec3 decoded(vec2 uv) {
     vec3 yuv;
@@ -65,6 +67,7 @@ const EXTERNAL: &str = r#"#version 300 es
 #extension GL_OES_EGL_image_external_essl3 : require
 precision highp float;
 uniform samplerExternalOES u_ext;
+uniform float u_fields;
 // The part of the buffer that is picture: left, top, right, bottom.
 uniform vec4 u_crop;
 
@@ -91,7 +94,11 @@ uniform vec2 u_tan;
 out vec4 f_color;
 
 vec3 colour(vec2 uv) {
-    vec3 rgb = decoded(uv);
+    // Two fields woven, blended: each line with half of each line beside it, of the other
+    // field, which leaves no combs where anything moves.
+    vec3 rgb = u_fields > 0.0
+        ? 0.5 * decoded(uv) + 0.25 * (decoded(uv - vec2(0.0, u_fields)) + decoded(uv + vec2(0.0, u_fields)))
+        : decoded(uv);
     if (u_light == 0) {
         return clamp(rgb, 0.0, 1.0);
     }
@@ -193,7 +200,7 @@ impl Default for Gaze {
 /// A compiled shader and where its uniforms are.
 struct Program {
     program: glow::Program,
-    at: [Option<glow::UniformLocation>; 17],
+    at: [Option<glow::UniformLocation>; 18],
 }
 
 impl Program {
@@ -245,9 +252,9 @@ pub struct Screen {
     deep: bool,
 }
 
-const NAMES: [&str; 17] = [
+const NAMES: [&str; 18] = [
     "u_rect", "u_view", "u_y", "u_u", "u_v", "u_planes", "u_matrix", "u_offset", "u_uv", "u_span", "u_gaze", "u_tan", "u_deep", "u_light",
-    "u_ext", "u_crop", "u_upright",
+    "u_ext", "u_crop", "u_upright", "u_fields",
 ];
 
 impl Screen {
@@ -540,6 +547,7 @@ impl Screen {
         g.uniform_4_f32(program.at[0].as_ref(), rect[0], rect[1], rect[2], rect[3]);
         g.uniform_2_f32(program.at[1].as_ref(), view.0 as f32, view.1 as f32);
         g.uniform_4_f32(program.at[8].as_ref(), uv[0], uv[1], uv[2], uv[3]);
+        g.uniform_1_f32(program.at[17].as_ref(), if picture.fields { 1.0 / picture.height.max(1) as f32 } else { 0.0 });
         let on = |b: bool| if b { 1.0 } else { 0.0 };
         g.uniform_3_f32(program.at[16].as_ref(), on(self.upright.swap), on(self.upright.mirror), on(self.upright.flip));
         g.uniform_1_i32(

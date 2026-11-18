@@ -18,6 +18,8 @@ pub mod subs;
 pub mod timing;
 
 #[cfg(feature = "engine")]
+mod deinterlace;
+#[cfg(feature = "engine")]
 pub mod fetch;
 #[cfg(feature = "engine")]
 pub mod player;
