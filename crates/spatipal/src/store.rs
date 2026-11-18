@@ -130,8 +130,13 @@ pub struct Chat {
 
 impl Chat {
     pub fn new() -> Chat {
+        // Seconds, the process, and the nanoseconds and a count besides: two chats begun within
+        // a second ("+" pressed twice) must not share a file.
+        static MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let at = now();
-        Chat { id: format!("{at}-{:04x}", std::process::id() & 0xffff), title: String::new(), said: Vec::new(), updated: at }
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+        let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Chat { id: format!("{at}-{:04x}-{nanos:08x}{n:x}", std::process::id() & 0xffff), title: String::new(), said: Vec::new(), updated: at }
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -203,6 +208,12 @@ mod tests {
         assert!(here.older_than(&Chat { said: said(4), updated: 90, ..here.clone() }));
         assert!(here.older_than(&Chat { updated: 101, ..here.clone() }));
         assert!(!here.older_than(&here.clone()));
+    }
+
+    #[test]
+    fn chats_begun_in_the_same_second_have_their_own_files() {
+        let ids: std::collections::HashSet<String> = (0..50).map(|_| Chat::new().id).collect();
+        assert_eq!(ids.len(), 50);
     }
 }
 
