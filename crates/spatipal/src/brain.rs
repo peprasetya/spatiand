@@ -392,7 +392,10 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
                 say(Told::Dismissed);
             }
             let done = tools::run(call, room);
-            log::info!("brain: {}({}) -> {}", call.name, call.arguments, done.content.chars().take(160).collect::<String>());
+            // What it typed and what it read are the wearer's: only the tool, what it was given
+            // (by name) and how it went are logged.
+            let given: Vec<String> = serde_json::from_str::<Value>(&call.arguments).ok().and_then(|a| a.as_object().map(|o| o.keys().cloned().collect())).unwrap_or_default();
+            log::info!("brain: {}({}) -> {} characters{}", call.name, given.join(", "), done.content.chars().count(), if done.held.is_some() { ", held for a yes" } else { "" });
             if let Some(h) = done.held.clone() {
                 *held = Some((h, std::time::Instant::now()));
             }
