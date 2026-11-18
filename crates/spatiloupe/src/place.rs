@@ -58,6 +58,116 @@ pub fn read(path: &Path) -> Result<Vec<u8>, String> {
     }
 }
 
+/// A remote file to be read about in -- its camera's account -- without fetching it whole: what
+/// is read is fetched a piece at a time, as far as it is wanted, by a range each. None for a
+/// place on this machine, which is read about in its file.
+pub fn pieces(path: &Path) -> Option<Pieces<impl FnMut(u64, u64) -> std::io::Result<(Vec<u8>, Option<u64>)>>> {
+    let (r, p) = remote(path)?;
+    Some(Pieces::new(move |start, len| storage().and_then(|s| s.read_part(&r, &p, start, len)).map_err(std::io::Error::other)))
+}
+
+/// A file read in pieces, each fetched by `fetch(start, len)` (its bytes, and the file's whole
+/// length if known) as the reading comes to it and kept: read in order, a file's head is one
+/// fetch, and a jump further in -- to where a HEIF's meta box says its Exif is -- one more. No
+/// more than [`MOST_PIECES`] is fetched in all, so a reader wanting the whole file is refused,
+/// not given it.
+pub struct Pieces<F> {
+    fetch: F,
+    /// The file's length, once an answer has said it.
+    length: Option<u64>,
+    at: u64,
+    /// What has been fetched: where each piece starts, and its bytes.
+    held: Vec<(u64, Vec<u8>)>,
+    fetched: u64,
+}
+
+/// How much of a file is fetched at a time: a phone's HEIC's boxes before its pictures, and its
+/// Exif.
+pub const PIECE: u64 = 64 << 10;
+
+/// The most of a file fetched in pieces, all told: well past any camera's account (Exif is at
+/// most 64 KB).
+pub const MOST_PIECES: u64 = 1 << 20;
+
+impl<F: FnMut(u64, u64) -> std::io::Result<(Vec<u8>, Option<u64>)>> Pieces<F> {
+    pub fn new(fetch: F) -> Pieces<F> {
+        Pieces { fetch, length: None, at: 0, held: Vec::new(), fetched: 0 }
+    }
+
+    /// How many bytes have been fetched.
+    #[cfg(test)]
+    pub fn fetched(&self) -> u64 {
+        self.fetched
+    }
+
+    /// The piece holding `at`, and where in it `at` is.
+    fn piece(&self, at: u64) -> Option<(usize, usize)> {
+        self.held.iter().position(|(start, bytes)| at >= *start && at < start + bytes.len() as u64).map(|i| (i, (at - self.held[i].0) as usize))
+    }
+}
+
+impl<F: FnMut(u64, u64) -> std::io::Result<(Vec<u8>, Option<u64>)>> std::io::BufRead for Pieces<F> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        if self.piece(self.at).is_none() {
+            if self.length.is_some_and(|length| self.at >= length) {
+                return Ok(&[]);
+            }
+            // Up to the next piece held, so that none is fetched twice.
+            let next = self.held.iter().map(|(start, _)| *start).filter(|&start| start > self.at).min();
+            let len = PIECE.min(next.map_or(u64::MAX, |next| next - self.at));
+            if self.fetched + len > MOST_PIECES {
+                return Err(std::io::Error::other("read about in further than a file's head"));
+            }
+            let (bytes, length) = (self.fetch)(self.at, len)?;
+            self.fetched += len;
+            self.length = self.length.or(length);
+            if bytes.is_empty() {
+                // Past its end.
+                self.length = Some(self.length.unwrap_or(self.at).min(self.at));
+                return Ok(&[]);
+            }
+            self.held.push((self.at, bytes));
+        }
+        let (i, offset) = self.piece(self.at).expect("held");
+        Ok(&self.held[i].1[offset..])
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.at += amount as u64;
+    }
+}
+
+impl<F: FnMut(u64, u64) -> std::io::Result<(Vec<u8>, Option<u64>)>> std::io::Read for Pieces<F> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let held = std::io::BufRead::fill_buf(self)?;
+        let n = held.len().min(out.len());
+        out[..n].copy_from_slice(&held[..n]);
+        std::io::BufRead::consume(self, n);
+        Ok(n)
+    }
+}
+
+impl<F: FnMut(u64, u64) -> std::io::Result<(Vec<u8>, Option<u64>)>> std::io::Seek for Pieces<F> {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        let at = match to {
+            std::io::SeekFrom::Start(n) => Some(n),
+            std::io::SeekFrom::Current(d) => self.at.checked_add_signed(d),
+            std::io::SeekFrom::End(d) => {
+                // The length, from the first piece's answer if nothing has been read yet.
+                if self.length.is_none() && self.held.is_empty() {
+                    let at = std::mem::replace(&mut self.at, 0);
+                    std::io::BufRead::fill_buf(self)?;
+                    self.at = at;
+                }
+                let length = self.length.ok_or_else(|| std::io::Error::other("a file of a length not known"))?;
+                length.checked_add_signed(d)
+            }
+        };
+        self.at = at.ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "before the file's start"))?;
+        Ok(self.at)
+    }
+}
+
 /// What FFmpeg is to open for a file: its path, or the stream of it.
 pub fn source(path: &Path) -> String {
     match remote(path).and_then(|(r, p)| storage().ok().map(|s| s.url(&r, &p))) {

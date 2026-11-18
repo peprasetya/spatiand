@@ -76,11 +76,21 @@ fn read_as(path: &Path, largest: u32, may_move: bool) -> Result<Picture, String>
     if ["heic", "heif", "hif", "avif", "jp2", "j2k", "jpf", "jpx", "j2c", "jxl"].contains(&ending(path).as_str()) {
         let mut picture = by_ffmpeg(path, largest)?;
         picture.eyes = stereo::guess(path, picture.width, picture.height, &picture.rgba);
-        // The camera's account, from the file on this machine without reading it whole; a
-        // remote's would be read twice over for it, and is not.
-        if crate::place::remote(path).is_none() {
-            if let Ok(file) = std::fs::File::open(path) {
-                picture.about = about_from(&mut std::io::BufReader::new(file));
+        // The camera's account, without reading the file whole: FFmpeg has read the picture by
+        // itself and kept none of it, so it is read from the file on this machine, and from a
+        // remote's by the pieces it is in -- the head, and where its Exif is -- each fetched
+        // by a range, never the whole file a second time. JPEG 2000 and JPEG XL keep no account
+        // that is read, so a remote's are not asked for it.
+        match crate::place::pieces(path) {
+            Some(mut pieces) => {
+                if ["heic", "heif", "hif", "avif"].contains(&ending(path).as_str()) {
+                    picture.about = about_from(&mut pieces);
+                }
+            }
+            None => {
+                if let Ok(file) = std::fs::File::open(path) {
+                    picture.about = about_from(&mut std::io::BufReader::new(file));
+                }
             }
         }
         return Ok(picture);
@@ -387,6 +397,68 @@ mod tests {
         let mut out = Vec::new();
         DynamicImage::ImageRgba8(image).write_to(&mut Cursor::new(&mut out), image::ImageFormat::Png).unwrap();
         out
+    }
+
+    /// A HEIF of `pictures` bytes of picture with the camera's account (its maker, "Canon") after
+    /// them, at its end, as the meta box at its head says.
+    fn heif_with_exif(pictures: usize) -> Vec<u8> {
+        fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+            out.extend_from_slice(kind);
+            out.extend_from_slice(body);
+            out
+        }
+        // A little-endian TIFF of one entry, Make: "Canon".
+        let mut tiff = b"II*\0".to_vec();
+        tiff.extend_from_slice(&8u32.to_le_bytes());
+        tiff.extend_from_slice(&1u16.to_le_bytes());
+        tiff.extend_from_slice(&0x010Fu16.to_le_bytes());
+        tiff.extend_from_slice(&2u16.to_le_bytes());
+        tiff.extend_from_slice(&6u32.to_le_bytes());
+        tiff.extend_from_slice(&26u32.to_le_bytes());
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(b"Canon\0");
+        // Exif's item: where its TIFF starts, then the TIFF.
+        let mut exif = 0u32.to_be_bytes().to_vec();
+        exif.extend_from_slice(&tiff);
+        let ftyp = boxed(b"ftyp", b"heic\0\0\0\0mif1heic");
+        let infe = boxed(b"infe", &[&[2, 0, 0, 0][..], &1u16.to_be_bytes(), &0u16.to_be_bytes(), b"Exif", b"\0"].concat());
+        let iinf = boxed(b"iinf", &[&[0, 0, 0, 0][..], &1u16.to_be_bytes(), &infe].concat());
+        // iloc version 0: offsets and lengths of four bytes, no base offset; its offset is put in
+        // once the meta box's size is known.
+        let iloc = |offset: u32| boxed(b"iloc", &[&[0, 0, 0, 0][..], &0x4400u16.to_be_bytes(), &1u16.to_be_bytes(), &1u16.to_be_bytes(), &0u16.to_be_bytes(), &1u16.to_be_bytes(), &offset.to_be_bytes(), &(exif.len() as u32).to_be_bytes()].concat());
+        let meta = |offset: u32| boxed(b"meta", &[&[0, 0, 0, 0][..], &iinf, &iloc(offset)].concat());
+        let head = ftyp.len() + meta(0).len();
+        let offset = (head + 8 + pictures) as u32;
+        let mut mdat = vec![0x5a; pictures];
+        mdat.extend_from_slice(&exif);
+        [ftyp, meta(offset), boxed(b"mdat", &mdat)].concat()
+    }
+
+    #[test]
+    fn a_remote_heif_s_account_is_read_from_its_pieces_not_the_whole_file() {
+        let file = heif_with_exif(5 << 20);
+        // As read from the file on this machine.
+        assert_eq!(about_from(&mut Cursor::new(&file)), [("Camera".to_string(), "Canon".to_string())]);
+        // As a remote's, by ranges: its head and its end, a piece each.
+        let asked = std::cell::RefCell::new(Vec::new());
+        let mut pieces = crate::place::Pieces::new(|start: u64, len: u64| {
+            asked.borrow_mut().push((start, len));
+            let from = (start as usize).min(file.len());
+            let to = (start + len).min(file.len() as u64) as usize;
+            Ok((file[from..to].to_vec(), Some(file.len() as u64)))
+        });
+        assert_eq!(about_from(&mut pieces), [("Camera".to_string(), "Canon".to_string())]);
+        assert_eq!(asked.borrow().len(), 2, "{:?}", asked.borrow());
+        assert!(pieces.fetched() <= 2 * crate::place::PIECE);
+        // One that wants the whole file is refused once it has had the most a head may be.
+        let mut whole = crate::place::Pieces::new(|start: u64, len: u64| {
+            let from = (start as usize).min(file.len());
+            let to = (start + len).min(file.len() as u64) as usize;
+            Ok((file[from..to].to_vec(), Some(file.len() as u64)))
+        });
+        assert!(std::io::Read::read_to_end(&mut whole, &mut Vec::new()).is_err());
+        assert!(whole.fetched() <= crate::place::MOST_PIECES);
     }
 
     #[test]

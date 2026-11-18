@@ -253,6 +253,30 @@ impl Storage {
         Ok(bytes)
     }
 
+    /// Part of a remote file: `len` bytes from `start` (fewer at its end, none past it), and how
+    /// long the whole file is if the answer says. Asked for by a range, so only that part is
+    /// fetched from the remote; a service that sends the whole file anyway is read only as far as
+    /// `len` from its start, and refused for a part further in.
+    pub fn read_part(&self, remote: &str, path: &str, start: u64, len: u64) -> Result<(Vec<u8>, Option<u64>), String> {
+        let url = format!("{}/dav/{}/{}", self.base(), percent(remote), percent(path.trim_start_matches('/')));
+        let request = agent().get(&url).header("Authorization", &self.auth()).header("Range", &format!("bytes={start}-{}", start + len.max(1) - 1));
+        let response = within(request, Duration::from_secs(120)).config().http_status_as_error(false).build().call().map_err(|e| words(&e))?;
+        let status = response.status().as_u16();
+        let header = |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
+        let total = match status {
+            // "bytes 0-65535/1234567"; the total may be "*", not known.
+            206 => header("content-range").and_then(|r| r.rsplit_once('/').and_then(|(_, total)| total.trim().parse().ok())),
+            // Past its end: nothing there.
+            416 => return Ok((Vec::new(), header("content-range").and_then(|r| r.rsplit_once('/').and_then(|(_, total)| total.trim().parse().ok())))),
+            200 if start == 0 => header("content-length").and_then(|l| l.trim().parse().ok()),
+            200 => return Err("the storage service would not read part of a file".into()),
+            _ => return Err(format!("the storage service answered {status}")),
+        };
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::Read::take(response.into_body().into_reader(), len), &mut bytes).map_err(|e| e.to_string())?;
+        Ok((bytes, total))
+    }
+
     /// Copy the user's own rclone remotes in. Returns their names.
     pub fn import(&self) -> Result<Vec<String>, String> {
         let response = agent().get(&format!("{}/import", self.base())).header("Authorization", &self.auth()).call().map_err(|e| words(&e))?;
@@ -459,5 +483,38 @@ mod tests {
         let nobody = Storage { port: std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port(), token: "t".into() };
         assert!(!nobody.ping());
         assert!(nobody.import().unwrap_err().contains("Connection refused"));
+    }
+
+    /// A part of a file is asked for by a range and read no further, and a service that sends
+    /// the whole file anyway is read only as far as the part from its start.
+    #[test]
+    fn a_part_of_a_file_is_asked_for_by_its_range() {
+        let file: Vec<u8> = (0..1_000_000u32).map(|i| (i % 251) as u8).collect();
+        let served = file.clone();
+        let (storage, seen) = serve(move |request| {
+            let range = request.lines().find_map(|line| line.to_ascii_lowercase().strip_prefix("range: bytes=").map(str::to_string));
+            let whole = request.contains("/dav/Plain/");
+            match range.and_then(|r| r.split_once('-').map(|(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap()))) {
+                Some((a, _)) if a >= served.len() && !whole => format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", served.len()).into_bytes(),
+                Some((a, b)) if !whole => {
+                    let b = b.min(served.len() - 1);
+                    let mut out = format!("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{b}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", served.len(), b + 1 - a).into_bytes();
+                    out.extend_from_slice(&served[a..=b]);
+                    out
+                }
+                _ => {
+                    let mut out = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", served.len()).into_bytes();
+                    out.extend_from_slice(&served);
+                    out
+                }
+            }
+        });
+        assert_eq!(storage.read_part("Drive", "a.heic", 0, 4096).unwrap(), (file[..4096].to_vec(), Some(1_000_000)));
+        assert!(seen.lock().unwrap()[0].to_ascii_lowercase().contains("range: bytes=0-4095"));
+        assert_eq!(storage.read_part("Drive", "a.heic", 999_000, 4096).unwrap(), (file[999_000..].to_vec(), Some(1_000_000)));
+        assert_eq!(storage.read_part("Drive", "a.heic", 2_000_000, 4096).unwrap(), (Vec::new(), Some(1_000_000)));
+        // Ranges not honoured: its start only.
+        assert_eq!(storage.read_part("Plain", "a.heic", 0, 4096).unwrap(), (file[..4096].to_vec(), Some(1_000_000)));
+        assert!(storage.read_part("Plain", "a.heic", 8192, 4096).is_err());
     }
 }
