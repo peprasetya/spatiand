@@ -51,6 +51,32 @@ pub struct Material {
     cutoff: f32,
     two_sided: bool,
     unlit: bool,
+    /// Each map's texture coordinates as KHR_texture_transform moves them -- base, metal-rough,
+    /// normal, occlusion, emissive, as `u_maps` and `u_more` count them.
+    uv: [Mat3; 5],
+}
+
+/// KHR_texture_transform's matrix: the coordinates scaled, turned `rotation` radians (towards
+/// the texture's top-right, its v running down), then moved by `offset` -- T * R * S.
+fn uv_transform(offset: [f32; 2], rotation: f32, scale: [f32; 2]) -> Mat3 {
+    let (sin, cos) = rotation.sin_cos();
+    Mat3::from_cols(Vec3::new(cos * scale[0], -sin * scale[0], 0.0), Vec3::new(sin * scale[1], cos * scale[1], 0.0), Vec3::new(offset[0], offset[1], 1.0))
+}
+
+/// A texture's transform, from its KHR_texture_transform as the JSON says it: the normal and
+/// occlusion textures, whose transform gltf does not read for itself.
+fn uv_transform_of(value: Option<&gltf::json::Value>) -> Mat3 {
+    let Some(value) = value else { return Mat3::IDENTITY };
+    let pair = |key: &str, or: [f32; 2]| {
+        value.get(key).and_then(|v| v.as_array()).filter(|a| a.len() == 2).map_or(or, |a| [a[0].as_f64().unwrap_or(or[0] as f64) as f32, a[1].as_f64().unwrap_or(or[1] as f64) as f32])
+    };
+    let rotation = value.get("rotation").and_then(|r| r.as_f64()).unwrap_or(0.0) as f32;
+    uv_transform(pair("offset", [0.0, 0.0]), rotation, pair("scale", [1.0, 1.0]))
+}
+
+/// A base colour, metal-rough or emissive texture's transform.
+fn info_transform(info: Option<&gltf::texture::Info>) -> Mat3 {
+    info.and_then(|i| i.texture_transform()).map_or(Mat3::IDENTITY, |t| uv_transform(t.offset(), t.rotation(), t.scale()))
 }
 
 pub struct Image {
@@ -217,7 +243,15 @@ impl Scene {
             let normal = material.normal_texture();
             let occlusion = material.occlusion_texture();
             let strength = material.emissive_strength().unwrap_or(1.0);
+            let uv = [
+                info_transform(pbr.base_color_texture().as_ref()),
+                info_transform(pbr.metallic_roughness_texture().as_ref()),
+                uv_transform_of(normal.as_ref().and_then(|n| n.extension_value("KHR_texture_transform"))),
+                uv_transform_of(occlusion.as_ref().and_then(|o| o.extension_value("KHR_texture_transform"))),
+                info_transform(material.emissive_texture().as_ref()),
+            ];
             materials.push(Material {
+                uv,
                 base: Vec4::from(pbr.base_color_factor()),
                 base_texture: source(pbr.base_color_texture().map(|t| t.texture()), true, &mut colour, &mut samplers),
                 metal: pbr.metallic_factor(),
@@ -257,6 +291,7 @@ impl Scene {
             cutoff: 0.5,
             two_sided: false,
             unlit: false,
+            uv: [Mat3::IDENTITY; 5],
         });
         let images: Vec<Image> = images
             .iter()
@@ -387,6 +422,9 @@ uniform sampler2D u_metal_rough_map;
 uniform sampler2D u_normal_map;
 uniform sampler2D u_occlusion_map;
 uniform sampler2D u_emissive_map;
+// Each map's coordinates as KHR_texture_transform moves them: base, metal-rough, normal,
+// occlusion, emissive.
+uniform mat3 u_uv[5];
 out vec4 f_colour;
 
 const float PI = 3.14159265;
@@ -432,9 +470,13 @@ vec3 light(vec3 n, vec3 v, vec3 l, vec3 colour, vec3 albedo, vec3 f0, float meta
     return (diffuse + specular) * colour * nl;
 }
 
+vec2 uv_of(int map) {
+    return (u_uv[map] * vec3(v_uv, 1.0)).xy;
+}
+
 void main() {
     vec4 base = u_base * v_colour;
-    if (u_maps.x == 1) base *= texture(u_base_map, v_uv);
+    if (u_maps.x == 1) base *= texture(u_base_map, uv_of(0));
     if (u_more.y == 1 && base.a < u_cutoff) discard;
     if (u_more.z == 1) {
         f_colour = vec4(pow(base.rgb, vec3(1.0 / 2.2)), u_more.y == 2 ? base.a : 1.0);
@@ -443,7 +485,7 @@ void main() {
     float metal = u_surface.x;
     float rough = u_surface.y;
     if (u_maps.y == 1) {
-        vec4 mr = texture(u_metal_rough_map, v_uv);
+        vec4 mr = texture(u_metal_rough_map, uv_of(1));
         rough *= mr.g;
         metal *= mr.b;
     }
@@ -460,8 +502,8 @@ void main() {
             // A frame from how the texture runs across the surface, for want of tangents.
             vec3 dp1 = dFdx(v_world);
             vec3 dp2 = dFdy(v_world);
-            vec2 duv1 = dFdx(v_uv);
-            vec2 duv2 = dFdy(v_uv);
+            vec2 duv1 = dFdx(uv_of(2));
+            vec2 duv2 = dFdy(uv_of(2));
             vec3 dp2perp = cross(dp2, n);
             vec3 dp1perp = cross(n, dp1);
             t = dp2perp * duv1.x + dp1perp * duv2.x;
@@ -470,7 +512,7 @@ void main() {
             t *= scale;
             b *= scale;
         }
-        vec3 m = texture(u_normal_map, v_uv).xyz * 2.0 - 1.0;
+        vec3 m = texture(u_normal_map, uv_of(2)).xyz * 2.0 - 1.0;
         m.xy *= u_surface.z;
         n = normalize(mat3(t, b, n) * m);
     }
@@ -486,10 +528,10 @@ void main() {
     vec3 diffuse_sky = sky(n, 1.0) * 0.5;
     vec3 brdf = env_brdf(f0, rough, nv);
     vec3 ambient = diffuse_sky * albedo * (1.0 - metal) + sky(r, rough) * brdf;
-    if (u_maps.w == 1) ambient *= mix(1.0, texture(u_occlusion_map, v_uv).r, u_surface.w);
+    if (u_maps.w == 1) ambient *= mix(1.0, texture(u_occlusion_map, uv_of(3)).r, u_surface.w);
     c += ambient * 0.9;
     vec3 emissive = u_emissive;
-    if (u_more.x == 1) emissive *= texture(u_emissive_map, v_uv).rgb;
+    if (u_more.x == 1) emissive *= texture(u_emissive_map, uv_of(4)).rgb;
     c += emissive;
     // Filmic, then into the window's sRGB.
     c = clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
@@ -815,6 +857,8 @@ impl Renderer {
             g.uniform_4_i32(uniform("u_maps").as_ref(), has(maps[0]), has(maps[1]), has(maps[2]), has(maps[3]));
             g.uniform_4_i32(uniform("u_more").as_ref(), has(maps[4]), m.alpha as i32, m.unlit as i32, piece.has_tangents as i32);
             g.uniform_1_f32(uniform("u_cutoff").as_ref(), m.cutoff);
+            let uv: Vec<f32> = m.uv.iter().flat_map(|t| t.to_cols_array()).collect();
+            g.uniform_matrix_3_f32_slice(uniform("u_uv").as_ref(), false, &uv);
             if m.two_sided {
                 g.disable(glow::CULL_FACE);
             } else {
@@ -967,6 +1011,44 @@ mod tests {
         let read = Scene::read(&dir.join("cycle.gltf")).map(|s| s.triangles);
         assert!(read.as_ref().is_err_and(|e| e.contains("never end")), "{read:?}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_object_is_drawn_by_the_gpu_where_there_is_one() {
+        let Ok(gl) = Gl::new() else {
+            eprintln!("no GL here: not tried");
+            return;
+        };
+        let dir = folder("gpu");
+        std::fs::write(dir.join("corners.bin"), corners()).unwrap();
+        std::fs::write(dir.join("one.gltf"), triangle("corners.bin", "")).unwrap();
+        let scene = Scene::read(&dir.join("one.gltf")).unwrap();
+        // Its shaders compiled and linked, and a frame drawn with them.
+        let mut renderer = Renderer::new(&gl, scene).unwrap();
+        renderer.draw(&gl, (64, 64), &Orbit::default(), Eye::Both, |_| {}).unwrap();
+        renderer.forget(&gl);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_texture_transform_moves_turns_and_scales_as_the_extension_says() {
+        let at = |m: Mat3, u: f32, v: f32| {
+            let p = m * Vec3::new(u, v, 1.0);
+            (p.x, p.y)
+        };
+        let close = |(a, b): (f32, f32), (c, d): (f32, f32)| (a - c).abs() < 1e-5 && (b - d).abs() < 1e-5;
+        // Offset and scale: the corner is the offset, the far corner the scale on from it.
+        let m = uv_transform([0.5, 0.25], 0.0, [2.0, 3.0]);
+        assert!(close(at(m, 0.0, 0.0), (0.5, 0.25)));
+        assert!(close(at(m, 1.0, 1.0), (2.5, 3.25)));
+        // A quarter turn: u's axis goes to minus v, v's to u (Blender's glTF importer agrees).
+        let m = uv_transform([0.0, 0.0], std::f32::consts::FRAC_PI_2, [1.0, 1.0]);
+        assert!(close(at(m, 1.0, 0.0), (0.0, -1.0)));
+        assert!(close(at(m, 0.0, 1.0), (1.0, 0.0)));
+        // As the JSON of a normal map says it.
+        let json: gltf::json::Value = gltf::json::deserialize::from_str(r#"{"offset":[0.5,0.25],"scale":[2,3]}"#).unwrap();
+        assert!(close(at(uv_transform_of(Some(&json)), 1.0, 1.0), (2.5, 3.25)));
+        assert_eq!(uv_transform_of(None), Mat3::IDENTITY);
     }
 
     #[test]
