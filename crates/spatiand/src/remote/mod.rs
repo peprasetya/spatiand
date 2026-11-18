@@ -654,13 +654,16 @@ impl Remotes {
             microphone: prefs.remote_microphone,
             ..Remotes::default()
         };
+        let dir = spatiand_track::config::config_dir();
+        let identity = spatiand_stream::Identity::load_or_create(&dir).ok();
+        if let Some(me) = &identity {
+            remotes.me = me.fingerprint().to_string();
+        }
         for entry in &prefs.remotes {
             remotes.add(display, entry);
         }
-        let dir = spatiand_track::config::config_dir();
-        if let Ok(me) = spatiand_stream::Identity::load_or_create(&dir) {
+        if let Some(me) = identity {
             let fp = me.fingerprint().to_string();
-            remotes.me = fp.clone();
             let name = crate::system::machine_name();
             // Read again only when the file has changed: reading it says so in the log.
             let prefs_file = dir.join("prefs.toml");
@@ -678,7 +681,19 @@ impl Remotes {
         remotes
     }
 
+    /// Whether a host on the list is this machine itself: a Mac is a host and a room under one
+    /// identity, and a list of hosts copied from elsewhere (the Mac app's paired computers) can
+    /// name it. It is not a remote of its own: its own host refuses it, and it would be shown
+    /// as one more computer, offline.
+    fn is_me(&self, entry: &crate::prefs::RemoteHost) -> bool {
+        !self.me.is_empty() && entry.fingerprint.eq_ignore_ascii_case(&self.me)
+    }
+
     fn add(&mut self, display: &mut DisplayHandle, entry: &crate::prefs::RemoteHost) {
+        if self.is_me(entry) {
+            log::info!("remote {}: this machine itself, not a remote of its own", entry.host);
+            return;
+        }
         let config = match config_for(entry, self.microphone) {
             Ok(config) => config,
             Err(e) => {
@@ -998,9 +1013,16 @@ impl Remotes {
         };
         spatiand_sync::roster::Roster::open_default().pair(&entry.fingerprint, &paired.name, &address);
         // Pairing again with a host already known replaces it, which is what pairing again
-        // after the host forgot this headset needs.
-        self.hosts.retain(|r| r.host != address);
-        prefs.remotes.retain(|r| r.host != address);
+        // after the host forgot this headset needs; and the same host paired again at another
+        // address (its name changed, or reached by its IP address) is the one host, not two.
+        let replaced: Vec<String> = prefs
+            .remotes
+            .iter()
+            .filter(|r| same_host(r, &address, &entry.fingerprint))
+            .map(|r| r.host.clone())
+            .collect();
+        self.hosts.retain(|r| r.host != address && !replaced.contains(&r.host));
+        prefs.remotes.retain(|r| !same_host(r, &address, &entry.fingerprint));
         prefs.remotes.push(entry.clone());
         prefs.save();
         log::info!("paired with {} at {address}", paired.name);
@@ -1033,7 +1055,7 @@ impl Remotes {
     fn describe(&self, prefs: &crate::prefs::Prefs) -> (Vec<HostRow>, Vec<HostTab>) {
         let mut rows = Vec::new();
         let mut tabs = Vec::new();
-        for entry in &prefs.remotes {
+        for entry in prefs.remotes.iter().filter(|e| !self.is_me(e)) {
             let view = self
                 .hosts
                 .iter()
@@ -1101,10 +1123,42 @@ impl Drop for Remote {
     }
 }
 
+/// Whether a host on the list is the one now paired at `address` with `fingerprint`.
+fn same_host(entry: &crate::prefs::RemoteHost, address: &str, fingerprint: &str) -> bool {
+    entry.host == address || (!fingerprint.is_empty() && entry.fingerprint.eq_ignore_ascii_case(fingerprint))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use spatiand_audio::server::Width;
+
+    fn host(address: &str, fingerprint: &str) -> crate::prefs::RemoteHost {
+        crate::prefs::RemoteHost { host: address.into(), fingerprint: fingerprint.into(), launch: Vec::new(), on_demand: false }
+    }
+
+    #[test]
+    fn this_machine_is_not_a_remote_of_its_own() {
+        // The Mac's room and host are one identity; its app's paired computers named it.
+        let remotes = Remotes { me: "cec2e365aa".into(), ..Remotes::default() };
+        let mut prefs = crate::prefs::Prefs::default();
+        prefs.remotes = vec![host("deepmagpie", "afb86951bb"), host("littleotter", "CEC2E365AA")];
+        let (rows, tabs) = remotes.describe(&prefs);
+        assert_eq!(rows.iter().map(|r| r.address.as_str()).collect::<Vec<_>>(), ["deepmagpie"]);
+        assert_eq!(tabs.len(), 1);
+        // Not knowing itself yet, it hides nothing.
+        let (rows, _) = Remotes::default().describe(&prefs);
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn a_host_paired_again_at_another_address_is_the_same_host() {
+        let old = host("littleotter", "cec2e365aa");
+        assert!(same_host(&old, "192.168.10.20", "CEC2E365AA"), "renamed or by its IP: the same host");
+        assert!(same_host(&old, "littleotter", "0b8dfc23"), "the same address: replaced, as before");
+        assert!(!same_host(&host("deepmagpie", "afb86951bb"), "192.168.10.20", "cec2e365aa"));
+        assert!(!same_host(&host("x", ""), "y", ""), "no fingerprint matches nothing");
+    }
 
     #[test]
     fn a_locked_host_is_waited_for_only_when_asked_and_says_when_it_is_over() {
