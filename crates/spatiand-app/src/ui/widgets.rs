@@ -349,7 +349,9 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
         p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, theme::wash(0.16));
     }
     match tile.picture {
-        Some(texture) => p.cover(gl, texture, frame, theme::ROW_RADIUS, theme::ink()),
+        // In its own colours: a picture is not ink, and multiplied by `theme::ink()` it was
+        // drawn nearly black in the light look.
+        Some(texture) => p.cover(gl, texture, frame, theme::ROW_RADIUS, [1.0, 1.0, 1.0, 1.0]),
         None => {
             // Its name, large, where its picture will be: a tile that is still loading, or
             // has no picture, says what it is rather than being a grey box among grey boxes.
@@ -360,7 +362,9 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
                 Some(glyph) => glyph.to_string(),
                 None => tile.title.chars().find(|c| c.is_alphanumeric()).into_iter().collect::<String>().to_uppercase(),
             };
-            let ink = if tile.tint.is_some() { [1.0, 1.0, 1.0, 0.82] } else { [1.0, 1.0, 1.0, 0.16] };
+            // White on a tile's own tint; on the SDK's faint stand-in, a wash of the ground's
+            // opposite, which white is not on the light ground.
+            let ink = if tile.tint.is_some() { [1.0, 1.0, 1.0, 0.82] } else { theme::wash(0.16) };
             match tile.icon {
                 Some(icon) => {
                     let side = picture.min(cell.w) * 0.34;
