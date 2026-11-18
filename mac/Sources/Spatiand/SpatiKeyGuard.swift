@@ -152,6 +152,15 @@ final class SpatiKeyGuard {
         // Its socket goes with the app, and a question still waiting is refused rather than left.
         _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
                                                    queue: nil) { _ in sp_key_stop() }
+        // **A touch covering what follows is let go when this Mac is locked, sleeps, or its
+        // screen goes to another user**: whoever comes back to it has to give a finger of their
+        // own. (On `queue`, after an unlock in progress, which may still keep the touch it got.)
+        let letGo: (Notification) -> Void = { [weak self] _ in self?.queue.async { self?.forget() } }
+        _ = DistributedNotificationCenter.default().addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil,
+                                                               queue: nil, using: letGo)
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            _ = NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: nil, using: letGo)
+        }
     }
 
     // MARK: what the service asks

@@ -675,6 +675,9 @@ fn prompts_say_what_for_and_who_asks() {
     answer::<SettingsAnswer>(ask(&service, conn, set(60, 300)));
     open(&service, next_conn());
     assert_eq!(guard.lingers.lock().unwrap().last(), Some(&60));
+    // Never for another device: its every use is a finger of its own.
+    answer::<RevealAnswer>(ask_from(&service, next_conn(), deck.clone(), reveal(None)));
+    assert_eq!(guard.lingers.lock().unwrap().last(), Some(&0), "a paired device's asking lingers 0");
 
     // The person saying no, or no Touch ID now, opens nothing, and the card says so as it goes.
     guard.notices.lock().unwrap().clear();

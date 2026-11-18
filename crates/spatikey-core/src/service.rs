@@ -1202,8 +1202,14 @@ impl Service {
     }
 
     /// Ask for a finger, for `what` ("open SpatiKey"), and take the vault key.
+    ///
+    /// **One touch covers what follows only for this device's own asking**: a request from
+    /// another device (`who.device` not empty) is always a finger of its own, neither covered
+    /// by a touch given here nor covering what follows -- as the Allow alert says ("Each use
+    /// still needs your finger here").
     fn unlock(&self, guard: &dyn Guard, vault: &Vault, who: &Who, what: &str) -> Result<VaultKey, Refusal> {
-        self.unlock_lingering(guard, vault, who, what, self.settings().touch_secs)
+        let linger = if who.device.is_empty() { self.settings().touch_secs } else { 0 };
+        self.unlock_lingering(guard, vault, who, what, linger)
     }
 
     /// The same, with how long this touch may go on covering others, and be covered by them.
