@@ -76,10 +76,9 @@ impl Installed {
         self.dir.join(&self.manifest.exec)
     }
 
-    /// The icon, if it has one that is there.
+    /// The icon, if it has one that is there (in the folder, not reached through a link out of it).
     pub fn icon(&self) -> Option<PathBuf> {
-        let icon = self.dir.join(self.manifest.icon.as_ref()?);
-        icon.is_file().then_some(icon)
+        within(&self.dir, self.manifest.icon.as_ref()?).ok()
     }
 
     /// The command line, as [`crate::launch`] takes it: every part quoted, since a home folder
@@ -149,11 +148,26 @@ pub fn read(dir: &Path) -> Result<Installed, String> {
     if let Some(icon) = &manifest.icon {
         inside(icon).map_err(|e| format!("icon: {e}"))?;
     }
-    let app = Installed { manifest, dir: dir.to_path_buf() };
-    if !app.program().is_file() {
-        return Err(format!("its program {} is not there", app.manifest.exec));
+    within(dir, &manifest.exec).map_err(|e| format!("its program {e}"))?;
+    Ok(Installed { manifest, dir: dir.to_path_buf() })
+}
+
+/// `path` in `dir` as a plain file of the folder's own: not a link, and not reached through a
+/// linked folder that leads out of it (an archive's `run` linked to a key would otherwise be made
+/// executable, and read, as the application's).
+fn within(dir: &Path, path: &str) -> Result<PathBuf, String> {
+    let file = dir.join(path);
+    let kind = std::fs::symlink_metadata(&file).map_err(|_| format!("{path} is not there"))?;
+    if !kind.is_file() {
+        return Err(format!("{path} is not a plain file"));
     }
-    Ok(app)
+    let (Ok(real), Ok(top)) = (file.canonicalize(), dir.canonicalize()) else {
+        return Err(format!("{path} is not there"));
+    };
+    if !real.starts_with(&top) {
+        return Err(format!("{path} is outside the application's folder"));
+    }
+    Ok(file)
 }
 
 fn check_id(id: &str) -> Result<(), String> {
@@ -184,8 +198,11 @@ pub fn is_package(path: &Path) -> bool {
 
 /// What a package or folder holds, read without installing it: for asking first.
 pub fn inspect(source: &Path) -> Result<Manifest, String> {
-    let dir = apps_dir().ok_or("no home folder")?;
-    let staging = stage(&dir, source)?;
+    inspect_in(&apps_dir().ok_or("no home folder")?, source)
+}
+
+fn inspect_in(dir: &Path, source: &Path) -> Result<Manifest, String> {
+    let staging = stage(dir, source)?;
     let result = find_root(&staging.0).and_then(|root| read(&root)).map(|app| app.manifest);
     drop(staging);
     result
@@ -200,7 +217,7 @@ pub fn install_into(dir: &Path, source: &Path) -> Result<Installed, String> {
     let staging = stage(dir, source)?;
     let root = find_root(&staging.0)?;
     let app = read(&root)?;
-    make_executable(&app.program())?;
+    make_executable(&within(&root, &app.manifest.exec)?)?;
     let target = dir.join(&app.manifest.id);
     // The old version moves aside and the new one into its place, each one rename, so the
     // launcher never sees a folder half of one and half of the other.
@@ -254,12 +271,75 @@ fn stage(dir: &Path, source: &Path) -> Result<Staging, String> {
         copy_dir(source, &staging.0)?;
     } else {
         let file = std::fs::File::open(source).map_err(|e| format!("{}: {e}", source.display()))?;
-        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
-        archive.set_preserve_permissions(true);
-        // Entries are unpacked inside the folder; `..` and absolute paths are refused.
-        archive.unpack(&staging.0).map_err(|e| format!("{} does not unpack: {e}", source.display()))?;
+        unpack(file, &staging.0).map_err(|e| format!("{} does not unpack: {e}", source.display()))?;
     }
     Ok(staging)
+}
+
+/// The most a package unpacks to, and the most entries it has: it is unpacked before anyone has
+/// said yes to it, so a small file that inflates without end must not fill the disk.
+const MOST_BYTES: u64 = 8 << 30;
+const MOST_ENTRIES: usize = 100_000;
+
+/// Unpack a gzipped tar into `dst`: only files, folders and links that stay inside it.
+fn unpack(file: impl std::io::Read, dst: &Path) -> Result<(), String> {
+    unpack_capped(file, dst, MOST_BYTES, MOST_ENTRIES)
+}
+
+fn unpack_capped(file: impl std::io::Read, dst: &Path, most_bytes: u64, most_entries: usize) -> Result<(), String> {
+    use tar::EntryType;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+    archive.set_preserve_permissions(true);
+    let (mut bytes, mut count) = (0u64, 0usize);
+    for entry in archive.entries().map_err(|e| e.to_string())? {
+        let mut entry = entry.map_err(|e| e.to_string())?;
+        count += 1;
+        if count > most_entries {
+            return Err(format!("it has more than {most_entries} entries"));
+        }
+        let path = entry.path().map_err(|e| e.to_string())?.into_owned();
+        match entry.header().entry_type() {
+            EntryType::Regular | EntryType::Continuous | EntryType::Directory => {}
+            EntryType::Symlink => {
+                let target = entry.link_name().map_err(|e| e.to_string())?.unwrap_or_default();
+                if !stays_inside(&path, &target) {
+                    return Err(format!("{} links out of the package", path.display()));
+                }
+            }
+            _ => return Err(format!("{} is neither a file, a folder nor a link inside", path.display())),
+        }
+        bytes = bytes.saturating_add(entry.header().size().map_err(|e| e.to_string())?);
+        if bytes > most_bytes {
+            return Err(format!("it unpacks to more than {} MB", most_bytes >> 20));
+        }
+        // `..` and absolute paths are refused here, and nothing is written through a link.
+        if !entry.unpack_in(dst).map_err(|e| format!("{}: {e}", path.display()))? {
+            return Err(format!("{} is outside the package", path.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a link at `at` (a path in the package) to `target` points inside the package.
+fn stays_inside(at: &Path, target: &Path) -> bool {
+    if target.as_os_str().is_empty() || target.is_absolute() {
+        return false;
+    }
+    let mut depth: i64 = 0;
+    for part in at.parent().into_iter().flat_map(|p| p.components()).chain(target.components()) {
+        match part {
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// The manifest at the top, or in the one folder at the top.
@@ -295,7 +375,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
 
 fn make_executable(program: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
-    let mut permissions = std::fs::metadata(program).map_err(|e| e.to_string())?.permissions();
+    let mut permissions = std::fs::symlink_metadata(program).map_err(|e| e.to_string())?.permissions();
     permissions.set_mode(permissions.mode() | 0o755);
     std::fs::set_permissions(program, permissions).map_err(|e| format!("{}: {e}", program.display()))
 }
@@ -388,6 +468,90 @@ mod tests {
         }
         assert_eq!(std::fs::read_dir(&apps).unwrap().count(), 0);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A package with one link (or hard link) besides the files.
+    fn package_with_link(dir: &Path, files: &[(&str, &str)], name: &str, target: &str, kind: tar::EntryType) -> PathBuf {
+        let path = dir.join("linked.spatiapp");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(file, flate2::Compression::fast()));
+        for (name, text) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(text.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, name, text.as_bytes()).unwrap();
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(kind);
+        header.set_size(0);
+        header.set_mode(0o777);
+        builder.append_link(&mut header, name, target).unwrap();
+        builder.into_inner().unwrap().finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn a_program_linked_out_of_the_package_is_refused_and_left_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("link");
+        let apps = dir.join("apps");
+        let secret = dir.join("id_ed25519");
+        std::fs::write(&secret, "key").unwrap();
+        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let manifest = "id = \"ok\"\nname = \"x\"\nexec = \"run\"\n";
+        let secret_name = secret.to_str().unwrap();
+        for kind in [tar::EntryType::Symlink, tar::EntryType::Link] {
+            let pkg = package_with_link(&dir, &[(MANIFEST, manifest)], "run", secret_name, kind);
+            assert!(inspect_in(&apps, &pkg).is_err(), "{kind:?}");
+            assert!(install_into(&apps, &pkg).is_err(), "{kind:?}");
+            // Relative, climbing out.
+            let pkg = package_with_link(&dir, &[(MANIFEST, manifest)], "run", "../../id_ed25519", kind);
+            assert!(install_into(&apps, &pkg).is_err(), "{kind:?}");
+        }
+        assert_eq!(std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777, 0o600);
+        // A link inside the package is unpacked, but is not taken as the program.
+        let pkg = package_with_link(&dir, &[(MANIFEST, manifest), ("real", "#!/bin/sh\n")], "run", "real", tar::EntryType::Symlink);
+        assert!(install_into(&apps, &pkg).is_err());
+        let pkg = package_with_link(&dir, &[(MANIFEST, "id = \"ok\"\nname = \"x\"\nexec = \"real\"\n"), ("real", "#!/bin/sh\n")], "lib.so", "real", tar::EntryType::Symlink);
+        let app = install_into(&apps, &pkg).unwrap();
+        assert!(app.dir.join("lib.so").is_symlink());
+        // A folder whose program is a link out of it, the same.
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join(MANIFEST), "id = \"other\"\nname = \"x\"\nexec = \"run\"\n").unwrap();
+        std::os::unix::fs::symlink(&secret, src.join("run")).unwrap();
+        assert!(install_into(&apps, &src).is_err());
+        assert_eq!(std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_package_that_inflates_without_end_is_stopped() {
+        let dir = temp("bomb");
+        let zeros = "\0".repeat(1 << 20);
+        let pkg = package(&dir, "", &[(MANIFEST, MANIFEST_TEXT), ("a", &zeros), ("b", &zeros), ("c", &zeros)]);
+        let out = dir.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let open = || std::fs::File::open(&pkg).unwrap();
+        assert!(unpack_capped(open(), &out, 2 << 20, 100).unwrap_err().contains("more than"));
+        let out2 = dir.join("out2");
+        std::fs::create_dir(&out2).unwrap();
+        assert!(unpack_capped(open(), &out2, 8 << 20, 3).unwrap_err().contains("entries"));
+        let out3 = dir.join("out3");
+        std::fs::create_dir(&out3).unwrap();
+        unpack_capped(open(), &out3, 8 << 20, 4).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn links_are_judged_by_where_they_lead() {
+        assert!(stays_inside(Path::new("lib/libx.so"), Path::new("libx.so.1")));
+        assert!(stays_inside(Path::new("top/lib/libx.so"), Path::new("../bin/x")));
+        assert!(!stays_inside(Path::new("run"), Path::new("../x")));
+        assert!(!stays_inside(Path::new("top/run"), Path::new("../../x")));
+        assert!(!stays_inside(Path::new("run"), Path::new("/etc/passwd")));
+        assert!(!stays_inside(Path::new("run"), Path::new("")));
     }
 
     #[test]
