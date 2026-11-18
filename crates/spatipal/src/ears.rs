@@ -57,6 +57,9 @@ pub enum Heard {
     Interrupted,
     /// A phrase was heard and let go: not meant for it, not words, or not written.
     LetGo,
+    /// What was said to it could not be written (Whisper or hemera failing): for the window's
+    /// trouble line.
+    Trouble(String),
 }
 
 /// What the ears are doing.
@@ -176,6 +179,7 @@ pub fn start(
                 next: None,
                 written: None,
                 waiting: None,
+                troubled: None,
             };
             ears.run(said_rx);
         })
@@ -368,6 +372,8 @@ struct Judge {
     /// A phrase waiting for its job's text: the job, when it began and ended, how long it was,
     /// whether its draft is what is written.
     waiting: Option<(u64, Instant, Instant, f32, bool)>,
+    /// When the window was last told that writing failed: not more than once a minute.
+    troubled: Option<Instant>,
 }
 
 impl Judge {
@@ -489,6 +495,15 @@ impl Judge {
             },
             Err(why) => {
                 log::warn!("ears: {why}");
+                // Said to it -- the listen button pressed, or in the conversation -- and lost:
+                // the wearer is told, not left waiting for an answer.
+                let to_it = self.once.load(Ordering::Relaxed) || self.conversation.open_until(&self.voice).is_some_and(|until| began <= until);
+                if to_it && self.troubled.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+                    self.troubled = Some(Instant::now());
+                    if !self.tell(Heard::Trouble(format!("What you said could not be written down: {why}"))) {
+                        return false;
+                    }
+                }
                 return self.tell(Heard::Ear(now)) && self.tell(Heard::LetGo);
             }
         };
