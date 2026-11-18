@@ -76,6 +76,13 @@ fn read_as(path: &Path, largest: u32, may_move: bool) -> Result<Picture, String>
     if ["heic", "heif", "hif", "avif", "jp2", "j2k", "jpf", "jpx", "j2c", "jxl"].contains(&ending(path).as_str()) {
         let mut picture = by_ffmpeg(path, largest)?;
         picture.eyes = stereo::guess(path, picture.width, picture.height, &picture.rgba);
+        // The camera's account, from the file on this machine without reading it whole; a
+        // remote's would be read twice over for it, and is not.
+        if crate::place::remote(path).is_none() {
+            if let Ok(file) = std::fs::File::open(path) {
+                picture.about = about_from(&mut std::io::BufReader::new(file));
+            }
+        }
         return Ok(picture);
     }
     let bytes = crate::place::read(path)?;
@@ -314,7 +321,13 @@ fn other_eye(what: u32, second: (u32, u32), first: (u32, u32)) -> bool {
 
 /// What the camera wrote down, in the words a person would use.
 fn about(bytes: &[u8]) -> Vec<(String, String)> {
-    let Ok(exif) = exif::Reader::new().read_from_container(&mut Cursor::new(bytes)) else { return Vec::new() };
+    about_from(&mut Cursor::new(bytes))
+}
+
+/// The same, from a file or anything else that can be read about in: JPEG, TIFF, PNG, WebP, and
+/// HEIF and AVIF, the ISO media files phones write.
+fn about_from(from: &mut (impl std::io::BufRead + std::io::Seek)) -> Vec<(String, String)> {
+    let Ok(exif) = exif::Reader::new().read_from_container(from) else { return Vec::new() };
     let get = |tag: exif::Tag| exif.get_field(tag, exif::In::PRIMARY).map(|f| f.display_value().with_unit(&exif).to_string());
     let mut about = Vec::new();
     if let Some(when) = get(exif::Tag::DateTimeOriginal).or_else(|| get(exif::Tag::DateTime)) {

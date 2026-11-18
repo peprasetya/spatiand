@@ -56,7 +56,9 @@ unsafe fn from_open(format: *mut ffi::AVFormatContext, width: u32) -> Option<Sti
         let group = *(*format).stream_groups.add(g);
         if (*group).type_ == ffi::AV_STREAM_GROUP_PARAMS_TILE_GRID {
             if let Some(still) = from_grid(format, group, width) {
-                return Some(still);
+                let grid = (*group).params.tile_grid;
+                let upright = Upright::of(side_matrix((*grid).coded_side_data, (*grid).nb_coded_side_data));
+                return Some(upright.apply(&still));
             }
         }
     }
@@ -69,6 +71,7 @@ unsafe fn from_open(format: *mut ffi::AVFormatContext, width: u32) -> Option<Sti
     if codec.is_null() {
         return None;
     }
+    let upright = Upright::of(side_matrix((*(*stream).codecpar).coded_side_data, (*(*stream).codecpar).nb_coded_side_data));
     let mut context = ffi::avcodec_alloc_context3(codec);
     ffi::avcodec_parameters_to_context(context, (*stream).codecpar);
     (*context).thread_count = 2;
@@ -90,9 +93,20 @@ unsafe fn from_open(format: *mut ffi::AVFormatContext, width: u32) -> Option<Sti
                 break;
             }
             if (*packet).stream_index == index {
-                ffi::avcodec_send_packet(context, packet);
-                if ffi::avcodec_receive_frame(context, frame) >= 0 {
-                    still = shrink(frame, width);
+                // A decoder that is full takes no more until a frame is taken from it: then the
+                // packet is given again, not lost.
+                let mut sent = ffi::avcodec_send_packet(context, packet);
+                loop {
+                    if ffi::avcodec_receive_frame(context, frame) >= 0 {
+                        still = shrink(frame, width);
+                        break;
+                    }
+                    if sent != again() {
+                        break;
+                    }
+                    sent = ffi::avcodec_send_packet(context, packet);
+                }
+                if still.is_some() {
                     ffi::av_packet_unref(packet);
                     break 'reading;
                 }
@@ -111,7 +125,7 @@ unsafe fn from_open(format: *mut ffi::AVFormatContext, width: u32) -> Option<Sti
         ffi::av_packet_free(&mut packet);
     }
     ffi::avcodec_free_context(&mut context);
-    still
+    still.map(|still| upright.apply(&still))
 }
 
 /// The tiles of a grid, each decoded and put where the grid says, the whole cropped to the
@@ -150,30 +164,45 @@ unsafe fn from_grid(format: *mut ffi::AVFormatContext, group: *mut ffi::AVStream
     let mut placed = 0usize;
     let mut packet = ffi::av_packet_alloc();
     let mut frame = ffi::av_frame_alloc();
-    while placed < tile_of.len() && ffi::av_read_frame(format, packet) >= 0 {
-        if let Some(&(x, y)) = tile_of.get(&(*packet).stream_index) {
-            ffi::avcodec_send_packet(context, packet);
-            let mut got = ffi::avcodec_receive_frame(context, frame) >= 0;
-            if !got {
-                ffi::avcodec_send_packet(context, ptr::null());
-                got = ffi::avcodec_receive_frame(context, frame) >= 0;
-                ffi::avcodec_flush_buffers(context);
-            }
-            if got {
-                if let Some(tile) = shrink(frame, (*frame).width as u32) {
-                    let (tw, th) = (tile.width as usize, tile.height as usize);
-                    for row in 0..th.min(ch.saturating_sub(y)) {
-                        let take = tw.min(cw.saturating_sub(x)) * 4;
-                        let to = ((y + row) * cw + x) * 4;
-                        canvas[to..to + take].copy_from_slice(&tile.rgba[row * tw * 4..row * tw * 4 + take]);
-                    }
-                    placed += 1;
+    // Where each tile given to the decoder goes, in the order given: a decoder may hold a frame
+    // back for a while, and gives them up in that order.
+    let mut waiting = std::collections::VecDeque::new();
+    // Every frame the decoder has ready, each put where its tile goes.
+    let take = |context: *mut ffi::AVCodecContext, waiting: &mut std::collections::VecDeque<(usize, usize)>, canvas: &mut Vec<u8>, placed: &mut usize| {
+        while ffi::avcodec_receive_frame(context, frame) >= 0 {
+            if let (Some((x, y)), Some(tile)) = (waiting.pop_front(), shrink(frame, (*frame).width as u32)) {
+                let (tw, th) = (tile.width as usize, tile.height as usize);
+                for row in 0..th.min(ch.saturating_sub(y)) {
+                    let take = tw.min(cw.saturating_sub(x)) * 4;
+                    let to = ((y + row) * cw + x) * 4;
+                    canvas[to..to + take].copy_from_slice(&tile.rgba[row * tw * 4..row * tw * 4 + take]);
                 }
-                ffi::av_frame_unref(frame);
+                *placed += 1;
+            }
+            ffi::av_frame_unref(frame);
+        }
+    };
+    let mut given = 0usize;
+    while given < tile_of.len() && ffi::av_read_frame(format, packet) >= 0 {
+        if let Some(&at) = tile_of.get(&(*packet).stream_index) {
+            loop {
+                let sent = ffi::avcodec_send_packet(context, packet);
+                if sent >= 0 {
+                    waiting.push_back(at);
+                    given += 1;
+                }
+                take(context, &mut waiting, &mut canvas, &mut placed);
+                // Full, it has given up what it had: the packet again. Otherwise on to the next.
+                if sent != again() {
+                    break;
+                }
             }
         }
         ffi::av_packet_unref(packet);
     }
+    // What it still holds, once it is told there is no more.
+    ffi::avcodec_send_packet(context, ptr::null());
+    take(context, &mut waiting, &mut canvas, &mut placed);
     ffi::av_frame_free(&mut frame);
     ffi::av_packet_free(&mut packet);
     ffi::avcodec_free_context(&mut context);
@@ -190,6 +219,82 @@ unsafe fn from_grid(format: *mut ffi::AVFormatContext, group: *mut ffi::AVStream
     }
     let whole = Still { width: w as u32, height: h as u32, rgba };
     Some(if whole.width <= width { whole } else { smaller(&whole, width) })
+}
+
+/// What a decoder says when it cannot take a packet until a frame is taken from it.
+fn again() -> c_int {
+    -(ffi::EAGAIN as c_int)
+}
+
+/// The display matrix among a stream's (or a grid's) side data, if it has one.
+unsafe fn side_matrix(data: *const ffi::AVPacketSideData, count: c_int) -> Option<[i32; 9]> {
+    if data.is_null() || count <= 0 {
+        return None;
+    }
+    let side = ffi::av_packet_side_data_get(data, count, ffi::AV_PKT_DATA_DISPLAYMATRIX);
+    if side.is_null() || (*side).data.is_null() || (*side).size < 36 {
+        return None;
+    }
+    let mut matrix = [0i32; 9];
+    ptr::copy_nonoverlapping((*side).data as *const i32, matrix.as_mut_ptr(), 9);
+    Some(matrix)
+}
+
+/// How a picture is put the right way up: across and down swapped first, then mirrored left for
+/// right, then upside down -- which between them make every quarter turn, mirrored or not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Upright {
+    pub swap: bool,
+    pub mirror: bool,
+    pub flip: bool,
+}
+
+impl Upright {
+    /// What a display matrix asks -- a phone held upright, an iPhone's HEIF turned with `irot`,
+    /// mirrored with `imir` -- as FFmpeg's own player reads it (fftools' autorotate). Anything but
+    /// a quarter turn, mirrored or not, is shown as it is.
+    pub fn of(matrix: Option<[i32; 9]>) -> Upright {
+        let Some(m) = matrix else { return Upright::default() };
+        let mut theta = -unsafe { ffi::av_display_rotation_get(m.as_ptr()) }.round();
+        if theta.is_nan() {
+            return Upright::default();
+        }
+        theta -= 360.0 * (theta / 360.0 + 0.9 / 360.0).floor();
+        let near = |angle: f64| (theta - angle).abs() < 1.0;
+        let (swap, mirror, flip) = if near(90.0) {
+            // transpose=cclock_flip if m[3] > 0, else transpose=clock.
+            if m[3] > 0 { (true, false, false) } else { (true, true, false) }
+        } else if near(180.0) {
+            (false, m[0] < 0, m[4] < 0)
+        } else if near(270.0) {
+            // transpose=clock_flip if m[3] < 0, else transpose=cclock.
+            if m[3] < 0 { (true, true, true) } else { (true, false, true) }
+        } else if near(0.0) || near(360.0) {
+            (false, false, m[4] < 0)
+        } else {
+            (false, false, false)
+        };
+        Upright { swap, mirror, flip }
+    }
+
+    pub fn apply(self, still: &Still) -> Still {
+        if self == Upright::default() {
+            return Still { width: still.width, height: still.height, rgba: still.rgba.clone() };
+        }
+        let (w, h) = (still.width as usize, still.height as usize);
+        let (ow, oh) = if self.swap { (h, w) } else { (w, h) };
+        let mut rgba = vec![0u8; ow * oh * 4];
+        for y in 0..oh {
+            for x in 0..ow {
+                let (x1, y1) = (if self.mirror { ow - 1 - x } else { x }, if self.flip { oh - 1 - y } else { y });
+                let (sx, sy) = if self.swap { (y1, x1) } else { (x1, y1) };
+                let from = (sy * w + sx) * 4;
+                let to = (y * ow + x) * 4;
+                rgba[to..to + 4].copy_from_slice(&still.rgba[from..from + 4]);
+            }
+        }
+        Still { width: ow as u32, height: oh as u32, rgba }
+    }
 }
 
 /// A picture made smaller in memory: a box filter, which is what shrinking by a lot wants.
@@ -240,4 +345,46 @@ unsafe fn shrink(frame: *const ffi::AVFrame, width: u32) -> Option<Still> {
     ffi::sws_scale(scaler, (*frame).data.as_ptr() as *const *const u8, (*frame).linesize.as_ptr(), 0, from_h, planes.as_ptr(), strides.as_ptr());
     ffi::sws_freeContext(scaler);
     Some(Still { width: to_w as u32, height: to_h as u32, rgba })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A display matrix turning a picture `angle` degrees anticlockwise, as FFmpeg makes one,
+    /// mirrored left for right if asked.
+    fn matrix(angle: f64, mirrored: bool) -> [i32; 9] {
+        let mut m = [0i32; 9];
+        unsafe {
+            ffi::av_display_rotation_set(m.as_mut_ptr(), angle);
+            if mirrored {
+                ffi::av_display_matrix_flip(m.as_mut_ptr(), 1, 0);
+            }
+        }
+        m
+    }
+
+    /// Two by one: A then B, as red 1 and 2.
+    fn two() -> Still {
+        Still { width: 2, height: 1, rgba: vec![1, 0, 0, 255, 2, 0, 0, 255] }
+    }
+
+    fn reds(still: &Still) -> (u32, u32, Vec<u8>) {
+        (still.width, still.height, still.rgba.chunks_exact(4).map(|p| p[0]).collect())
+    }
+
+    #[test]
+    fn a_picture_is_put_upright_as_its_display_matrix_says() {
+        // None, or none to speak of: as it is.
+        assert_eq!(reds(&Upright::of(None).apply(&two())), (2, 1, vec![1, 2]));
+        assert_eq!(reds(&Upright::of(Some(matrix(0.0, false))).apply(&two())), (2, 1, vec![1, 2]));
+        // A phone held upright: ffprobe says "rotation of -90" (av_display_rotation_set of 90),
+        // a quarter clockwise to put right, and its left end goes up.
+        assert_eq!(reds(&Upright::of(Some(matrix(90.0, false))).apply(&two())), (1, 2, vec![1, 2]));
+        // The other way, and half a turn.
+        assert_eq!(reds(&Upright::of(Some(matrix(-90.0, false))).apply(&two())), (1, 2, vec![2, 1]));
+        assert_eq!(reds(&Upright::of(Some(matrix(180.0, false))).apply(&two())), (2, 1, vec![2, 1]));
+        // Mirrored only.
+        assert_eq!(reds(&Upright::of(Some(matrix(0.0, true))).apply(&two())), (2, 1, vec![2, 1]));
+    }
 }
