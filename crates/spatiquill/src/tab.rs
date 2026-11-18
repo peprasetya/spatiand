@@ -228,6 +228,10 @@ pub fn run() -> io::Result<()> {
     let size = Size { cols: cols as usize, rows: rows as usize };
     let term = Arc::new(FairMutex::new(Term::new(Config::default(), &size, listener.clone())));
     let home = std::env::var_os("SPATIQUILL_FOLDER").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from);
+    // Where this tab starts is not the shell's to pass on: a `spatiquill` started from it would
+    // open in this folder rather than its own. Taken out before the terminal (and any thread
+    // of this process) is made.
+    std::env::remove_var("SPATIQUILL_FOLDER");
     let mut env = HashMap::new();
     env.insert("TERM".to_string(), "xterm-256color".to_string());
     env.insert("COLORTERM".to_string(), "truecolor".to_string());
