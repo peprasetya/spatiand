@@ -447,6 +447,12 @@ If the session has no head tracking — no headset plugged in, or a nested
 development session — you get `unavailable` with a reason instead of a channel.
 Carry on as a flat window; do not wait.
 
+A Rust application on Spatiand's SDK (`crates/spatiand-app`) need not write this: since 2026-11-17
+`App::ask_poses()`, `App::pose()`, `App::set_frame_pose()` and the matrices for an eye do the
+mapping, the version check and the seqlock read, the same on the Deck, the Beam Pro and the Mac
+(docs/spatiand-apps.md, "the head, for an application that draws its own eyes"; checked in a
+headless room with a turning head, not in the glasses).
+
 You do **not** need this to show pre-packed stereo video, or to be the
 environment. Those are the compositor's tracking, not yours. This is for
 drawing your own geometry.

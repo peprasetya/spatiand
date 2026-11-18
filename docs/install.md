@@ -72,6 +72,10 @@ Turning things off
     pointer_hold_degrees      how far the pointer is held where a button went
                               down (0.4 if absent; 0 turns it off)
     pointer_hold_mouse_degrees  the same for a mouse's own movement (0.1)
+    steadiness                how still the room is held while the head sways:
+                              off, light, medium (the default) or strong; the
+                              settings' Steadiness row writes it, and
+                              SPATIAND_STEADY=0|light|medium|strong overrides it
 
 `~/.config/spatiand/session.env` is read into the session's environment if it
 exists. `RUST_LOG=debug` there is the way to get more out of the log on a

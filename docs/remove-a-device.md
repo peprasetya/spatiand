@@ -49,7 +49,8 @@ On a Deck you can also use a shell (Desktop Mode, or ssh):
 2. Change what it could see. Removal stops it from getting anything new, but whatever it had already
    synced stays on its disk unencrypted: storage logins, media server tokens, assistant chats,
    bookmarks, history and cookies. SpatiKey's vault stays encrypted, and opening it takes your
-   finger on your Mac.
+   finger on a device that holds it. Removing a device that held the vault (in SpatiKey's settings)
+   gives the vault new keys that device never has.
 3. Check the list with `--devices` on another machine.
 
 **There can be a race.** Whoever holds a paired device can also remove your other devices from the list
