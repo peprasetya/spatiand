@@ -370,7 +370,15 @@ struct Shared {
     moved: AtomicU64,
     /// The picture stream's rate as the container has it, for where the codec states none.
     container_rate: (i32, i32),
+    /// Since when, after a seek, no sound has been heard while every picture there is room for
+    /// waits and nothing more of the sound is coming; and the seek's number + 1 once the film
+    /// has gone over to the wall's time for it (see `Player::position`).
+    unheard: Mutex<Option<Instant>>,
+    walled: AtomicU64,
 }
+
+/// How long the pictures may wait for a sound that is not coming before the wall keeps time.
+const UNHEARD: Duration = Duration::from_millis(500);
 
 const NO_STREAM: u64 = u64::MAX;
 
@@ -715,6 +723,8 @@ impl Player {
                     let rate = (*streams[index]).avg_frame_rate;
                     (rate.num, rate.den)
                 }),
+                unheard: Mutex::new(None),
+                walled: AtomicU64::new(0),
             });
 
             let mut threads = Vec::new();
@@ -812,9 +822,10 @@ impl Player {
         // has been seen or heard, the film is where it was asked to go.
         // Sound that has nowhere to go any more keeps no time: the wall does.
         let sound = shared.sound.as_ref().filter(|s| s.alive());
-        let position = match sound.and_then(|sound| sound.time(shared.serial.load(Ordering::Relaxed))) {
+        let serial = shared.serial.load(Ordering::Relaxed);
+        let position = match sound.and_then(|sound| sound.time(serial)) {
             Some(heard) => heard,
-            None if sound.is_some() && !shared.audio_out.load(Ordering::Relaxed) => target,
+            None if sound.is_some() && !shared.audio_out.load(Ordering::Relaxed) && !self.unheard(serial, target) => target,
             None => {
                 let wall = shared.wall.lock().unwrap();
                 if shared.paused.load(Ordering::Relaxed) || !shown {
@@ -826,6 +837,35 @@ impl Player {
         };
         // Never past the end -- where the end is known: one only guessed at may be short of it.
         position.clamp(0.0, if self.info.duration > 0.0 && !self.info.duration_guessed { self.info.duration } else { f64::MAX })
+    }
+
+    /// Whether the sound being waited for since the seek numbered `serial` is not coming: none
+    /// heard, none waiting to be, none read, and the pictures waiting for it with no room for
+    /// more -- so the reader, its queue of pictures full, reads nothing more either. A track
+    /// that starts late, or has a long gap, or ended before the pictures (a seek into the
+    /// tail), stood the film at its first picture for good. Once so, the wall keeps the time
+    /// until something is heard.
+    fn unheard(&self, serial: u64, target: f64) -> bool {
+        let shared = &self.shared;
+        if shared.walled.load(Ordering::Relaxed) == serial + 1 {
+            return true;
+        }
+        let stalled = shared.sound.as_ref().is_some_and(|s| s.empty())
+            && shared.audio.len() == 0
+            && (shared.pictures.lock().unwrap().len() >= PICTURES_AHEAD || shared.read_out.load(Ordering::Relaxed));
+        let mut unheard = shared.unheard.lock().unwrap();
+        if !stalled {
+            *unheard = None;
+            return false;
+        }
+        if unheard.get_or_insert_with(Instant::now).elapsed() < UNHEARD {
+            return false;
+        }
+        log::info!("no sound has come since the move to {target:.1} s: the film keeps time by the wall until some does");
+        *unheard = None;
+        shared.walled.store(serial + 1, Ordering::Relaxed);
+        *shared.wall.lock().unwrap() = Wall { time: target, since: Instant::now() };
+        true
     }
 
     pub fn seek(&mut self, seconds: f64) {
@@ -984,7 +1024,8 @@ impl Player {
                 if next.time <= now + 0.004 || first {
                     if first {
                         target.1 = true;
-                        if shared.sound.is_none() {
+                        // The wall keeps time from here where no sound does (yet).
+                        if shared.sound.as_ref().is_none_or(|sound| sound.time(serial).is_none()) {
                             *shared.wall.lock().unwrap() = Wall { time: next.time, since: Instant::now() };
                         }
                     }
@@ -1550,6 +1591,8 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
     unsafe {
         let mut frame = ffi::av_frame_alloc();
         let mut decoder: Option<(u64, Decoder)> = None;
+        // The track whose sound cannot be made, if one has been found so.
+        let mut broken: Option<u64> = None;
         let mut resampler: *mut ffi::SwrContext = ptr::null_mut();
         // What the resampler was made for: a track may change its mind part way through.
         let mut made_for = (0, 0, 0);
@@ -1576,16 +1619,29 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
             }
             // The decoder is for whichever stream is chosen, made when its first packet comes.
             let wanted = shared.audio_stream.load(Ordering::Relaxed);
-            if decoder.as_ref().map(|(stream, _)| *stream) != Some(wanted) {
+            if broken != Some(wanted) && decoder.as_ref().map(|(stream, _)| *stream) != Some(wanted) {
                 decoder = streams.get(wanted as usize).and_then(|stream| match open_decoder(stream.0, false) {
                     Ok((decoder, _)) => Some((wanted, decoder)),
                     Err(e) => {
-                        log::warn!("no sound from this track: {e}");
+                        log::warn!("no sound from this track: {e}; the film keeps time without it");
                         None
                     }
                 });
+                if decoder.is_none() {
+                    broken = Some(wanted);
+                }
             }
-            let Some((_, decoder)) = decoder.as_ref() else { continue };
+            // A track that cannot be heard is asked again of nobody, and is done with at once:
+            // waited for, its end never came and the film stood still at its first picture.
+            let decoder = match decoder.as_ref() {
+                Some((_, decoder)) if broken != Some(wanted) => decoder,
+                _ => {
+                    if packet_serial == shared.serial.load(Ordering::Relaxed) {
+                        shared.audio_out.store(true, Ordering::Relaxed);
+                    }
+                    continue;
+                }
+            };
             if packet_serial != serial {
                 ffi::avcodec_flush_buffers(decoder.context);
                 serial = packet_serial;
@@ -1607,9 +1663,16 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
                         &mut resampler, &to, ffi::AV_SAMPLE_FMT_FLT, rate, &(*frame).ch_layout, (*frame).format, (*frame).sample_rate, 0, ptr::null_mut(),
                     );
                     if made < 0 || ffi::swr_init(resampler) < 0 {
+                        // Sound of a shape nothing can be made of (no rate, no channels): as a
+                        // track with no decoder.
+                        log::warn!("no sound from this track: it cannot be resampled ({} Hz, {} channels); the film keeps time without it", shape.1, shape.2);
                         ffi::swr_free(&mut resampler);
                         ffi::av_frame_unref(frame);
-                        continue;
+                        broken = Some(wanted);
+                        if serial == shared.serial.load(Ordering::Relaxed) {
+                            shared.audio_out.store(true, Ordering::Relaxed);
+                        }
+                        break;
                     }
                     made_for = shape;
                 }

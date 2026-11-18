@@ -471,10 +471,14 @@ impl Sound {
         // Frozen where it is, and started again from there.
         let now = self.time_now();
         self.inner.paused.store(paused, Ordering::Relaxed);
+        // Started again with nothing waiting to be heard -- the sound ended before the
+        // pictures -- time goes on from here as it did before the pause: held until the next
+        // block, which is not coming, it stood the film still for good.
+        let nothing = !paused && self.inner.waiting.lock().unwrap().samples == 0;
         if let (Some(heard), Some(now)) = (self.inner.heard.lock().unwrap().as_mut(), now) {
             heard.time = now;
             heard.at = Instant::now();
-            heard.running = false;
+            heard.running = nothing;
         }
     }
 
