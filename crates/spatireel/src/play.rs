@@ -590,16 +590,33 @@ impl Playing {
         let upright = self.upright();
         self.screen.set_upright(upright);
 
-        // The film's own surface, when it is the sky: the frame, whole, and nothing else.
-        if let (Some(sky), Staging::Sky { .. }) = (self.sky, staging) {
-            if new || !self.screen.has_picture() {
-                let screen = &mut self.screen;
+        // The film's own surface, when it is the sky: the frame, whole, and the subtitle in
+        // front of the wearer. The window is the controls, which fade when left alone: the
+        // words are not drawn there (they were drawn nowhere).
+        if let (Some(sky), Staging::Sky { half, eyes }) = (self.sky, staging) {
+            if new || !self.screen.has_picture() || words_changed {
+                let this = &mut *self;
                 app.draw(sky, |gl, size| {
                     if let Some(picture) = picture.as_ref() {
-                        screen.load(gl, picture);
+                        this.screen.load(gl, picture);
                     }
                     clear(gl);
-                    screen.draw(gl, size, [0.0, 0.0, size.0 as f32, size.1 as f32], [0.0, 0.0, 1.0, 1.0]);
+                    this.screen.draw(gl, size, [0.0, 0.0, size.0 as f32, size.1 as f32], [0.0, 0.0, 1.0, 1.0]);
+                    let Some(cue) = cue.as_ref() else { return };
+                    let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
+                    let (w, h) = (size.0 as f32, size.1 as f32);
+                    let parts: Vec<Rect> = match eyes {
+                        EyeLayout::SideBySide => vec![Rect::new(0.0, 0.0, w / 2.0, h), Rect::new(w / 2.0, 0.0, w / 2.0, h)],
+                        EyeLayout::TopBottom => vec![Rect::new(0.0, 0.0, w, h / 2.0), Rect::new(0.0, h / 2.0, w, h / 2.0)],
+                        _ => vec![Rect::new(0.0, 0.0, w, h)],
+                    };
+                    for (eye, part) in parts.iter().enumerate() {
+                        p.begin_over(gl, size, sky_screen(*part, half), WINDOW);
+                        let nearer = if parts.len() == 2 { WINDOW.0 * 0.0035 } else { 0.0 };
+                        let shift = if (eye == 0) != this.swapped { nearer } else { -nearer };
+                        this.words(p, gl, cue, shift, 0.0);
+                        p.end(gl);
+                    }
                 })?;
             }
         }
@@ -994,6 +1011,15 @@ impl Playing {
     }
 }
 
+/// Where in one eye's part of a sphere's frame (`part`, the whole of the sphere, or the front
+/// half of it) a screen of 64 by 36 degrees straight ahead is: what the subtitles of a film in
+/// the sky are drawn on, at its foot, a little below the horizon.
+fn sky_screen(part: Rect, half: bool) -> Rect {
+    let degree = part.w / if half { 180.0 } else { 360.0 };
+    let (w, h) = (64.0 * degree, 36.0 * degree);
+    Rect::new(part.x + (part.w - w) / 2.0, part.y + (part.h - h) / 2.0, w, h)
+}
+
 /// The window's size in the pixels the pointer is told in, which the controls are laid out in.
 fn app_shape(arranged: Option<(Staging, (u32, u32), (u32, u32), bool)>) -> (f32, f32) {
     arranged.map_or(WINDOW, |(_, _, shape, _)| (shape.0 as f32, shape.1 as f32))
@@ -1137,6 +1163,17 @@ mod tests {
         // A half-width pair squeezed into a DVD's frame: each eye the whole frame's shape.
         let pair = layout(Projection::Flat, StereoLayout::SideBySide);
         assert!((eye_aspect(&pair, (720, 576), 64.0 / 45.0) - 16.0 / 9.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_film_in_the_sky_has_its_words_straight_ahead() {
+        // A whole sphere 3840 x 1920: 64 degrees across is 3840 / 360 * 64, in the middle.
+        let screen = sky_screen(Rect::new(0.0, 0.0, 3840.0, 1920.0), false);
+        assert!((screen.w - 682.67).abs() < 0.1 && (screen.h - 384.0).abs() < 0.1);
+        assert!((screen.x + screen.w / 2.0 - 1920.0).abs() < 0.1 && (screen.y + screen.h / 2.0 - 960.0).abs() < 0.1);
+        // The right eye of a VR180 pair side by side: the middle of its own half.
+        let right = sky_screen(Rect::new(2880.0, 0.0, 2880.0, 2880.0), true);
+        assert!((right.x + right.w / 2.0 - 4320.0).abs() < 0.1 && (right.w - 1024.0).abs() < 0.1);
     }
 
     #[test]
