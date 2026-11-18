@@ -135,7 +135,11 @@ impl Can {
         };
         let moved = if copy { copy_then_remove(path, &target) } else { std::fs::rename(path, &target) };
         if let Err(e) = moved {
-            let _ = std::fs::remove_file(&info);
+            // Its info file goes only with nothing in the trash by it: a folder taken partly off
+            // its disk is kept whole in the trash, where it came from known.
+            if target.symlink_metadata().is_err() {
+                let _ = std::fs::remove_file(&info);
+            }
             return Err(e);
         }
         Ok(target)
@@ -252,10 +256,31 @@ fn remove(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Copied to `to` (links as links), then the original taken away: between disks.
+/// Copied to `to` (links as links), then the original taken away: between disks. Not copied
+/// at all from a folder it cannot be taken out of (a read-only disk); a copy that fails part
+/// way taken away again; and the copy taken away again if the original, a file or a link, is
+/// still whole where it was. A folder that could be taken away only in part keeps its copy:
+/// that is now the only whole one.
 fn copy_then_remove(from: &Path, to: &Path) -> io::Result<()> {
-    copy_all(from, to)?;
-    remove(from)
+    if let Some(folder) = from.parent().filter(|f| !f.as_os_str().is_empty()) {
+        let c = std::ffi::CString::new(folder.as_os_str().as_bytes()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+        if unsafe { libc::access(c.as_ptr(), libc::W_OK) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    if let Err(e) = copy_all(from, to) {
+        // (`to` was free: something by its name now is another's, come meanwhile.)
+        if e.kind() != io::ErrorKind::AlreadyExists {
+            let _ = remove(to);
+        }
+        return Err(e);
+    }
+    let folder = from.symlink_metadata().is_ok_and(|m| m.is_dir());
+    remove(from).inspect_err(|_| {
+        if !folder {
+            let _ = remove(to);
+        }
+    })
 }
 
 fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
@@ -269,8 +294,11 @@ fn copy_all(from: &Path, to: &Path) -> io::Result<()> {
             copy_all(&entry.path(), &to.join(entry.file_name()))?;
         }
         Ok(())
-    } else {
+    } else if meta.is_file() {
         std::fs::copy(from, to).map(|_| ())
+    } else {
+        // A pipe, a socket, a device: copying a pipe waits for ever.
+        Err(io::Error::new(io::ErrorKind::Unsupported, format!("{} is not a file or a folder, and is not copied", from.display())))
     }
 }
 
@@ -793,6 +821,31 @@ mod tests {
         std::fs::set_permissions(dir.join("disk2/.Trash"), std::fs::Permissions::from_mode(0o777)).unwrap();
         assert_eq!(top_can(&dir.join("disk2"), false).root, dir.join(format!("disk2/.Trash-{}", uid())));
         assert_eq!(top_can(&dir.join("disk2"), true).root, dir.join("disk2/.Trash-spatiand"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_cannot_be_taken_off_its_disk_leaves_nothing_in_the_trash() {
+        use std::os::unix::fs::PermissionsExt;
+        if uid() == 0 {
+            return; // root may write anywhere: nothing is read-only to it.
+        }
+        let dir = scratch("readonly");
+        let can = Can { root: dir.join("Trash"), top: None };
+        std::fs::create_dir_all(dir.join("disk/Music")).unwrap();
+        std::fs::write(dir.join("disk/Music/x.flac"), b"flac").unwrap();
+        // A socket is not copied: a copy that fails part way.
+        std::fs::create_dir_all(dir.join("disk/Old")).unwrap();
+        std::fs::write(dir.join("disk/Old/a"), b"a").unwrap();
+        std::os::unix::net::UnixListener::bind(dir.join("disk/Old/socket")).unwrap();
+        std::fs::set_permissions(dir.join("disk/Music"), std::fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(can.put(&dir.join("disk/Music/x.flac"), "2026-11-15T09:08:07", true).is_err());
+        std::fs::set_permissions(dir.join("disk/Music"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(can.put(&dir.join("disk/Old"), "2026-11-15T09:08:07", true).is_err());
+        assert_eq!(std::fs::read(dir.join("disk/Music/x.flac")).unwrap(), b"flac", "left where it was");
+        assert!(dir.join("disk/Old/a").exists());
+        assert_eq!(std::fs::read_dir(can.files()).unwrap().count(), 0, "no copy left behind");
+        assert_eq!(std::fs::read_dir(can.info()).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
