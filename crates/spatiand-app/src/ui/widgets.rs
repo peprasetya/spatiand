@@ -713,6 +713,219 @@ impl Tabs {
     }
 }
 
+// --- a bar of closable tabs ---
+
+/// One tab on a [`TabBar`]: its name, and the colour of the dot before it -- `look::TEAL` the
+/// active one, `theme::ink_hint()` an idle one, `look::AMBER` busy or rung, `look::trouble()`
+/// stopped, `look::VIOLET` somewhere remote.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TabLook {
+    pub label: String,
+    pub dot: super::Color,
+}
+
+/// What is under a point of a [`TabBar`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabHit {
+    Tab(usize),
+    Close(usize),
+    New,
+}
+
+/// What a press on a [`TabBar`] asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabSaid {
+    Chose(usize),
+    Close(usize),
+    New,
+}
+
+/// A window's tabs along its top, as SpatiShelf's and SpatiQuill's: each tab 110 to 330 wide
+/// as they fit, more than fit scrolled along so that the active one is on show; the active
+/// one lit with a glow and the mark's rule along its foot, a dot before each name, a close
+/// cross on the active and the hovered tab, a "+" after the last. The close cross and the "+"
+/// take presses 44 across. A press acts as it goes down.
+#[derive(Debug, Default)]
+pub struct TabBar {
+    /// The first tab on show, when more than fit.
+    pub first: usize,
+    /// The last tab left is not to be closed: no cross is drawn while only one is open.
+    pub keep_last: bool,
+    /// A tab being dragged along the bar, drawn centred at this x (the app's own dragging).
+    pub dragged: Option<(usize, f32)>,
+    /// Each tab drawn last: its index, its face, its close cross (as drawn, 26 across).
+    placed: Vec<(usize, Rect, Rect)>,
+    plus: Rect,
+    pointer: Option<(f32, f32)>,
+    /// How many tabs there were, as last drawn.
+    count: usize,
+}
+
+impl TabBar {
+    /// The height of the bar, its tabs' faces 50 high inside it.
+    pub const HEIGHT: f32 = 66.0;
+    /// The narrowest and widest a tab is.
+    pub const TAB_WIDTH: (f32, f32) = (110.0, 330.0);
+    /// How far a press counts round a close cross or the "+": 44 across.
+    const HIT: f32 = 44.0;
+
+    /// How `n` tabs share a bar `room` wide: each tab's width, the first shown and how many are.
+    /// As wide as they fit, between [`Self::TAB_WIDTH`]'s; more than fit at the narrowest are
+    /// scrolled along the bar from `first` (as it was), as little as keeps `active` on show.
+    pub fn share(n: usize, active: usize, first: usize, room: f32) -> (f32, usize, usize) {
+        if n == 0 {
+            return (Self::TAB_WIDTH.1, 0, 0);
+        }
+        let width = (room / n as f32).clamp(Self::TAB_WIDTH.0, Self::TAB_WIDTH.1);
+        let shown = (((room + 0.5) / width).floor() as usize).clamp(1, n);
+        let first = first.min(n - shown).min(active).max((active + 1).saturating_sub(shown));
+        (width, first, shown)
+    }
+
+    fn hit_round(mark: Rect) -> Rect {
+        Rect::new(mark.x + mark.w * 0.5 - Self::HIT * 0.5, mark.y + mark.h * 0.5 - Self::HIT * 0.5, Self::HIT, Self::HIT)
+    }
+
+    /// Each tab as last drawn: its index, its face and its close cross.
+    pub fn placed(&self) -> &[(usize, Rect, Rect)] {
+        &self.placed
+    }
+
+    /// What is at `(x, y)`, as last drawn.
+    pub fn hit(&self, x: f32, y: f32) -> Option<TabHit> {
+        let closable = !self.keep_last || self.count > 1;
+        // The crosses first: one reaches a little over its tab's edge.
+        for &(index, face, close) in &self.placed {
+            if closable && Self::hit_round(close).contains(x, y) && face.inset(-8.0).contains(x, y) {
+                return Some(TabHit::Close(index));
+            }
+        }
+        if let Some(&(index, ..)) = self.placed.iter().find(|(_, face, _)| face.contains(x, y)) {
+            return Some(TabHit::Tab(index));
+        }
+        self.plus.contains(x, y).then_some(TabHit::New)
+    }
+
+    /// Drawn along the top of `bar` (`HEIGHT` high), `active` lit -- with a stronger glow while
+    /// the window has the keys (`focused`).
+    pub fn draw(&mut self, p: &mut Painter, gl: &Gl, bar: Rect, tabs: &[TabLook], active: usize, focused: bool) {
+        let inner = Rect::new(bar.x + 12.0, bar.y + 10.0, bar.w - 24.0, Self::HEIGHT - 16.0);
+        let plus_w = 50.0;
+        let (width, first, shown) = Self::share(tabs.len(), active, self.first, inner.w - plus_w - 16.0);
+        self.first = first;
+        self.count = tabs.len();
+        let closable = !self.keep_last || tabs.len() > 1;
+        let hovered = self.pointer.and_then(|(x, y)| self.hit(x, y));
+        self.placed.clear();
+        let mut x = inner.x;
+        for (index, tab) in tabs.iter().enumerate().skip(first).take(shown) {
+            let mut rect = Rect::new(x, inner.y, width - 8.0, inner.h);
+            x += width;
+            if let Some((_, at)) = self.dragged.filter(|(d, _)| *d == index) {
+                rect.x = (at - rect.w * 0.5).clamp(inner.x, (inner.right() - plus_w - rect.w).max(inner.x));
+            }
+            let lit = index == active;
+            let hover = matches!(hovered, Some(TabHit::Tab(i) | TabHit::Close(i)) if i == index);
+            if lit {
+                p.glow(gl, rect, 14.0, theme::glow(if focused { 0.18 } else { 0.06 }), 16.0);
+                p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
+                super::look::rule(p, gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5));
+            } else if hover {
+                p.fill(gl, rect, 14.0, theme::hover());
+            }
+            p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, tab.dot);
+            let close = Rect::new(rect.right() - 38.0, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
+            let crossed = (lit || hover) && closable;
+            let label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if crossed { 44.0 } else { 14.0 }, ..rect };
+            p.label(gl, &tab.label, label, theme::ROW_EM * 0.72, if lit { theme::ink() } else { theme::ink_row() }, 0.0);
+            if crossed {
+                if hovered == Some(TabHit::Close(index)) {
+                    p.fill(gl, close, 13.0, theme::wash(0.14));
+                }
+                super::icons::draw(p, gl, super::Icon::Close, close.inset(4.0), theme::ink_detail());
+            }
+            self.placed.push((index, rect, close));
+        }
+        self.plus = Rect::new(x.min(inner.right() - plus_w), inner.y + (inner.h - Self::HIT) * 0.5, Self::HIT, Self::HIT);
+        if self.pointer.is_some_and(|(x, y)| self.plus.contains(x, y)) {
+            p.fill(gl, self.plus, 22.0, theme::hover());
+        }
+        super::icons::draw(p, gl, super::Icon::Plus, self.plus.inset(10.0), theme::ink_detail());
+    }
+
+    /// The pointer's moves (for what is lit under it), and a press: on a tab, its cross or the
+    /// "+", as it goes down.
+    pub fn input(&mut self, input: &Input) -> Option<TabSaid> {
+        match input {
+            Input::Pointer { x, y } => self.pointer = Some((*x, *y)),
+            Input::PointerLeft => self.pointer = None,
+            Input::Press { pressed: true, .. } => {
+                let (x, y) = self.pointer?;
+                return self.hit(x, y).map(|hit| match hit {
+                    TabHit::Tab(i) => TabSaid::Chose(i),
+                    TabHit::Close(i) => TabSaid::Close(i),
+                    TabHit::New => TabSaid::New,
+                });
+            }
+            _ => {}
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tab_bar_tests {
+    use super::*;
+    use crate::Modifiers;
+
+    #[test]
+    fn every_tab_fits_or_the_active_one_is_on_show() {
+        // Three on a wide bar: as wide as they may be.
+        assert_eq!(TabBar::share(3, 0, 0, 1174.0), (330.0, 0, 3));
+        // Nine: narrower, all shown (they were cut off from the eighth at 150).
+        let (w, first, shown) = TabBar::share(9, 8, 0, 1174.0);
+        assert!(w >= TabBar::TAB_WIDTH.0 && w * 9.0 <= 1174.0);
+        assert_eq!((first, shown), (0, 9));
+        // Twenty: as many as fit at the narrowest, scrolled to the active one.
+        let (w, first, shown) = TabBar::share(20, 15, 0, 1174.0);
+        assert_eq!((w, shown), (TabBar::TAB_WIDTH.0, 10));
+        assert_eq!(first, 6);
+        // It stays put while the active one is on show, and follows it back.
+        assert_eq!(TabBar::share(20, 10, 6, 1174.0).1, 6);
+        assert_eq!(TabBar::share(20, 2, 6, 1174.0).1, 2);
+        // Tabs closed: no scrolling past the end.
+        assert_eq!(TabBar::share(11, 10, 6, 1174.0).1, 1);
+        assert_eq!(TabBar::share(0, 0, 3, 1174.0), (330.0, 0, 0));
+    }
+
+    #[test]
+    fn a_press_chooses_closes_or_adds_and_the_cross_is_44_across() {
+        let mut bar = TabBar::default();
+        let face = Rect::new(12.0, 10.0, 322.0, 50.0);
+        let close = Rect::new(face.right() - 38.0, face.y + 12.0, 26.0, 26.0);
+        bar.placed = vec![(0, face, close), (1, Rect { x: 342.0, ..face }, Rect { x: close.x + 330.0, ..close })];
+        bar.plus = Rect::new(672.0, 13.0, 44.0, 44.0);
+        bar.count = 2;
+        let press = Input::Press { pressed: true, modifiers: Modifiers::default() };
+        let at = |bar: &mut TabBar, x: f32, y: f32| {
+            bar.input(&Input::Pointer { x, y });
+            bar.input(&press)
+        };
+        assert_eq!(at(&mut bar, 100.0, 30.0), Some(TabSaid::Chose(0)));
+        // 9 beyond the drawn cross, still the cross.
+        assert_eq!(at(&mut bar, close.x - 8.0, close.y - 8.0), Some(TabSaid::Close(0)));
+        assert_eq!(at(&mut bar, 690.0, 30.0), Some(TabSaid::New));
+        assert_eq!(at(&mut bar, 900.0, 30.0), None);
+        // The last tab kept: no cross to press.
+        bar.keep_last = true;
+        bar.placed.truncate(1);
+        bar.count = 1;
+        assert_eq!(at(&mut bar, close.x + 13.0, close.y + 13.0), Some(TabSaid::Chose(0)));
+        bar.input(&Input::PointerLeft);
+        assert_eq!(bar.input(&press), None);
+    }
+}
+
 // --- text field ---
 
 /// One line of text to type into.

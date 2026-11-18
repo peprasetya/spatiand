@@ -33,7 +33,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use spatiand_app::ui::{draw_icon, look as room, theme, Button, Confirm, Field, Icon, Input, List, Menu, MenuSaid, Painter, Rect, Row, Texture, Typed};
+use spatiand_app::ui::{draw_icon, look as room, theme, Button, Confirm, Field, Icon, Input, List, Menu, MenuSaid, Painter, Rect, Row, TabBar, TabLook, TabSaid, Texture, Typed};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 use spatiand_storage::{Remote, Storage};
 
@@ -529,8 +529,8 @@ struct Shelf {
     view_button: Button,
     /// "Empty", over the trash.
     empty_button: Button,
-    placed_tabs: Vec<(Rect, Rect)>,
-    plus: Rect,
+    /// The tabs along the top.
+    bar: TabBar,
     trail: Vec<(Rect, Place)>,
     content: Rect,
     typed: (String, Instant),
@@ -1532,18 +1532,19 @@ impl Shelf {
         let (x, y) = self.pointer;
         // The bar of tabs.
         if let Input::Press { pressed: true, .. } = input {
-            if let Some(at) = self.placed_tabs.iter().position(|(r, _)| r.contains(x, y)) {
-                if self.placed_tabs[at].1.inset(-6.0).contains(x, y) && self.tabs.len() > 1 {
-                    self.ask_close_tab(at);
-                } else {
+            self.bar.input(&Input::Pointer { x, y });
+            match self.bar.input(&input) {
+                Some(TabSaid::Close(at)) => return self.ask_close_tab(at),
+                Some(TabSaid::Chose(at)) => {
                     self.active = at;
+                    return;
                 }
-                return;
-            }
-            if self.plus.contains(x, y) {
-                let place = self.tab().place.clone();
-                self.new_tab(place);
-                return;
+                Some(TabSaid::New) => {
+                    let place = self.tab().place.clone();
+                    self.new_tab(place);
+                    return;
+                }
+                None => {}
             }
             if let Some((_, place)) = self.trail.iter().find(|(r, _)| r.contains(x, y)).cloned() {
                 self.tab().go(place, true);
@@ -1899,7 +1900,7 @@ impl Shelf {
 
     fn paint(&mut self, p: &mut Painter, gl: &spatiand_app::Gl) {
         let all = p.bounds();
-        self.paint_bar(p, gl, all);
+        self.paint_tabs(p, gl, all);
         // The side.
         let side = Rect::new(all.x + 14.0, BAR + 6.0, SIDE - 20.0, all.h - BAR - 20.0);
         room::glass(p, gl, side, 22.0, 0.75);
@@ -1974,53 +1975,28 @@ impl Shelf {
         self.paint_overlay(p, gl, all);
     }
 
-    fn paint_bar(&mut self, p: &mut Painter, gl: &spatiand_app::Gl, all: Rect) {
-        let bar = Rect::new(all.x + 12.0, all.y + 10.0, all.w - 24.0, BAR - 16.0);
-        let n = self.tabs.len().max(1);
-        let width = ((bar.w - 60.0) / n as f32).clamp(150.0, 320.0);
-        self.placed_tabs.clear();
-        let mut x = bar.x;
-        for (i, tab) in self.tabs.iter().enumerate() {
-            let rect = Rect::new(x, bar.y, width - 8.0, bar.h);
-            x += width;
-            let active = i == self.active;
-            let hover = rect.contains(self.pointer.0, self.pointer.1);
-            if active {
-                p.glow(gl, rect, 14.0, theme::glow(0.14), 16.0);
-                p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
-                room::rule(p, gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5));
-            } else if hover {
-                p.fill(gl, rect, 14.0, theme::hover());
-            }
-            let dot = if tab.crashed.is_some() {
-                room::trouble()
-            } else if !tab.doing.is_empty() {
-                room::AMBER
-            } else if matches!(tab.place, Place::Remote(..)) {
-                room::VIOLET
-            } else if active {
-                room::TEAL
-            } else {
-                theme::ink_hint()
-            };
-            p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, dot);
-            let close = Rect::new(rect.right() - 38.0, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
-            let show_close = (active || hover) && self.tabs.len() > 1;
-            let label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if show_close { 44.0 } else { 14.0 }, ..rect };
-            p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::ink() } else { theme::ink_row() }, 0.0);
-            if show_close {
-                if close.inset(-6.0).contains(self.pointer.0, self.pointer.1) {
-                    p.fill(gl, close, 13.0, theme::wash(0.14));
-                }
-                draw_icon(p, gl, Icon::Close, close.inset(4.0), theme::ink_detail());
-            }
-            self.placed_tabs.push((rect, close));
-        }
-        self.plus = Rect::new(x, bar.y + (bar.h - 44.0) * 0.5, 44.0, 44.0);
-        if self.plus.contains(self.pointer.0, self.pointer.1) {
-            p.fill(gl, self.plus, 22.0, theme::hover());
-        }
-        draw_icon(p, gl, Icon::Plus, self.plus.inset(10.0), theme::ink_detail());
+    fn paint_tabs(&mut self, p: &mut Painter, gl: &spatiand_app::Gl, all: Rect) {
+        let tabs: Vec<TabLook> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(i, tab)| {
+                let dot = if tab.crashed.is_some() {
+                    room::trouble()
+                } else if !tab.doing.is_empty() {
+                    room::AMBER
+                } else if matches!(tab.place, Place::Remote(..)) {
+                    room::VIOLET
+                } else if i == self.active {
+                    room::TEAL
+                } else {
+                    theme::ink_hint()
+                };
+                TabLook { label: tab.label(), dot }
+            })
+            .collect();
+        self.bar.input(&Input::Pointer { x: self.pointer.0, y: self.pointer.1 });
+        self.bar.draw(p, gl, Rect { h: TabBar::HEIGHT, ..all }, &tabs, self.active, true);
     }
 
     fn paint_content(&mut self, p: &mut Painter, gl: &spatiand_app::Gl, area: Rect) {
@@ -2561,8 +2537,11 @@ fn main() {
             forward: Button::default(),
             view_button: Button::default(),
             empty_button: Button::default(),
-            placed_tabs: Vec::new(),
-            plus: Rect::default(),
+            bar: {
+                let mut bar = TabBar::default();
+                bar.keep_last = true;
+                bar
+            },
             trail: Vec::new(),
             content: Rect::default(),
             typed: (String::new(), Instant::now()),

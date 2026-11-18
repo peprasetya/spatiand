@@ -29,14 +29,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{self, look, theme, Confirm, Input, MenuSaid, Painter, Rect, Row};
+use spatiand_app::ui::{self, look, theme, Confirm, Input, MenuSaid, Painter, Rect, Row, TabBar, TabHit, TabLook};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 
 use grid::Grid;
 use wire::{FromTab, Gather, Screen, ToTab};
 
 const WINDOW: (u32, u32) = (1280, 820);
-const BAR: f32 = 66.0;
+const BAR: f32 = TabBar::HEIGHT;
 const MARGIN: f32 = 18.0;
 const TEXT_PX: f32 = 24.0;
 
@@ -140,8 +140,8 @@ struct Win {
     placed: Vec<(u64, Rect, Rect)>,
     /// The first tab shown on the bar: more than fit are scrolled along it, the active one
     /// always on show.
-    first: usize,
-    plus: Rect,
+    /// The tabs along the top; dragging one along it and tearing it off are this app's.
+    bar: TabBar,
     last_click: Option<(Instant, (u16, u16))>,
     menu: Option<Menu>,
     /// A question over the window, and what a yes to it does: closing what has programs
@@ -264,8 +264,7 @@ impl Quill {
             pressed_in_text: false,
             mouse_cell: None,
             placed: Vec::new(),
-            first: 0,
-            plus: Rect::default(),
+            bar: TabBar::default(),
             last_click: None,
             menu: None,
             asking: None,
@@ -640,7 +639,10 @@ impl Quill {
                 }
             }
             Event::PointerMoved { x, y, .. } => self.pointer(w, x, y),
-            Event::PointerLeft { .. } => self.wins[w].hover = Hover::Nothing,
+            Event::PointerLeft { .. } => {
+                self.wins[w].hover = Hover::Nothing;
+                self.wins[w].bar.input(&Input::PointerLeft);
+            }
             Event::Button { button, pressed, .. } => self.button(w, button, pressed),
             Event::Scroll { dy, .. } => self.scroll(w, dy),
             Event::Describe { .. } => {
@@ -681,7 +683,7 @@ impl Quill {
             if from != self.wins[w].id && at.elapsed() < Duration::from_millis(900) {
                 self.in_flight = None;
                 let win = &self.wins[w];
-                let place = win.placed.iter().position(|(_, r, _)| x < r.x + r.w * 0.5).map(|at| at + win.first);
+                let place = win.placed.iter().position(|(_, r, _)| x < r.x + r.w * 0.5).map(|at| at + win.bar.first);
                 let to = self.wins[w].id;
                 self.move_tab(tab, to, place);
                 return;
@@ -689,6 +691,7 @@ impl Quill {
         }
         let win = &mut self.wins[w];
         win.pointer = (x, y);
+        win.bar.input(&Input::Pointer { x, y });
         if let Some(drag) = win.drag.as_mut() {
             drag.at = (x, y);
             if (x - drag.from.0).abs() > 10.0 || (y - drag.from.1).abs() > 10.0 {
@@ -698,7 +701,7 @@ impl Quill {
             if drag.moved && !drag.torn {
                 // Along the bar: the tab goes where the pointer is.
                 let tab = drag.tab;
-                let target = (win.first + drag_target(&win.placed, tab, x)).min(win.tabs.len().saturating_sub(1));
+                let target = (win.bar.first + drag_target(&win.placed, tab, x)).min(win.tabs.len().saturating_sub(1));
                 if let Some(from) = win.tabs.iter().position(|&t| t == tab) {
                     if from != target {
                         win.tabs.remove(from);
@@ -1167,7 +1170,7 @@ impl Quill {
                 let bg = tab::BACKGROUND;
                 let ground = Rect::new(area.x - 10.0, area.y - 6.0, all.w - (area.x - 10.0) * 2.0, all.h - area.y + 6.0 - 8.0);
                 p.fill(gl, ground, 16.0, [bg[0] as f32 / 255.0, bg[1] as f32 / 255.0, bg[2] as f32 / 255.0, 1.0]);
-                draw_bar(p, gl, win, tabs, all);
+                draw_tabs(p, gl, win, tabs, all);
                 p.end(gl);
                 let active = win.tabs.get(win.active).and_then(|t| tabs.get(t));
                 if let (Some(grid), Some(tab)) = (grid.as_mut(), active) {
@@ -1328,104 +1331,37 @@ fn word_at(screen: &Screen, at: (u16, u16)) -> ((u16, u16), (u16, u16)) {
 
 /// What is at a point of a window: a tab, its close mark, the "+", the terminal.
 fn hover_at(win: &Win, x: f32, y: f32) -> Hover {
-    if let Some((id, _, close)) = win.placed.iter().find(|(_, r, _)| r.contains(x, y)) {
-        if close.inset(-6.0).contains(x, y) { Hover::Close(*id) } else { Hover::Tab(*id) }
-    } else if win.plus.contains(x, y) {
-        Hover::Plus
-    } else if y > BAR {
-        Hover::Text
-    } else {
-        Hover::Nothing
+    // The bar says which tab by its place as drawn; `placed` has their ids in the same order.
+    let id = |index: usize| win.bar.placed().iter().position(|(i, _, _)| *i == index).and_then(|at| win.placed.get(at)).map(|(id, _, _)| *id);
+    match win.bar.hit(x, y) {
+        Some(TabHit::Tab(index)) => id(index).map_or(Hover::Nothing, Hover::Tab),
+        Some(TabHit::Close(index)) => id(index).map_or(Hover::Nothing, Hover::Close),
+        Some(TabHit::New) => Hover::Plus,
+        None if y > BAR => Hover::Text,
+        None => Hover::Nothing,
     }
 }
 
-/// The narrowest and widest a tab is on the bar.
-const TAB_WIDTH: (f32, f32) = (110.0, 330.0);
-
-/// How `n` tabs share a bar `room` wide: each tab's width, the first shown and how many are.
-/// As wide as they fit, between [`TAB_WIDTH`]'s; more than fit at the narrowest are scrolled
-/// along the bar from `first` (as it was), as little as keeps the `active` one on show.
-fn bar_tabs(n: usize, active: usize, first: usize, room: f32) -> (f32, usize, usize) {
-    if n == 0 {
-        return (TAB_WIDTH.1, 0, 0);
-    }
-    let width = (room / n as f32).clamp(TAB_WIDTH.0, TAB_WIDTH.1);
-    let shown = (((room + 0.5) / width).floor() as usize).clamp(1, n);
-    let first = first.min(n - shown).min(active).max((active + 1).saturating_sub(shown));
-    (width, first, shown)
-}
-
-#[cfg(test)]
-mod bar_tests {
-    use super::*;
-
-    #[test]
-    fn every_tab_fits_or_the_active_one_is_on_show() {
-        // Three on a wide bar: as wide as they may be.
-        assert_eq!(bar_tabs(3, 0, 0, 1174.0), (330.0, 0, 3));
-        // Nine: narrower, all shown (they were cut off from the eighth at 150).
-        let (w, first, shown) = bar_tabs(9, 8, 0, 1174.0);
-        assert!(w >= TAB_WIDTH.0 && w * 9.0 <= 1174.0);
-        assert_eq!((first, shown), (0, 9));
-        // Twenty: as many as fit at the narrowest, scrolled to the active one.
-        let (w, first, shown) = bar_tabs(20, 15, 0, 1174.0);
-        assert_eq!((w, shown), (TAB_WIDTH.0, 10));
-        assert_eq!(first, 6);
-        // It stays put while the active one is on show, and follows it back.
-        assert_eq!(bar_tabs(20, 10, 6, 1174.0).1, 6);
-        assert_eq!(bar_tabs(20, 2, 6, 1174.0).1, 2);
-        // Tabs closed: no scrolling past the end.
-        assert_eq!(bar_tabs(11, 10, 6, 1174.0).1, 1);
-        assert_eq!(bar_tabs(0, 0, 3, 1174.0), (330.0, 0, 0));
-    }
-}
-
-fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMap<u64, Tab>, all: Rect) {
-    let bar = Rect::new(all.x + 12.0, all.y + 10.0, all.w - 24.0, BAR - 16.0);
-    let plus_w = 50.0;
-    let (width, first, shown) = bar_tabs(win.tabs.len(), win.active, win.first, bar.w - plus_w - 16.0);
-    win.first = first;
-    win.placed.clear();
-    let mut x = bar.x;
-    for (index, &id) in win.tabs.iter().enumerate().skip(first).take(shown) {
-        let Some(tab) = tabs.get(&id) else { continue };
-        let rect = Rect::new(x, bar.y, width - 8.0, bar.h);
-        x += width;
-        let active = index == win.active;
-        let hover = matches!(win.hover, Hover::Tab(t) | Hover::Close(t) if t == id);
-        let dragged = win.drag.as_ref().is_some_and(|d| d.tab == id && d.moved);
-        let rect = if dragged && !win.drag.as_ref().unwrap().torn {
-            let d = win.drag.as_ref().unwrap();
-            Rect { x: (d.at.0 - rect.w * 0.5).clamp(bar.x, bar.right() - plus_w - rect.w), ..rect }
-        } else {
-            rect
-        };
-        if active {
-            p.glow(gl, rect, 14.0, theme::glow(if win.focused { 0.18 } else { 0.06 }), 16.0);
-            p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
-            look::rule(p, gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5));
-        } else if hover {
-            p.fill(gl, rect, 14.0, theme::hover());
-        }
-        // A mark for how the tab is: running, rung, stopped.
-        let colour = match tab.state {
-            TabState::Crashed(_) => look::trouble(),
-            TabState::Running if tab.rang.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) => look::AMBER,
-            TabState::Running => if active { look::TEAL } else { theme::ink_hint() },
-        };
-        p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, colour);
-        let close = Rect::new(rect.right() - 38.0, rect.y + rect.h * 0.5 - 13.0, 26.0, 26.0);
-        let label = Rect { x: rect.x + 34.0, w: rect.w - 34.0 - if active || hover { 44.0 } else { 14.0 }, ..rect };
-        p.label(gl, &tab.label(), label, theme::ROW_EM * 0.72, if active { theme::ink() } else { theme::ink_row() }, 0.0);
-        if active || hover {
-            if win.hover == Hover::Close(id) {
-                p.fill(gl, close, 13.0, theme::wash(0.14));
-            }
-            spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Close, close.inset(4.0), theme::ink_detail());
-        }
-        win.placed.push((id, rect, close));
-    }
-    win.plus = Rect::new(x.min(bar.right() - plus_w), bar.y + (bar.h - 44.0) * 0.5, 44.0, 44.0);
+fn draw_tabs(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMap<u64, Tab>, all: Rect) {
+    // A mark for how each tab is: running, rung, stopped.
+    let looks: Vec<TabLook> = win
+        .tabs
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let Some(tab) = tabs.get(id) else { return TabLook { label: String::new(), dot: theme::ink_hint() } };
+            let dot = match tab.state {
+                TabState::Crashed(_) => look::trouble(),
+                TabState::Running if tab.rang.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) => look::AMBER,
+                TabState::Running => if index == win.active { look::TEAL } else { theme::ink_hint() },
+            };
+            TabLook { label: tab.label(), dot }
+        })
+        .collect();
+    // Dragged along the bar: drawn where the pointer is.
+    win.bar.dragged = win.drag.as_ref().filter(|d| d.moved && !d.torn).and_then(|d| win.tabs.iter().position(|&t| t == d.tab).map(|at| (at, d.at.0)));
+    win.bar.draw(p, gl, Rect { h: TabBar::HEIGHT, ..all }, &looks, win.active, win.focused);
+    win.placed = win.bar.placed().iter().map(|&(index, face, close)| (win.tabs[index], face, close)).collect();
     // The bar as now placed decides what the pointer is over, until it moves.
     if win.hover != Hover::Nothing && win.drag.is_none() {
         let now = hover_at(win, win.pointer.0, win.pointer.1);
@@ -1435,10 +1371,6 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
             win.dirty = true;
         }
     }
-    if win.hover == Hover::Plus {
-        p.fill(gl, win.plus, 22.0, theme::hover());
-    }
-    spatiand_app::ui::draw_icon(p, gl, spatiand_app::ui::Icon::Plus, win.plus.inset(10.0), theme::ink_detail());
 }
 
 fn main() {

@@ -515,8 +515,8 @@ impl Shelf {
             }
             return Some(Target { place: tab.place.clone(), rect: self.content, tab: None, closed: false });
         }
-        if let Some(i) = self.placed_tabs.iter().position(|(r, _)| r.contains(x, y)) {
-            return Some(Target { place: self.tabs[i].place.clone(), rect: self.placed_tabs[i].0, tab: Some(i), closed: false });
+        if let Some(&(i, face, _)) = self.bar.placed().iter().find(|(i, face, _)| face.contains(x, y) && *i < self.tabs.len()) {
+            return Some(Target { place: self.tabs[i].place.clone(), rect: face, tab: Some(i), closed: false });
         }
         if let Some((rect, place)) = self.trail.iter().find(|(r, _)| r.contains(x, y)) {
             return Some(Target { place: place.clone(), rect: *rect, tab: None, closed: false });
