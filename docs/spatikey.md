@@ -622,17 +622,21 @@ had kept and opening nothing, a file sealed under the old key arriving late and 
 code, and a holder killed right after writing the change (`SOFT_BREAK_REKEY`) with another
 finishing it. `cargo check` of SpatiKey and the Deck's room, `cargo ndk check` of the Beam Pro's
 room and SpatiKey. **Not checked:** a real Touch ID or BiometricPrompt (the guards are unchanged:
-they are handed a wrap and their own key, as before); anything on a Mac -- **not built there**
-(spatikey-core gained `p256` as a dependency of the service; SpatiKeyGuard.swift, KeyGuard.java
+they are handed a wrap and their own key, as before); anything on a Mac -- **not built there when this was written**
+(the Mac's guard was built on littleotter afterwards, 2026-11-17: "Every device with biometrics holds
+the vault"; spatikey-core gained `p256` as a dependency of the service; SpatiKeyGuard.swift, KeyGuard.java
 and the Rust around them are untouched); two real devices and the real synchroniser between them
 (its order of sending, by name, is relied on and was read, not driven); SpatiKey's window showing
 the new code after a removal (type-checked; the screen is the one a new code already uses).
 
-**Seen on the way, not changed:** over the socket, a request with an `id` of its own (`get`,
-`delete`, `totp`, `reveal`, `type`) arrives with the envelope's `id` and its own as one JSON key;
-the service reads the message into a JSON value first, where the later of two same-named keys
-wins, and a Python client sending both was refused ("expected u64"). The rig keeps to `list` and
-`put`. Whether SpatiKey's window is caught by it was not looked into.
+**Seen on the way, fixed on 2026-11-18 (f170e03):** over the socket, a request with an `id` of its
+own (`get`, `delete`, `totp`, `reveal`, `type`) arrived with the envelope's `id` and its own as one
+JSON key; the service read the message into a JSON value, where the later of two same-named keys
+wins ("expected u64"), and the devices' channel refused it ("duplicate field `id`"). So opening,
+deleting or typing an entry from SpatiKey's window, or a one-time code, never worked through the
+socket or across devices; only the in-process tests, which skip the JSON, passed. The entry's id is
+written as `entry` now and the envelope is read by hand, so the older two-`id` form is read too.
+This build asking an older service: those five are still refused there, as they always were.
 
 **Workarounds, with the proper alternative.** A removed device still linked to Spatiand can write
 old-key entries and offer a rival change of keys to holders that were away (see "Security" above;
@@ -646,3 +650,54 @@ over the C interface); changed fingers are told from a finger that did not match
 attempt took when the Secure Enclave's error says nothing more (keep the biometry state hash in
 `touch-id.json` and compare it); the Beam Pro's socket is bound to its Wi-Fi address only
 (`android_setsocknetwork` with the Wi-Fi network from Java).
+
+## 2026-11-18: the window's own work, the words, and who is let in
+
+What the window did wrong over the days after the holders were built, found by reading it and by
+driving it over a real socket; each is a test or a rig run, **none was seen in a room with a
+finger on a sensor**.
+
+* **Entries through the socket** work (f170e03, above); the socket test puts, reads, reveals, asks
+  the code of and deletes an entry by its id through a real socket as the window does, and reads
+  the form a window before this date wrote (59b29ee).
+* **The editor loses no changes and overwrites none** (959e498): Cancel or Escape with changes asks
+  ("Leave without saving?"); Edit asks the service for the entry again; Save carries what the
+  change was begun from (`Put`'s `based_on`) and a save over another device's change is refused
+  (`stale`) and offers that version, the fields left alone taking its values; an entry changed when
+  its session ends is kept aside and brought back at the next opening; one deleted elsewhere is
+  kept as a new entry by Save. A password on an entry's page is lent to the painter, not cloned
+  each frame, and not left shown when the window loses the keys. The service refuses a stale save
+  too (de15784).
+* **A new recovery code is not lost** (4076e91, de15784): the service keeps a code made on this
+  device (setting up, a new code, a removal) until the wearer says it is saved (`RecoverySaved`;
+  `unseen-code.json` in the device's own folder, 0600, never the synced one), handed back only to
+  this device's own programs; the window's screen over it is not taken down by the session ending,
+  the service going or the window closing; quitting with it up asks; a removal that replaces the
+  code says so before (`removal_new_code`) and on the screen that shows the new one. A code that is
+  not the vault's is said so (`no_match`, "That is not this vault's recovery code"), no longer as
+  a cancelled touch (778a0dc).
+* **The window keeps up** (210dbd9): a device asking to be added appears in a settings page already
+  open (asked every 3 s), a turned-down request says so, a holder removed elsewhere moves the
+  locked screen on, and a phone that holds the vault is not called a Mac with Touch ID. Words name
+  Apple Passwords only on the Mac; elsewhere the recovery code is kept in "your password manager"
+  (fcbc119).
+* **The words and buttons follow docs/look-and-feel.md** (35e48a7, f44555c): every question's no is
+  Cancel, one that destroys nothing has the yes lit again, the button that types both is "Type
+  username and password". The SDK's `Confirm` is the one used; SpatiKey has no copy of its own.
+* **A touch that lasts** (the 60 or 300 s setting) never answers another device's request, and on
+  the Mac it is let go when the Mac is locked, sleeps, its screens sleep or its session goes to
+  another user (9f782e1; Android does not linger). Tested in `tests/service.rs`; the Mac side was
+  built on littleotter, not run with a lock.
+* **A window asked for while a finger is wanted** opens where the wearer looked when it was asked
+  for, and for 10 s after; a window that opens out of view is said on a card (8630bac; the Deck,
+  the Beam Pro and the Mac alike; tested headless, not worn).
+* **The assistant never sees SpatiKey's windows**, nor SpatiMesh's window asking for a profile's
+  PIN or password (b7df024): no picture, title or own description of them goes to the model
+  server, and no picture of the whole view while one is in view or the Touch ID card or the hosts'
+  page is up (docs/ai-integrations.md). **Not done:** the assistant can still click and type into
+  such a window; the proper alternative is a protocol flag marking a window secret, which the room
+  would honour for the assistant, dictation and a host alike.
+* **A password copied** on the phone or the Mac stays there, and one copied in the room is put on
+  them marked secret (`IS_SENSITIVE`, the pasteboard's concealed type; d701ba7). SpatiKey itself
+  puts nothing on the clipboard, it types. A locked Mac still receives the clipboard sync: the
+  lock stops what a session may do to the Mac, not what is put on its pasteboard.
