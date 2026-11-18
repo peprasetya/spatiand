@@ -85,7 +85,7 @@ struct Pal {
     trouble: Option<(String, Instant)>,
     voice: Voice,
     brain: Brain,
-    told: Receiver<Told>,
+    told: Receiver<(u64, Told)>,
     room_asks: Receiver<(String, Sender<String>)>,
     ears: Option<Ears>,
     heard_tx: Sender<Heard>,
@@ -291,9 +291,37 @@ impl Pal {
         warm::warm(Hemera::new(&self.speech.hemera), wanted, now);
     }
 
+    /// The answer being given stops: the brain first, so that nothing more of it is said, and
+    /// what of it was shown is kept in its chat as it is. What the brain still says of it is not
+    /// this window's any more (`told` goes by the turn's number).
+    fn cut_answer(&mut self) {
+        self.brain.stop();
+        let Some(a) = self.answering.take() else { return };
+        let said = Said {
+            role: "assistant".into(),
+            text: a.text,
+            thinking: a.thinking,
+            did: a.did,
+            model: if a.handed_over { a.model } else { String::new() },
+            at: store::now(),
+        };
+        self.keep_answer(said);
+    }
+
+    /// An answer, into the chat it was asked in.
+    fn keep_answer(&mut self, said: Said) {
+        if let Some(chat) = self.current.and_then(|i| self.chats.get_mut(i)) {
+            chat.said.push(said);
+            chat.updated = store::now();
+            if let Err(e) = chat.save() {
+                log::warn!("the chat could not be kept: {e}");
+            }
+        }
+    }
+
     fn ask(&mut self, text: String, ended: Option<Instant>) {
         if self.answering.is_some() {
-            self.brain.stop();
+            self.cut_answer();
             self.voice.hush();
         }
         let i = self.chat_for_turn();
@@ -307,13 +335,14 @@ impl Pal {
         if let Err(e) = chat.save() {
             log::warn!("the chat could not be kept: {e}");
         }
-        self.answering = Some(Answering::default());
-        self.brain.ask(Turn { text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), ended });
+        let turn = Turn { number: 0, text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), ended };
+        self.answering = self.brain.ask(turn).map(|turn| Answering { turn, ..Default::default() });
         self.dirty = true;
     }
 
-    fn told(&mut self, told: Told) {
-        let Some(a) = self.answering.as_mut() else { return };
+    /// What the brain said of turn `turn`: only the answer being given is shown.
+    fn told(&mut self, turn: u64, told: Told) {
+        let Some(a) = self.answering.as_mut().filter(|a| a.turn == turn) else { return };
         match told {
             Told::Text(t) => {
                 a.doing = None;
@@ -338,13 +367,7 @@ impl Pal {
                 self.answering = None;
                 self.conversation.touch();
                 self.finished_at = Some(Instant::now());
-                if let Some(chat) = self.current.and_then(|i| self.chats.get_mut(i)) {
-                    chat.said.push(said);
-                    chat.updated = store::now();
-                    if let Err(e) = chat.save() {
-                        log::warn!("the chat could not be kept: {e}");
-                    }
-                }
+                self.keep_answer(said);
             }
         }
         self.dirty = true;
@@ -371,10 +394,8 @@ impl Pal {
                 // Its voice has stopped already (the ears stopped it); the answer stops too, and
                 // what they say next is the next thing asked.
                 self.interrupted = Some((Instant::now(), self.voice.lately_said()));
+                self.cut_answer();
                 self.voice.interrupt();
-                if self.answering.is_some() {
-                    self.brain.stop();
-                }
                 self.brain.let_go();
                 self.finished_at = None;
                 log::info!("interrupted: listening to the wearer");
@@ -394,10 +415,8 @@ impl Pal {
             // "Stop", "quiet", "diam": only that -- nothing is asked of the model.
             Heard::Asked { text, .. } if ears::is_hush(&text) => {
                 log::info!("told to be quiet ({text:?}): quiet");
+                self.cut_answer();
                 self.voice.interrupt();
-                if self.answering.is_some() {
-                    self.brain.stop();
-                }
                 // What waited for a yes is not waiting any more.
                 self.brain.let_go();
                 self.finished_at = None;
@@ -436,7 +455,7 @@ impl Pal {
             }
             Want::Look => self.look = !self.look,
             Want::Stop => {
-                self.brain.stop();
+                self.cut_answer();
                 self.brain.let_go();
                 self.voice.hush();
             }
@@ -643,8 +662,8 @@ impl Pal {
             for (json, reply) in self.room_asks.try_iter().collect::<Vec<_>>() {
                 self.app.room_ask(&json, reply);
             }
-            for told in self.told.try_iter().collect::<Vec<_>>() {
-                self.told(told);
+            for (turn, told) in self.told.try_iter().collect::<Vec<_>>() {
+                self.told(turn, told);
             }
             for heard in self.heard.try_iter().collect::<Vec<_>>() {
                 self.heard(heard);

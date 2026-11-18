@@ -28,7 +28,7 @@
 //! rest of the article" -- and marked as not on screen ([`past_the_view`]); other windows only
 //! when asked for.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -45,6 +45,8 @@ use crate::voice::Voice;
 /// One turn: what the wearer said, the chat so far, and whether to show the model the window
 /// they are looking at.
 pub struct Turn {
+    /// Its number, given by [`Brain::ask`]: what it tells the window is marked with it.
+    pub number: u64,
     pub text: String,
     pub history: Vec<Said>,
     pub look: bool,
@@ -71,15 +73,20 @@ pub enum Told {
 
 pub struct Brain {
     turns: Sender<Turn>,
-    stop: Arc<AtomicBool>,
+    /// The last turn asked for.
+    asked: AtomicU64,
+    /// Every turn up to this one is stopped: an answer stops when its turn is.
+    stopped: Arc<AtomicU64>,
     /// What waits for the wearer's yes is to be let go before the next turn.
     let_go: Arc<AtomicBool>,
 }
 
 impl Brain {
-    pub fn start(room: Room, voice: Voice, told: Sender<Told>) -> Brain {
+    /// The brain, on a thread of its own; what it tells the window comes marked with the
+    /// number of the turn it is about.
+    pub fn start(room: Room, voice: Voice, told: Sender<(u64, Told)>) -> Brain {
         let (turns, waiting) = channel::<Turn>();
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicU64::new(0));
         let stopped = stop.clone();
         let let_go = Arc::new(AtomicBool::new(false));
         let gone = let_go.clone();
@@ -87,17 +94,20 @@ impl Brain {
             .name("brain".into())
             .spawn(move || think(waiting, room, voice, told, stopped, gone))
             .expect("a thread for the brain");
-        Brain { turns, stop, let_go }
+        Brain { turns, asked: AtomicU64::new(0), stopped: stop, let_go }
     }
 
-    pub fn ask(&self, turn: Turn) {
-        self.stop.store(false, Ordering::Relaxed);
-        let _ = self.turns.send(turn);
+    /// Ask for a turn; its number, or `None` when the brain has gone (its thread ended).
+    pub fn ask(&self, mut turn: Turn) -> Option<u64> {
+        let number = self.asked.fetch_add(1, Ordering::Relaxed) + 1;
+        turn.number = number;
+        self.turns.send(turn).ok().map(|_| number)
     }
 
-    /// Stop the answer being given.
+    /// Stop the answer being given, and any asked for before it. A turn asked for after this
+    /// is not stopped by it.
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stopped.fetch_max(self.asked.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 
     /// Forget what waits for the wearer's yes: told to be quiet, Stop pressed, spoken over -- a
@@ -107,7 +117,7 @@ impl Brain {
     }
 }
 
-fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<Told>, stop: Arc<AtomicBool>, let_go: Arc<AtomicBool>) {
+fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<(u64, Told)>, stop: Arc<AtomicU64>, let_go: Arc<AtomicBool>) {
     // What waits for the wearer's yes, and since when.
     let mut held: Option<(Held, std::time::Instant)> = None;
     // One client for every turn, so its connections to hemera are kept from one to the next.
@@ -127,9 +137,15 @@ fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<Told>, st
                 h
             }
         };
+        let number = turn.number;
+        // Stopped before it began: nothing of it is said or done.
+        let stopped = || stop.load(Ordering::Relaxed) >= number;
+        if stopped() {
+            continue;
+        }
         let wake = room.wake.clone();
         let say = |t: Told| {
-            let _ = told.send(t);
+            let _ = told.send((number, t));
             wake();
         };
         // The answer to a question it asked: what was held is done, or let go.
@@ -162,7 +178,7 @@ fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<Told>, st
                 None => {}
             }
         }
-        match answer(&turn, &hemera, &room, &voice, &say, &stop, &mut held) {
+        match answer(&turn, &hemera, &room, &voice, &say, &stopped, &mut held) {
             Ok(said) => say(Told::Done(said)),
             Err(why) => {
                 log::warn!("brain: {why}");
@@ -178,7 +194,7 @@ const ROUNDS: usize = 10;
 /// How much of the chat the model is given.
 const REMEMBERED: usize = 16;
 
-fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn(Told), stop: &AtomicBool, held: &mut Option<(Held, std::time::Instant)>) -> Result<Said, String> {
+fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn(Told), stopped: &dyn Fn() -> bool, held: &mut Option<(Held, std::time::Instant)>) -> Result<Said, String> {
     let s = &turn.settings;
     let started = Instant::now();
     if let Some(ended) = turn.ended {
@@ -247,7 +263,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     let mut decided: Option<bool> = if decision.is_some() { None } else { Some(false) };
     let mut first_words = false;
     for _ in 0..ROUNDS {
-        if stop.load(Ordering::Relaxed) {
+        if stopped() {
             break;
         }
         let ask = Ask {
@@ -267,7 +283,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         log::info!("brain: asking {model} ({} messages)", messages.len());
         voice.set_generating(true);
         let answer = converse(hemera, &ask, |piece| {
-            if stop.load(Ordering::Relaxed) {
+            if stopped() {
                 return false;
             }
             if decided.is_none() {

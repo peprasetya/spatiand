@@ -15,6 +15,8 @@ use crate::store::{Chat, Said, Settings};
 /// The answer being given, as it comes.
 #[derive(Default)]
 pub struct Answering {
+    /// The brain's number for the turn: what it says of any other is not this answer's.
+    pub turn: u64,
     pub text: String,
     pub thinking: String,
     pub did: Vec<String>,
