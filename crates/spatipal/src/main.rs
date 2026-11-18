@@ -98,6 +98,9 @@ struct Pal {
     ear: Ear,
     /// When hemera was last asked to have the models ready.
     warmed: Option<Instant>,
+    /// When to ask hemera again, the settings having changed what it needs ready: a moment
+    /// after the last change, so that stepping through the models warms only the one stopped at.
+    warm_due: Option<Instant>,
     name: Arc<Mutex<String>>,
     waker: Waker,
     woken: std::fs::File,
@@ -239,7 +242,7 @@ impl Pal {
                     self.heard_tx.clone(),
                     move || waker.wake(),
                 ));
-                self.warm(true);
+                self.warm_soon();
                 log::info!("listening for {:?}", self.settings.name);
             }
             (false, true) => {
@@ -286,6 +289,7 @@ impl Pal {
             return;
         }
         self.warmed = Some(Instant::now());
+        self.warm_due = None;
         let mut models = Vec::new();
         if self.ears.is_some() {
             models.push(self.speech.transcription_model.clone());
@@ -338,6 +342,11 @@ impl Pal {
 
     /// Ask the brain. `spoken`: when the wearer stopped speaking, and whether it followed on in
     /// the conversation; `None` when typed.
+    /// Have hemera ready again once the settings have been left alone a moment.
+    fn warm_soon(&mut self) {
+        self.warm_due = Some(Instant::now() + Duration::from_secs(2));
+    }
+
     fn ask(&mut self, text: String, spoken: Option<(Instant, bool)>) {
         let ended = spoken.map(|(ended, _)| ended);
         if self.answering.is_some() {
@@ -505,7 +514,13 @@ impl Pal {
                 self.ui.page = Page::Settings;
                 self.fetch_lists();
             }
-            Want::Chat => self.ui.page = Page::Chat,
+            Want::Chat => {
+                self.ui.page = Page::Chat;
+                // Out of the settings: what they changed is made ready now.
+                if self.warm_due.is_some() {
+                    self.warm(true);
+                }
+            }
             Want::Keep(settings, speech) => self.keep(settings, speech),
         }
         self.dirty = true;
@@ -523,6 +538,9 @@ impl Pal {
         self.voice.set_voice(spoken_voice(&settings), Hemera::new(&speech.hemera));
         let listening_changed = settings.listening != self.settings.listening;
         let ears_changed = speech != self.speech;
+        // What hemera is asked to have ready, or where hemera is: only then is it asked again.
+        let wanted = |s: &Settings, v: &VoiceSettings| (s.model.clone(), s.large_model.clone(), s.speech_model.clone(), s.spoken, v.hemera.clone(), v.transcription_model.clone());
+        let models_changed = wanted(&settings, &speech) != wanted(&self.settings, &self.speech);
         self.settings = settings;
         self.speech = speech;
         if ears_changed {
@@ -532,8 +550,10 @@ impl Pal {
             self.tend_ears();
         }
         self.tell_figure();
-        // Other models, perhaps: have them ready.
-        self.warm(true);
+        // Other models: have them ready, once the wearer has stopped stepping through them.
+        if models_changed {
+            self.warm_soon();
+        }
     }
 
     /// The figure, as chosen: which, and whether it is shown.
@@ -748,6 +768,9 @@ impl Pal {
             if self.leaving && self.answering.is_none() && !self.voice.busy() && !self.leave() {
                 return Ok(());
             }
+            if self.warm_due.is_some_and(|at| Instant::now() >= at) {
+                self.warm(true);
+            }
             self.look_at_reminders();
             self.tend_mood();
             self.draw()?;
@@ -872,6 +895,7 @@ fn main() {
             conversation: Arc::new(Conversation::new()),
             ear: Ear::Quiet,
             warmed: None,
+            warm_due: None,
             name,
             waker,
             woken,
