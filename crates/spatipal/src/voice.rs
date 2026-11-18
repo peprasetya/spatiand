@@ -38,20 +38,23 @@ pub const SOUND_KEY: &str = "spatipal-voice";
 
 enum Line {
     /// What to say, and how many interruptions there had been when it was asked for: one since,
-    /// and it is not said.
+    /// and it is not said. (A hush needs no line of its own: what waits is dropped by this
+    /// number as it comes up, and what was asked after the hush is said.)
     Say(String, u64),
-    /// Drop what is waiting to be said.
-    Hush,
 }
 
+/// To the player, each marked with the interruptions there had been when it was made: sound of
+/// an older number than the last cut is not played.
 enum Sound {
     /// A sentence begins, about this many seconds long.
-    Begin(f32),
-    Pcm(Vec<i16>),
+    Begin(f32, u64),
+    Pcm(Vec<i16>, u64),
     /// All of it has come.
-    End,
-    /// Stop at once: what the room has not yet played is not played.
-    Cut,
+    End(u64),
+    /// Stop at once: what the room has not yet played is not played, nor anything made before
+    /// this cut (its number) that is still on its way. Sent by [`Voice::hush`] itself, so that
+    /// it is heard at once, whatever the sentences' thread is waiting on.
+    Cut(u64),
 }
 
 /// How long a sentence waits for a model that is writing to be done.
@@ -68,6 +71,7 @@ const SLICE: usize = SPEECH_RATE as usize / 20;
 #[derive(Clone)]
 pub struct Voice {
     lines: Sender<Line>,
+    sounds: Sender<Sound>,
     shared: Arc<Shared>,
 }
 
@@ -117,10 +121,11 @@ impl Voice {
             said: Mutex::new(std::collections::VecDeque::new()),
         });
         let s = shared.clone();
+        let to_player = sounds.clone();
         std::thread::Builder::new().name("voice-say".into()).spawn(move || speak(said, sounds, s)).expect("a thread for the voice");
         let s = shared.clone();
         std::thread::Builder::new().name("voice-play".into()).spawn(move || play(heard, s)).expect("a thread for the voice");
-        let voice = Voice { lines, shared };
+        let voice = Voice { lines, sounds: to_player, shared };
         voice.prepare();
         voice
     }
@@ -162,8 +167,8 @@ impl Voice {
 
     /// Stop talking: what is waiting is not said, nor the rest of what is being said.
     pub fn hush(&self) {
-        self.shared.cuts.fetch_add(1, Ordering::Relaxed);
-        let _ = self.lines.send(Line::Hush);
+        let cut = self.shared.cuts.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.sounds.send(Sound::Cut(cut));
     }
 
     /// **Stop now**, mid-word: the wearer has begun speaking over it. The sentence being made is
@@ -233,6 +238,7 @@ impl Voice {
     #[cfg(test)]
     pub fn silent() -> Voice {
         let (lines, _) = channel::<Line>();
+        let (sounds, _) = channel::<Sound>();
         let shared = Arc::new(Shared {
             quiet_at: AtomicU64::new(0),
             epoch: Instant::now(),
@@ -248,32 +254,31 @@ impl Voice {
             made: Mutex::new(None),
             said: Mutex::new(std::collections::VecDeque::new()),
         });
-        Voice { lines, shared }
+        Voice { lines, sounds, shared }
     }
 }
 
 fn speak(lines: Receiver<Line>, sounds: Sender<Sound>, shared: Arc<Shared>) {
     let mut sentences = 0u64;
+    let cut_since = |cut: u64| shared.cuts.load(Ordering::Relaxed) != cut;
     while let Ok(line) = lines.recv() {
         match line {
-            Line::Hush => {
-                // Everything already waiting goes with it.
-                while let Ok(Line::Say(..)) = lines.try_recv() {
-                    shared.waiting.fetch_sub(1, Ordering::Relaxed);
-                }
-                let _ = sounds.send(Sound::Cut);
-            }
             Line::Say(text, cut) => {
-                if shared.cuts.load(Ordering::Relaxed) != cut {
+                if cut_since(cut) {
                     shared.waiting.fetch_sub(1, Ordering::Relaxed);
                     continue;
                 }
                 let asked = Instant::now();
-                while shared.generating.load(Ordering::Relaxed) && asked.elapsed() < WAIT_FOR_MODEL {
+                while shared.generating.load(Ordering::Relaxed) && asked.elapsed() < WAIT_FOR_MODEL && !cut_since(cut) {
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 let hemera = shared.hemera.lock().unwrap().clone();
                 let voice = one_voice(&shared, &hemera);
+                // Cut while it waited, or while its voice was being made: not begun.
+                if cut_since(cut) {
+                    shared.waiting.fetch_sub(1, Ordering::Relaxed);
+                    continue;
+                }
                 let said = spoken_form(&text);
                 sentences += 1;
                 log::info!(
@@ -282,7 +287,7 @@ fn speak(lines: Receiver<Line>, sounds: Sender<Sound>, shared: Arc<Shared>) {
                     voice.model,
                     said.chars().take(60).collect::<String>()
                 );
-                let _ = sounds.send(Sound::Begin(said.chars().count() as f32 / 17.0));
+                let _ = sounds.send(Sound::Begin(said.chars().count() as f32 / 17.0, cut));
                 // `SPATIPAL_TEST_RECORD=<folder>`: each sentence's sound kept as a WAV file, for a
                 // test to compare the voices of a long answer without anyone listening.
                 let mut kept = std::env::var_os("SPATIPAL_TEST_RECORD").map(|_| Vec::new());
@@ -290,13 +295,13 @@ fn speak(lines: Receiver<Line>, sounds: Sender<Sound>, shared: Arc<Shared>) {
                     if let Some(k) = kept.as_mut() {
                         k.extend_from_slice(pcm);
                     }
-                    shared.cuts.load(Ordering::Relaxed) == cut && sounds.send(Sound::Pcm(pcm.to_vec())).is_ok()
+                    !cut_since(cut) && sounds.send(Sound::Pcm(pcm.to_vec(), cut)).is_ok()
                 });
                 if let (Some(dir), Some(pcm)) = (std::env::var_os("SPATIPAL_TEST_RECORD"), kept) {
                     let path = std::path::Path::new(&dir).join(format!("sentence-{sentences:03}.wav"));
                     let _ = std::fs::write(&path, spatiand_voice::hemera::wav(&pcm, SPEECH_RATE));
                 }
-                let _ = sounds.send(Sound::End);
+                let _ = sounds.send(Sound::End(cut));
                 if let Err(why) = result {
                     log::warn!("voice: {why}");
                 }
@@ -359,24 +364,28 @@ fn play(heard: Receiver<Sound>, shared: Arc<Shared>) {
     // all of it has.
     let (mut expected, mut came, mut first_came) = (0.0f32, 0.0f32, None::<(Instant, f32)>);
     let mut all_came = true;
+    // The last cut: what was made before it is not played.
+    let mut cut_at = 0u64;
     loop {
         match heard.recv_timeout(Duration::from_millis(10)) {
-            Ok(Sound::Begin(seconds)) => {
+            Ok(Sound::Begin(_, n) | Sound::Pcm(_, n) | Sound::End(n)) if n < cut_at => {}
+            Ok(Sound::Begin(seconds, _)) => {
                 (expected, came, first_came, all_came) = (seconds, 0.0, None, false);
                 // Going on from what is playing, there is nothing to hold; else, enough first.
                 holding = waiting.is_empty() && Instant::now() >= heard_by;
             }
-            Ok(Sound::Pcm(pcm)) => {
+            Ok(Sound::Pcm(pcm, _)) => {
                 let now = Instant::now();
                 came += seconds_of(pcm.len());
                 first_came.get_or_insert((now, came));
                 waiting.extend(pcm);
             }
-            Ok(Sound::End) => {
+            Ok(Sound::End(_)) => {
                 all_came = true;
                 holding = false;
             }
-            Ok(Sound::Cut) => {
+            Ok(Sound::Cut(n)) => {
+                cut_at = cut_at.max(n);
                 // Not even what the room has yet to play.
                 waiting.clear();
                 stream.clear();
