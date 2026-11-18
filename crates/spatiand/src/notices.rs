@@ -87,13 +87,23 @@ impl Card {
     /// A notification was taken away by its sender: off the card, if it is the one there (true
     /// then). Its having been seen is forgotten, so the same words posted later show again.
     pub fn remove(&mut self, key: &str) -> bool {
-        let prefix = format!("{key}\u{1}");
-        self.seen.retain(|s| !s.starts_with(&prefix));
+        self.forget(key);
         if self.shown.as_ref().is_some_and(|s| s.key == key) {
             self.shown = None;
             return true;
         }
         false
+    }
+
+    /// The notification is over for its sender, though it was not taken away: the Deck's server
+    /// tells the application so when its card expires or is pressed (`NotificationClosed`), and
+    /// the same words sent again are then a new notification, to be shown. (A Mac banner or an
+    /// Android notification is still there after its card goes, and posted again unchanged is
+    /// not shown again.)
+    #[allow(dead_code)] // the Deck's
+    pub fn forget(&mut self, key: &str) {
+        let prefix = format!("{key}\u{1}");
+        self.seen.retain(|s| !s.starts_with(&prefix));
     }
 
     /// The notification whose time on the card is over, taken off it.
@@ -305,5 +315,24 @@ mod tests {
         card.post("k", "Alarm".into(), GLANCE, t);
         card.remove("k");
         assert!(card.post("k", "Alarm".into(), GLANCE, t + 60 * T).shown);
+    }
+
+    #[test]
+    fn a_notification_its_sender_was_told_is_over_is_shown_again() {
+        // The Deck: `notify-send -r 77 "Build finished"` twice, 10 s apart. The first expired
+        // (or was pressed) and its application was told it closed, so the second is new.
+        let mut card = Card::new();
+        let t = Instant::now();
+        assert!(card.post("77", "Build finished".into(), GLANCE, t).shown);
+        assert_eq!(card.expire(t + GLANCE), Some("77".into()));
+        card.forget("77");
+        assert!(card.post("77", "Build finished".into(), GLANCE, t + 10 * T).shown);
+        assert_eq!(card.press(t + 11 * T), Some("77".into()));
+        card.forget("77");
+        assert!(card.post("77", "Build finished".into(), GLANCE, t + 20 * T).shown);
+        // Displaced by another and told it closed: the same.
+        assert_eq!(card.post("78", "Other".into(), GLANCE, t + 21 * T).displaced, Some("77".into()));
+        card.forget("77");
+        assert!(card.post("77", "Build finished".into(), GLANCE, t + 22 * T).shown);
     }
 }

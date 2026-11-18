@@ -131,7 +131,12 @@ pub fn showing() -> bool {
 pub fn pressed() {
     let taken = {
         let mut state = STATE.lock().unwrap();
-        let id = state.card.press(Instant::now()).map(|k| id_of(&k));
+        let key = state.card.press(Instant::now());
+        // Closed below: the same words sent again are a new notification.
+        if let Some(key) = &key {
+            state.card.forget(key);
+        }
+        let id = key.map(|k| id_of(&k));
         id.map(|id| (id, state.default_action.take() == Some(id)))
     };
     if let Some((id, default_action)) = taken {
@@ -144,7 +149,14 @@ pub fn pressed() {
 }
 
 fn expire() {
-    let gone = STATE.lock().unwrap().card.expire(Instant::now()).map(|k| id_of(&k));
+    let gone = {
+        let mut state = STATE.lock().unwrap();
+        let key = state.card.expire(Instant::now());
+        if let Some(key) = &key {
+            state.card.forget(key);
+        }
+        key.map(|k| id_of(&k))
+    };
     if let Some(id) = gone {
         closed(id, 1);
     }
@@ -518,6 +530,9 @@ fn notify(m: &Msg) -> Result<u32, (&'static str, String)> {
             state.last_id
         };
         let posted = state.card.post(&id.to_string(), text, lasting(n.timeout), Instant::now());
+        if let Some(old) = &posted.displaced {
+            state.card.forget(old);
+        }
         if posted.shown {
             state.default_action = default_action.then_some(id);
         }
