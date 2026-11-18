@@ -519,7 +519,17 @@ impl Reel {
             self.keep_place();
             let (playing, _) = self.playing.as_mut().unwrap();
             if playing.player().ended() {
-                self.stop(true);
+                // Stopped short by what could not be read: left where it was, not finished, and
+                // the wearer told why.
+                match playing.player().failed() {
+                    Some(why) => {
+                        let title = playing.name.clone();
+                        log::warn!("{title}: {why}");
+                        self.stop(false);
+                        self.screen.trouble(format!("{title} stopped: {why}"));
+                    }
+                    None => self.stop(true),
+                }
             } else {
                 playing.dirty |= std::mem::take(&mut self.dirty);
                 playing.draw(&mut self.app, self.window, &mut self.painter)?;

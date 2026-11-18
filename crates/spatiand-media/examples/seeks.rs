@@ -58,5 +58,8 @@ fn main() -> Result<(), String> {
     let began = Instant::now();
     let (shown, last) = play(&mut player, 600.0);
     println!("played to the end in {:.2} s: {shown} pictures, the last at {last:.3}; length {}", began.elapsed().as_secs_f64(), length(&player));
+    if let Some(why) = player.failed() {
+        println!("it stopped short of its end: {why}");
+    }
     Ok(())
 }

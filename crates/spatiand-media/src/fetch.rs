@@ -483,6 +483,11 @@ impl Remote {
         self.shared.size
     }
 
+    /// Why the server stopped giving the film, if it has: asked again and again, and refused.
+    pub fn failure(&self) -> Option<String> {
+        self.shared.state.lock().unwrap().failed.clone()
+    }
+
     /// Stop fetching, and let any read waiting give up.
     pub fn close(&self) {
         // Not waiting for the lock: closing must work whatever the fetching is doing, and every

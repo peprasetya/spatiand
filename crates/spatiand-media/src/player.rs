@@ -375,6 +375,8 @@ struct Shared {
     /// has gone over to the wall's time for it (see `Player::position`).
     unheard: Mutex<Option<Instant>>,
     walled: AtomicU64,
+    /// Why the reader stopped short of the end, if it did: the file could not be read further.
+    failed: Mutex<Option<String>>,
 }
 
 /// How long the pictures may wait for a sound that is not coming before the wall keeps time.
@@ -776,6 +778,7 @@ impl Player {
                 }),
                 unheard: Mutex::new(None),
                 walled: AtomicU64::new(0),
+                failed: Mutex::new(None),
             });
 
             let mut threads = Vec::new();
@@ -995,6 +998,15 @@ impl Player {
         }
     }
 
+    /// Why the film stopped before its end, if it did: what could not be read. [`Player::ended`]
+    /// is true of it too, once what was read has been played -- but it has not been watched to
+    /// the end, and whoever keeps the wearer's place should not be told it has.
+    pub fn failed(&self) -> Option<String> {
+        let failed = self.shared.failed.lock().unwrap().clone()?;
+        // The server's own words, where it was a server that stopped giving the film.
+        Some(self.remote.as_ref().and_then(|remote| remote.failure()).unwrap_or(failed))
+    }
+
     /// The film has been played to its end.
     pub fn ended(&self) -> bool {
         let shared = &self.shared;
@@ -1192,6 +1204,7 @@ fn start_afresh(shared: &Shared, video: bool) {
         sound.clear();
     }
     shared.read_out.store(false, Ordering::Relaxed);
+    *shared.failed.lock().unwrap() = None;
     shared.video_out.store(!video, Ordering::Relaxed);
     shared.audio_out.store(shared.audio_stream.load(Ordering::Relaxed) == NO_STREAM, Ordering::Relaxed);
 }
@@ -1288,10 +1301,26 @@ fn read(source: Source, shared: Arc<Shared>) {
             }
             let serial = shared.serial.load(Ordering::Relaxed);
             let got = ffi::av_read_frame(format, packet);
+            if got == ffi::AVERROR(libc::EAGAIN as u32) {
+                // Nothing yet, from a stream being made.
+                std::thread::sleep(Duration::from_millis(8));
+                continue;
+            }
             if got < 0 {
-                // The end, or an error that might as well be: let the decoders run dry.
-                if got != ffi::AVERROR_EOF {
-                    log::warn!("reading stopped: {}", error_text(got));
+                // The end, or the file could not be read further: either way the decoders are let
+                // run dry. A failure is kept to be told apart from the end: taken for it, the film
+                // closed with nothing said, and its server was told it had been watched to the end.
+                // Some demuxers say "end of file" where reading failed; the reader's own error says.
+                let error = if got != ffi::AVERROR_EOF {
+                    got
+                } else if !(*format).pb.is_null() && (*(*format).pb).error < 0 && (*(*format).pb).error != ffi::AVERROR_EOF {
+                    (*(*format).pb).error
+                } else {
+                    0
+                };
+                if error != 0 && !shared.stop.load(Ordering::Relaxed) {
+                    log::warn!("reading stopped: {}", error_text(error));
+                    *shared.failed.lock().unwrap() = Some(error_text(error));
                 }
                 if let Some(film) = counted.as_mut() {
                     film.index.ended();
