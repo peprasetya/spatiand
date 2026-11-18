@@ -195,7 +195,7 @@ impl Home {
             places.push(Tile {
                 title: vibrefy_name(address),
                 // A new code is all it takes: the address is kept.
-                detail: Some("Signed out \u{b7} reconnect".into()),
+                detail: Some("Login expired \u{b7} reconnect".into()),
                 glyph: Some("V".into()),
                 tint: tinted([0.62, 0.66, 0.74, 1.0]),
                 ..Tile::default()
@@ -752,7 +752,7 @@ impl Browse {
 // --- adding a server ---
 
 /// A Vibrefy server as the wearer would call it: its host, as the source's label has it.
-fn vibrefy_name(address: &str) -> String {
+pub(crate) fn vibrefy_name(address: &str) -> String {
     let address = address.trim_end_matches('/');
     let host = address.split_once("://").map_or(address, |(_, rest)| rest);
     format!("Vibrefy \u{b7} {}", host.split([':', '/']).next().unwrap_or(host))

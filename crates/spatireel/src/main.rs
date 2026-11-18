@@ -174,7 +174,17 @@ impl Reel {
             .iter()
             .filter(|entry| entry.source.expired())
             .filter_map(|entry| match &entry.kind {
-                Kind::Server(account) => Some((entry.source.label(), account.clone())),
+                // Whose sign-in it was is not said, on the screen or in the log (the owner,
+                // 2026-11-18: "When the login user is expired, Don't Show the Last login user. So
+                // just say the previous login is expired"): a Vibrefy server is named by its
+                // address alone.
+                Kind::Server(account) => Some((
+                    match account {
+                        Account::Vibrefy(account) => screens::vibrefy_name(&account.address),
+                        _ => entry.source.label(),
+                    },
+                    account.clone(),
+                )),
                 _ => None,
             })
             .collect();
@@ -195,8 +205,9 @@ impl Reel {
         }
         self.gather();
         self.go_home();
-        let names: Vec<&str> = ended.iter().map(|(label, _)| label.as_str()).collect();
-        self.screen.trouble(format!("{}: signed out by the server. Reconnect asks for a new code.", names.join(", ")));
+        let mut names: Vec<&str> = ended.iter().map(|(label, _)| label.as_str()).collect();
+        names.dedup();
+        self.screen.trouble(format!("{}: the previous login has expired. Reconnect asks for a new code.", names.join(", ")));
     }
 
     fn list(&mut self, browse: &mut Browse) {
