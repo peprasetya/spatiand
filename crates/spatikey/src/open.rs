@@ -319,7 +319,7 @@ impl EntryPage {
         self.focus = self.focus.min(actions.len().saturating_sub(1));
         self.lit(&actions);
         let mut all = ui::page(p);
-        let mut right = ui::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, &title);
+        let mut right = look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, &title, "");
         if self.entry.is_some() {
             let delete_w = Button::icon_width(p, gl, "Delete");
             self.delete.draw_icon(p, gl, right.take_right(delete_w), Icon::Trash, "Delete");
@@ -736,7 +736,7 @@ impl Edit {
             Some(entry) if entry.title.is_empty() => "Change the entry".to_string(),
             Some(entry) => format!("Change {}", entry.title),
         };
-        let mut right = ui::top(p, gl, &mut all, &mut self.cancel, "Cancel", Icon::Close, &title);
+        let mut right = look::top(p, gl, &mut all, &mut self.cancel, "Cancel", Icon::Close, &title, "");
         let save_w = Button::width(p, gl, "Save");
         match view.waiting {
             Some((since, words)) => ui::waiting(p, gl, right.take_right(save_w + 200.0), since, words),
@@ -1202,7 +1202,7 @@ impl SettingsPage {
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, view: &View) {
         let mut all = ui::page(p);
-        ui::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Settings");
+        look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Settings", "");
         ui::foot(p, gl, &mut all, "[\u{2191}] [\u{2193}] Choose  [Enter] Change  [Esc] Back", view);
         let rows: Vec<Row> = Self::lines(view).into_iter().map(|(_, row)| row).collect();
         self.lines.focused = self.confirm.is_none();

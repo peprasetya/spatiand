@@ -289,7 +289,7 @@ impl Recover {
         let new_here = !view.status.opens_here && !view.fingers_changed && !self.from_settings;
         let title = if new_here { format!("Open SpatiKey on {me}") } else { format!("{set_up} again") };
         if self.can_go_back(view) {
-            ui::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, &title);
+            look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, &title, "");
         } else {
             look::header(p, gl, &mut all, &title, "");
         }
@@ -597,7 +597,7 @@ impl Pair {
                 }
             }
             Stage::Found => {
-                ui::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Pair with your Mac");
+                look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Pair with your Mac", "");
                 ui::foot(p, gl, &mut all, "[\u{2191}] [\u{2193}] Choose  [Enter] Pair  [Esc] Back", view);
                 let mut column = ui::column(all, ui::COLUMN);
                 let mut foot = column.take_bottom(Button::HEIGHT);

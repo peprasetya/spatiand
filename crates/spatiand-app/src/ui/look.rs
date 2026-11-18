@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use super::{theme, Color, Painter, Rect};
+use super::{theme, Button, Color, Icon, Painter, Rect};
 use crate::Gl;
 
 pub const TEAL: Color = [0.086, 0.902, 0.753, 1.0];
@@ -48,6 +48,36 @@ pub fn header(p: &mut Painter, gl: &Gl, all: &mut Rect, title: &str, beside: &st
     all.take_top(10.0);
     rule(p, gl, all.take_top(2.0));
     all.take_top(18.0);
+}
+
+/// A screen reached from another: at its head a way back (`back`, labelled `back_label`, or
+/// only its icon where the label is empty), its title, a quieter word `beside` it, and the rule
+/// under them, with the gaps of [`header`]. Returns the row's part right of the title and the
+/// word beside, for buttons of the screen's own.
+#[allow(clippy::too_many_arguments)]
+pub fn top(p: &mut Painter, gl: &Gl, all: &mut Rect, back: &mut Button, back_label: &str, back_icon: Icon, title: &str, beside: &str) -> Rect {
+    top_with(p, gl, all, title, beside, |p, row| {
+        let width = if back_label.is_empty() { Button::HEIGHT } else { Button::icon_width(p, gl, back_label) };
+        back.draw_icon(p, gl, row.take_left(width), back_icon, back_label);
+        row.take_left(24.0);
+    })
+}
+
+/// [`top`] for a head whose buttons are the screen's own: `buttons` draws them into the row,
+/// taking what they need off its left (the ways back, each followed by a gap of 24) and its
+/// right; the title and the word beside it have what is left.
+pub fn top_with(p: &mut Painter, gl: &Gl, all: &mut Rect, title: &str, beside: &str, buttons: impl FnOnce(&mut Painter, &mut Rect)) -> Rect {
+    let mut row = all.take_top(Button::HEIGHT);
+    buttons(p, &mut row);
+    let mut taken = p.label(gl, title, Rect { w: (row.w * 0.6).max(0.0), ..row }, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
+    if !beside.is_empty() {
+        let rest = Rect { x: row.x + taken + 22.0, w: (row.w - taken - 22.0).max(0.0), y: row.y + 6.0, ..row };
+        taken += 22.0 + p.label(gl, beside, rest, theme::DETAIL_EM, theme::ink_hint(), 0.0);
+    }
+    all.take_top(12.0);
+    rule(p, gl, all.take_top(2.0));
+    all.take_top(18.0);
+    Rect { x: row.x + taken + 24.0, w: (row.w - taken - 24.0).max(0.0), ..row }
 }
 
 /// A hairline that is teal, then blue, then violet, and fades out to the right.

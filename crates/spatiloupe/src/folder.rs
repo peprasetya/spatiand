@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use spatiand_app::ui::{look, theme, Button, Icon, Grid, Input, Painter, Rect, Shape, Texture, Tile};
+use spatiand_app::ui::{look, theme, Button, Icon, Grid, Input, Painter, Shape, Texture, Tile};
 use spatiand_app::{Gl, Key};
 
 use crate::view::Seen;
@@ -375,13 +375,7 @@ impl Folder {
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl) {
         self.take_arrived(p, gl);
         let mut all = p.bounds().inset(theme::PAD);
-        let mut top = all.take_top(Button::HEIGHT);
-        if crate::place::parent(&self.path).is_some() {
-            self.up.draw_icon(p, gl, top.take_left(Button::HEIGHT), Icon::Up, "");
-            top.take_left(22.0);
-        }
         let name = crate::place::name(&self.path);
-        let taken = p.label(gl, &name, top, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
         let count = match self.state {
             State::Ready => {
                 let files = self.entries.iter().filter(|e| e.kind != Kind::Folder).count();
@@ -389,11 +383,12 @@ impl Folder {
             }
             _ => String::new(),
         };
-        let beside = Rect { x: top.x + taken + 20.0, w: (top.w - taken - 20.0).max(0.0), y: top.y + 5.0, ..top };
-        p.label(gl, &format!("SpatiLoupe   {count}"), beside, theme::DETAIL_EM, theme::ink_hint(), 0.0);
-        all.take_top(12.0);
-        look::rule(p, gl, all.take_top(2.0));
-        all.take_top(16.0);
+        let beside = format!("SpatiLoupe   {count}");
+        if crate::place::parent(&self.path).is_some() {
+            look::top(p, gl, &mut all, &mut self.up, "", Icon::Up, &name, &beside);
+        } else {
+            look::top_with(p, gl, &mut all, &name, &beside, |_, _| {});
+        }
         look::foot(p, gl, &mut all, &self.path.display().to_string(), None);
         match &self.state {
             State::Loading(since) => look::waiting(p, gl, all, *since),

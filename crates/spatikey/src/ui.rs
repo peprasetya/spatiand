@@ -243,20 +243,6 @@ pub fn prose(p: &mut Painter, gl: &Gl, all: &mut Rect, text: &str, color: Color)
     all.take_top(h + PROSE_EM * 0.7);
 }
 
-/// A screen's head with a way back: a Back (or Cancel) button, its title, and the rule under.
-/// Returns the row's right-hand part, for buttons of the screen's own.
-pub fn top(p: &mut Painter, gl: &Gl, all: &mut Rect, back: &mut Button, back_label: &str, back_icon: Icon, title: &str) -> Rect {
-    let mut row = all.take_top(Button::HEIGHT);
-    let width = Button::icon_width(p, gl, back_label);
-    back.draw_icon(p, gl, row.take_left(width), back_icon, back_label);
-    row.take_left(24.0);
-    let taken = p.label(gl, title, Rect { w: (row.w * 0.6).max(0.0), ..row }, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
-    all.take_top(14.0);
-    look::rule(p, gl, all.take_top(2.0));
-    all.take_top(24.0);
-    Rect { x: row.x + taken + 24.0, w: (row.w - taken - 24.0).max(0.0), ..row }
-}
-
 /// The line at a screen's foot: what went wrong, else what was just done, else which keys do what.
 pub fn foot(p: &mut Painter, gl: &Gl, all: &mut Rect, hint: &str, view: &View) {
     match (view.trouble, view.said) {

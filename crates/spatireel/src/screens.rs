@@ -608,49 +608,48 @@ impl Browse {
         }
         let mut all = p.bounds().inset(theme::PAD);
         // The ways out, then where this is.
-        let mut top = all.take_top(Button::HEIGHT);
-        let width = Button::icon_width(p, gl, "Home");
-        self.home.draw_icon(p, gl, top.take_left(width), Icon::Home, "Home");
-        top.take_left(12.0);
-        if self.local || !self.trail.is_empty() {
-            self.up.draw_icon(p, gl, top.take_left(Button::HEIGHT), Icon::Up, "");
-            top.take_left(22.0);
-        }
-        // Taking a server away is for its top, where it is not mistaken for anything else: in
-        // a folder it is a button where a slip of the pointer is all it takes.
-        if self.can_remove() {
-            let label = if self.asking_to_remove() { "Press again to remove" } else { "Remove" };
-            let width = Button::icon_width(p, gl, label);
-            self.remove.draw_icon(p, gl, top.take_right(width), Icon::Trash, label);
-            top.take_right(16.0);
-        }
-        if matches!(self.state, State::Ready) && !self.local && self.items.len() > 1 {
-            // Right to left, so the first reads first.
-            for (button, sort) in self.sorts.iter_mut().zip(Sort::ALL).rev() {
-                if sort == Sort::Updated && !self.items.iter().any(|item| item.modified > 0) {
-                    button.focused = false;
-                    continue;
-                }
-                button.focused = self.sort == sort;
-                button.draw_icon(p, gl, top.take_right(Button::HEIGHT), sort.icon(), "");
-                top.take_right(8.0);
-            }
-            top.take_right(8.0);
-        }
         let title = if self.local {
             let path = self.path();
             path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
         } else {
             self.folder().map_or(self.label.clone(), |item| item.title.clone())
         };
-        let taken = p.label(gl, &title, top, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
-        if title != self.label {
-            let beside = Rect { x: top.x + taken + 20.0, w: (top.w - taken - 20.0).max(0.0), y: top.y + 5.0, ..top };
-            p.label(gl, &self.label, beside, theme::DETAIL_EM, theme::ink_hint(), 0.0);
-        }
-        all.take_top(12.0);
-        look::rule(p, gl, all.take_top(2.0));
-        all.take_top(16.0);
+        let beside = if title != self.label { self.label.clone() } else { String::new() };
+        let can_remove = self.can_remove();
+        let remove_label = if self.asking_to_remove() { "Press again to remove" } else { "Remove" };
+        let can_go_up = self.local || !self.trail.is_empty();
+        let sorting = matches!(self.state, State::Ready) && !self.local && self.items.len() > 1;
+        let updated = self.items.iter().any(|item| item.modified > 0);
+        let (home, up, remove, sorts, chosen) = (&mut self.home, &mut self.up, &mut self.remove, &mut self.sorts, self.sort);
+        look::top_with(p, gl, &mut all, &title, &beside, |p, top| {
+            let width = Button::icon_width(p, gl, "Home");
+            home.draw_icon(p, gl, top.take_left(width), Icon::Home, "Home");
+            top.take_left(12.0);
+            if can_go_up {
+                up.draw_icon(p, gl, top.take_left(Button::HEIGHT), Icon::Up, "");
+                top.take_left(24.0);
+            }
+            // Taking a server away is for its top, where it is not mistaken for anything else: in
+            // a folder it is a button where a slip of the pointer is all it takes.
+            if can_remove {
+                let width = Button::icon_width(p, gl, remove_label);
+                remove.draw_icon(p, gl, top.take_right(width), Icon::Trash, remove_label);
+                top.take_right(16.0);
+            }
+            if sorting {
+                // Right to left, so the first reads first.
+                for (button, sort) in sorts.iter_mut().zip(Sort::ALL).rev() {
+                    if sort == Sort::Updated && !updated {
+                        button.focused = false;
+                        continue;
+                    }
+                    button.focused = chosen == sort;
+                    button.draw_icon(p, gl, top.take_right(Button::HEIGHT), sort.icon(), "");
+                    top.take_right(8.0);
+                }
+                top.take_right(8.0);
+            }
+        });
         let hint = if self.local { self.path().display().to_string() } else { "[Enter] Open  [Backspace] Up  [Esc] Home".to_string() };
         look::foot(p, gl, &mut all, &hint, self.trouble.as_deref());
         match &self.state {
@@ -823,19 +822,12 @@ impl Add {
 
     fn draw(&mut self, p: &mut Painter, gl: &Gl) {
         let mut all = p.bounds().inset(theme::PAD);
-        let mut top = all.take_top(Button::HEIGHT);
-        let width = Button::icon_width(p, gl, "Back");
-        self.back.draw_icon(p, gl, top.take_left(width), Icon::Back, "Back");
-        top.take_left(22.0);
         let title = match self.stage {
             Stage::Pick => "Add a server".to_string(),
             Stage::Form(flavour) => format!("Sign in to {}", flavour.label()),
             Stage::Pair => "Pair with Vibrefy".to_string(),
         };
-        p.label(gl, &title, top, theme::TITLE_EM * 0.9, theme::ink(), 0.0);
-        all.take_top(12.0);
-        look::rule(p, gl, all.take_top(2.0));
-        all.take_top(22.0);
+        look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, &title, "");
         look::foot(p, gl, &mut all, "[Tab] Next field  [Enter] Go on  [Esc] Back", self.trouble.as_deref());
         match self.stage {
             Stage::Pick => {
