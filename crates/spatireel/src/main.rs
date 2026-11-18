@@ -238,7 +238,7 @@ impl Reel {
             source.watching(&item, what);
             None
         });
-        playing.close(&mut self.app, self.window);
+        playing.close(&mut self.app, self.window, &mut self.painter);
         self.app.resize(self.window, self.home_size);
         self.app.set_title(self.window, "SpatiReel");
         // What was just left is now part watched: a list drawn before is stale.

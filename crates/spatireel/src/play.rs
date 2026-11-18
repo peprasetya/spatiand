@@ -285,7 +285,9 @@ pub struct Playing {
     /// The subtitle last drawn, so that a new one is a reason to draw; and a picture
     /// subtitle's texture, kept for as long as it is the one on show.
     words_shown: Option<Arc<Cue>>,
-    words_picture: Option<(usize, Texture)>,
+    /// Held by the cue itself: by its address alone, a cue dropped and a new one made where it
+    /// had been showed the old one's picture.
+    words_picture: Option<(Arc<Cue>, Texture)>,
 }
 
 /// The `.srt` that goes with a film on this machine: the one with its name, or with its
@@ -490,11 +492,14 @@ impl Playing {
     }
 
     /// Close whatever this opened besides the window it was given.
-    pub fn close(mut self, app: &mut App, window: WindowId) {
+    pub fn close(mut self, app: &mut App, window: WindowId, painter: &mut Option<Painter>) {
         if let Some(sky) = self.sky.take() {
             app.close(sky);
         }
         if let Ok(gl) = app.gl() {
+            if let (Some(p), Some((_, old))) = (painter.as_mut(), self.words_picture.take()) {
+                p.forget(gl, old);
+            }
             self.screen.delete(gl);
         }
         app.set_eyes(window, EyeLayout::Mono, false);
@@ -562,6 +567,12 @@ impl Playing {
                 this.screen.load(gl, picture);
             }
             clear(gl);
+            // A picture subtitle no longer on show lets its texture go.
+            if cue.as_ref().zip(this.words_picture.as_ref()).is_none_or(|(cue, (held, _))| !Arc::ptr_eq(cue, held)) {
+                if let (Some(p), Some((_, old))) = (painter.as_mut(), this.words_picture.take()) {
+                    p.forget(gl, old);
+                }
+            }
             match staging {
                 Staging::Window { .. } => this.screen.draw(gl, size, whole, [0.0, 0.0, 1.0, 1.0]),
                 Staging::OneEye => this.screen.draw(gl, size, whole, one_eye),
@@ -642,14 +653,13 @@ impl Playing {
                 }
             }
             Words::Picture { rgba, width, height, place } => {
-                let key = Arc::as_ptr(cue) as usize;
-                if self.words_picture.map(|(held, _)| held) != Some(key) {
+                if self.words_picture.as_ref().is_none_or(|(held, _)| !Arc::ptr_eq(held, cue)) {
                     if let Some((_, old)) = self.words_picture.take() {
                         p.forget(gl, old);
                     }
-                    self.words_picture = p.texture(gl, rgba, *width, *height).ok().map(|texture| (key, texture));
+                    self.words_picture = p.texture(gl, rgba, *width, *height).ok().map(|texture| (cue.clone(), texture));
                 }
-                if let Some((_, texture)) = self.words_picture {
+                if let Some(texture) = self.words_picture.as_ref().map(|(_, texture)| *texture) {
                     let rect = Rect::new(all.x + place[0] * all.w + shift, all.y + place[1] * all.h - lifted.min(all.h * place[1]), place[2] * all.w, place[3] * all.h);
                     p.image(gl, texture, rect, [0.0, 0.0, 1.0, 1.0], 0.0, [1.0, 1.0, 1.0, 1.0], false);
                 }
