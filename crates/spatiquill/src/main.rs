@@ -588,6 +588,15 @@ impl Quill {
         Some((col, row))
     }
 
+    /// Whether a point is in the right half of its cell: a selection begun or ended there
+    /// leaves that cell out on its side, as every terminal has it.
+    fn right_half(&self, win: usize, x: f32) -> bool {
+        let (area, cols, _) = self.text_area(self.wins[win].size);
+        let Some((cw, _)) = self.grid.as_ref().map(|g| g.cell) else { return false };
+        let at = ((x - area.x) / cw).max(0.0);
+        at >= cols as f32 || at.fract() >= 0.5
+    }
+
     fn handle(&mut self, event: Event) -> bool {
         // Dark or light: every window drawn again in the theme's new colours. One picture or
         // two, or another size of eye: drawn again for it.
@@ -727,8 +736,9 @@ impl Quill {
                     }
                 } else if let Some((start, _)) = self.wins[w].selecting {
                     self.wins[w].selecting = Some((start, cell));
+                    let right = self.right_half(w, x);
                     if let Some(t) = self.tabs.get_mut(&tab) {
-                        t.tell(&ToTab::Select(Some((start, cell))));
+                        t.tell(&ToTab::SelectTo { col: cell.0, row: cell.1, right });
                     }
                 }
             }
@@ -794,13 +804,16 @@ impl Quill {
                     let Some(cell) = self.cell_at(w, x, y) else { return };
                     self.wins[w].pressed_in_text = true;
                     let mouse = self.tabs.get(&tab).is_some_and(|t| t.screen.mouse);
+                    let right = self.right_half(w, x);
                     let t = self.tabs.get_mut(&tab).unwrap();
                     if mouse {
                         t.tell(&ToTab::Mouse { button: 0, pressed: true, motion: false, col: cell.0, row: cell.1 });
                         self.wins[w].mouse_cell = Some(cell);
                     } else {
+                        // Begun in the tab, which holds where it began as a place in its text:
+                        // output scrolling the screen meanwhile takes it along.
                         self.wins[w].selecting = Some((cell, cell));
-                        t.tell(&ToTab::Select(None));
+                        t.tell(&ToTab::SelectFrom { col: cell.0, row: cell.1, right });
                     }
                 }
                 Hover::Nothing => {}

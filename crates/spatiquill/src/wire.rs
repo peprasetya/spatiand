@@ -74,6 +74,12 @@ pub enum ToTab {
     Mouse { button: u8, pressed: bool, motion: bool, col: u16, row: u16 },
     /// Select from one cell to another, in the screen as shown; `None` clears.
     Select(Option<((u16, u16), (u16, u16))>),
+    /// Begin selecting at a cell of the screen as shown, on its `right` half or its left: the
+    /// tab keeps where it began as a place in its text, which output scrolling the screen
+    /// takes along. Nothing is selected until [`ToTab::SelectTo`].
+    SelectFrom { col: u16, row: u16, right: bool },
+    /// Select from where [`ToTab::SelectFrom`] began to this cell of the screen as shown.
+    SelectTo { col: u16, row: u16, right: bool },
     /// Send back what is selected as [`FromTab::Copied`].
     Copy,
     /// Select everything: the history and the screen.
@@ -187,6 +193,12 @@ impl ToTab {
                 }
                 b'X'
             }
+            ToTab::SelectFrom { col, row, right } | ToTab::SelectTo { col, row, right } => {
+                put_u16(&mut b, *col);
+                put_u16(&mut b, *row);
+                b.push(*right as u8);
+                if matches!(self, ToTab::SelectFrom { .. }) { b'Y' } else { b'Z' }
+            }
             ToTab::Copy => b'C',
             ToTab::SelectAll => b'A',
             ToTab::Focus(on) => {
@@ -222,6 +234,8 @@ impl ToTab {
                     ToTab::Select(Some(((b.u16()?, b.u16()?), (b.u16()?, b.u16()?))))
                 }
             }
+            b'Y' => ToTab::SelectFrom { col: b.u16()?, row: b.u16()?, right: b.u8()? != 0 },
+            b'Z' => ToTab::SelectTo { col: b.u16()?, row: b.u16()?, right: b.u8()? != 0 },
             b'C' => ToTab::Copy,
             b'A' => ToTab::SelectAll,
             b'F' => ToTab::Focus(b.u8()? != 0),
@@ -401,6 +415,8 @@ mod tests {
             ToTab::Scroll(-5),
             ToTab::Paste(b"'/tmp/caf\xe9.txt' ".to_vec()),
             ToTab::Select(None),
+            ToTab::SelectFrom { col: 3, row: 7, right: true },
+            ToTab::SelectTo { col: 300, row: 1, right: false },
             ToTab::SelectAll,
             ToTab::Resize { cols: 80, rows: 24, cell_w: 12, cell_h: 26 },
         ];

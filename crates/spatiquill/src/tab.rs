@@ -212,6 +212,29 @@ fn mouse_report(mode: TermMode, button: u8, pressed: bool, motion: bool, col: u1
     Some(vec![0x1b, b'[', b'M', 32 + code, x, y])
 }
 
+/// A cell of the screen as shown, as a place in the terminal's text, and the side of it.
+fn shown_point<T>(term: &Term<T>, col: u16, row: u16, right: bool) -> (Point, Side) {
+    let offset = term.grid().display_offset() as i32;
+    let last = term.columns().saturating_sub(1);
+    (Point::new(Line(row as i32 - offset), Column((col as usize).min(last))), if right { Side::Right } else { Side::Left })
+}
+
+/// Begin a selection at a cell of the screen as shown. The terminal holds where it began as a
+/// place in its text and moves it as output scrolls (`Selection::rotate`), so a drag that goes
+/// on while a program writes keeps its start on the text it began on.
+fn select_from<T>(term: &mut Term<T>, col: u16, row: u16, right: bool) {
+    let (point, side) = shown_point(term, col, row, right);
+    term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+}
+
+/// Take the selection begun by `select_from` to a cell of the screen as shown.
+fn select_to<T>(term: &mut Term<T>, col: u16, row: u16, right: bool) {
+    let (point, side) = shown_point(term, col, row, right);
+    if let Some(selection) = term.selection.as_mut() {
+        selection.update(point, side);
+    }
+}
+
 pub fn run() -> io::Result<()> {
     let mut input = io::stdin();
     let output = Arc::new(std::sync::Mutex::new(io::stdout()));
@@ -354,6 +377,8 @@ pub fn run() -> io::Result<()> {
                         selection
                     });
                 }
+                ToTab::SelectFrom { col, row, right } => select_from(&mut reading_term.lock(), col, row, right),
+                ToTab::SelectTo { col, row, right } => select_to(&mut reading_term.lock(), col, row, right),
                 ToTab::Copy => {
                     let text = reading_term.lock().selection_to_string().unwrap_or_default();
                     if !send(FromTab::Copied(text)) {
@@ -491,6 +516,25 @@ mod tests {
         assert_eq!(indexed(231, &colours), [255, 255, 255]);
         assert_eq!(indexed(196, &colours), [255, 0, 0]);
         assert_eq!(indexed(232, &colours), [8, 8, 8]);
+    }
+
+    #[test]
+    fn a_selection_keeps_its_start_while_output_scrolls() {
+        let (events, _heard) = channel();
+        let mut term = Term::new(Config::default(), &Size { cols: 10, rows: 3 }, Listener(events));
+        let mut parser = alacritty_terminal::vte::ansi::Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::new();
+        parser.advance(&mut term, b"one\r\ntwo\r\nthree");
+        // Pressed on "two", the screen's second row.
+        select_from(&mut term, 0, 1, false);
+        // A line written meanwhile: "two" is now the first row, "three" the second.
+        parser.advance(&mut term, b"\r\nfour");
+        select_to(&mut term, 4, 1, true);
+        assert_eq!(term.selection_to_string().as_deref(), Some("two\nthree"));
+        // Back to where it began, and on along its own line.
+        select_to(&mut term, 0, 0, false);
+        assert_eq!(term.selection_to_string(), None);
+        select_to(&mut term, 2, 0, true);
+        assert_eq!(term.selection_to_string().as_deref(), Some("two"));
     }
 
     #[test]
