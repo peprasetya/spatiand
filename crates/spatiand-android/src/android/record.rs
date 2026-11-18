@@ -91,14 +91,26 @@ impl Recorder {
         let surround = ring(spatiand_audio::server::SURROUND_CHANNELS);
         let mic = ring(1);
         let into = mic.clone();
-        let microphone = match spatiand_audio::server::Capture::open(
-            RATE,
-            1,
-            Box::new(move |samples: &[i16]| {
-                let floats: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
-                into.write(&floats);
-            }),
-        ) {
+        // **On the Mac, not before its owner has allowed it**, as dictation and a host's
+        // microphone wait: opened earlier, macOS asks on a screen the wearer cannot see or click,
+        // with the mouse the room's. Until then the track is silence.
+        #[cfg(target_os = "macos")]
+        let allowed = crate::mac::MICROPHONE_ALLOWED.load(Ordering::Relaxed);
+        #[cfg(not(target_os = "macos"))]
+        let allowed = true;
+        let opened = if allowed {
+            spatiand_audio::server::Capture::open(
+                RATE,
+                1,
+                Box::new(move |samples: &[i16]| {
+                    let floats: Vec<f32> = samples.iter().map(|s| *s as f32 / 32768.0).collect();
+                    into.write(&floats);
+                }),
+            )
+        } else {
+            Err("Spatiand may not use the microphone yet: \u{201C}Allow the microphone\u{201D} in Spatiand's menu on the Mac".into())
+        };
+        let microphone = match opened {
             Ok(capture) => Some(capture),
             Err(e) => {
                 log::warn!("recording: the microphone track will be silent ({e})");
