@@ -79,7 +79,8 @@ struct Pal {
     settings: Settings,
     speech: VoiceSettings,
     chats: Vec<Chat>,
-    current: Option<usize>,
+    /// The chat open, by its id: the list is sorted again whenever it is read.
+    current: Option<String>,
     answering: Option<Answering>,
     look: bool,
     trouble: Option<(String, Instant)>,
@@ -124,7 +125,7 @@ macro_rules! view {
     ($pal:expr) => {
         View {
             chats: &$pal.chats,
-            current: $pal.current,
+            current: $pal.current.as_ref().and_then(|id| $pal.chats.iter().position(|c| &c.id == id)),
             answering: $pal.answering.as_ref(),
             settings: &$pal.settings,
             speech: &$pal.speech,
@@ -177,7 +178,9 @@ impl Pal {
         self.ready = false;
         self.dirty = true;
         self.chats = store::chats();
-        self.current = self.current.or(if self.chats.is_empty() { None } else { Some(0) });
+        // The chat that was open stays open, wherever the list now puts it.
+        let kept = self.current.take().filter(|id| self.chats.iter().any(|c| &c.id == id));
+        self.current = kept.or_else(|| self.chats.first().map(|c| c.id.clone()));
     }
 
     fn close_window(&mut self) {
@@ -254,17 +257,20 @@ impl Pal {
 
     /// The chat a new turn goes in: the last one if it was recent enough, else a new one.
     fn chat_for_turn(&mut self) -> usize {
-        if let Some(i) = self.current {
+        if let Some(i) = self.current_index() {
             return i;
         }
         let recent = self.chats.first().is_some_and(|c| store::now().saturating_sub(c.updated) <= self.settings.continue_hours as u64 * 3600);
-        if recent {
-            self.current = Some(0);
-            return 0;
+        if !recent {
+            self.chats.insert(0, Chat::new());
         }
-        self.chats.insert(0, Chat::new());
-        self.current = Some(0);
+        self.current = Some(self.chats[0].id.clone());
         0
+    }
+
+    /// Where the chat open is in the list.
+    fn current_index(&self) -> Option<usize> {
+        self.current.as_ref().and_then(|id| self.chats.iter().position(|c| &c.id == id))
     }
 
     /// Have hemera ready with what the next answer needs (`crate::warm`); not again for a few
@@ -305,17 +311,22 @@ impl Pal {
             model: if a.handed_over { a.model } else { String::new() },
             at: store::now(),
         };
-        self.keep_answer(said);
+        let a = Answering { chat: a.chat, ..Default::default() };
+        self.keep_answer(&a.chat, said);
     }
 
-    /// An answer, into the chat it was asked in.
-    fn keep_answer(&mut self, said: Said) {
-        if let Some(chat) = self.current.and_then(|i| self.chats.get_mut(i)) {
-            chat.said.push(said);
-            chat.updated = store::now();
-            if let Err(e) = chat.save() {
-                log::warn!("the chat could not be kept: {e}");
+    /// An answer, into the chat it was asked in -- by its id, whichever chat is open now. A chat
+    /// forgotten meanwhile is not made again.
+    fn keep_answer(&mut self, chat: &str, said: Said) {
+        match self.chats.iter_mut().find(|c| c.id == chat) {
+            Some(chat) => {
+                chat.said.push(said);
+                chat.updated = store::now();
+                if let Err(e) = chat.save() {
+                    log::warn!("the chat could not be kept: {e}");
+                }
             }
+            None => log::info!("an answer for a chat since forgotten: not kept"),
         }
     }
 
@@ -325,6 +336,7 @@ impl Pal {
             self.voice.hush();
         }
         let i = self.chat_for_turn();
+        let chat_id = self.chats[i].id.clone();
         let history = self.chats[i].said.clone();
         let chat = &mut self.chats[i];
         chat.said.push(Said { role: "user".into(), text: text.clone(), at: store::now(), ..Default::default() });
@@ -336,7 +348,7 @@ impl Pal {
             log::warn!("the chat could not be kept: {e}");
         }
         let turn = Turn { number: 0, text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), ended };
-        self.answering = self.brain.ask(turn).map(|turn| Answering { turn, ..Default::default() });
+        self.answering = self.brain.ask(turn).map(|turn| Answering { turn, chat: chat_id, ..Default::default() });
         self.dirty = true;
     }
 
@@ -364,10 +376,11 @@ impl Pal {
                 self.say_trouble(&why);
             }
             Told::Done(said) => {
+                let chat = std::mem::take(&mut a.chat);
                 self.answering = None;
                 self.conversation.touch();
                 self.finished_at = Some(Instant::now());
-                self.keep_answer(said);
+                self.keep_answer(&chat, said);
             }
         }
         self.dirty = true;
@@ -429,15 +442,23 @@ impl Pal {
         match want {
             Want::Ask(text) => self.ask(text, None),
             Want::NewChat => {
-                self.current = None;
-                self.chats.insert(0, Chat::new());
-                self.current = Some(0);
+                let chat = Chat::new();
+                self.current = Some(chat.id.clone());
+                self.chats.insert(0, chat);
             }
-            Want::OpenChat(i) => self.current = Some(i).filter(|i| *i < self.chats.len()),
-            Want::ForgetChat(i) => {
-                if i < self.chats.len() {
+            Want::OpenChat(i) => {
+                if let Some(c) = self.chats.get(i) {
+                    self.current = Some(c.id.clone());
+                }
+            }
+            // By its id: the chat the wearer chose, wherever it is in the list now. Only it is
+            // closed if it was the one open.
+            Want::ForgetChat(id) => {
+                if let Some(i) = self.chats.iter().position(|c| c.id == id) {
                     self.chats.remove(i).forget();
-                    self.current = None;
+                    if self.current.as_deref() == Some(id.as_str()) {
+                        self.current = None;
+                    }
                 }
             }
             Want::Listening => {
@@ -624,7 +645,7 @@ impl Pal {
                 return self.settings.on;
             }
             Event::Describe { window } => {
-                let text = self.current.and_then(|i| self.chats.get(i)).map(|c| c.said.iter().rev().take(6).rev().map(|s| format!("{}: {}", s.role, s.text)).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+                let text = self.current_index().and_then(|i| self.chats.get(i)).map(|c| c.said.iter().rev().take(6).rev().map(|s| format!("{}: {}", s.role, s.text)).collect::<Vec<_>>().join("\n")).unwrap_or_default();
                 self.app.describe(*window, &spatiand_app::Description { kind: "chat".into(), app: "SpatiPal".into(), title: self.settings.name.clone(), text, ..Default::default() });
                 return true;
             }

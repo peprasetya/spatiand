@@ -17,6 +17,8 @@ use crate::store::{Chat, Said, Settings};
 pub struct Answering {
     /// The brain's number for the turn: what it says of any other is not this answer's.
     pub turn: u64,
+    /// The chat it was asked in, by its id: it is kept there, whichever is open when it ends.
+    pub chat: String,
     pub text: String,
     pub thinking: String,
     pub did: Vec<String>,
@@ -48,7 +50,8 @@ pub enum Want {
     Ask(String),
     NewChat,
     OpenChat(usize),
-    ForgetChat(usize),
+    /// Forget a chat, by its id.
+    ForgetChat(String),
     Listening,
     Spoken,
     Look,
@@ -120,7 +123,8 @@ pub struct Window {
     /// within a few seconds the chat is forgotten.
     forget: Button,
     forget_row: Option<usize>,
-    armed: Option<(usize, std::time::Instant)>,
+    /// The chat whose bin was pressed once, by its id, and when.
+    armed: Option<(String, std::time::Instant)>,
 }
 
 impl Window {
@@ -219,7 +223,7 @@ impl Window {
             .map(|c| Row::with(if c.title.is_empty() { "New chat".to_string() } else { c.title.clone() }, crate::time::short(c.updated)))
             .collect();
         let hovered = self.chats.hovered();
-        let armed = self.armed.filter(|(_, at)| at.elapsed() < ARMED_FOR).map(|(i, _)| i);
+        let armed = self.armed.as_ref().filter(|(_, at)| at.elapsed() < ARMED_FOR).and_then(|(id, _)| view.chats.iter().position(|c| &c.id == id));
         let mut rows = rows;
         // The chat under the pointer shows its bin where its time was.
         if let Some(row) = hovered.or(armed).and_then(|i| rows.get_mut(i)) {
@@ -340,12 +344,10 @@ impl Window {
                     return None;
                 }
                 Input::Press { pressed: false, .. } if self.forget.input(&input) => {
-                    if self.armed.is_some_and(|(at, when)| at == i && when.elapsed() < ARMED_FOR) {
-                        self.armed = None;
-                        return Some(Want::ForgetChat(i));
-                    }
-                    self.armed = Some((i, std::time::Instant::now()));
-                    return None;
+                    // By the chat's id: the list may have moved under the pointer between the
+                    // two presses.
+                    let Some(id) = view.chats.get(i).map(|c| c.id.clone()) else { return None };
+                    return self.arm_or_forget(id);
                 }
                 Input::Pointer { .. } | Input::PointerLeft => {
                     self.forget.input(&input);
@@ -382,12 +384,22 @@ impl Window {
         // A chat is forgotten with its bin (pressed twice), or Control/Super-Delete on the one open.
         if let Input::Key { key: spatiand_app::Key::Delete, modifiers, .. } = &input {
             if (modifiers.logo || modifiers.control) && view.current.is_some() {
-                return view.current.map(Want::ForgetChat);
+                return view.current.and_then(|i| view.chats.get(i)).map(|c| Want::ForgetChat(c.id.clone()));
             }
         }
         if let Some(Typed::Entered) = self.field.input(&input) {
             return self.take_field();
         }
+        None
+    }
+
+    /// The first press on a chat's bin arms it; a second within a few seconds forgets it.
+    fn arm_or_forget(&mut self, id: String) -> Option<Want> {
+        if self.armed.as_ref().is_some_and(|(at, when)| *at == id && when.elapsed() < ARMED_FOR) {
+            self.armed = None;
+            return Some(Want::ForgetChat(id));
+        }
+        self.armed = Some((id, std::time::Instant::now()));
         None
     }
 
