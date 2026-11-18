@@ -159,8 +159,11 @@ impl Window {
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, view: &View) {
         let mut all = p.bounds().inset(theme::PAD);
-        let beside = view.status.to_string();
-        look::header(p, gl, &mut all, &view.settings.name, &beside);
+        // The app's name heads its first screen; Settings has its own head, with the way back.
+        if self.page == Page::Chat {
+            let beside = view.status.to_string();
+            look::header(p, gl, &mut all, &view.settings.name, &beside);
+        }
         match self.page {
             Page::Chat => self.draw_chat(p, gl, all, view),
             Page::Settings => self.draw_settings(p, gl, all, view),
