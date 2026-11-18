@@ -435,37 +435,37 @@ All fourteen done on 2026-11-18 (the commits in the last column). What the per-a
 
 ### SpatiPal
 
-| # | Where | Now | Rule | Change | Size |
-|---|---|---|---|---|---|
-| 1 | `ui.rs:11`, `:227`, `:241-248`, `:389-407` | A chat is deleted by pressing its bin twice within 4 s (the second press's label "Delete"); Cmd-Delete the same | 12 | One press (or Cmd-Delete) asks `Confirm::careful("Delete this chat? It cannot be had back.", "Delete", "Cancel")`; drop `ARMED_FOR` and `armed` | M |
-| 2 | `time.rs:61-69` | A chat's time is "14:47" or "4/10" | 18 | `look::when` [SDK 5] | S |
-| 3 | `main.rs:147` | What went wrong stays 12 s | 13 | `Duration::from_secs(8)` | S |
-| 4 | `main.rs:238` | "the room would not give its microphone": lower case, no full stop | 13, 18 | `"The room would not give its microphone."`; give the same treatment to what reaches `say_trouble` at `main.rs:414`, `:439`, `:543`, `:546`, `:685` (capitalise the first letter and end with a full stop inside `say_trouble`, `main.rs:264`, if not already so) | S |
-| 5 | `ui.rs:165` | Window margin `theme::PAD * 0.6` | 4 | `theme::PAD` | S |
-| 6 | `ui.rs:270-282` | The conversation scrolls with no scrollbar | 11 | `look::scrollbar(p, gl, Rect { x: all.right() - theme::SCROLL_WIDTH, w: theme::SCROLL_WIDTH, ..all }, all.h, tall, tall - all.h - self.scroll)` when `tall > all.h` [SDK 4] | S |
-| 7 | `ui.rs:287-291` | Settings is a screen left by "Done" at the foot right | 12 | `look::top(.., &mut self.back, "Back", Icon::Back, "Settings", "")` at its head [SDK 6]; Escape with no edit open goes back | M |
-| 8 | `ui.rs:211` (the "+" button) | A new chat has no key | 15 | Cmd-N starts one (`Input::Key { key: Key::Char('n'), .. }` with Control or logo) | S |
-| 9 | `ui.rs:293` | The edit field's hint is a sentence about keys: "… — Enter or a click elsewhere keeps it, Escape drops it" | 18 | Hint `label(line)` only; under the list, `look::keys(.., "[Enter] Keep  [Esc] Drop", 0.0, 1.0)` | S |
+| # | Where | Now | Rule | Change | Size | Done |
+|---|---|---|---|---|---|---|
+| ~~1~~ | `ui.rs:11`, `:227`, `:241-248`, `:389-407` | A chat is deleted by pressing its bin twice within 4 s (the second press's label "Delete"); Cmd-Delete the same | 12 | One press (or Cmd-Delete) asks `Confirm::careful("Delete this chat? It cannot be had back.", "Delete", "Cancel")`; drop `ARMED_FOR` and `armed` | M | done, `942b8d8` |
+| ~~2~~ | `time.rs:61-69` | A chat's time is "14:47" or "4/10" | 18 | `look::when` [SDK 5] | S | done by the SDK work, checked, `56baea9` |
+| ~~3~~ | `main.rs:147` | What went wrong stays 12 s | 13 | `Duration::from_secs(8)` | S | done, `942b8d8` |
+| ~~4~~ | `main.rs:238` | "the room would not give its microphone": lower case, no full stop | 13, 18 | `"The room would not give its microphone."`; give the same treatment to what reaches `say_trouble` at `main.rs:414`, `:439`, `:543`, `:546`, `:685` (capitalise the first letter and end with a full stop inside `say_trouble`, `main.rs:264`, if not already so) | S | done, `942b8d8` |
+| ~~5~~ | `ui.rs:165` | Window margin `theme::PAD * 0.6` | 4 | `theme::PAD` | S | done, `942b8d8` |
+| ~~6~~ | `ui.rs:270-282` | The conversation scrolls with no scrollbar | 11 | `look::scrollbar(p, gl, Rect { x: all.right() - theme::SCROLL_WIDTH, w: theme::SCROLL_WIDTH, ..all }, all.h, tall, tall - all.h - self.scroll)` when `tall > all.h` [SDK 4] | S | done, `942b8d8` |
+| ~~7~~ | `ui.rs:287-291` | Settings is a screen left by "Done" at the foot right | 12 | `look::top(.., &mut self.back, "Back", Icon::Back, "Settings", "")` at its head [SDK 6]; Escape with no edit open goes back | M | done, `942b8d8`; the app's name head is not drawn above Settings' own, `3d6990a` |
+| ~~8~~ | `ui.rs:211` (the "+" button) | A new chat has no key | 15 | Cmd-N starts one (`Input::Key { key: Key::Char('n'), .. }` with Control or logo) | S | done, `942b8d8` |
+| ~~9~~ | `ui.rs:293` | The edit field's hint is a sentence about keys: "… — Enter or a click elsewhere keeps it, Escape drops it" | 18 | Hint `label(line)` only; under the list, `look::keys(.., "[Enter] Keep  [Esc] Drop", 0.0, 1.0)` | S | done, `942b8d8` |
 
 ### SpatiKey
 
-| # | Where | Now | Rule | Change | Size |
-|---|---|---|---|---|---|
-| 1 | `ui.rs:454-517` | Own `Confirm` | 12 | `ui::Confirm::careful` [SDK 3] | S after |
-| 2 | `open.rs:442`, `:1249`, `:1263` | The no is "Keep it" | 18 | `"Cancel"` | S |
-| 3 | `open.rs:659-661` | "Load it" / "Not now" | 18 | `"Load it"` / `"Cancel"` | S |
-| 4 | `open.rs:835` | "Leave" / "Keep editing" | 18 | `"Leave"` / `"Cancel"` | S |
-| 5 | `main.rs:932-934`, `:940` | Quitting with a code unsaved or changes unsaved: SDK `Confirm::new`, the yes lit | 12 | `Confirm::careful` | S |
-| 6 | `main.rs:379`, `:396`, `:398`, `:423`, `:428`, `:433`, `:444`, `:457` ("Forgetting"), `:465` | Words for something going on have no ellipsis: "Opening", "Saving", "Looking for Macs on this network" | 18 | End each with `\u{2026}` | S |
-| 7 | `open.rs:56` | The field's hint is "Search" | 18 | `"Find in SpatiKey"` | S |
-| 8 | `main.rs:955` | `describe` gives a title and no app | 19 | `Description { app: TITLE.into(), title: TITLE.into(), ..Default::default() }` (kind and text stay empty) | S |
-| 9 | `ui.rs:413-423` | A date is always "29 Oct 2026" | 18 | `look::when` [SDK 5] | S |
-| 10 | `ui.rs:248-259` | Own `top` | 4 | `look::top` [SDK 6] | S |
-| 11 | `ui.rs:232` | Window margin `theme::PAD * 0.8` | 4 | `theme::PAD` | S |
-| 12 | `main.rs:53` | What was done stays 6 s | 13 | `Duration::from_secs(5)` | S |
-| 13 | `locked.rs:562` | "This device" on every platform | 18 | `look::this_device()` [SDK 12] | S |
-| 14 | `locked.rs:566`, `:585`, `:594`, `:600`, `:618`, `:623`, `:784`; `main.rs:365`; `open.rs:1153`; `ui.rs:372`, `:376`, `:382`, `:384` | A device that asks another says "your Mac" and "Touch ID on {mac}", though since `b35ed2c` the holder that answers may be a phone | 18 | Name the holder by its kind: "Touch ID on {name}" / "your fingerprint on {name}" through `ui::sensor(kind)`; "your Mac" becomes "a device that opens SpatiKey" in prose and the holder's name on buttons ("Pair with {name}") | M |
-| 15 | `locked.rs:90` | Prose names "The Steam Deck and the Beam Pro" | 18 | `"Devices with no sensor of their own ask one of them each time, …"` | S |
+| # | Where | Now | Rule | Change | Size | Done |
+|---|---|---|---|---|---|---|
+| ~~1~~ | `ui.rs:454-517` | Own `Confirm` | 12 | `ui::Confirm::careful` [SDK 3] | S | done by the SDK work, checked, `d505867` |
+| ~~2~~ | `open.rs:442`, `:1249`, `:1263` | The no is "Keep it" | 18 | `"Cancel"` | S | done, `35e48a7` |
+| ~~3~~ | `open.rs:659-661` | "Load it" / "Not now" | 18 | `"Load it"` / `"Cancel"` | S | done, `35e48a7` |
+| ~~4~~ | `open.rs:835` | "Leave" / "Keep editing" | 18 | `"Leave"` / `"Cancel"` | S | done, `35e48a7` |
+| ~~5~~ | `main.rs:932-934`, `:940` | Quitting with a code unsaved or changes unsaved: SDK `Confirm::new`, the yes lit | 12 | `Confirm::careful` | S | done, `35e48a7` |
+| ~~6~~ | `main.rs:379`, `:396`, `:398`, `:423`, `:428`, `:433`, `:444`, `:457` ("Forgetting"), `:465` | Words for something going on have no ellipsis: "Opening", "Saving", "Looking for Macs on this network" | 18 | End each with `\u{2026}` | S | done, `35e48a7` |
+| ~~7~~ | `open.rs:56` | The field's hint is "Search" | 18 | `"Find in SpatiKey"` | S | done, `35e48a7` |
+| ~~8~~ | `main.rs:955` | `describe` gives a title and no app | 19 | `Description { app: TITLE.into(), title: TITLE.into(), ..Default::default() }` (kind and text stay empty) | S | done, `35e48a7` |
+| ~~9~~ | `ui.rs:413-423` | A date is always "29 Oct 2026" | 18 | `look::when` [SDK 5] | S | done by the SDK work, checked, `56baea9` |
+| ~~10~~ | `ui.rs:248-259` | Own `top` | 4 | `look::top` [SDK 6] | S | done by the SDK work, checked, `a6e3d65` |
+| ~~11~~ | `ui.rs:232` | Window margin `theme::PAD * 0.8` | 4 | `theme::PAD` | S | done, `35e48a7` |
+| ~~12~~ | `main.rs:53` | What was done stays 6 s | 13 | `Duration::from_secs(5)` | S | done, `35e48a7` |
+| ~~13~~ | `locked.rs:562` | "This device" on every platform | 18 | `look::this_device()` [SDK 12] | S | done, `35e48a7` |
+| ~~14~~ | `locked.rs:566`, `:585`, `:594`, `:600`, `:618`, `:623`, `:784`; `main.rs:365`; `open.rs:1153`; `ui.rs:372`, `:376`, `:382`, `:384` | A device that asks another says "your Mac" and "Touch ID on {mac}", though since `b35ed2c` the holder that answers may be a phone | 18 | Name the holder by its kind: "Touch ID on {name}" / "your fingerprint on {name}" through `ui::sensor(kind)`; "your Mac" becomes "a device that opens SpatiKey" in prose and the holder's name on buttons ("Pair with {name}") | M | done, `35e48a7` |
+| ~~15~~ | `locked.rs:90` | Prose names "The Steam Deck and the Beam Pro" | 18 | `"Devices with no sensor of their own ask one of them each time, …"` | S | done, `35e48a7` |
 
 ### SpatiReel
 
