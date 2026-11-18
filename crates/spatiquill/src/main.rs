@@ -588,9 +588,9 @@ impl Quill {
             Event::DragLeft { .. } => self.wins[w].dropping = None,
             Event::Dropped { .. } => {
                 if let Some(form) = self.wins[w].dropping.take() {
+                    // Bytes as they come: a file's name need not be UTF-8, and is typed as its own.
                     let bytes = self.app.drop_data(form).unwrap_or_default();
-                    let text = String::from_utf8_lossy(&bytes);
-                    let typed = if form == "text/uri-list" { paths_typed(&text) } else { text.into_owned() };
+                    let typed = if form == "text/uri-list" { paths_typed(&bytes) } else { bytes };
                     if let Some(t) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)).filter(|_| !typed.is_empty()) {
                         t.tell(&ToTab::Paste(typed));
                     }
@@ -822,7 +822,7 @@ impl Quill {
     fn paste(&mut self, w: usize) {
         let Some(text) = self.app.clipboard_text().filter(|t| !t.is_empty()) else { return };
         if let Some(t) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
-            t.tell(&ToTab::Paste(text));
+            t.tell(&ToTab::Paste(text.into_bytes()));
         }
     }
 
@@ -1323,28 +1323,27 @@ fn main() {
 const DROP_FORMS: &[&str] = &["text/uri-list", "text/plain;charset=utf-8", "text/plain"];
 
 /// A `text/uri-list` as a shell is to be given it: each `file:` address's path, quoted where it
-/// needs to be, a space between and after.
-fn paths_typed(list: &str) -> String {
-    let paths: Vec<String> = list
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| match l.strip_prefix("file://") {
+/// needs to be, a space between and after. In bytes: a path is its bytes, UTF-8 or not.
+fn paths_typed(list: &[u8]) -> Vec<u8> {
+    let paths: Vec<Vec<u8>> = list
+        .split(|&b| b == b'\n')
+        .map(|l| l.trim_ascii())
+        .filter(|l| !l.is_empty() && !l.starts_with(b"#"))
+        .map(|l| match l.strip_prefix(b"file://") {
             Some(rest) => {
-                let path = if rest.starts_with('/') { rest } else { rest.find('/').map_or("", |i| &rest[i..]) };
+                let path = if rest.starts_with(b"/") { rest } else { rest.iter().position(|&b| b == b'/').map_or(&[][..], |i| &rest[i..]) };
                 decode(path)
             }
-            None => l.to_string(),
+            None => l.to_vec(),
         })
         .filter(|p| !p.is_empty())
         .map(|p| quoted(&p))
         .collect();
-    if paths.is_empty() { String::new() } else { paths.join(" ") + " " }
+    if paths.is_empty() { Vec::new() } else { [paths.join(&b' '), vec![b' ']].concat() }
 }
 
 /// `%XX` back to its byte.
-fn decode(text: &str) -> String {
-    let bytes = text.as_bytes();
+fn decode(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -1361,16 +1360,25 @@ fn decode(text: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    out
 }
 
 /// A path as a shell reads it back as the same path: in single quotes unless it has nothing a
 /// shell would take for something else.
-fn quoted(path: &str) -> String {
-    if !path.is_empty() && path.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+,:@%".contains(c)) {
-        return path.to_string();
+fn quoted(path: &[u8]) -> Vec<u8> {
+    if !path.is_empty() && path.iter().all(|&b| b.is_ascii_alphanumeric() || b"/._-+,:@%".contains(&b)) {
+        return path.to_vec();
     }
-    format!("'{}'", path.replace('\'', "'\\''"))
+    let mut out = vec![b'\''];
+    for &b in path {
+        if b == b'\'' {
+            out.extend_from_slice(b"'\\''");
+        } else {
+            out.push(b);
+        }
+    }
+    out.push(b'\'');
+    out
 }
 
 #[cfg(test)]
@@ -1404,20 +1412,27 @@ mod drop_tests {
 
     #[test]
     fn dropped_files_are_typed_as_paths() {
-        let list = "file:///home/me/notes.txt\r\nfile:///home/me/My%20Files/it's.png\r\n";
-        assert_eq!(paths_typed(list), "/home/me/notes.txt '/home/me/My Files/it'\\''s.png' ");
-        assert_eq!(paths_typed("# nothing\r\n"), "");
+        let list = b"file:///home/me/notes.txt\r\nfile:///home/me/My%20Files/it's.png\r\n";
+        assert_eq!(paths_typed(list), b"/home/me/notes.txt '/home/me/My Files/it'\\''s.png' ");
+        assert_eq!(paths_typed(b"# nothing\r\n"), b"");
+    }
+
+    #[test]
+    fn a_name_that_is_not_utf8_is_typed_as_its_bytes() {
+        assert_eq!(paths_typed(b"file:///tmp/caf%E9.txt\r\n"), b"'/tmp/caf\xe9.txt' ");
+        assert_eq!(paths_typed(b"file:///tmp/caf\xe9.txt\r\n"), b"'/tmp/caf\xe9.txt' ");
     }
 
     #[test]
     fn an_escape_is_two_hex_digits_and_nothing_else() {
-        assert_eq!(decode("/a%20b"), "/a b");
+        let d = |s: &str| String::from_utf8(decode(s.as_bytes())).unwrap();
+        assert_eq!(d("/a%20b"), "/a b");
         // A character of two bytes straight after the %: not cut in two.
-        assert_eq!(decode("/%a\u{e9}"), "/%a\u{e9}");
-        assert_eq!(decode("/%\u{e9}9"), "/%\u{e9}9");
+        assert_eq!(d("/%a\u{e9}"), "/%a\u{e9}");
+        assert_eq!(d("/%\u{e9}9"), "/%\u{e9}9");
         // A sign is not a digit.
-        assert_eq!(decode("/%+5"), "/%+5");
-        assert_eq!(decode("/%4"), "/%4");
+        assert_eq!(d("/%+5"), "/%+5");
+        assert_eq!(d("/%4"), "/%4");
     }
 }
 

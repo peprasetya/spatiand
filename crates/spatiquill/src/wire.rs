@@ -63,7 +63,8 @@ pub enum ToTab {
     /// `copy_first`: if something is selected, the key is not sent; what is selected is
     /// copied ([`FromTab::Copied`]) and the selection cleared instead (Control-C).
     Key { key: u8, code: u32, text: String, shift: bool, control: bool, alt: bool, copy_first: bool },
-    Paste(String),
+    /// Bytes, not text: a dropped file's name is its own bytes, UTF-8 or not.
+    Paste(Vec<u8>),
     Resize { cols: u16, rows: u16, cell_w: u16, cell_h: u16 },
     /// Move the view up the history by so many lines (down if less than none), or to the
     /// foot with `i32::MIN`.
@@ -101,8 +102,11 @@ fn put_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
 fn put_str(out: &mut Vec<u8>, s: &str) {
-    put_u32(out, s.len() as u32);
-    out.extend_from_slice(s.as_bytes());
+    put_bytes(out, s.as_bytes());
+}
+fn put_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    put_u32(out, bytes.len() as u32);
+    out.extend_from_slice(bytes);
 }
 
 /// Reading a message's body.
@@ -126,9 +130,12 @@ impl Body<'_> {
     fn u32(&mut self) -> Option<u32> {
         self.take(4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
-    fn str(&mut self) -> Option<String> {
+    fn bytes(&mut self) -> Option<&[u8]> {
         let n = self.u32()? as usize;
-        self.take(n).map(|b| String::from_utf8_lossy(b).into_owned())
+        self.take(n)
+    }
+    fn str(&mut self) -> Option<String> {
+        self.bytes().map(|b| String::from_utf8_lossy(b).into_owned())
     }
 }
 
@@ -151,8 +158,8 @@ impl ToTab {
                 put_str(&mut b, text);
                 b'K'
             }
-            ToTab::Paste(text) => {
-                put_str(&mut b, text);
+            ToTab::Paste(bytes) => {
+                put_bytes(&mut b, bytes);
                 b'P'
             }
             ToTab::Resize { cols, rows, cell_w, cell_h } => {
@@ -200,7 +207,7 @@ impl ToTab {
                 let m = b.u8()?;
                 ToTab::Key { key, code, shift: m & 1 != 0, control: m & 2 != 0, alt: m & 4 != 0, copy_first: m & 8 != 0, text: b.str()? }
             }
-            b'P' => ToTab::Paste(b.str()?),
+            b'P' => ToTab::Paste(b.bytes()?.to_vec()),
             b'R' => ToTab::Resize { cols: b.u16()?, rows: b.u16()?, cell_w: b.u16()?, cell_h: b.u16()? },
             b'S' => ToTab::Scroll(b.u32()? as i32),
             b'M' => {
@@ -392,6 +399,7 @@ mod tests {
             ToTab::Key { key: 3, code: 30, text: "é".into(), shift: true, control: false, alt: true, copy_first: false },
             ToTab::Key { key: 15, code: 46, text: "c".into(), shift: false, control: true, alt: false, copy_first: true },
             ToTab::Scroll(-5),
+            ToTab::Paste(b"'/tmp/caf\xe9.txt' ".to_vec()),
             ToTab::Select(None),
             ToTab::SelectAll,
             ToTab::Resize { cols: 80, rows: 24, cell_w: 12, cell_h: 26 },

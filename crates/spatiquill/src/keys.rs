@@ -94,13 +94,25 @@ pub fn own_chord(m: Modifiers) -> bool {
 /// What a paste sends the program: lines ended as Return ends them, and, for a program that
 /// asked for bracketed paste (`TermMode::BRACKETED_PASTE`), between its brackets -- with any
 /// Escape taken out, so pasted text cannot end the bracket early and be run as typed.
-pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
-    let text = text.replace("\r\n", "\r").replace('\n', "\r");
+/// Bytes, not text: what is pasted need not be UTF-8 (a dropped file's name).
+pub fn paste_bytes(text: &[u8], bracketed: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len() + 12);
     if bracketed {
-        format!("\x1b[200~{}\x1b[201~", text.replace('\x1b', "")).into_bytes()
-    } else {
-        text.into_bytes()
+        out.extend_from_slice(b"\x1b[200~");
     }
+    let mut bytes = text.iter().copied().peekable();
+    while let Some(b) = bytes.next() {
+        match b {
+            b'\r' if bytes.peek() == Some(&b'\n') => {}
+            b'\n' => out.push(b'\r'),
+            0x1b if bracketed => {}
+            b => out.push(b),
+        }
+    }
+    if bracketed {
+        out.extend_from_slice(b"\x1b[201~");
+    }
+    out
 }
 
 /// A key as a number, to cross from the window to the tab.
@@ -356,9 +368,12 @@ mod tests {
 
     #[test]
     fn a_paste_is_bracketed_when_the_program_asked() {
-        assert_eq!(paste_bytes("ls\npwd\r\n", false), b"ls\rpwd\r");
-        assert_eq!(paste_bytes("ls\n", true), b"\x1b[200~ls\r\x1b[201~");
+        assert_eq!(paste_bytes(b"ls\npwd\r\n", false), b"ls\rpwd\r");
+        assert_eq!(paste_bytes(b"ls\n", true), b"\x1b[200~ls\r\x1b[201~");
         // An Escape in the text cannot close the bracket early.
-        assert_eq!(paste_bytes("a\x1b[201~rm", true), b"\x1b[200~a[201~rm\x1b[201~");
+        assert_eq!(paste_bytes(b"a\x1b[201~rm", true), b"\x1b[200~a[201~rm\x1b[201~");
+        // A lone Return stays one; bytes that are not UTF-8 go as they are.
+        assert_eq!(paste_bytes(b"a\rb\r\n", false), b"a\rb\r");
+        assert_eq!(paste_bytes(b"caf\xe9", true), b"\x1b[200~caf\xe9\x1b[201~");
     }
 }
