@@ -497,20 +497,28 @@ All fourteen done on 2026-11-18 (the commits in the last column). What the per-a
 
 ### The room's own UI
 
-| # | Where | Now | Rule | Change | Size |
-|---|---|---|---|---|---|
-| 1 | `shell/environment.rs:15` | "Add an image..." with three dots | 18 | `"Add an image\u{2026}"` | S |
-| 2 | `shell/hud.rs:167` | "Looking for sound devices" | 18 | `"Looking for sound devices\u{2026}"` | S |
-| 3 | `room/startup.rs:65-74` | "Starting the graphics", "Loading the room", … with no ellipsis | 18 | End each with `\u{2026}` | S |
-| 4 | `shell/hud.rs:474` | "Press A to use this one" in a row's detail (the footer already says "A use") | 18 | `"Choose to use this one"`, as the other details ("Choose to change") | S |
-| 5 | `room/dictate.rs:204` | "Listening — press 🎤 to stop": a colour emoji, blank on the Beam Pro | 7 | `"Dictation\nListening \u{2014} press the microphone key to stop"` | S |
-| 6 | `room/spatikey.rs:372` | "Caps Lock is on: turn it off and try again" has no full stop | 18 | Add `.` | S |
-| 7 | `shell/launcher.rs:214` | This machine is "This computer" on every platform | 18 | "This Mac" on macOS, "This device" on Android, as `reel/source/local.rs:16-23` (the shell does not link the SDK: three `cfg!` arms) | S |
-| 8 | `choose/main.rs:400-406` | The chooser draws its two buttons by hand; its yes is filled `theme::selected()` / `theme::mark()`, the only "primary" look anywhere | 8 | Two `ui::Button`s; the yes `focused = true` | M |
-| 9 | `choose/main.rs:388` | Its title at `TITLE_EM * 0.7` | 1 | `theme::TITLE_EM * 0.8` | S |
-| 10 | `choose/main.rs:309`, `:328`, `:363` | "Type the file's name first", "Choose a file first", "Nothing is at {path}" have no full stop | 18 | Add `.` | S |
-| 11 | `choose/main.rs` (no `describe` call) | The chooser does not answer `Event::Describe` | 19 | On `Event::Describe`: `Description { kind: "files".into(), app: "Spatiand".into(), title: self.title(), text: field text, directory, vocabulary: the names shown }` | S |
-| 12 | `room/menu.rs:134-499` | Footers "A choose   B back": lower-case verbs, no keycaps | 18 | Decisions 4 | M |
+| # | Where | Now | Rule | Change | Size | Done |
+|---|---|---|---|---|---|---|
+| ~~1~~ | `shell/environment.rs:15` | "Add an image..." with three dots | 18 | `"Add an image\u{2026}"` | S | done, `caf6a51` |
+| ~~2~~ | `shell/hud.rs:167` | "Looking for sound devices" | 18 | `"Looking for sound devices\u{2026}"` | S | done, `caf6a51` |
+| ~~3~~ | `room/startup.rs:65-74` | "Starting the graphics", "Loading the room", … with no ellipsis | 18 | End each with `\u{2026}` | S | done, `caf6a51` |
+| ~~4~~ | `shell/hud.rs:474` | "Press A to use this one" in a row's detail (the footer already says "A use") | 18 | `"Choose to use this one"`, as the other details ("Choose to change") | S | done, `caf6a51` |
+| ~~5~~ | `room/dictate.rs:204` | "Listening — press 🎤 to stop": a colour emoji, blank on the Beam Pro | 7 | `"Dictation\nListening \u{2014} press the microphone key to stop"` | S | done, `caf6a51`: written as the room's own drawn symbol (`Symbol::Mic.char()`), which the text renderer already painted on every platform; the words kept |
+| ~~6~~ | `room/spatikey.rs:372` | "Caps Lock is on: turn it off and try again" has no full stop | 18 | Add `.` | S | done, `caf6a51` |
+| ~~7~~ | `shell/launcher.rs:214` | This machine is "This computer" on every platform | 18 | "This Mac" on macOS, "This device" on Android, as `reel/source/local.rs:16-23` (the shell does not link the SDK: three `cfg!` arms) | S | done, `caf6a51` |
+| ~~8~~ | `choose/main.rs:400-406` | The chooser draws its two buttons by hand; its yes is filled `theme::selected()` / `theme::mark()`, the only "primary" look anywhere | 8 | Two `ui::Button`s; the yes `focused = true` | M | done, `a47c88e` |
+| ~~9~~ | `choose/main.rs:388` | Its title at `TITLE_EM * 0.7` | 1 | `theme::TITLE_EM * 0.8` | S | done, `a47c88e` |
+| ~~10~~ | `choose/main.rs:309`, `:328`, `:363` | "Type the file's name first", "Choose a file first", "Nothing is at {path}" have no full stop | 18 | Add `.` | S | done, `a47c88e` |
+| ~~11~~ | `choose/main.rs` (no `describe` call) | The chooser does not answer `Event::Describe` | 19 | On `Event::Describe`: `Description { kind: "files".into(), app: "Spatiand".into(), title: self.title(), text: field text, directory, vocabulary: the names shown }` | S | done, `a47c88e` |
+| ~~12~~ | `room/menu.rs:134-499` | Footers "A choose   B back": lower-case verbs, no keycaps | 18 | Decisions 4 | M | done, `a8372ab` |
+
+All twelve done on 2026-11-18. Row 12's footers are drawn as keycaps by the scene, shared by the
+Deck, the Beam Pro and the Mac; row 7 changes the default name only (Android names the machine
+after the device once it knows, as before). Seen in the headless room (dark): the settings,
+environment, sound devices and controller cards with keycap footers, the startup panel's "Asking
+the glasses for 3D…", the chooser (dark and light) with its two buttons; not seen: a notice card
+and the dictation card (no notification reached the card in the snapshot, and dictation needs
+its engine), the Windows page's long footer, and the room on the Mac and the Beam Pro.
 
 ### Decisions for the owner
 
