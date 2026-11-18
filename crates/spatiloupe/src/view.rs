@@ -474,6 +474,9 @@ pub struct View {
     foot: Rect,
     side: Rect,
     trouble: Option<String>,
+    /// A press on the controls while they were faded out, which only brought them back: its
+    /// release is not a click either.
+    swallowing: bool,
 }
 
 impl View {
@@ -512,6 +515,7 @@ impl View {
             foot: Rect::default(),
             side: Rect::default(),
             trouble: None,
+            swallowing: false,
         }
     }
 
@@ -1212,6 +1216,18 @@ impl View {
                 if matches!(input, Input::Key { .. }) {
                     return Want::Nothing;
                 }
+            }
+        }
+        // The controls faded out are not there to be worked: a press where they were brings them
+        // back and does nothing else, as a scroll there already did not scroll the strip.
+        if let Input::Press { pressed, .. } = input {
+            let (x, y) = self.pointer;
+            if *pressed && !controls_were_up && (self.bar.contains(x, y) || self.foot.contains(x, y) || self.side.contains(x, y)) {
+                self.swallowing = true;
+                return Want::Nothing;
+            }
+            if !*pressed && std::mem::take(&mut self.swallowing) {
+                return Want::Nothing;
             }
         }
         if self.back.input(input) {
@@ -2209,6 +2225,26 @@ mod tests {
         view.input(&key(Key::Char('/'), "/"));
         view.input(&key(Key::Char('q'), "q"));
         assert_eq!(view.describe().1, "q");
+    }
+
+    #[test]
+    fn a_press_on_faded_controls_only_brings_them_back() {
+        let mut view = viewing(3, 1);
+        view.bar = Rect::new(28.0, 24.0, 1384.0, 80.0);
+        // In the room, where the pointer sweeping with the head does not bring them back.
+        view.hands_heard = true;
+        view.last_stir = Instant::now() - CHROME_STAYS - Duration::from_secs(2);
+        assert_eq!(view.chrome(), 0.0);
+        view.input(&Input::Pointer { x: 60.0, y: 60.0 });
+        let press = |pressed| Input::Press { pressed, modifiers: spatiand_app::Modifiers::default() };
+        assert!(matches!(view.input(&press(true)), Want::Nothing));
+        assert!(view.swallowing && view.pressed_at.is_none());
+        assert_eq!(view.chrome(), 1.0, "back");
+        assert!(matches!(view.input(&press(false)), Want::Nothing));
+        assert!(!view.swallowing);
+        // Up, the next press is the controls' own.
+        view.input(&press(true));
+        assert!(!view.swallowing);
     }
 
     #[test]
