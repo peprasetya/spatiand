@@ -39,6 +39,37 @@ fn find_angle() {
     }
 }
 
+/// Load ANGLE now, on the calling thread: `sp_begin`, on the app's main thread, before the
+/// session's thread exists. ANGLE carries Chromium's allocator shim, which takes over the
+/// process's default malloc zone when the library is loaded. Loaded first by the session's
+/// thread (Smithay's `make_sure_egl_is_loaded`, then ANGLE's own lazy load of libGLESv2 on the
+/// first EGL call) while the main thread was making the glasses' window, AppKit freed a block
+/// through the shim mid-swap and the app trapped in `TryFreeDefaultFallbackToFindZoneAndFree`
+/// (2026-11-18). Loaded here, the swap is over before the two can race. Workaround: the proper
+/// cure is an ANGLE built without the shim (`use_allocator_shim=false`,
+/// `use_partition_alloc_as_malloc=false`); fetch-angle.sh copies SpatiMesh's, which has it.
+pub fn load_early() {
+    find_angle();
+    if let Err(e) = ffi::make_sure_egl_is_loaded() {
+        return log::warn!("ANGLE not loaded early: {e}");
+    }
+    // libEGL loads libGLESv2 itself on its first call; make that happen here too.
+    let gles = std::env::var_os("SPATIAND_EGL")
+        .map(std::path::PathBuf::from)
+        .and_then(|egl| egl.parent().map(|d| d.join("libGLESv2.dylib")))
+        .filter(|p| p.exists());
+    if let Some(gles) = gles {
+        use std::os::unix::ffi::OsStrExt;
+        if let Ok(path) = std::ffi::CString::new(gles.as_os_str().as_bytes()) {
+            // Kept loaded for good, as libEGL keeps it.
+            let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
+            if handle.is_null() {
+                log::warn!("libGLESv2 not loaded early");
+            }
+        }
+    }
+}
+
 /// ANGLE's display on Metal, handed to Smithay.
 pub fn open_display() -> Result<EGLDisplay, String> {
     use smithay::backend::egl::ffi::egl;

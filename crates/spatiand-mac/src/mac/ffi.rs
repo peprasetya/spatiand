@@ -143,6 +143,9 @@ pub extern "C" fn sp_begin(callback: Option<Callback>, user: *mut c_void) {
         return;
     }
     ALIVE.store(true, Ordering::SeqCst);
+    // ANGLE loaded here, on the main thread, not by the session's thread while AppKit makes
+    // the glasses' window (see egl::load_early).
+    super::egl::load_early();
     let started = std::thread::Builder::new().name("spatiand".into()).spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             use smithay::reexports::calloop::EventLoop;

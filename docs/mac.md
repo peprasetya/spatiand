@@ -50,7 +50,7 @@ the Deck's code, not a likeness of it.
 * **Sound** is the Deck's engine (`spatiand-audio/src/server_fed.rs`, shared with Android) on a
   Core Audio output unit.
 
-## Three things macOS does that cost a day each
+## Four things macOS does that cost a day each
 
 1. **A frame with alpha 0 is invisible.** The scene leaves whatever alpha blending comes to; a
    display ignores it and the window server does not. `egl::finish_frame` sets it to one.
@@ -60,6 +60,14 @@ the Deck's code, not a likeness of it.
    frames.
 3. **ANGLE's swap does not wait for the display.** The frame clock is a `CVDisplayLink` on the
    glasses' display (`egl::follow_display`, `egl::pace`).
+4. **ANGLE carries Chromium's allocator shim**, which takes over the default malloc zone when
+   libEGL is loaded. Loaded by the session's thread while the main thread made the glasses'
+   window, AppKit freed a block through the shim mid-swap and the app trapped at start
+   (`TryFreeDefaultFallbackToFindZoneAndFree`, 2026-11-18, intermittent). `sp_begin` now loads
+   libEGL and libGLESv2 on the main thread before the session's thread starts
+   (`egl::load_early`). **Workaround**: the proper cure is an ANGLE built without the shim
+   (`use_allocator_shim=false use_partition_alloc_as_malloc=false` in its GN args);
+   `fetch-angle.sh` copies SpatiMesh's ANGLE, which has it.
 
 ## Building and looking at it without glasses
 
