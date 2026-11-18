@@ -21,7 +21,7 @@ mod widgets;
 pub use hide::{AutoHide, CONTROLS_SHOWN};
 pub use icons::{coverage as icon_coverage, draw as draw_icon, Icon};
 pub use paint::{Painter, Texture};
-pub use widgets::{Button, Confirm, Field, Grid, List, Row, Shape, Strip, Tabs, Tile, Typed, DOUBLE_CLICK, DOUBLE_CLICK_SLOP, DRAG_AFTER};
+pub use widgets::{Button, Confirm, Field, Grid, List, Menu, MenuSaid, Row, Shape, Strip, Tabs, Tile, Typed, DOUBLE_CLICK, DOUBLE_CLICK_SLOP, DRAG_AFTER};
 
 use crate::{Event, Key, Modifiers};
 

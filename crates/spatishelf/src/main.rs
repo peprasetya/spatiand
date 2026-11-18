@@ -33,7 +33,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use spatiand_app::ui::{draw_icon, look as room, theme, Button, Confirm, Field, Icon, Input, List, Painter, Rect, Row, Texture, Typed};
+use spatiand_app::ui::{draw_icon, look as room, theme, Button, Confirm, Field, Icon, Input, List, Menu, MenuSaid, Painter, Rect, Row, Texture, Typed};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 use spatiand_storage::{Remote, Storage};
 
@@ -426,7 +426,7 @@ enum Overlay {
     None,
     /// `chosen`: what was chosen when it opened, which its entries act on -- not what is chosen
     /// when one is picked, after a listing that came meanwhile may have moved the cursor.
-    Menu { at: (f32, f32), list: List, entries: Vec<(Row, Action)>, chosen: Vec<Place> },
+    Menu { menu: Menu, entries: Vec<(Row, Action)>, chosen: Vec<Place> },
     Ask { what: Asking, field: Field, ok: Button, cancel: Button },
     /// A question (the SDK's, as every Spatiand application asks), and what a yes does.
     Confirm { confirm: Confirm, action: Action },
@@ -1358,20 +1358,18 @@ impl Shelf {
         // What floats over everything has the input first.
         match &mut self.overlay {
             Overlay::None => {}
-            Overlay::Menu { at, list, entries, chosen } => {
-                let rect = menu_rect(*at, entries.len(), self.size);
-                let outside = matches!(input, Input::Press { pressed: true, .. }) && !rect.contains(self.pointer.0, self.pointer.1);
-                if outside || matches!(input, Input::Key { key: Key::Escape, .. }) {
-                    self.overlay = Overlay::None;
-                    return;
-                }
-                if let Some(row) = list.input(&input) {
-                    let action = entries[row].1.clone();
-                    let chosen = std::mem::take(chosen);
-                    self.overlay = Overlay::None;
-                    self.pinned = Some(chosen);
-                    self.act(action);
-                    self.pinned = None;
+            Overlay::Menu { menu, entries, chosen } => {
+                match menu.input(&input, self.pointer) {
+                    Some(MenuSaid::Closed) => self.overlay = Overlay::None,
+                    Some(MenuSaid::Chose(row)) => {
+                        let action = entries[row].1.clone();
+                        let chosen = std::mem::take(chosen);
+                        self.overlay = Overlay::None;
+                        self.pinned = Some(chosen);
+                        self.act(action);
+                        self.pinned = None;
+                    }
+                    None => {}
                 }
                 return;
             }
@@ -2265,13 +2263,7 @@ impl Shelf {
         }
         match &mut self.overlay {
             Overlay::None => {}
-            Overlay::Menu { at, list, entries, .. } => {
-                let rect = menu_rect(*at, entries.len(), size);
-                // On the ground's own colour under the glass: a menu over pictures is read, not
-                // seen through.
-                p.glow(gl, rect, 20.0, [0.0, 0.0, 0.0, 0.45], 24.0);
-                p.fill(gl, rect, 20.0, theme::ground());
-                room::glass(p, gl, rect, 20.0, 1.0);
+            Overlay::Menu { menu, entries, .. } => {
                 let mut rows: Vec<Row> = entries.iter().map(|(r, _)| r.clone()).collect();
                 // "Open with": each application with its own picture, once it has come.
                 for (row, (_, action)) in rows.iter_mut().zip(entries.iter()) {
@@ -2281,7 +2273,7 @@ impl Shelf {
                         }
                     }
                 }
-                list.draw(p, gl, rect.inset(10.0), &rows);
+                menu.draw(p, gl, &rows, Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32));
             }
             Overlay::Ask { what, field, ok, cancel } => {
                 let pane = Rect::new(all.w * 0.5 - 380.0, all.h * 0.32, 760.0, 250.0);
@@ -2409,15 +2401,6 @@ fn list_layout(rect: Rect, depth: usize, wide: bool) -> (Rect, Rect, Rect) {
     let face = Rect::new(x + DISCLOSURE - 4.0, rect.y + 7.0, rect.h - 14.0, rect.h - 14.0);
     let name = Rect { x: face.right() + 14.0, w: (cols[0].right() - face.right() - 14.0).max(0.0), ..cols[0] };
     (triangle, face, name)
-}
-
-fn menu_rect(at: (f32, f32), rows: usize, size: (u32, u32)) -> Rect {
-    // No taller than the window: a long one ("Other...") scrolls.
-    let h = (rows as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 16.0).min(size.1 as f32 - 24.0);
-    let w = 620.0;
-    let x = at.0.min(size.0 as f32 - w - 12.0).max(12.0);
-    let y = at.1.min(size.1 as f32 - h - 12.0).max(12.0);
-    Rect::new(x, y, w, h)
 }
 
 /// Where a thing in the trash came from, as its folder, the home folder written `~`.

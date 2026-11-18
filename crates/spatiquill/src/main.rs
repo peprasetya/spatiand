@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{look, theme, Confirm, Input, List, Painter, Rect, Row};
+use spatiand_app::ui::{self, look, theme, Confirm, Input, MenuSaid, Painter, Rect, Row};
 use spatiand_app::{App, Button as PointerButton, Event, Key, Modifiers, WindowId};
 
 use grid::Grid;
@@ -209,19 +209,8 @@ enum MenuItem {
 
 /// The terminal's menu, open at a point of its window.
 struct Menu {
-    at: (f32, f32),
-    list: List,
+    menu: ui::Menu,
     items: Vec<(Row, MenuItem)>,
-}
-
-impl Menu {
-    fn rect(&self, size: (u32, u32)) -> Rect {
-        let h = self.items.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP) + 16.0;
-        let w = 420.0;
-        let x = self.at.0.min(size.0 as f32 - w - 12.0).max(12.0);
-        let y = self.at.1.min(size.1 as f32 - h - 12.0).max(12.0);
-        Rect::new(x, y, w, h)
-    }
 }
 
 impl Quill {
@@ -1064,25 +1053,21 @@ impl Quill {
         }
         items.push((Row::with("Paste", look::chord("V")), MenuItem::Paste));
         items.push((Row::new("Select all"), MenuItem::SelectAll));
-        let mut list = List::default();
-        list.focused = true;
         self.wins[w].selecting = None;
-        self.wins[w].menu = Some(Menu { at, list, items });
+        self.wins[w].menu = Some(Menu { menu: ui::Menu::new(at), items });
     }
 
     /// The menu has the input first while it is open. Whether it took this event.
     fn menu_input(&mut self, w: usize, event: &Event) -> bool {
-        let size = self.wins[w].size;
         let pointer = self.wins[w].pointer;
         let Some(menu) = self.wins[w].menu.as_mut() else { return false };
-        let rect = menu.rect(size);
         match event {
             // Another right press: the menu opens again where it is now.
             Event::Button { button: PointerButton::Right, pressed: true, .. } => {
                 self.wins[w].menu = None;
                 return false;
             }
-            Event::Button { button: PointerButton::Left, pressed: true, .. } if !rect.contains(pointer.0, pointer.1) => {
+            Event::Button { button: PointerButton::Left, pressed: true, .. } if !menu.menu.contains(pointer.0, pointer.1) => {
                 self.wins[w].menu = None;
                 return true;
             }
@@ -1098,8 +1083,12 @@ impl Quill {
             Event::Key { pressed: false, .. } => return false,
             _ => {}
         }
-        let chosen = Input::of(event, 1.0).and_then(|input| menu.list.input(&input));
-        if let Some(row) = chosen {
+        let said = Input::of(event, 1.0).and_then(|input| menu.menu.input(&input, pointer));
+        if said == Some(MenuSaid::Closed) {
+            self.wins[w].menu = None;
+            return true;
+        }
+        if let Some(MenuSaid::Chose(row)) = said {
             let item = menu.items[row].1;
             self.wins[w].menu = None;
             let tab = self.active_tab(w);
@@ -1220,12 +1209,8 @@ impl Quill {
                     p.label(gl, hint, pill, theme::FOOTER_EM * 0.85, theme::ink_detail(), 0.5);
                 }
                 if let Some(menu) = win.menu.as_mut() {
-                    let rect = menu.rect(size);
-                    p.glow(gl, rect, 20.0, [0.0, 0.0, 0.0, 0.45], 24.0);
-                    p.fill(gl, rect, 20.0, theme::ground());
-                    look::glass(p, gl, rect, 20.0, 1.0);
                     let rows: Vec<Row> = menu.items.iter().map(|(r, _)| r.clone()).collect();
-                    menu.list.draw(p, gl, rect.inset(10.0), &rows);
+                    menu.menu.draw(p, gl, &rows, Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32));
                 }
                 if let Some((why, _)) = failed.as_ref() {
                     let mut chars = why.chars();

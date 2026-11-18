@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use std::sync::Arc;
 
-use spatiand_app::ui::{theme, AutoHide, Button, Input, List, Painter, Rect, Row, Texture, Icon, CONTROLS_SHOWN};
+use spatiand_app::ui::{theme, AutoHide, Button, Input, Menu, MenuSaid, Painter, Rect, Row, Texture, Icon, CONTROLS_SHOWN};
 use spatiand_media::subs::{self, Cue, Words};
 use spatiand_app::{Anchor, App, EyeLayout, Gl, Key, Layer, Mode, WindowId};
 use spatiand_media::hints;
@@ -245,7 +245,7 @@ pub struct Playing {
     next_button: Button,
     /// The controls have come up by themselves for the offer, which they do once.
     offer_shown: bool,
-    menu: Option<(List, Vec<(Row, Option<Choice>)>)>,
+    menu: Option<(Menu, Vec<(Row, Option<Choice>)>)>,
     /// Where the seek bar was drawn, to turn a press on it into a time.
     bar: Rect,
     seeking: bool,
@@ -783,14 +783,13 @@ impl Playing {
         let width = Button::icon_width(p, gl, "Library");
         self.back.draw_icon(p, gl, Rect { x: right - width, w: width, ..row }, Icon::Back, "Library");
 
-        if let Some((list, rows)) = self.menu.as_mut() {
+        if let Some((menu, rows)) = self.menu.as_mut() {
             let rows: Vec<Row> = rows.iter().map(|(row, _)| row.clone()).collect();
-            let tall = (rows.len() as f32 * (theme::ROW_HEIGHT + theme::ROW_GAP)).min(all.h - height - 40.0).max(theme::ROW_HEIGHT);
-            let card = Rect::new(all.x + theme::PAD * 0.6, (all.bottom() - height - tall - 34.0).max(0.0), 640.0f32.min(all.w - theme::PAD), tall + 28.0);
-            p.fill(gl, card.inset(-2.0), theme::CARD_RADIUS * 0.6, theme::rim());
-            p.fill(gl, card, theme::CARD_RADIUS * 0.6, [0.043, 0.05, 0.072, 0.97]);
-            list.focused = true;
-            list.draw(p, gl, card.inset(14.0), &rows);
+            // Over the controls, at the left, its foot just above them: the room above the
+            // controls is what it is kept in, and it opens at that room's foot.
+            let above = Rect { h: (all.bottom() - height + 6.0 - all.y).max(0.0), ..all };
+            menu.at = (all.x + theme::PAD * 0.6, above.bottom());
+            menu.draw(p, gl, &rows, above);
         }
     }
 
@@ -845,9 +844,9 @@ impl Playing {
         rows.push((Row::heading("Picture against sound"), None));
         rows.push((Row::with("Picture earlier", offset(self.player.lip())), Some(Choice::LipBy(-0.05))));
         rows.push((Row::with("Picture later", offset(self.player.lip())), Some(Choice::LipBy(0.05))));
-        let mut list = List::default();
-        list.cursor = 1;
-        self.menu = Some((list, rows));
+        let mut menu = Menu::new((0.0, 0.0));
+        menu.list.cursor = 1;
+        self.menu = Some((menu, rows));
     }
 
     fn choose(&mut self, choice: Choice) {
@@ -876,10 +875,10 @@ impl Playing {
             }
         }
         // Open again, on the same row, with the marks where they now are.
-        let cursor = self.menu.as_ref().map_or(1, |(list, _)| list.cursor);
+        let cursor = self.menu.as_ref().map_or(1, |(menu, _)| menu.list.cursor);
         self.open_menu();
-        if let Some((list, rows)) = self.menu.as_mut() {
-            list.cursor = cursor.min(rows.len() - 1);
+        if let Some((menu, rows)) = self.menu.as_mut() {
+            menu.list.cursor = cursor.min(rows.len() - 1);
         }
     }
 
@@ -926,18 +925,17 @@ impl Playing {
                 self.seek_to_pointer();
             }
         }
-        if let Some((list, rows)) = self.menu.as_mut() {
-            if let Some(chosen) = list.input(input) {
-                if let Some(choice) = rows[chosen].1 {
-                    self.choose(choice);
+        if let Some((menu, rows)) = self.menu.as_mut() {
+            match menu.input(input, self.pointer) {
+                Some(MenuSaid::Chose(chosen)) => {
+                    if let Some(choice) = rows[chosen].1 {
+                        self.choose(choice);
+                    }
+                    return Outcome::Nothing;
                 }
-                return Outcome::Nothing;
-            }
-            match input {
-                Input::Key { key: Key::Escape, .. } => self.menu = None,
-                // A press anywhere else puts the menu away.
-                Input::Press { pressed: true, .. } if !list.contains(self.pointer.0, self.pointer.1) => self.menu = None,
-                _ => {}
+                // Escape, or a press anywhere else, puts the menu away.
+                Some(MenuSaid::Closed) => self.menu = None,
+                None => {}
             }
             if self.menu.is_some() || matches!(input, Input::Key { .. }) {
                 return Outcome::Nothing;

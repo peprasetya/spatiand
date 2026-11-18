@@ -1347,6 +1347,114 @@ impl Confirm {
     }
 }
 
+// --- a menu ---
+
+/// What a [`Menu`] said of an input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuSaid {
+    /// This row was chosen: the menu has done its work.
+    Chose(usize),
+    /// Escape, or a press outside it: closed, and nothing else is to be done.
+    Closed,
+}
+
+/// A menu at a point of the window: a [`List`] on a pane of glass, as wide as its widest row
+/// (320 to 620), kept 12 inside the window and no taller than it (a long one scrolls). While it
+/// is open the application gives it the input first; arrows and Enter work it, Escape or a
+/// press outside close it.
+#[derive(Debug, Default)]
+pub struct Menu {
+    /// Where it opens: its top left, moved in to stay in the window.
+    pub at: (f32, f32),
+    pub list: List,
+    /// Where it was last drawn, for a press to be inside or out.
+    area: Rect,
+}
+
+impl Menu {
+    pub const NARROWEST: f32 = 320.0;
+    pub const WIDEST: f32 = 620.0;
+
+    pub fn new(at: (f32, f32)) -> Menu {
+        let mut list = List::default();
+        list.focused = true;
+        Menu { at, list, area: Rect::default() }
+    }
+
+    /// Where it is drawn with `rows`, in `within` (the window).
+    pub fn rect(&self, p: &mut Painter, gl: &Gl, rows: &[Row], within: Rect) -> Rect {
+        let max = 8192.0 / p.scale();
+        let per_row = theme::ROW_HEIGHT + theme::ROW_GAP;
+        let h = (rows.len() as f32 * per_row + 16.0).min(within.h - 24.0).max(0.0);
+        let scrolls = rows.len() as f32 * per_row - theme::ROW_GAP > h - 20.0;
+        let mut widest: f32 = 0.0;
+        for row in rows {
+            let mut w = if row.heading { p.measure(gl, &row.label, theme::FOOTER_EM, max).0 } else { p.measure(gl, &row.label, theme::ROW_EM, max).0 };
+            if !row.heading {
+                if let Some(trailing) = row.trailing.as_deref().filter(|t| !t.is_empty()) {
+                    w += p.measure(gl, trailing, theme::ROW_EM * 0.8, max).0 + 24.0;
+                }
+                if row.picture.is_some() {
+                    w += theme::ROW_EM * 1.15 + 12.0;
+                } else if row.icon.is_some() {
+                    w += theme::ROW_EM * 0.95 + 18.0;
+                }
+            }
+            widest = widest.max(w);
+        }
+        // The row's insets, the list's inset in the pane, and the scrollbar's room.
+        let w = (widest + theme::ROW_INSET * 2.0 + 20.0 + if scrolls { theme::SCROLL_WIDTH + 12.0 } else { 0.0 }).ceil().clamp(Self::NARROWEST, Self::WIDEST).min(within.w - 24.0);
+        let x = self.at.0.min(within.right() - w - 12.0).max(within.x + 12.0);
+        let y = self.at.1.min(within.bottom() - h - 12.0).max(within.y + 12.0);
+        Rect::new(x, y, w, h)
+    }
+
+    /// Drawn over everything, in `within` (the window).
+    pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rows: &[Row], within: Rect) {
+        let rect = self.rect(p, gl, rows, within);
+        self.area = rect;
+        // On the ground's own colour under the glass: a menu over pictures is read, not seen
+        // through.
+        p.glow(gl, rect, 20.0, [0.0, 0.0, 0.0, 0.45], 24.0);
+        p.fill(gl, rect, 20.0, theme::ground());
+        super::look::glass(p, gl, rect, 20.0, 1.0);
+        self.list.draw(p, gl, rect.inset(10.0), rows);
+    }
+
+    /// Whether `(x, y)` is on it, as last drawn.
+    pub fn contains(&self, x: f32, y: f32) -> bool {
+        self.area.contains(x, y)
+    }
+
+    /// The pointer is at `pointer` (the application's own idea of it, as presses carry none).
+    pub fn input(&mut self, input: &Input, pointer: (f32, f32)) -> Option<MenuSaid> {
+        match input {
+            Input::Key { key: Key::Escape, .. } => return Some(MenuSaid::Closed),
+            Input::Press { pressed: true, .. } if !self.area.contains(pointer.0, pointer.1) => return Some(MenuSaid::Closed),
+            _ => {}
+        }
+        self.list.input(input).map(MenuSaid::Chose)
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+    use crate::Modifiers;
+
+    #[test]
+    fn escape_or_a_press_outside_closes_and_enter_chooses() {
+        let key = |key: Key| Input::Key { key, text: None, modifiers: Modifiers::default(), letter: None };
+        let press = Input::Press { pressed: true, modifiers: Modifiers::default() };
+        let mut menu = Menu::new((100.0, 100.0));
+        menu.area = Rect::new(100.0, 100.0, 400.0, 200.0);
+        assert_eq!(menu.input(&key(Key::Escape), (0.0, 0.0)), Some(MenuSaid::Closed));
+        assert_eq!(menu.input(&press, (50.0, 50.0)), Some(MenuSaid::Closed));
+        assert_eq!(menu.input(&press, (150.0, 150.0)), None);
+        assert!(menu.list.focused);
+    }
+}
+
 #[cfg(test)]
 mod confirm_tests {
     use super::*;

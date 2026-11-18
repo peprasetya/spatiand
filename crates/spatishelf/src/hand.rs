@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{look as room, theme, Field, Icon, List, Painter, Rect, Row, Texture};
+use spatiand_app::ui::{look as room, theme, Field, Icon, Menu, Painter, Rect, Row, Texture};
 use spatiand_app::Modifiers;
 
 use crate::proto::{Item, Kind, Op, Place, ToTab};
@@ -810,11 +810,9 @@ impl Shelf {
 
     pub(crate) fn open_menu(&mut self, at: (f32, f32), entries: Vec<(Row, Action)>) {
         self.menu_at = at;
-        let mut list = List::default();
-        list.focused = true;
         // A menu opened from another's entry acts on what that one was opened for.
         let chosen = self.chosen();
-        self.overlay = Overlay::Menu { at, list, entries, chosen };
+        self.overlay = Overlay::Menu { menu: Menu::new(at), entries, chosen };
     }
 
     fn item_menu(&mut self, at: (f32, f32)) {
