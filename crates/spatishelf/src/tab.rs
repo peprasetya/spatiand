@@ -256,8 +256,17 @@ fn free_name(folder: &Path, name: &str) -> PathBuf {
     (2..).map(|n| folder.join(format!("{stem} {n}{ending}"))).find(|p| !p.exists()).unwrap()
 }
 
+/// A thing copied as it is: a folder with what is in it, a link as the link it is -- not what
+/// it leads to (a Proton prefix's `dosdevices/z:` leads to the whole disk, and a link that
+/// leads nowhere is still a link). What is neither a file, a folder nor a link (a pipe, a
+/// socket, a device) is refused: copying a pipe waits for ever.
 fn copy_local(from: &Path, to: &Path, done: &mut u64, total: u64, report: &mut dyn FnMut(u64, u64, &str)) -> io::Result<()> {
-    if from.is_dir() {
+    let meta = from.symlink_metadata()?;
+    let kind = meta.file_type();
+    if kind.is_symlink() {
+        return std::os::unix::fs::symlink(std::fs::read_link(from)?, to);
+    }
+    if kind.is_dir() {
         std::fs::create_dir_all(to)?;
         for entry in std::fs::read_dir(from)? {
             let entry = entry?;
@@ -265,18 +274,13 @@ fn copy_local(from: &Path, to: &Path, done: &mut u64, total: u64, report: &mut d
         }
         return Ok(());
     }
+    if !kind.is_file() {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, format!("{} is not a file or a folder, and is not copied", from.display())));
+    }
     report(*done, total, &from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
     std::fs::copy(from, to)?;
-    *done += std::fs::metadata(from).map(|m| m.len()).unwrap_or(0);
+    *done += meta.len();
     Ok(())
-}
-
-fn size_of(path: &Path) -> u64 {
-    if path.is_dir() {
-        std::fs::read_dir(path).into_iter().flatten().flatten().map(|e| size_of(&e.path())).sum()
-    } else {
-        std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
-    }
 }
 
 /// Through rclone, waiting for the job and saying how it goes.
@@ -307,14 +311,22 @@ fn transfer(item: &Place, into: &Place, moving: bool, storage: &Mutex<Option<Sto
         if target.starts_with(from) {
             return Err(format!("{name} cannot go inside itself"));
         }
-        if moving && std::fs::rename(from, &target).is_ok() {
-            return Ok(());
+        // Moved by renaming; copied and taken away only to another disk, which renaming cannot
+        // reach. Any other refusal is the move's.
+        if moving {
+            match std::fs::rename(from, &target) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.raw_os_error() == Some(libc::EXDEV) => {}
+                Err(e) => return Err(e.to_string()),
+            }
         }
-        let total = size_of(from);
+        // Links not followed, here as in the copy.
+        let total = crate::trash::size_of(from);
         let mut done = 0;
         copy_local(from, &target, &mut done, total, report).map_err(|e| e.to_string())?;
         if moving {
-            if from.is_dir() { std::fs::remove_dir_all(from) } else { std::fs::remove_file(from) }.map_err(|e| e.to_string())?;
+            let folder = from.symlink_metadata().is_ok_and(|m| m.is_dir());
+            if folder { std::fs::remove_dir_all(from) } else { std::fs::remove_file(from) }.map_err(|e| e.to_string())?;
         }
         return Ok(());
     }
@@ -611,6 +623,28 @@ mod tests {
         run_op(Op::Mkdir { inside: place("dst"), name: "new".into() }, &kept, &mut quiet).unwrap();
         assert!(dir.join("dst/new").is_dir());
         assert!(run_op(Op::Copy { from: vec![place("src")], to: place("src/inner") }, &kept, &mut quiet).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn links_are_copied_as_links_and_a_pipe_is_refused() {
+        let dir = std::env::temp_dir().join(format!("spatishelf-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("prefix/dosdevices")).unwrap();
+        std::fs::create_dir_all(dir.join("dst")).unwrap();
+        // A Proton prefix's: the whole disk, and a drive that is not there.
+        std::os::unix::fs::symlink("/", dir.join("prefix/dosdevices/z:")).unwrap();
+        std::os::unix::fs::symlink("/no/such/drive", dir.join("prefix/dosdevices/d:")).unwrap();
+        let fifo = std::ffi::CString::new(dir.join("pipe").to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let kept = Mutex::new(None);
+        let place = |p: &str| Place::Local(dir.join(p).to_string_lossy().into_owned());
+        let mut quiet = |_: u64, _: u64, _: &str| {};
+        run_op(Op::Copy { from: vec![place("prefix")], to: place("dst") }, &kept, &mut quiet).unwrap();
+        assert_eq!(std::fs::read_link(dir.join("dst/prefix/dosdevices/z:")).unwrap(), Path::new("/"));
+        assert_eq!(std::fs::read_link(dir.join("dst/prefix/dosdevices/d:")).unwrap(), Path::new("/no/such/drive"));
+        assert!(run_op(Op::Copy { from: vec![place("pipe")], to: place("dst") }, &kept, &mut quiet).is_err(), "a pipe is refused, not waited on");
+        assert!(dir.join("pipe").symlink_metadata().is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
