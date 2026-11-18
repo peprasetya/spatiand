@@ -478,7 +478,8 @@ impl Judge {
                 None => t,
                 Some(why) => {
                     if !t.is_empty() {
-                        log::info!("ears: let go, {why}: {t:?} ({seconds:.1} s, sure {sure:.2})");
+                        // What was said in the room, not to it: not its words in the log.
+                        log::debug!("ears: let go, {why}: {} characters ({seconds:.1} s, sure {sure:.2})", t.chars().count());
                     }
                     return self.tell(Heard::Ear(now));
                 }
@@ -492,7 +493,7 @@ impl Judge {
         let in_conversation = self.conversation.open_until(&self.voice).is_some_and(|until| began <= until);
         let meant = meant(&text, &called, self.once.swap(false, Ordering::Relaxed) || in_conversation);
         let Some(meant) = meant else {
-            log::debug!("ears: not for us: {text:?}");
+            log::debug!("ears: not for us: {} characters", text.chars().count());
             return self.tell(Heard::Ear(now));
         };
         self.conversation.touch();

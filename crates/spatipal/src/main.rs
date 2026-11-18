@@ -424,11 +424,11 @@ impl Pal {
                 let (_, said) = self.interrupted.take().unwrap();
                 match ears::not_its_own(&text, &said) {
                     Some(rest) if rest != text => {
-                        log::info!("heard over it {text:?}: its own words left out, {rest:?} is the wearer's");
+                        log::debug!("heard over it {} characters: its own words left out, {} are the wearer's", text.chars().count(), rest.chars().count());
                         self.heard(Heard::Asked { text: rest, ended });
                     }
                     Some(_) => self.heard(Heard::Asked { text, ended }),
-                    None => log::info!("heard over it {text:?}: its own voice, not the wearer's -- nothing asked"),
+                    None => log::debug!("heard over it {} characters: its own voice, not the wearer's -- nothing asked", text.chars().count()),
                 }
             }
             // "Stop", "quiet", "diam": only that -- nothing is asked of the model.
