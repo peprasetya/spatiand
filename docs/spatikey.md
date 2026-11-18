@@ -407,34 +407,9 @@ names the two cures: exclude Spatiand from Tailscale, or turn off its subnet rou
 
 ## SpatiMesh
 
-Our WPE (SpatiMesh's engine until 2026-11-10) had no WebAuthn of its own (`ENABLE_WEB_AUTHN` was off; there was no `navigator.credentials`
-or `PublicKeyCredential`), so the page's half is ours:
-
-* **`webauthn.js`, in the page's world**, defines `navigator.credentials` (`create`, `get`,
-  `store`, `preventSilentAccess`), `PublicKeyCredential` with its static functions,
-  `AuthenticatorAttestationResponse`, `AuthenticatorAssertionResponse` and `Credential`. Where a
-  browser already has them (the extensions) it wraps them instead, and falls back to the
-  browser's own when SpatiKey has nothing for the site. It turns buffers into base64url and back,
-  honours `signal` and `timeout`, and speaks only through events to the isolated world. It never
-  says what the origin is and never builds clientDataJSON.
-* **`cred-world.js`, in an isolated world of its own** (`spatimesh-cred`, every frame, document
-  start), is the only script that can reach the message handler `spatimeshCred`: a page cannot
-  post to it, cannot see its globals, and cannot change what `self.origin` returns there. It
-  stamps every request with that origin, whether it is the top frame, and the top frame's origin
-  when it can be read, and relays the answer. It also finds login forms (password inputs,
-  `autocomplete` username/current-password/new-password/webauthn), tells the window when one has
-  the focus, fills it when asked (in that frame only), and notices a login being submitted.
-* **The window** builds clientDataJSON from the stamped origin, refuses anything not https or
-  localhost, refuses a cross-origin frame (there is no permissions policy without WebKit's
-  WebAuthn), checks the relying party id against the origin with the public suffix list, and asks
-  the service. A key button beside the address bar fills the focused login; after a login is
-  submitted with a password SpatiKey does not have, it offers to save it. `mediation:
-  "conditional"` (passkeys offered in the login field) waits until the key button is pressed.
-* **Fixed on the way:** the page description sent to dictation and the assistant no longer
-  includes the value of a password field, and Copy no longer copies out of one.
-
-The engine-verified origin a WebKit patch could give (the script message's frame, which WebKit's
-GLib API drops) is the stronger alternative to the isolated world's stamp; it is not built.
+Until 2026-11-10 SpatiMesh was a Rust window over WPE, which had no WebAuthn, and SpatiKey's page half (an
+isolated-world script stamping the origin, a key button in the window) was written for it; it is removed with it.
+SpatiMesh is Chromium now: next section.
 
 ## SpatiMesh on Chromium
 
@@ -573,8 +548,8 @@ the Chrome and Firefox extensions (`extensions/spatikey`, `tools/spatikey-browse
 | Same network only | a real broadcast on this Mac's Wi-Fi (en0) answered and paired in one process; utun7 never counted as a LAN |
 | The Mac's Secure Enclave key | made with `.biometryCurrentSet` and restored, with no prompt; the wrap format against a software key |
 | The service in Spatiand.app | starts at launch, its socket answers `status` (no vault yet, Touch ID can set one up) |
-| SpatiMesh on WPE, passkeys | in the test room against `examples/soft-service` (Touch ID stood in for): a page made a passkey and signed in with it, clientDataJSON's origin the isolated world's |
-| SpatiMesh on WPE, passwords | the key button lit on a focused login field; pressed, the right login filled |
+| SpatiMesh on WPE (until 2026-11-10; historical), passkeys | in the test room against `examples/soft-service` (Touch ID stood in for): a page made a passkey and signed in with it, clientDataJSON's origin the isolated world's |
+| SpatiMesh on WPE (until 2026-11-10; historical), passwords | the key button lit on a focused login field; pressed, the right login filled |
 | The extensions | 50 tests, in headless Chrome and Firefox (`node --test extensions/spatikey/test/*.test.js`) |
 | The window | every screen in the test room with `--demo` |
 
@@ -643,8 +618,7 @@ old-key entries and offer a rival change of keys to holders that were away (see 
 proper: per-holder signing keys). Before Android 15 a Keystore key agreement cannot be
 BiometricPrompt's CryptoObject, so a key made there is usable for 5 s after the finger rather than
 for that one use (the proper one, per-use, is what Android 15+ gets, and it is chosen when the key
-is made). Android's prompt has no "touch lasts" of its own: each unlock asks. The origin of a SpatiMesh request is the isolated
-world's stamp, not the engine's (a WebKit patch exposing the script message's frame); a Touch ID
+is made). Android's prompt has no "touch lasts" of its own: each unlock asks. A Touch ID
 panel that got no answer is taken down by Swift at 110 s, before Rust gives up at 120 s (a cancel
 over the C interface); changed fingers are told from a finger that did not match by how long the
 attempt took when the Secure Enclave's error says nothing more (keep the biometry state hash in

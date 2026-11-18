@@ -146,7 +146,7 @@ not connect to hosts. `--selftest-click` moves the real pointer: not while the M
   heard from where its window is; the speaker on the bar mutes it, and scrolled or slid it is that
   window's own volume, shown as a ring. A screen on show has the sound of everything else.
   An application is every process it answers for, not only its children: Safari's pages are
-  played by a WebKit service. A browser is one sound for all its windows, and macOS does not
+  played by a WebKit service (Safari is a Mac application, not SpatiMesh). A browser is one sound for all its windows, and macOS does not
   say which is playing: it is placed at the window that says so in its title (Chrome's
   speaker mark), or else at the one in front when the sound began, and stays there until it
   has been quiet for twenty seconds. Two windows of one browser playing at once are heard

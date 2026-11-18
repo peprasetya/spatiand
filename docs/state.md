@@ -54,7 +54,7 @@ the doc of its area says so, and that holds here.
 
 ## Working
 
-Verified on hardware unless noted.
+Verified on hardware unless noted. Written on the Deck from September; the paragraphs carry their own dates where they were changed since, and the dated section above and the area docs win where they differ.
 
 **Display.** Owns the GPU with no desktop underneath. Glasses negotiate side-by-side by
 modesetting at the native mode first (the link must be up before the MCU switch means
@@ -149,7 +149,7 @@ are stripped. A window's subsurfaces are drawn and pointed at as its menus are (
 are subsurfaces: the profile menu, the address bar's suggestions, a login field's list), except
 through another window in front of them.
 
-**Sidecar.** Second `DrmCompositor` on the Deck's panel: CPU/GPU/memory graphs, clock, battery,
+**Sidecar (as of September; the Beam Pro's panel is the phone's touch area, docs/beam-pro.md).** Second `DrmCompositor` on the Deck's panel: CPU/GPU/memory graphs, clock, battery,
 volume and brightness. Flip completions are tracked per-CRTC — a single flag lets one screen
 consume the other's and that screen then never presents again, silently. The volume and
 brightness bars are touchable (below).
@@ -172,7 +172,7 @@ display, session or headset, and can host a real Wayland client while doing it. 
 layout bug in this project was found by looking at its output. `tools/probe-*.py` established
 the controller map, the haptic command and the IMU axes.
 
-294 tests. Build on the Deck in the `holo` distrobox; the Mac has no Linux graphics stack.
+The test count was 294 in September; on 2026-11-18 the workspace has about 2,170 `#[test]` functions (`grep -rn '#\[test\]' crates`). Build on the Deck in the `holo` distrobox (as of September; the build now lives on deepmagpie, docs/mac.md and docs/beam-pro.md for the others); the Mac has no Linux graphics stack of its own.
 
 ---
 
@@ -188,13 +188,13 @@ each with a turned double-arrow cursor. Pixels follow the world size at constant
 the client gets more buffer rather than a bigger picture of the same buffer: text keeps its
 angular size and more of it fits. The opposite edge stays put.
 
-294 → 337 tests.
+294 → 337 tests (September).
 
 ---
 
-## Not tested by a human yet
+## Not tested by a human yet (as of September 2026)
 
-Everything above has tests and builds; these two have never had a finger or a thumb on them.
+When this was written, everything above had tests and builds and these two had never had a finger or a thumb on them. Nothing later in this file says they have since.
 
 - **Sidecar touch.** Discovery, opening and the `EVIOCGABS` ranges are confirmed on the real
   panel (`cargo run --example touch-probe`, as root). What is not confirmed is the quarter
@@ -214,7 +214,7 @@ the Deck, any Bluetooth pad and the glasses' gyro and temple buttons all feed it
 sees one virtual Xbox pad and nothing else. Steam runs alongside with `-nojoy`, which is what
 lets a Steam game be launched at all while Spatiand owns the controller.
 
-Not yet played: a real game, on the glasses, with a person holding the Deck. Everything up to
+Games (September; a game has been run since, Stumble Guys through Steam, below and docs/input-mapper.md). Not confirmed in this file: a game played on the glasses by a person holding the Deck. Everything up to
 that is checked — the layouts and the engine by 47 tests, the pad by `--ignored` against the
 kernel and by asking SDL what it can see, the editor by `SPATIAND_VIEW=controller`, and the
 hiding of the physical pads from Proton by rendering what Wine enumerated.
@@ -227,11 +227,10 @@ disappear, which for a game launched through Steam is the window Steam puts up w
 prepares the game. All three are fixed and measured — see [x11.md](x11.md) and the list
 below — but the game itself still has to be played.
 
-### Smaller, and genuinely optional
+### Smaller, and genuinely optional (September; the first two since built)
 
-- **Stereo per window** (`spatiand_stereo_v1`): the shader already takes a UV range, so an SBS
-  source needs the protocol and a per-window layout, not new rendering.
-- **Media player**: `spatiand-media` on libmpv. `Scene::set_sky` is the seam — playing a 360
+- **Stereo per window**: done, as eye layouts in `spatiand_xr_v1` (`crates/spatiand-proto/protocol/spatiand-xr-v1.xml`).
+- **360 video**: `spatiand-media` is on FFmpeg and each platform's decoder now (not libmpv); `Scene::set_sky` is the seam — playing a 360
   video is "swap the sky texture each frame and put the projection back afterwards".
 - **`EvdevGeneric` / `NullHmd`**: the plan wanted a second backend early to prove the traits are
   not Deck-shaped. `NullHmd` exists; the generic input backend does not.

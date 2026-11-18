@@ -201,7 +201,8 @@ something is wrong.
 ## Tested on
 
 Exactly one machine. Everything below is what it was, not what is required —
-but it is the only combination anyone has seen work.
+but it is the only combination anyone has seen work. The versions are as of
+SteamOS build 20260716.1 (July 2026) and have not been read off the machine since.
 
 | | |
 |---|---|
