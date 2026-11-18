@@ -1276,11 +1276,26 @@ fn read(source: Source, shared: Arc<Shared>) {
                     None if first_picture && video_stream.is_some() && !shared.read_out.load(Ordering::Relaxed) => waiting = Some(seconds),
                     None => {
                         let to = ((seconds + start) * ffi::AV_TIME_BASE as f64) as i64;
+                        let pb = (*format).pb;
+                        let before = if pb.is_null() { -1 } else { ffi::avio_seek(pb, 0, libc::SEEK_CUR) };
                         let sought = ffi::av_seek_frame(format, -1, to, ffi::AVSEEK_FLAG_BACKWARD as c_int);
                         if sought < 0 {
-                            // Nothing has moved: what is in hand is still what comes next. Thrown
-                            // away, as it was, the decoders lost their place for nothing.
                             log::warn!("could not seek to {seconds:.1}: {}", error_text(sought));
+                            let after = if pb.is_null() { -1 } else { ffi::avio_seek(pb, 0, libc::SEEK_CUR) };
+                            if before >= 0 && after != before {
+                                // A seek that reads on looking for its time (a file with no index)
+                                // and fails leaves the reader wherever it gave up -- at the end,
+                                // often, and the film then ended there. Back to where it was, by
+                                // bytes, and everything from before thrown away, being from there.
+                                let back = ffi::av_seek_frame(format, -1, before, ffi::AVSEEK_FLAG_BYTE as c_int);
+                                if back < 0 {
+                                    log::warn!("could not go back to byte {before} either: {}", error_text(back));
+                                }
+                                start_afresh(&shared, video_stream.is_some());
+                            }
+                            // Otherwise nothing has moved: what is in hand is still what comes
+                            // next. Thrown away, as it was, the decoders lost their place for
+                            // nothing.
                             stay(&shared);
                         } else {
                             start_afresh(&shared, video_stream.is_some());
