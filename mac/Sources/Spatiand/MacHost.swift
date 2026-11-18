@@ -99,8 +99,26 @@ final class MacHost {
         }
         link = l
         // **A notification on this Mac goes to whoever is looking at it from a room.**
-        Notices.shared.onShown = { [weak self] text in self?.link?.say(["Notice": ["text": text]]) }
-        Notices.shared.start()
+        // Read for as long as this Mac is a host, whether or not its own room is in the glasses
+        // (`Notices.Reader`); said only to a session that is attached, and not while this Mac is
+        // locked, when what it would say is said as a state (`sayHeld`).
+        Notices.shared.onShown = { [weak self] text in
+            guard let self, self.attached, !self.macLocked else { return }
+            if !text.isEmpty { print("host: a notification here, said to the session") }
+            self.link?.say(["Notice": ["text": text]])
+        }
+        // A banner the session pressed (`NoticePress`) opened an application: its windows are
+        // the session's to see, as one it had started.
+        Notices.shared.onOpened = { [weak self] bundle in
+            guard let self, self.attached, self.pressedNotice else { return }
+            self.pressedNotice = false
+            print("host: the session pressed a notification; showing it the windows of \(bundle)")
+            self.launched.insert(bundle)
+            self.reconcile()
+        }
+        Notices.shared.start(for: .host)
+        // (Asked now, not when it is first said: locked, Touch ID answers no.)
+        _ = Self.unlockWords
         l.onJoined = { [unowned self] in joined($0) }
         l.onAttached = { [unowned self] in greet() }
         l.onSaid = { [unowned self] in said($0) }
@@ -117,6 +135,7 @@ final class MacHost {
     }
 
     func stop() {
+        Notices.shared.stop(for: .host)
         poll?.invalidate()
         poll = nil
         closePairing()
@@ -233,6 +252,10 @@ final class MacHost {
         link.say(["Welcome": ["version": Self.protocolVersion, "host": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
                               "reattached": !launched.isEmpty]])
         sendCatalog(force: true)
+        // Locked: said as a state before anything else is, so the session's launcher and card
+        // say what is waited for from the start.
+        toldLocked = false
+        if macLocked { sayHeld() }
         reconcile()
         onChange?()
     }
@@ -269,18 +292,61 @@ final class MacHost {
         return png.base64EncodedString()
     }
 
+    /// What is installed on this Mac, looked at again when an application folder may have
+    /// changed (every half minute, and whenever what is running changes).
+    private var installed: [Room.Installed] = []
+    private var installedLooked = Date.distantPast
+    private var catalogBusy = false
+    private var lastRunning = ""
+
+    /// **Every application this Mac can start, not only the ones running** (the owner,
+    /// 2026-11-17, of a Deck's launcher that showed Claude and Finder and nothing else:
+    /// "currently, only active app shown on deck"). The same list the Mac's own room's launcher
+    /// has (`Room.applications`), by name, each under its bundle's identifier, which is what
+    /// `Launch` names and `launch` opens; and whatever is running from somewhere else (an
+    /// application run from a download folder), so that its windows can still be asked for.
+    /// The list and its icons are read off the main thread: eighty bundles and their pictures.
     private func sendCatalog(force: Bool) {
-        guard let link, attached else { return }
-        let apps = runningApps().sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
-        let key = apps.compactMap { $0.bundleIdentifier }.joined(separator: ",")
-        guard force || key != lastCatalog else { return }
-        lastCatalog = key
-        let list: [[String: Any]] = apps.map { app in
-            var entry: [String: Any] = ["id": app.bundleIdentifier ?? "", "name": app.localizedName ?? "", "exec": "open"]
-            if let png = icon(of: app) { entry["icon_png"] = png }
-            return entry
+        guard link != nil, attached, !catalogBusy else { return }
+        let running = runningApps()
+        let runningKey = running.compactMap { $0.bundleIdentifier }.sorted().joined(separator: ",")
+        let stale = Date().timeIntervalSince(installedLooked) > 30
+        guard force || stale || runningKey != lastRunning else { return }
+        lastRunning = runningKey
+        let extra: [(id: String, name: String, icon: String?)] = running.compactMap { app in
+            guard let id = app.bundleIdentifier else { return nil }
+            return (id, app.localizedName ?? id, nil)
         }
-        link.say(["Catalog": ["apps": list]])
+        let known = installed
+        catalogBusy = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let apps = force || stale || known.isEmpty ? Room.applications() : known
+            var seen: Set<String> = []
+            var list: [[String: Any]] = []
+            for app in apps {
+                guard let id = app.bundle, seen.insert(id).inserted else { continue }
+                var entry: [String: Any] = ["id": id, "name": app.title, "exec": "open"]
+                if let file = app.icon, let png = FileManager.default.contents(atPath: file) { entry["icon_png"] = png.base64EncodedString() }
+                list.append(entry)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.catalogBusy = false
+                self.installed = apps
+                if force || stale || known.isEmpty { self.installedLooked = Date() }
+                // Running, and not in an application folder: after the others, by name.
+                for app in extra.sorted(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) where seen.insert(app.id).inserted {
+                    var entry: [String: Any] = ["id": app.id, "name": app.name, "exec": "open"]
+                    if let found = running.first(where: { $0.bundleIdentifier == app.id }), let png = self.icon(of: found) { entry["icon_png"] = png }
+                    list.append(entry)
+                }
+                let key = list.compactMap { $0["id"] as? String }.joined(separator: ",")
+                guard self.attached, force || key != self.lastCatalog else { return }
+                self.lastCatalog = key
+                print("host: \(list.count) applications offered to the session")
+                self.link?.say(["Catalog": ["apps": list]])
+            }
+        }
     }
 
     // MARK: the windows
@@ -355,16 +421,36 @@ final class MacHost {
         didSet {
             guard macLocked != oldValue else { return }
             toldLocked = false
-            if !macLocked { reconcile() }
+            if macLocked {
+                sayHeld()
+            } else {
+                // **Said, and at once**: whoever unlocked it did so with a finger on this Mac's
+                // sensor, and the session they came from showed nothing of it having been taken.
+                print("host: this Mac is unlocked; the session is told, and shown what it asked for meanwhile")
+                if attached { link?.say(["Held": "No"]) }
+                reconcile()
+            }
         }
     }
     private var toldLocked = false
 
-    private func sayLocked() {
+    /// How this Mac is unlocked, for the session to say: with a finger where it has a sensor a
+    /// finger is enrolled on. Asked once, before it is ever locked (locked, the answer is no).
+    private static let unlockWords: String = SpatiKeyGuard.canTouch() ? "Touch ID or its password" : "its password"
+
+    /// This Mac is locked: the session is told so as a state (`Held`), which it shows for as
+    /// long as it lasts and says the end of, and in a notice as well, which is all a session
+    /// built before `Held` understands (one that knows `Held` passes the notice over).
+    private func sayHeld() {
         guard attached, let link else { return }
         toldLocked = true
+        print("host: this Mac is locked; the session is told its windows wait until it is unlocked")
+        link.say(["Held": ["Locked": ["unlock": Self.unlockWords]]])
         link.say(["Notice": ["text": "\(Host.current().localizedName ?? "This Mac") is locked: unlock it to use its windows here."]])
     }
+
+    /// Whether the session has pressed a notification's card and what that opens is awaited.
+    private var pressedNotice = false
 
     /// Windows whose capture macOS refused, and when: not asked for again on their own until a
     /// while has passed, as the sound's (`soundFailed`).
@@ -373,7 +459,7 @@ final class MacHost {
     private func reconcile() {
         guard attached, MacWindows.allowed(ask: false) else { return }
         if macLocked {
-            if !toldLocked { sayLocked() }
+            if !toldLocked { sayHeld() }
             return
         }
         Task { [weak self] in
@@ -606,11 +692,20 @@ final class MacHost {
         case "Launch":
             if let app = fields["app"] as? String { launch(app) }
         case "Show":
-            if macLocked { sayLocked(); break }
+            // (Locked, it is remembered and shown when this Mac is unlocked: the session is
+            // waiting for it, and says so.)
             if let id = windowNumber(fields), let info = offered[id] {
                 askedFor.insert(info.windowID)
                 reconcile()
             }
+            if macLocked { sayHeld() }
+        case "NoticePress":
+            // The card a banner of this Mac's is on was pressed in the session's room: the
+            // banner is pressed, which opens what it came from, and that application's windows
+            // are shown to the session (`Notices.onOpened`).
+            print("host: the session pressed a notification's card")
+            pressedNotice = true
+            Notices.shared.pressed()
         case "Close":
             if let id = windowNumber(fields), let s = shared[id] {
                 // A screen is not closed, only no longer shown: and then on offer again.
@@ -700,7 +795,10 @@ final class MacHost {
     // MARK: launching, closing, resizing
 
     private func launch(_ bundle: String) {
+        // Nothing named: the session only asked to use this computer.
+        guard !bundle.isEmpty else { if macLocked { sayHeld() }; return }
         launched.insert(bundle)
+        if macLocked { sayHeld() }
         if NSRunningApplication.runningApplications(withBundleIdentifier: bundle).isEmpty,
            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())

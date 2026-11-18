@@ -210,7 +210,7 @@ pub fn run(
         // are back here.
         let mut launch_first: Option<String> = None;
         if config.on_demand {
-            set(Link::Offline("connects when you use it".into()));
+            set(Link::Offline(super::NOT_ASKED_FOR.into()));
             loop {
                 if stop.load(Ordering::Relaxed) {
                     return;
@@ -264,8 +264,11 @@ pub fn run(
             // ended (lost, refused, taken over, the host forgotten): nobody is there to show one
             // that is chosen, and a host that comes back says again what it has.
             super::offered_gone(&config.host, None);
+            // And it is not waited for to be unlocked: nobody is there to say it has been.
+            super::held_gone(&config.host);
             if let Ok(mut v) = view.lock() {
                 v.quiet = false;
+                v.held = None;
                 // A host gone mid-rumble never says stop, and the motors run until told.
                 v.rumble = Some((0, 0));
             }
@@ -326,19 +329,29 @@ pub fn run(
             }
 
             // Wait, still answering the compositor — an unanswered client is one it may decide
-            // has hung — and still hearing the launcher, so a launch of an app on a host that
-            // is off can at least say why nothing happened.
+            // has hung — and still hearing the launcher. **An application asked for while the
+            // host is not connected is tried for at once**, and started when the host answers:
+            // the wearer pressing its bubble again is the wearer saying it is there now, and
+            // waiting out the rest of a twenty-second pause first looked like a press that did
+            // nothing. If it still does not answer, its tab in the launcher says so.
             let until = Instant::now() + pause;
-            while Instant::now() < until && !stop.load(Ordering::Relaxed) {
+            let mut asked = false;
+            while Instant::now() < until && !stop.load(Ordering::Relaxed) && !asked {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_millis(50)) => {}
-                    command = commands.recv() => {
-                        if let Some(Command::Launch(app) | Command::ForceQuit(app)) = command {
+                    command = commands.recv() => match command {
+                        Some(Command::Launch(app)) => {
+                            log::info!("remote {}: asked for; trying it again now", config.host);
+                            launch_first = Some(app).filter(|a| !a.is_empty());
+                            asked = true;
+                        }
+                        Some(Command::ForceQuit(app)) => {
                             log::info!(
                                 "remote: cannot reach {app}: {} is not connected",
                                 config.host
                             );
                         }
+                        _ => {}
                     }
                 }
                 if let Err(e) = client::pump(&mut client, &mut queue) {
@@ -346,7 +359,7 @@ pub fn run(
                     return;
                 }
             }
-            pause = (pause * 2).min(Duration::from_secs(20));
+            pause = if asked { Duration::from_secs(1) } else { (pause * 2).min(Duration::from_secs(20)) };
         }
     });
 }
@@ -585,7 +598,21 @@ async fn serve(
                                         client.present(window.0, after.0, after.1);
                                     }
                                 }
-                                HostMessage::Notice { text } => super::host_notice_said(text),
+                                HostMessage::Notice { text } => super::host_notice_said(&config.host, text),
+                                // The host is locked, or no longer: its tab in the launcher
+                                // says so for as long as it is, and the card while the wearer
+                                // is waiting for something of it.
+                                HostMessage::Held(held) => {
+                                    let unlock = match held {
+                                        spatiand_stream::Held::Locked { unlock } => Some(unlock),
+                                        spatiand_stream::Held::No => None,
+                                    };
+                                    let name = view.lock().ok().and_then(|v| v.name.clone()).unwrap_or_else(|| config.host.clone());
+                                    super::held_said(&config.host, &name, unlock.clone());
+                                    if let Ok(mut v) = view.lock() {
+                                        v.held = unlock;
+                                    }
+                                }
                                 // A window's application menus: offered (its title bar gets
                                 // the button), and the levels of the one that is open.
                                 HostMessage::Menu(spatiand_stream::MenuSaid::Offered { window }) => {
@@ -764,6 +791,9 @@ async fn serve(
                         }
                         Some(Command::Menu(ask)) => {
                             say(&out, ClientMessage::Menu(ask));
+                        }
+                        Some(Command::NoticePress) => {
+                            say(&out, ClientMessage::NoticePress {});
                         }
                         Some(Command::Glasses(on)) => {
                             say(&out, ClientMessage::Glasses { on });

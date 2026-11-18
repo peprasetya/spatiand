@@ -528,6 +528,13 @@ pub fn run(
             .and_then(|v| v.parse().ok())
             .unwrap_or(15.0);
         _remotes = crate::remote::Remotes::start(&mut runtime.display_handle, &prefs);
+        // `SPATIAND_REMOTE_USE=<host>[,<application>]` asks for that computer as the launcher's
+        // "Use this computer" does (or for one of its applications), before the wait: how a
+        // computer that is only connected to when asked, and one that is locked, are looked at.
+        if let Ok(asked) = std::env::var("SPATIAND_REMOTE_USE") {
+            let (host, app) = asked.split_once(',').unwrap_or((asked.as_str(), ""));
+            _remotes.launch(host, app);
+        }
         log::info!(
             "waiting up to {seconds}s for a window from {} host(s)",
             _remotes.len()
@@ -1141,6 +1148,9 @@ pub fn run(
     } else {
         card
     };
+    // And last, as in a session, what a host has to say: its notification, or that it is locked
+    // and waited for.
+    let card = if card.is_empty() { crate::remote::host_notice() } else { card };
     if !card.is_empty() {
         log::info!("the card says {card:?}");
     }
@@ -2561,7 +2571,7 @@ fn made_up_hosts() -> (Vec<spatiand_shell::HostRow>, Vec<spatiand_shell::HostTab
         icon: None,
     };
     let tabs = vec![
-        HostTab {
+        HostTab { note: String::new(),
             label: "workshop".into(),
             address: "workshop".into(),
             online: true,
@@ -2571,7 +2581,7 @@ fn made_up_hosts() -> (Vec<spatiand_shell::HostRow>, Vec<spatiand_shell::HostTab
                 app("firestorm", "Firestorm"),
             ],
         },
-        HostTab {
+        HostTab { note: String::new(),
             label: "study-pc".into(),
             address: "192.168.10.40".into(),
             online: false,

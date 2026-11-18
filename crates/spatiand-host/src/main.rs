@@ -41,6 +41,16 @@ mod pair;
 mod pose;
 mod route;
 mod state;
+// **This machine's notifications, for the wearer looking at it from somewhere else.** The room's
+// own server for them, the same file: it answers `org.freedesktop.Notifications` where nobody
+// does and watches the bus where a desktop has the name, and what is on its card is said to the
+// session (`HostMessage::Notice`), which shows it on its own -- as a Mac host says its banners.
+#[allow(dead_code)]
+#[path = "../../spatiand/src/notices.rs"]
+mod notices;
+#[allow(dead_code)]
+#[path = "../../spatiand/src/notifications.rs"]
+mod notifications;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -449,6 +459,11 @@ fn run_host(
         false => None,
     };
     let mut attached = false;
+    // What was last said to the session of this machine's notifications.
+    let mut noticed = String::new();
+    if net.is_some() {
+        notifications::start_watching();
+    }
     // Watches the audio graph: it puts an application's sound in the right sink even when the
     // application picked its own device, and notices when one of them wants a microphone.
     let router = route::Router::start();
@@ -541,6 +556,8 @@ fn run_host(
                             // Only now is it listened to or spoken to. Encoding and sound wait too.
                             net.set_admitted(here_session, true);
                             attached = true;
+                            // A notification on show now is said to the one who has just come.
+                            noticed.clear();
                             if let Some(s) = &host.sounds {
                                 s.set_attached(true);
                             }
@@ -606,6 +623,12 @@ fn run_host(
                     FromSession::Said { session, message }
                         if admitted && here.is_some() && session == here_session =>
                     {
+                        // The card this machine's notification is on was pressed there: its
+                        // default action, where this host is the one that was told of it.
+                        if matches!(message, spatiand_stream::ClientMessage::NoticePress {}) {
+                            notifications::pressed();
+                            continue;
+                        }
                         said(&mut host, &library.served, message, &mut streams, &mut pads, &mut pacer);
                     }
                     // **The one waiting to pair.** Only its pairing is listened to, and it is
@@ -770,6 +793,15 @@ fn run_host(
         if let Some((strong, weak)) = pads.rumble() {
             if let (Some(net), true) = (&net, attached) {
                 net.send(ToSession::Control(HostMessage::Rumble { strong, weak }));
+            }
+        }
+
+        // A notification on this machine, and its going: said to the session when it changes.
+        if let (Some(net), true) = (&net, attached) {
+            let notice = notifications::notice();
+            if notice != noticed {
+                net.send(ToSession::Control(HostMessage::Notice { text: notice.clone() }));
+                noticed = notice;
             }
         }
 

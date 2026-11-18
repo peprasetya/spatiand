@@ -29,7 +29,17 @@ final class Notices {
     /// is the host of, whose wearer cannot see this screen.
     var onShown: ((String) -> Void)?
 
-    func start() {
+    /// Who the banners are read for. **Each starts and stops its own reading**: the room's
+    /// leaving the glasses used to stop the one timer, which was also the host's -- so from the
+    /// moment the glasses were unplugged from this Mac (to be plugged into a Deck, say) the Deck
+    /// was told of no notification here, though it went on hearing their sound in the screen's
+    /// (the owner, 2026-11-17: "i can hear there is notification sound from mac but no visual in
+    /// deck").
+    enum Reader { case room, host }
+    private var readers: Set<Reader> = []
+
+    func start(for reader: Reader) {
+        readers.insert(reader)
         guard timer == nil else { return }
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self, !self.looking else { return }
@@ -40,7 +50,9 @@ final class Notices {
         timer = t
     }
 
-    func stop() {
+    func stop(for reader: Reader) {
+        readers.remove(reader)
+        guard readers.isEmpty else { return }
         timer?.invalidate()
         timer = nil
         queue.async { [self] in
@@ -93,6 +105,32 @@ final class Notices {
         return found
     }
 
+    /// What Notification Center has on show, as accessibility says it: each element's role, what
+    /// it can be asked to do and its words, indented by depth. For `--selftest-notice`, when no
+    /// banner is found: how a macOS that arranges its banners differently is looked at.
+    static func tree() -> String {
+        guard let center = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.notificationcenterui").first else {
+            return "Notification Center is not running"
+        }
+        let app = AXUIElementCreateApplication(center.processIdentifier)
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
+        guard result == .success, let windows = value as? [AXUIElement] else { return "its windows cannot be read (\(result.rawValue))" }
+        var out = "\(windows.count) window(s)\n"
+        func walk(_ element: AXUIElement, _ depth: Int) {
+            var actions: CFArray?
+            AXUIElementCopyActionNames(element, &actions)
+            let role = string(element, kAXRoleAttribute) ?? "?"
+            let sub = string(element, kAXSubroleAttribute) ?? ""
+            let words = string(element, kAXValueAttribute) ?? string(element, kAXTitleAttribute) ?? string(element, kAXDescriptionAttribute) ?? ""
+            out += String(repeating: "  ", count: depth) + "\(role) \(sub) \((actions as? [String]) ?? []) \(words.prefix(60))\n"
+            guard depth < 9 else { return }
+            for child in children(element) { walk(child, depth + 1) }
+        }
+        for window in windows { walk(window, 1) }
+        return out
+    }
+
     /// Banners already seen, so that one that stays on the screen (an alert waiting to be
     /// answered) is shown once and not for as long as it sits there.
     private var seen: Set<String> = []
@@ -130,10 +168,15 @@ final class Notices {
         }
     }
 
+    /// What a pressed banner brought forward, for whoever pressed it from somewhere else: this
+    /// Mac as a host shows its session that application's windows.
+    var onOpened: ((String) -> Void)?
+
     private func after() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [self] in
             if let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier, front != Bundle.main.bundleIdentifier {
-                RoomWindows.shared.follow(bundle: front)
+                if Room.shared.inGlasses { RoomWindows.shared.follow(bundle: front) }
+                onOpened?(front)
             }
         }
     }

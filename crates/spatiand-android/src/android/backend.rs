@@ -1294,8 +1294,10 @@ pub fn run(
                 }
             }
 
+            // (And when a host offers a window or stops offering one, as on the Deck.)
+            let offered_changed = crate::remote::offered_changed();
             if shell.mode() == Mode::Switcher
-                && !(runtime.state.arrived_windows.is_empty() && runtime.state.departed_windows.is_empty())
+                && (offered_changed || !(runtime.state.arrived_windows.is_empty() && runtime.state.departed_windows.is_empty()))
             {
                 shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
             }
@@ -1830,7 +1832,13 @@ pub fn run(
                                     // the room: pressing it is "yes", as on the Deck.
                                     crate::install::accept();
                                 } else if crate::install::notice().is_empty() {
-                                    super::notice_pressed();
+                                    if !super::notice().is_empty() {
+                                        super::notice_pressed();
+                                    } else {
+                                        // A host's notification, as on the Deck: the host does
+                                        // what pressing it there does, and the card goes.
+                                        remotes.notice_pressed();
+                                    }
                                 }
                             }
                             typed = true;

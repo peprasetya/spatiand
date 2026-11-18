@@ -105,13 +105,17 @@ pub struct RemoteEntry {
 /// A tab rather than its applications mixed in with this machine's: the same name can be on
 /// both — a browser here and a browser there are not the same browser — and which machine
 /// something runs on is the first thing you choose, not the last.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HostTab {
     pub label: String,
     /// What it is known by; launching names it.
     pub address: String,
     pub online: bool,
     pub apps: Vec<RemoteEntry>,
+    /// What is in the way of its applications, if anything, said after its name above them
+    /// while its tab is open: that it is being connected to, that it does not answer, that it
+    /// is locked and how it is unlocked. Empty when nothing is.
+    pub note: String,
 }
 
 /// What pressing A on an application asked for.
@@ -436,7 +440,9 @@ impl Launcher {
             Level::Machines => None,
             Level::Own => (self.root() != Level::Own).then(|| OWN_LABEL.to_string()),
             Level::Local => (!self.hosts.is_empty() || !self.own.is_empty()).then(|| self.local_name.clone()),
-            Level::Host(i) => self.hosts.get(*i).map(|h| h.label.clone()),
+            Level::Host(i) => self.hosts.get(*i).map(|h| {
+                if h.note.is_empty() { h.label.clone() } else { format!("{} \u{2014} {}", h.label, h.note) }
+            }),
         }
     }
 
@@ -753,6 +759,38 @@ mod tests {
     }
 
     #[test]
+    fn a_computer_asked_for_fills_its_tab_where_the_wearer_is_looking() {
+        // Not connected to until asked: one bubble, which asks.
+        let mut asking = tab("littleotter", &[]);
+        asking.online = false;
+        asking.apps = vec![RemoteEntry { id: String::new(), name: "Use this computer".into(), icon: None }];
+        let mut l = Launcher::new(vec![app("Here")]);
+        l.set_hosts(vec![asking.clone()]);
+        l.step(Direction::Right);
+        assert_eq!(l.activate(), None);
+        assert_eq!(l.level(), &Level::Host(0));
+        assert_eq!(l.activate(), Some(Launch::Remote { host: "littleotter".into(), app: String::new() }));
+        // Being connected to: said above the bubbles, in the same tab.
+        let mut connecting = asking.clone();
+        connecting.note = "connecting\u{2026}".into();
+        connecting.apps[0].name = "Connecting\u{2026}".into();
+        l.set_hosts(vec![connecting]);
+        assert_eq!(l.level(), &Level::Host(0));
+        assert_eq!(l.heading().as_deref(), Some("littleotter \u{2014} connecting\u{2026}"));
+        // Locked: its applications are listed, and what is in the way is said.
+        let mut locked = tab("littleotter", &["Notes", "Preview"]);
+        locked.note = "locked: unlock it with Touch ID or its password".into();
+        l.set_hosts(vec![locked]);
+        assert_eq!(l.level(), &Level::Host(0));
+        assert_eq!(l.len(), 2);
+        assert!(l.heading().unwrap().ends_with("locked: unlock it with Touch ID or its password"));
+        // Unlocked: only its name again, and the applications still there.
+        l.set_hosts(vec![tab("littleotter", &["Notes", "Preview"])]);
+        assert_eq!(l.heading().as_deref(), Some("littleotter"));
+        assert_eq!(l.len(), 2);
+    }
+
+    #[test]
     fn there_is_real_space_between_neighbouring_bubbles() {
         let l = launcher_of(PAGE_SIZE);
         let gap = (l.placement(0).yaw - l.placement(1).yaw).to_degrees().abs();
@@ -761,6 +799,7 @@ mod tests {
 
     fn tab(address: &str, apps: &[&str]) -> HostTab {
         HostTab {
+            note: String::new(),
             label: address.to_string(),
             address: address.to_string(),
             online: true,

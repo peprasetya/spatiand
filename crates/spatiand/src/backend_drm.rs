@@ -2379,9 +2379,13 @@ pub fn run(
             // here where the engine lives.
             // A window list is stale the moment something opens or closes, and closing things
             // is now something the list itself does.
+            // And the moment a host offers a window or stops offering one: a host unlocked or
+            // just connected to, or one whose link went.
+            let offered_changed = crate::remote::offered_changed();
             if shell.mode() == Mode::Switcher
-                && !(runtime.state.arrived_windows.is_empty()
-                    && runtime.state.departed_windows.is_empty())
+                && (offered_changed
+                    || !(runtime.state.arrived_windows.is_empty()
+                        && runtime.state.departed_windows.is_empty()))
             {
                 shell.refresh_windows(crate::remote::with_offered(runtime.state.open_windows()));
             }
@@ -3380,6 +3384,16 @@ pub fn run(
                                     && scene.notice_hit(&a.ray, orientation) =>
                             {
                                 crate::notifications::pressed();
+                            }
+                            // A notification of a host's, which the wearer cannot see the
+                            // screen of: pressed, the host does what pressing it there does (a
+                            // Mac opens what it came from, and shows it here) and the card goes.
+                            Some(a)
+                                if crate::install::notice().is_empty()
+                                    && remotes.notice_showing()
+                                    && scene.notice_hit(&a.ray, orientation) =>
+                            {
+                                remotes.notice_pressed();
                             }
                             // Before the title bar: the button sits inside the bar, so testing
                             // the bar first would start a drag and never reach this.

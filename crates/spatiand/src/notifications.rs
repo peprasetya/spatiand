@@ -20,6 +20,15 @@
 //! two signals -- and the one part with any depth, the hints a notification carries (an image is
 //! a `(iiibiiay)` in a variant), is skipped by its signature rather than understood.
 //!
+//! **A host of the room's (`spatiand-host`) uses the same file** (by path), so that what an
+//! application says on the machine it runs on reaches the wearer looking at it from another
+//! (`HostMessage::Notice`): it answers the name where nobody does -- a machine with no desktop
+//! running -- and where a desktop has it, it *watches* instead ([`start_watching`]): a second
+//! connection made a monitor of the bus (`org.freedesktop.DBus.Monitoring.BecomeMonitor`, what
+//! `dbus-monitor` is), matching only `Notify` calls, so the desktop goes on showing its own
+//! notifications and the host hears of them too. The room itself never watches: where a desktop
+//! shows them, they are being shown.
+//!
 //! The bus is read on a thread of its own. Replies and signals are written from whichever thread
 //! has something to say -- the frame loop's press, or the reader's own -- through one shared
 //! handle on the socket.
@@ -76,6 +85,10 @@ fn id_of(key: &str) -> u32 {
 /// The socket's writing side, shared by every thread that answers or signals.
 static OUT: Mutex<Option<UnixStream>> = Mutex::new(None);
 static SERIAL: AtomicU32 = AtomicU32::new(1);
+/// Whether the name is this process's now. While it is not, a host watches the bus instead.
+static OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Counts the notifications heard while watching: they have no number of this server's.
+static WATCHED: AtomicU32 = AtomicU32::new(0);
 
 // --- what the room asks ---
 
@@ -86,6 +99,18 @@ static SERIAL: AtomicU32 = AtomicU32::new(1);
 pub fn start() {
     if let Err(e) = std::thread::Builder::new().name("notifications".into()).spawn(serve) {
         log::warn!("notifications: could not start its thread: {e}");
+    }
+}
+
+/// [`start`], and where somebody else answers the name, hear what they are told as well: for a
+/// host, whose notifications are for a wearer somewhere else whether or not a desktop here
+/// shows them. Nothing is taken from whoever has the name, and a notification heard this way
+/// cannot be answered (a press on its card takes no action of it): only the name's owner can.
+#[allow(dead_code)]
+pub fn start_watching() {
+    start();
+    if let Err(e) = std::thread::Builder::new().name("notifications-watch".into()).spawn(watch) {
+        log::warn!("notifications: could not start the watching thread: {e}");
     }
 }
 
@@ -129,6 +154,10 @@ fn expire() {
 
 /// `NotificationClosed`: 1 it expired, 2 the wearer dismissed it, 3 `CloseNotification` closed it.
 fn closed(id: u32, reason: u32) {
+    // One only heard of while watching is not this server's to say anything of.
+    if id == 0 {
+        return;
+    }
     let mut w = W::default();
     w.u(id);
     w.u(reason);
@@ -175,6 +204,7 @@ fn serve() {
                 if let Err(e) = session(conn) {
                     log::warn!("notifications: the session bus went away ({e})");
                 }
+                OWNED.store(false, Ordering::Relaxed);
                 *OUT.lock().unwrap() = None;
                 STATE.lock().unwrap().card.clear();
             }
@@ -250,6 +280,7 @@ fn session(mut conn: Conn) -> io::Result<()> {
             CALL => answer(&m),
             _ => {}
         }
+        OWNED.store(owned, Ordering::Relaxed);
         if said != Some(owned) && (asking.is_none() || owned) {
             if owned {
                 log::info!("notifications: serving {NAME}; desktop applications' notifications are shown on the card");
@@ -259,6 +290,105 @@ fn session(mut conn: Conn) -> io::Result<()> {
             said = Some(owned);
         }
     }
+}
+
+// --- watching, where somebody else has the name ---
+
+/// What a monitor of the bus is sent: the calls asking for a notification, and nothing else.
+const WATCH_RULE: &str = "type='method_call',interface='org.freedesktop.Notifications',member='Notify'";
+
+fn watch() {
+    let mut said = false;
+    loop {
+        // Ours: they come to the server itself. (Looked at again as often as the name is asked for.)
+        if OWNED.load(Ordering::Relaxed) {
+            said = false;
+            std::thread::sleep(Duration::from_secs(1));
+            continue;
+        }
+        // A moment for the server to have asked for the name first.
+        std::thread::sleep(Duration::from_secs(2));
+        if OWNED.load(Ordering::Relaxed) {
+            continue;
+        }
+        match Conn::open().and_then(|conn| watching(conn, &mut said)) {
+            Ok(()) => {}
+            Err(e) => {
+                if !said {
+                    log::info!("notifications: the bus cannot be watched ({e}); what a desktop here is told is not heard");
+                    said = true;
+                }
+                std::thread::sleep(ASK_AGAIN);
+            }
+        }
+    }
+}
+
+/// One connection as a monitor, until the name becomes this process's or the bus goes.
+fn watching(mut conn: Conn, said: &mut bool) -> io::Result<()> {
+    conn.stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+    let mut out = conn.stream.try_clone()?;
+    let mut ask = |serial: u32, interface: &str, member: &str, signature: &str, body: &[u8]| -> io::Result<()> {
+        let header = Header {
+            path: Some(BUS_PATH),
+            interface: Some(interface),
+            member: Some(member),
+            destination: Some(BUS),
+            ..Header::default()
+        };
+        out.write_all(&encode(CALL, 0, serial, &header, signature, body))
+    };
+    let answered = |conn: &mut Conn, serial: u32, what: &str| -> io::Result<()> {
+        let asked = Instant::now();
+        loop {
+            if asked.elapsed() > Duration::from_secs(5) {
+                return Err(io::Error::new(io::ErrorKind::TimedOut, format!("the bus did not answer {what}")));
+            }
+            if let Some(m) = conn.next()? {
+                if m.reply_serial == Some(serial) {
+                    return match m.kind {
+                        ERROR => Err(io::Error::other(format!("the bus refused {what}: {}", m.error.unwrap_or_default()))),
+                        _ => Ok(()),
+                    };
+                }
+            }
+        }
+    };
+    ask(1, BUS, "Hello", "", &[])?;
+    answered(&mut conn, 1, "Hello")?;
+    let mut w = W::default();
+    w.array(4, |w| w.s(WATCH_RULE));
+    w.u(0);
+    ask(2, "org.freedesktop.DBus.Monitoring", "BecomeMonitor", "asu", &w.b)?;
+    answered(&mut conn, 2, "BecomeMonitor")?;
+    log::info!("notifications: {NAME} is someone else's here; watching what they are told");
+    *said = false;
+    loop {
+        if OWNED.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let Some(m) = conn.next()? else { continue };
+        if m.kind == CALL && m.member.as_deref() == Some("Notify") && m.interface.as_deref() == Some(NAME) && m.signature == "susssasa{sv}i" {
+            match read_notify(&m.body, m.big) {
+                Ok(n) => watched(&n),
+                Err(e) => log::debug!("notifications: a Notify that could not be read ({e})"),
+            }
+        }
+    }
+}
+
+/// A notification heard while watching: on the card, under a key of this module's own (the
+/// number its server gives it is in a reply this does not wait for).
+fn watched(n: &Notify) {
+    let text = card(&n.app, &n.summary, &n.body);
+    let key = format!("w{}", WATCHED.fetch_add(1, Ordering::Relaxed));
+    let mut state = STATE.lock().unwrap();
+    let posted = state.card.post(&key, text, lasting(n.timeout), Instant::now());
+    if posted.shown {
+        state.default_action = None;
+    }
+    drop(state);
+    log::info!("notification from {:?}, heard on its way to this desktop's own server", n.app);
 }
 
 fn call(destination: &str, path: &str, interface: &str, member: &str, signature: &str, body: &[u8]) -> io::Result<u32> {

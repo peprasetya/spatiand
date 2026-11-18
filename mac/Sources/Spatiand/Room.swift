@@ -146,7 +146,7 @@ final class Room {
         }
         PadInput.shared.start()
         // The Mac's notifications, under the clock.
-        if Settings.notifications, RoomTap.allowed(ask: false) { Notices.shared.start() }
+        if Settings.notifications, RoomTap.allowed(ask: false) { Notices.shared.start(for: .room) }
         // The sound of each application with a window on show, taken and placed at that window.
         if Settings.soundPlacement, !preview || ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil {
             sound.onProblem = { print("sound: \($0)") }
@@ -183,7 +183,9 @@ final class Room {
         desk = true
         soundTimer?.invalidate()
         soundTimer = nil
-        Notices.shared.stop()
+        // (The room's reading of them only: this Mac as a host goes on reading them for a
+        // session somewhere else, which is whom they are for once the glasses have gone there.)
+        Notices.shared.stop(for: .room)
         soundQueue.sync { sound.stopAll() }
         RoomTap.shared.remove()
         RoomWindows.shared.clear()
@@ -221,7 +223,7 @@ final class Room {
         defer { stopping = false }
         soundTimer?.invalidate()
         unwatchApplications()
-        Notices.shared.stop()
+        Notices.shared.stop(for: .room)
         soundQueue.sync { sound.stopAll() }
         RoomTap.shared.remove()
         RoomWindows.shared.clear()
@@ -340,7 +342,7 @@ final class Room {
     }
 
     /// Where this Mac's applications are, for the launcher.
-    private static let applicationRoots = ["/Applications", "/System/Applications", NSString("~/Applications").expandingTildeInPath]
+    static let applicationRoots = ["/Applications", "/System/Applications", NSString("~/Applications").expandingTildeInPath]
 
     /// The application folders, watched while the session runs, so one installed, removed or
     /// updated meanwhile is in the launcher (the compositor's `local_apps_changed`), as the
@@ -377,6 +379,26 @@ final class Room {
     /// Every application on this Mac, for the launcher: its name, its bundle, and its icon as a
     /// picture in a file, made once.
     private func listApplications() {
+        let found = Self.applications()
+        sp_apps_begin()
+        for app in found { sp_app(app.title, app.path, app.icon) }
+        sp_apps_end()
+        print("launcher: \(found.count) applications of this Mac")
+    }
+
+    /// One application installed on this Mac: what it is called, where it is, its bundle's
+    /// identifier where it has one, and its icon as a picture in a file.
+    struct Installed {
+        let title: String
+        let path: String
+        let bundle: String?
+        let icon: String?
+    }
+
+    /// Every application installed on this Mac, by name: the room's launcher's list, and what
+    /// this Mac as a host offers a session (`MacHost.sendCatalog`) -- one list, so that what can
+    /// be started from the Mac's own room can be started from a Deck's.
+    static func applications() -> [Installed] {
         let cache = NSString("~/Library/Caches/Spatiand/icons").expandingTildeInPath
         try? FileManager.default.createDirectory(atPath: cache, withIntermediateDirectories: true)
         var found: [(String, String)] = []
@@ -396,18 +418,16 @@ final class Room {
             }
         }
         for root in roots { look(root, depth: 0) }
-        sp_apps_begin()
-        for (title, path) in found.sorted(by: { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }) {
-            let key = (Bundle(path: path)?.bundleIdentifier ?? title).replacingOccurrences(of: "/", with: "_")
+        return found.sorted(by: { $0.0.localizedCaseInsensitiveCompare($1.0) == .orderedAscending }).map { title, path in
+            let bundle = Bundle(path: path)?.bundleIdentifier
+            let key = (bundle ?? title).replacingOccurrences(of: "/", with: "_")
             let icon = cache + "/" + key + ".png"
             if !FileManager.default.fileExists(atPath: icon) { Self.writeIcon(of: path, to: icon) }
-            sp_app(title, path, FileManager.default.fileExists(atPath: icon) ? icon : nil)
+            return Installed(title: title, path: path, bundle: bundle, icon: FileManager.default.fileExists(atPath: icon) ? icon : nil)
         }
-        sp_apps_end()
-        print("launcher: \(found.count) applications of this Mac")
     }
 
-    private static func writeIcon(of path: String, to file: String) {
+    static func writeIcon(of path: String, to file: String) {
         let image = NSWorkspace.shared.icon(forFile: path)
         let side = 128
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8, samplesPerPixel: 4,

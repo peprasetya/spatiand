@@ -665,6 +665,7 @@ if CommandLine.arguments.contains("--selftest-notice") {
         let found = Notices.banners()
         print("look \(attempt): \(found.count) banner(s) \(found.map { $0.1 })")
         if !found.isEmpty { break }
+        if attempt == 4 { print(Notices.tree()) }
     }
     exit(0)
 }
@@ -1495,11 +1496,36 @@ if CommandLine.arguments.contains("--selftest-local") {
 if let at = CommandLine.arguments.firstIndex(of: "--serve-host") {
     // --serve-host <seconds>: this Mac as a host and nothing else, for another program to connect to.
     let seconds = Double(CommandLine.arguments.dropFirst(at + 1).first ?? "") ?? 60
+    // **A test host with an identity of its own (`SPATIAND_HOST_DIR`) keeps settings of its own
+    // too**, beside that identity, unless told where (`SPATIAND_APPS_CONFIG`). It used to share
+    // this Mac's real ones, and a test session that connected to it exchanged settings with
+    // them: on 2026-11-18 a scratch room's list of devices, newer than the owner's, went into
+    // this Mac's and from there to his other machines (two made-up devices, taken off again
+    // with --forget-device; the list's key changed twice, as it does at any removal).
+    if let dir = ProcessInfo.processInfo.environment["SPATIAND_HOST_DIR"], ProcessInfo.processInfo.environment["SPATIAND_APPS_CONFIG"] == nil {
+        setenv("SPATIAND_APPS_CONFIG", dir + "/settings", 1)
+    }
     let application = NSApplication.shared
     application.setActivationPolicy(.accessory)
     DispatchQueue.main.async {
         MacHost.shared.start()
         MacHost.shared.openPairing()
+        // `SPATIAND_HOST_TEST_LOCKED=<seconds>`: as though this Mac were locked from the start
+        // and unlocked after that long, for looking at what a session shows meanwhile and
+        // after without locking the Mac (which only a person at it can undo).
+        if let seconds = ProcessInfo.processInfo.environment["SPATIAND_HOST_TEST_LOCKED"].flatMap(Double.init) {
+            MacHost.shared.macLocked = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { MacHost.shared.macLocked = false }
+        }
+        // `SPATIAND_HOST_TEST_NOTICE=<seconds>,<words>`: as though a banner with those words had
+        // come up after that long (a `|` in them parts its two lines), for looking at what a
+        // session shows of it where macOS shows no banner (see `Notices`).
+        if let test = ProcessInfo.processInfo.environment["SPATIAND_HOST_TEST_NOTICE"], let comma = test.firstIndex(of: ","),
+           let seconds = Double(test[..<comma]) {
+            let words = test[test.index(after: comma)...].replacingOccurrences(of: "|", with: "\n")
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { Notices.shared.onShown?(words) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds + 8) { Notices.shared.onShown?("") }
+        }
         print("serving as \(MacHost.shared.address), fingerprint \(MacHost.shared.link?.fingerprint ?? "?")")
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { exit(0) }
     }

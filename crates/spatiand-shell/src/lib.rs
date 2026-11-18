@@ -659,7 +659,16 @@ impl Shell {
                 Mode::Launcher => {
                     // A group opens; an application launches and gets out of the way.
                     let launch = self.launcher.activate()?;
-                    self.mode = Mode::World;
+                    // **A computer asked for, not an application of it, stays where it is**: its
+                    // bubble ("Use this computer") connects to it, and what it offers takes the
+                    // bubble's place in the same tab when it has said. The launcher used to
+                    // close on it as on an application, and the wearer had to open it again and
+                    // find the computer again to see whether anything had come of it (the owner,
+                    // 2026-11-17: "app list not expanded, have to recall the app menu").
+                    let stays = matches!(&launch, Launch::Remote { app, .. } if app.is_empty());
+                    if !stays {
+                        self.mode = Mode::World;
+                    }
                     Some(match launch {
                         Launch::Local(app) => ShellEvent::Launch(app),
                         Launch::Own(app) => ShellEvent::LaunchOwn(app),
@@ -882,7 +891,7 @@ mod tests {
     }
 
     fn a_host() -> (Vec<HostRow>, Vec<HostTab>) {
-        let tab = HostTab {
+        let tab = HostTab { note: String::new(),
             label: "deepmagpie".into(),
             address: "deepmagpie".into(),
             online: true,
@@ -1263,7 +1272,7 @@ mod tests {
         let mut s = shell();
         s.set_hosts(
             vec![],
-            vec![HostTab {
+            vec![HostTab { note: String::new(),
                 label: "workshop".into(),
                 address: "workshop".into(),
                 online: true,

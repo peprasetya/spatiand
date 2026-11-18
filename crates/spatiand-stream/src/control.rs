@@ -140,6 +140,13 @@ pub enum ClientMessage {
     /// After the pairing pair, so a host that predates it reads every other message as before
     /// and this one as something it does not know; it is only said to a host that offered.
     Menu(MenuAsk),
+    /// The wearer pressed the card a notification of this host's is shown on
+    /// ([`HostMessage::Notice`]): the host does what pressing it there does -- on a Mac the
+    /// banner is pressed, which opens the application it came from, whose windows are then
+    /// shown to the session; on Linux the notification's default action is taken.
+    ///
+    /// Last, and must stay so: a host built before it passes it over.
+    NoticePress {},
 }
 
 /// What the host sends.
@@ -243,6 +250,34 @@ pub enum HostMessage {
     /// A window's application menus: offered, and a level of them at a time once opened. See
     /// [`MenuSaid`]. After `PairReply`, so a session built before it reports it as unknown.
     Menu(MenuSaid),
+    /// Whether something at the host is in the way of its windows, and what. See [`Held`].
+    /// Said when it changes, and to a session that attaches while it is so.
+    ///
+    /// Last, and must stay so: a session built before it reports it as unknown (and is still
+    /// told in words, by a `Notice`).
+    Held(Held),
+}
+
+/// What is in the way of a host's windows being shown.
+///
+/// **The session has to know it as a state, not as a sentence that passes.** A Mac that is
+/// locked shows nothing of its windows to anything (macOS's own rule, not to be got round), and
+/// said so in a [`HostMessage::Notice`]: nine seconds in a corner, and then nothing -- not that
+/// it was still waiting, and not that the wait was over. Whoever unlocked it, with a finger on
+/// its sensor in another room, came back to a launcher that looked as it had before and
+/// had to open it again to find out (the owner, 2026-11-17: "when touch id validate, no
+/// konfirmation, app list not expanded, have to recall the app menu"). So the room is told when
+/// it begins and when it ends: it says what is waited for and on which machine for as long as
+/// it is, says that it is over when it is, and shows what the host then offers where the wearer
+/// was already looking.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Held {
+    /// Nothing is in the way, or no longer.
+    No,
+    /// The host is locked. `unlock` is how it is unlocked there, in words that finish "unlock
+    /// it with ...": "Touch ID or its password" on a Mac with a sensor, "its password" on one
+    /// without.
+    Locked { unlock: String },
 }
 
 /// What the wearer does with a window's application menus.
@@ -631,6 +666,7 @@ mod tests {
             ClientMessage::Menu(MenuAsk::Open { window: WindowId(4) }),
             ClientMessage::Menu(MenuAsk::Choose { row: 2 }),
             ClientMessage::Menu(MenuAsk::Back),
+            ClientMessage::NoticePress {},
         ];
         for message in client {
             let bytes = crate::to_bytes(&message).expect("encodes");
@@ -690,6 +726,9 @@ mod tests {
                 rows: vec![MenuRow { label: "File  \u{203A}".into(), detail: "Opens more".into() }],
             }),
             HostMessage::Menu(MenuSaid::Done),
+            HostMessage::Held(Held::Locked { unlock: "Touch ID or its password".into() }),
+            HostMessage::Held(Held::No),
+            HostMessage::Notice { text: "Messages\nLunch at one?".into() },
         ];
         for message in host {
             let bytes = crate::to_bytes(&message).expect("encodes");
@@ -730,6 +769,26 @@ mod tests {
         let bytes = crate::to_bytes(&HostMessage::Menu(MenuSaid::Done)).unwrap();
         let reply = crate::to_bytes(&HostMessage::PairReply { spake: vec![], confirm: vec![] }).unwrap();
         assert_eq!(bytes[0], reply[0] + 1);
+    }
+
+    #[test]
+    fn a_held_host_and_a_pressed_notice_cross_as_the_mac_host_writes_and_reads_them() {
+        let locked: HostMessage = serde_json::from_str(r#"{"Held":{"Locked":{"unlock":"Touch ID or its password"}}}"#).unwrap();
+        assert_eq!(locked, HostMessage::Held(Held::Locked { unlock: "Touch ID or its password".into() }));
+        assert_eq!(serde_json::from_str::<HostMessage>(r#"{"Held":"No"}"#).unwrap(), HostMessage::Held(Held::No));
+        // What the app is handed when the card is pressed: a name with no fields, as an object.
+        assert_eq!(serde_json::to_string(&ClientMessage::NoticePress {}).unwrap(), r#"{"NoticePress":{}}"#);
+    }
+
+    #[test]
+    fn what_holds_a_host_and_a_pressed_notice_are_messages_an_older_peer_passes_over() {
+        // Appended, each after the last variant an older build knows.
+        let held = crate::to_bytes(&HostMessage::Held(Held::No)).unwrap();
+        let menu = crate::to_bytes(&HostMessage::Menu(MenuSaid::Done)).unwrap();
+        assert_eq!(held[0], menu[0] + 1);
+        let press = crate::to_bytes(&ClientMessage::NoticePress {}).unwrap();
+        let menu = crate::to_bytes(&ClientMessage::Menu(MenuAsk::Back)).unwrap();
+        assert_eq!(press[0], menu[0] + 1);
     }
 
     #[test]

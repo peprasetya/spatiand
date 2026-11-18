@@ -64,6 +64,9 @@ pub struct HostView {
     /// Connected, but nothing at all has come from the host for a while. See `QUIET_AFTER` in
     /// `session`: an application that is the room is hidden while this is true.
     pub quiet: bool,
+    /// The host is locked, and shows nothing of its windows until it is unlocked there: how it
+    /// is unlocked, in its own words ("Touch ID or its password"). See `spatiand_stream::Held`.
+    pub held: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -208,6 +211,8 @@ pub enum Command {
     Show(u32),
     /// The wearer is using a window's application menus. See [`menu`].
     Menu(spatiand_stream::MenuAsk),
+    /// The wearer pressed the card this host's notification is on.
+    NoticePress,
 }
 
 /// Windows that hosts have open and are not showing: which host, its number there, what it is
@@ -216,23 +221,43 @@ static OFFERED: std::sync::Mutex<Vec<(String, u32, String, usize, bool)>> = std:
 /// Clear of anything the compositor numbers its own windows with.
 const OFFERED_FROM: usize = 1 << 40;
 
+/// Whether what hosts offer has changed since the list of windows was last made from it.
+static OFFERED_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub(crate) fn offered_said(host: &str, window: u32, title: String, screen: bool) {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(OFFERED_FROM);
     let mut offered = OFFERED.lock().unwrap();
     match offered.iter_mut().find(|o| o.0 == host && o.1 == window) {
+        Some(known) if known.2 == title => return,
         Some(known) => known.2 = title,
         None => offered.push((host.to_string(), window, title, NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), screen)),
     }
+    OFFERED_CHANGED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Shown now, or closed there: off the list either way. `None` is every window of that host's.
 pub(crate) fn offered_gone(host: &str, window: Option<u32>) {
-    OFFERED.lock().unwrap().retain(|o| o.0 != host || window.is_some_and(|w| o.1 != w));
+    let mut offered = OFFERED.lock().unwrap();
+    let before = offered.len();
+    offered.retain(|o| o.0 != host || window.is_some_and(|w| o.1 != w));
+    if offered.len() != before {
+        OFFERED_CHANGED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Whether what hosts offer has changed since this was last asked (or since the list was last
+/// made, [`with_offered`]). **The list of windows on show is made again when it has**: a host
+/// that went away while the list was open took its windows off it only at the next opening, so
+/// the wearer could choose one nobody was there to show; and one just unlocked, or just
+/// connected to, offered its windows to a list that went on showing none.
+pub fn offered_changed() -> bool {
+    OFFERED_CHANGED.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The compositor's list of windows, with what hosts are offering after it: put away, to be
 /// asked for like any hidden window.
 pub fn with_offered(mut windows: Vec<spatiand_shell::WindowEntry>) -> Vec<spatiand_shell::WindowEntry> {
+    OFFERED_CHANGED.store(false, std::sync::atomic::Ordering::Relaxed);
     for (_, _, title, id, screen) in OFFERED.lock().unwrap().iter() {
         windows.push(spatiand_shell::WindowEntry {
             id: *id,
@@ -245,20 +270,194 @@ pub fn with_offered(mut windows: Vec<spatiand_shell::WindowEntry>) -> Vec<spatia
     windows
 }
 
-/// The last notification a host sent, and when: shown for a glance and then let go of.
-static HOST_NOTICE: std::sync::Mutex<Option<(String, std::time::Instant)>> = std::sync::Mutex::new(None);
+/// The last notification a host sent, which host, and when: shown for a glance and then let go of.
+static HOST_NOTICE: std::sync::Mutex<Option<HostNotice>> = std::sync::Mutex::new(None);
 
-pub(crate) fn host_notice_said(text: String) {
-    *HOST_NOTICE.lock().unwrap() = (!text.is_empty()).then(|| (text, std::time::Instant::now()));
+struct HostNotice {
+    /// The host it is from, by the name it was added as; empty for a word of the room's own
+    /// about a host (that it is unlocked), which pressing does nothing to.
+    host: String,
+    text: String,
+    at: std::time::Instant,
+    lasts: std::time::Duration,
 }
 
-/// What a host has just notified of, if it is recent enough to be worth a glance.
+/// How long a host's notification stays on the card unless the host takes it away first (it
+/// does, after its own eight seconds).
+const NOTICE_FOR: std::time::Duration = std::time::Duration::from_secs(9);
+/// How long the room's own last word about a host stays.
+const WORD_FOR: std::time::Duration = std::time::Duration::from_secs(6);
+
+fn notice_slot() -> std::sync::MutexGuard<'static, Option<HostNotice>> {
+    HOST_NOTICE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A host's notification, or (empty) its going. One from a host that is locked is passed over:
+/// a host that also says it is locked in a notice, for a session older than
+/// [`spatiand_stream::Held`], is not shown twice.
+pub(crate) fn host_notice_said(host: &str, text: String) {
+    if !text.is_empty() && held().iter().any(|h| h.host == host) {
+        return;
+    }
+    let mut notice = notice_slot();
+    if text.is_empty() {
+        // Only its own is taken away: not another host's, and not the room's word about one.
+        if notice.as_ref().is_some_and(|n| n.host == host) {
+            *notice = None;
+        }
+    } else {
+        log::info!("remote {host}: a notification there, shown on the card");
+        *notice = Some(HostNotice { host: host.to_string(), text, at: std::time::Instant::now(), lasts: NOTICE_FOR });
+    }
+}
+
+/// The room's own word about a host, for a few seconds.
+fn word(text: String) {
+    *notice_slot() = Some(HostNotice { host: String::new(), text, at: std::time::Instant::now(), lasts: WORD_FOR });
+}
+
+/// What the card says of the hosts, if anything: that one the wearer asked something of is
+/// locked, for as long as it is waited for; else what one has just notified of, if it is recent
+/// enough to be worth a glance.
 pub fn host_notice() -> String {
-    HOST_NOTICE
-        .lock()
-        .ok()
-        .and_then(|n| n.as_ref().filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(9)).map(|(text, _)| text.clone()))
-        .unwrap_or_default()
+    if let Some(waiting) = waiting_words(std::time::Instant::now()) {
+        return waiting;
+    }
+    notice_slot().as_ref().filter(|n| n.at.elapsed() < n.lasts).map(|n| n.text.clone()).unwrap_or_default()
+}
+
+/// The host whose notification is on the card now, for a press on it.
+fn notice_from() -> Option<String> {
+    if waiting_words(std::time::Instant::now()).is_some() {
+        return None;
+    }
+    notice_slot().as_ref().filter(|n| n.at.elapsed() < n.lasts && !n.host.is_empty()).map(|n| n.host.clone())
+}
+
+// --- a host that is locked ---
+
+/// A host that has said it is locked ([`spatiand_stream::Held`]).
+#[derive(Debug, Clone)]
+struct HeldHost {
+    /// What it was added as.
+    host: String,
+    /// What it calls itself.
+    name: String,
+    /// How it is unlocked there, in its own words.
+    unlock: String,
+    /// When the wearer last asked something of it that it cannot do until it is unlocked: one
+    /// of its applications, one of its windows, or to be connected to at all. From then the card
+    /// says what is waited for; a host that is locked and not being asked anything says nothing.
+    asked: Option<std::time::Instant>,
+}
+
+/// How long the card says a locked host is waited for. After it the card says once that it is
+/// still locked and goes: the wait is not over (what was asked for still opens when the host is
+/// unlocked, and that is still said), but nobody looks at a card for longer than this.
+const WAIT_FOR: std::time::Duration = std::time::Duration::from_secs(120);
+/// How long before a host says it is locked an asking still counts as what is waited for:
+/// connecting to it and being told takes a moment.
+const ASKED_WITHIN: std::time::Duration = std::time::Duration::from_secs(20);
+
+static HELD: std::sync::Mutex<Vec<HeldHost>> = std::sync::Mutex::new(Vec::new());
+/// The host the wearer last asked something of, and when.
+static LAST_ASKED: std::sync::Mutex<Option<(String, std::time::Instant)>> = std::sync::Mutex::new(None);
+
+fn held() -> std::sync::MutexGuard<'static, Vec<HeldHost>> {
+    HELD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The wearer asked something of `host`: if it is locked, that is what is waited for from now.
+pub(crate) fn asked_of(host: &str) {
+    let now = std::time::Instant::now();
+    *LAST_ASKED.lock().unwrap_or_else(|e| e.into_inner()) = Some((host.to_string(), now));
+    if let Some(h) = held().iter_mut().find(|h| h.host == host) {
+        h.asked = Some(now);
+    }
+}
+
+/// `host` says it is locked (`Some`: how it is unlocked) or no longer (`None`).
+pub(crate) fn held_said(host: &str, name: &str, unlock: Option<String>) {
+    let mut all = held();
+    match unlock {
+        Some(unlock) => {
+            let asked = LAST_ASKED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .filter(|(h, at)| h == host && at.elapsed() < ASKED_WITHIN)
+                .map(|(_, at)| *at);
+            match all.iter_mut().find(|h| h.host == host) {
+                Some(h) => {
+                    h.name = name.to_string();
+                    h.unlock = unlock;
+                    h.asked = h.asked.or(asked);
+                }
+                None => all.push(HeldHost { host: host.to_string(), name: name.to_string(), unlock, asked }),
+            }
+            drop(all);
+            log::info!("remote {host}: it is locked; its windows wait until it is unlocked there");
+            // Its notice of the same, from a host that says both, is not also shown.
+            let mut notice = notice_slot();
+            if notice.as_ref().is_some_and(|n| n.host == host) {
+                *notice = None;
+            }
+        }
+        None => {
+            let was = all.iter().position(|h| h.host == host).map(|i| all.remove(i));
+            drop(all);
+            // **Said, when it was being waited for**: the finger was on a sensor in another
+            // room, and nothing here said it had been taken.
+            if let Some(was) = was {
+                log::info!("remote {host}: unlocked");
+                if was.asked.is_some() {
+                    word(format!("{} is unlocked\nWhat you asked of it opens here now", was.name));
+                }
+            }
+        }
+    }
+}
+
+/// `host`'s link has gone: it is not waited for any more, and that is said if it was.
+pub(crate) fn held_gone(host: &str) {
+    let mut all = held();
+    let was = all.iter().position(|h| h.host == host).map(|i| all.remove(i));
+    drop(all);
+    if let Some(HeldHost { name, asked: Some(at), .. }) = was {
+        if at.elapsed() < WAIT_FOR {
+            word(format!("{name} is no longer connected\nIt was locked, and nothing of it was shown"));
+        }
+    }
+}
+
+/// What the card says while a locked host is waited for.
+fn waiting_words(now: std::time::Instant) -> Option<String> {
+    let all = held();
+    // The one asked last.
+    let h = all.iter().filter(|h| h.asked.is_some()).max_by_key(|h| h.asked)?;
+    let waited = now.saturating_duration_since(h.asked?);
+    if waited < WAIT_FOR {
+        Some(format!("{} is locked\nUnlock it with {}: what you asked of it opens here by itself", h.name, h.unlock))
+    } else if waited < WAIT_FOR + WORD_FOR {
+        Some(format!("{} is still locked\nNothing of it is shown here until it is unlocked there", h.name))
+    } else {
+        None
+    }
+}
+
+/// Why a host that is only connected to when the wearer asks is not connected yet.
+pub(crate) const NOT_ASKED_FOR: &str = "connects when you use it";
+
+/// What a host's tab in the launcher says after its name, from its link and whether it is locked.
+fn tab_note(link: &Link, held: Option<&str>) -> String {
+    match (link, held) {
+        (Link::Online, Some(unlock)) => format!("locked: unlock it with {unlock}"),
+        (Link::Online, None) => String::new(),
+        (Link::Connecting, _) => "connecting\u{2026}".into(),
+        // Not asked for yet: its one bubble says what to do.
+        (Link::Offline(reason), _) if reason == NOT_ASKED_FOR => String::new(),
+        (Link::Offline(reason) | Link::Refused(reason), _) => reason.clone(),
+    }
 }
 
 /// Whether this session has glasses on, as last noticed: what a host is told when it is
@@ -329,6 +528,7 @@ impl Remote {
     }
 
     pub fn launch(&self, app: &str) {
+        asked_of(&self.host);
         let _ = self.commands.send(Command::Launch(app.to_string()));
     }
 
@@ -345,7 +545,12 @@ impl Remote {
     }
 
     fn show(&self, window: u32) {
+        asked_of(&self.host);
         let _ = self.commands.send(Command::Show(window));
+    }
+
+    fn notice_press(&self) {
+        let _ = self.commands.send(Command::NoticePress);
     }
 
     fn viewport(&self, viewport: spatiand_stream::Viewport) {
@@ -599,6 +804,23 @@ impl Remotes {
         true
     }
 
+    /// Whether a host's notification is on the card now, so that a press on the card is its.
+    pub fn notice_showing(&self) -> bool {
+        notice_from().is_some()
+    }
+
+    /// The card a host's notification is on was pressed: the host is told, and does what
+    /// pressing it there does (a Mac presses the banner, and shows the session what that
+    /// opens); the card goes.
+    pub fn notice_pressed(&mut self) {
+        let Some(host) = notice_from() else { return };
+        log::info!("remote {host}: its notification was pressed");
+        for remote in self.hosts.iter().filter(|r| r.host == host) {
+            remote.notice_press();
+        }
+        *notice_slot() = None;
+    }
+
     /// **Every host is told whenever the glasses come on or go off**, not only when it is
     /// connected to: an application there that can draw a room for a head, or an ordinary window
     /// for nobody's, changes over while it runs (`set_glasses` on its control channel). Called
@@ -834,9 +1056,17 @@ impl Remotes {
                 label,
                 address: entry.host.clone(),
                 online: status == HostStatus::Online,
-                apps: if entry.on_demand && view.apps.is_empty() {
+                // What is in the way of its applications, if anything: said after its name
+                // while its tab is open, for as long as it is so.
+                note: tab_note(&view.link, view.held.as_deref()),
+                apps: if view.apps.is_empty() && view.link == Link::Connecting {
+                    // Being connected to: its applications take this bubble's place, where the
+                    // wearer is looking, when it has said what they are.
+                    vec![RemoteEntry { id: String::new(), name: "Connecting\u{2026}".into(), icon: None }]
+                } else if view.apps.is_empty() && !matches!(view.link, Link::Online) {
                     // Its applications are not known until it is connected to, and connecting
                     // takes its windows from whichever device has them: so it is asked for.
+                    // One that did not answer is asked again by the same bubble.
                     vec![RemoteEntry { id: String::new(), name: "Use this computer".into(), icon: None }]
                 } else {
                     view.apps
@@ -875,6 +1105,71 @@ impl Drop for Remote {
 mod tests {
     use super::*;
     use spatiand_audio::server::Width;
+
+    #[test]
+    fn a_locked_host_is_waited_for_only_when_asked_and_says_when_it_is_over() {
+        // (One test for all of it: the lists are the process's.)
+        let now = std::time::Instant::now();
+        // Locked, and nothing asked of it: nothing on the card.
+        held_said("test-mac", "littleOtter", Some("Touch ID or its password".into()));
+        assert_eq!(waiting_words(now), None);
+        // A notification of its own saying the same is not shown beside it.
+        host_notice_said("test-mac", "littleOtter is locked: unlock it".into());
+        assert!(notice_slot().as_ref().is_none_or(|n| n.host != "test-mac"));
+        // Asked: the card says what is waited for, and on which machine.
+        asked_of("test-mac");
+        let words = waiting_words(std::time::Instant::now()).unwrap();
+        assert!(words.starts_with("littleOtter is locked\n"), "{words}");
+        assert!(words.contains("Touch ID or its password"), "{words}");
+        assert_eq!(host_notice(), words);
+        // Long after, it says once that it is still locked, and then goes.
+        let asked = held().iter().find(|h| h.host == "test-mac").unwrap().asked.unwrap();
+        assert!(waiting_words(asked + WAIT_FOR + std::time::Duration::from_secs(1)).unwrap().contains("still locked"));
+        assert_eq!(waiting_words(asked + WAIT_FOR + WORD_FOR + std::time::Duration::from_secs(1)), None);
+        // Unlocked: said, since it was waited for.
+        held_said("test-mac", "littleOtter", None);
+        assert!(host_notice().starts_with("littleOtter is unlocked"), "{}", host_notice());
+        assert!(notice_from().is_none(), "the room's own word is not a notification to press");
+        // A notification from it is shown now, and is its to press; its going takes it away.
+        host_notice_said("test-mac", "Messages\nLunch at one?".into());
+        assert_eq!(host_notice(), "Messages\nLunch at one?");
+        assert_eq!(notice_from().as_deref(), Some("test-mac"));
+        host_notice_said("another", String::new());
+        assert_eq!(notice_from().as_deref(), Some("test-mac"));
+        host_notice_said("test-mac", String::new());
+        assert_eq!(host_notice(), "");
+        // Asked first and told it is locked a moment after (connecting): waited for at once.
+        asked_of("test-mac");
+        held_said("test-mac", "littleOtter", Some("its password".into()));
+        assert!(host_notice().contains("its password"));
+        // Its link goes while it is waited for: said, and the wait is over.
+        held_gone("test-mac");
+        assert!(host_notice().contains("no longer connected"));
+        *notice_slot() = None;
+    }
+
+    #[test]
+    fn a_tab_says_what_is_in_the_way_of_its_applications() {
+        assert_eq!(tab_note(&Link::Online, None), "");
+        assert_eq!(tab_note(&Link::Online, Some("Touch ID or its password")), "locked: unlock it with Touch ID or its password");
+        assert_eq!(tab_note(&Link::Connecting, None), "connecting\u{2026}");
+        assert_eq!(tab_note(&Link::Offline(NOT_ASKED_FOR.into()), None), "");
+        assert_eq!(tab_note(&Link::Offline("littleotter does not answer".into()), None), "littleotter does not answer");
+    }
+
+    #[test]
+    fn the_list_of_windows_is_made_again_when_what_hosts_offer_changes() {
+        offered_gone("test-offer", None);
+        let _ = offered_changed();
+        offered_said("test-offer", 3, "Notes".into(), false);
+        assert!(offered_changed());
+        assert!(!offered_changed());
+        // Said again the same: nothing changed.
+        offered_said("test-offer", 3, "Notes".into(), false);
+        assert!(!offered_changed());
+        offered_gone("test-offer", None);
+        assert!(offered_changed());
+    }
 
     #[test]
     fn a_remote_application_is_stereo_unless_its_catalogue_asked_for_more() {

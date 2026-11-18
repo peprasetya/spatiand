@@ -217,7 +217,24 @@ Pro it is a host like the Linux one, with these differences, which are a Mac's:
   browser's engine draws.
 * A screen is sent at the size it looks, not at the size macOS draws it before scaling it down,
   and with the sound of everything that has no stream of its own.
-* The Mac's notifications are sent to the device and shown under its clock.
+* The Mac's notifications are sent to the device and shown under its clock, on the same card as
+  the device's own; pressing the card there presses the banner here, and the windows of what
+  that opens are shown to the device (`ClientMessage::NoticePress`). Read for as long as this Mac
+  is a host, whether or not its own room is in the glasses (`Notices.Reader`): until 2026-11-18
+  the room's leaving the glasses stopped the one reader, so a Deck the glasses had been moved to
+  was told of none. **macOS mutes banners while a display is "shared"** (its log: `muted by
+  display state (displayShared)`), which is always, on a Mac with Spatiand's virtual screen or a
+  window being captured: they go to Notification Center's list unseen, and what is read here is
+  the banner (see `Notices.swift`: macOS has no way for one application to hear of another's
+  notifications). The switch is the owner's: System Settings > Notifications > "Allow
+  notifications when mirroring or sharing the display". Without it nothing is seen in the Mac's
+  room or on a device, only heard where the application plays its own sound. (The other way --
+  reading macOS's store of delivered notifications, which needs Full Disk Access and is not a
+  format anyone has promised -- is a workaround and is not built.)
+* **Every application this Mac can start is offered**, not only what is running (`sendCatalog`:
+  the room's own launcher's list, `Room.applications`), and a Mac that is locked says so as a
+  state (`HostMessage::Held`) -- see docs/remote.md, "A computer asked for, and one that is
+  locked".
 * **A window's application menus are offered** (`MenuSaid::Offered`, after `Opened`, for an
   application with a menu bar): its title bar on the device gets the menu button, and the
   device's room shows the menus as its own list, a level at a time (`ClientMessage::Menu` --

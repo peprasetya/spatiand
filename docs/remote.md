@@ -1034,3 +1034,56 @@ Rotation only. Whether it *feels* right at network latency has not been judged b
 Deck was attached took the windows from the Deck ("another device took the windows; starting one of
 its applications here takes them back"), and the Deck showed nothing until its session reconnected. That
 is the existing rule, but it is easy to forget with two machines on one host.
+
+## A computer asked for, and one that is locked -- 2026-11-18
+
+The owner, 2026-11-17, from the Deck against the Mac mini: "currently, only active app shown on
+deck. the more problem, first its locked and need touch id. when touch id validate, no
+konfirmation, app list not expanded, have to recall the app menu"; and "i can hear there is
+notification sound from mac but no visual in deck". What each was, from that night's logs on both
+machines, and what changed:
+
+| Met | Cause | Now |
+|---|---|---|
+| Two applications in the Mac's tab (Claude, Finder) | A Mac host's catalogue was `NSWorkspace.runningApplications` | Everything installed, the list the Mac's own launcher has (79 on littleotter), by bundle identifier; what runs from elsewhere after it |
+| The launcher had to be opened again | "Use this computer" is a bubble like an application's, and the launcher closed on it as it does on a launch; the catalogue arrived two seconds later with nobody looking | A computer asked for keeps its tab open: "connecting..." above a bubble that says the same, then its applications in the bubble's place. One that does not answer says so there, and its bubble asks again at once |
+| No word that a locked Mac was waited for, or had been unlocked | The host said "is locked" as a notification: nine seconds in the corner, then nothing, and nothing at all when it was unlocked; a window asked for meanwhile was dropped | `HostMessage::Held(Locked { unlock })` / `Held(No)`: the tab says "locked: unlock it with Touch ID or its password" for as long as it is; the card says so while the wearer waits for something asked of it (two minutes, then once "still locked"); "is unlocked" when it is, and what was asked for opens by itself |
+| A notification heard, not seen | Two things. The Mac's room stopped the one banner reader when the glasses left it (for the Deck). And macOS mutes banners while a display is shared -- see docs/mac.md | The host reads for itself. The macOS switch is the owner's to turn on |
+
+**The lock that night was not the Mac's.** littleotter's screen lock is off (`sysadminctl
+-screenLock status`), its log has no lock between its start and the session, and the only Touch ID
+it asked for that evening was SpatiKey's, at 21:38, for SpatiMesh's locked profile opened on the
+Deck -- an hour before the Mac was used from the Deck (22:37), with no finger asked for then. So
+the Touch ID in the report is SpatiKey's gate on the profile, not a gate on the remote; what is
+built here is the flow round the one lock the remote path has (macOS's own, which shows nothing
+of a locked Mac to anything). One thing seen in the Deck's log of that unlock is left for whoever
+has SpatiMesh: the profile's window opened 127 degrees to the wearer's right, where the head
+was turned to reach the Mac's sensor, so nothing appeared in front when the finger was taken.
+
+**Notifications cross from every kind of host.** `HostMessage::Notice` was said only by a Mac.
+The Linux host now runs the room's own notification server (the same file, by path): it answers
+`org.freedesktop.Notifications` where nobody does, and where a desktop has the name it becomes a
+monitor of the bus (`BecomeMonitor`, matching `Notify` calls only) and hears what the desktop's
+server is told without taking anything from it. A press on the card in the room goes back
+(`ClientMessage::NoticePress`): the notification's default action where the host is the server,
+the banner pressed on a Mac; one only overheard cannot be answered, which only its server can.
+
+**The list of windows follows what hosts offer** (`remote::offered_changed`): it was made again
+only when one of the room's own windows came or went, so a host that went away while it was open
+stayed on it, and one just unlocked or connected to was missing from it.
+
+**[verified]** on deepmagpie (snapshot room) against a sandboxed Linux host and against a test
+copy of the Mac app on littleotter (`--serve-host`, port 47650, an identity and settings of its
+own): the tab before asking, 7 and 79 applications arriving in it, the Linux host's notification
+on the card both as the server and as a monitor beside a stand-in desktop server, the Mac's tab
+and card while locked (`SPATIAND_HOST_TEST_LOCKED`), "is unlocked" after, and a Mac notice on the
+card (`SPATIAND_HOST_TEST_NOTICE`, since macOS showed no banner to read). Not verified: a real
+lock and a real finger; a real banner read with the macOS switch on; the press on a host's card;
+any of it in the glasses.
+
+**A test host must not share real settings.** A session and a host exchange Spatiand's
+applications' settings, the list of the owner's devices among them, and the newest file wins. A
+test room on a scratch folder connected to a test Mac host that used the Mac's real one, and its
+scratch list -- newer -- went into the owner's: two made-up devices, removed again with
+`spatiand-host --forget-device`. `--serve-host` with `SPATIAND_HOST_DIR` now keeps its settings
+beside that identity. Give every test end `SPATIAND_APPS_CONFIG`.
