@@ -1070,6 +1070,10 @@ impl Shelf {
             Action::OpenInTab(place) => self.new_tab(place),
             Action::PasteInto(place) => {
                 let Some((from, moving)) = self.clipboard.clone() else { return };
+                if !moving && place == Place::Trash {
+                    self.say("Nothing is copied into the Trash: things go there with Delete.");
+                    return;
+                }
                 self.send(from, place, !moving);
                 if moving {
                     self.clipboard = None;
@@ -1097,6 +1101,12 @@ impl Shelf {
                 self.destinations_menu(at, action == Action::CopyToMenu);
             }
             Action::Send { to, copy } => {
+                // (A drop on the Trash, whatever is held, puts in it: that is what a drop there
+                // is for. A copy asked for by name is not made there.)
+                if copy && to == Place::Trash {
+                    self.say("Nothing is copied into the Trash: things go there with Delete.");
+                    return;
+                }
                 let chosen = self.chosen();
                 self.send(chosen, to, copy);
             }

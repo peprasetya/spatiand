@@ -900,7 +900,8 @@ impl Shelf {
     pub(crate) fn side_menu(&mut self, row: usize, at: (f32, f32)) {
         let Some(SideRow::Go(place)) = self.side_rows.get(row).cloned() else { return };
         let mut entries = vec![(Row::new("Open in a new tab").icon(Icon::Plus), Action::OpenInTab(place.clone()))];
-        if self.clipboard.is_some() {
+        // Copied things are not pasted into the Trash: that would put the originals there.
+        if self.clipboard.as_ref().is_some_and(|(_, moving)| *moving || place != Place::Trash) {
             entries.push((Row::new("Paste here").icon(Icon::Paste), Action::PasteInto(place.clone())));
         }
         if let Place::Remote(name, _) = &place {
@@ -919,7 +920,8 @@ impl Shelf {
         let mut seen = vec![here.clone()];
         let mut entries = Vec::new();
         let mut add = |name: String, place: Place, icon: Icon, entries: &mut Vec<(Row, Action)>| {
-            if seen.contains(&place) {
+            // A copy in the Trash is no copy: the originals would go there.
+            if seen.contains(&place) || copy && place == Place::Trash {
                 return;
             }
             seen.push(place.clone());
