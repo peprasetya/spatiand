@@ -38,6 +38,13 @@ real Wayland clients as windows you can point at, move, resize, hide and close.
 Windows curve round you, the nearer the more; a hidden one keeps running and is
 brought back from the window list. A 360° environment behind them. A launcher, a HUD, and a virtual keyboard.
 
+**The room holds still.** The view is held while the head only sways, and a press goes down where
+the pointer rested before the press moved it, at a Steadiness the wearer sets in the settings (off,
+light, medium by default, strong), the same on the Deck, the Beam Pro and the Mac. The apps follow
+one set of rules for their look and words, [docs/look-and-feel.md](docs/look-and-feel.md). Most of
+these changes, those of 2026-11-17 and 11-18, were checked by tests and in headless rooms only;
+[docs/state.md](docs/state.md) says what was and was not run on hardware.
+
 **Picture in picture.** Any window can be pinned to the glass with the pin on its
 title bar, or from the window list (left pins, right lets go): it then stays in
 one corner of your view, tilting with your head, with a hairline frame and its
@@ -280,7 +287,8 @@ on purpose — it is shown precisely when there is no headset to ask.
 | | |
 |---|---|
 | [docs/apps.md](docs/apps.md) | Writing an application for Spatiand: window sizing, audio layouts, and the stereo and immersive-video protocols as they are specified so far |
-| [docs/spatiand-apps.md](docs/spatiand-apps.md) | Spatiand's own applications — SpatiShelf, SpatiReel, SpatiLoupe, SpatiQuill: the plan, not yet built |
+| [docs/spatiand-apps.md](docs/spatiand-apps.md) | Spatiand's own applications — SpatiShelf, SpatiReel, SpatiLoupe, SpatiQuill, SpatiPal, SpatiKey and the SDK they share: the plan, what was built, and what was checked |
+| [docs/look-and-feel.md](docs/look-and-feel.md) | The look-and-feel rules for the first-party applications and the room, and where each departs from them |
 | [docs/x11.md](docs/x11.md) | Why X11 runs and is not supported |
 | [docs/input-mapper.md](docs/input-mapper.md) | Controller layouts and the virtual gamepad a game sees |
 | [docs/openxr.md](docs/openxr.md) | The OpenXR runtime: how it works, how to run a game with it (native, Proton, remote), what is missing |
@@ -288,7 +296,7 @@ on purpose — it is shown precisely when there is no headset to ask.
 | [docs/install.md](docs/install.md) | Installing a release, and what to check when it goes wrong |
 | [docs/xreal-air.md](docs/xreal-air.md) | The glasses' protocol, verified against hardware. Probably the most reusable thing here |
 | [docs/steam-deck-controller.md](docs/steam-deck-controller.md) | The controller's HID reports |
-| [docs/state.md](docs/state.md) | Where the session keeps things |
+| [docs/state.md](docs/state.md) | Where the project stands: what works, what has not run on hardware, what is open |
 | [docs/spatimesh.md](docs/spatimesh.md) | SpatiMesh, the browser: Chromium with Spatiand's patches on all three systems, and the monthly update to the newest Chromium |
 | [docs/spatimesh-mac-port.md](docs/spatimesh-mac-port.md) | Chromium's Linux user interface carried to macOS |
 | [docs/spatikey.md](docs/spatikey.md) | SpatiKey: passwords and passkeys |
