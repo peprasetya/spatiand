@@ -785,13 +785,13 @@ impl SpatiKey {
             // a cancelled touch -- it cannot be told from one here).
             Asked::Recover if refusal.code == Code::NoMatch => {
                 self.said = None;
-                self.trouble = Some("That is not this vault\u{2019}s recovery code. Check it against \u{201C}SpatiKey recovery\u{201D} in Apple Passwords.".into());
+                self.trouble = Some(format!("That is not this vault\u{2019}s recovery code. Check it against \u{201C}SpatiKey recovery\u{201D} in {}.", ui::keeper()));
                 return;
             }
             Asked::Recover if refusal.code == Code::BadRequest => {
                 let why = if refusal.message.trim().is_empty() { String::new() } else { format!(": {}", refusal.message.trim()) };
                 self.said = None;
-                self.trouble = Some(format!("That is not a recovery code{why}. Check it against \u{201C}SpatiKey recovery\u{201D} in Apple Passwords."));
+                self.trouble = Some(format!("That is not a recovery code{why}. Check it against \u{201C}SpatiKey recovery\u{201D} in {}.", ui::keeper()));
                 return;
             }
             _ => {}

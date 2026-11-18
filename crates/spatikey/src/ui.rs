@@ -67,8 +67,31 @@ pub fn sensor(kind: &str) -> &'static str {
     }
 }
 
+/// Where the recovery code is to be kept, in the words of the platform they are read on
+/// (`std::env::consts::OS`): Apple Passwords on a Mac, the wearer's own password manager on a
+/// phone or a Linux machine, which have no Apple Passwords.
+pub fn keeper_on(os: &str) -> &'static str {
+    match os {
+        "macos" => "Apple Passwords",
+        _ => "your password manager",
+    }
+}
+
+/// [`keeper_on`] this platform.
+pub fn keeper() -> &'static str {
+    keeper_on(std::env::consts::OS)
+}
+
+/// How to save the recovery code now, on the platform the words are read on.
+pub fn save_code_on(os: &str) -> &'static str {
+    match os {
+        "macos" => "Save it now in Apple Passwords: open Passwords, press +, call it \u{201C}SpatiKey recovery\u{201D}, and put the code in as its password. iCloud Keychain then keeps it behind Face ID or Touch ID on your Apple devices.",
+        _ => "Save it now in your password manager: a new entry called \u{201C}SpatiKey recovery\u{201D}, with the code as its password, kept behind your phone\u{2019}s or computer\u{2019}s own lock.",
+    }
+}
+
 /// A sensor by its name, in the middle of a sentence: "Touch ID", "the fingerprint sensor".
-fn sensor_named(kind: &str) -> &'static str {
+pub fn sensor_named(kind: &str) -> &'static str {
     match sensor(kind) {
         "Touch ID" => "Touch ID",
         _ => "the fingerprint sensor",
@@ -517,6 +540,19 @@ mod tests {
             let phone = meaning(&Refusal::new(code, ""), "darkPhoenix", Some("android-biometric"));
             assert!(!phone.contains("Touch ID") && !phone.contains("Mac"), "{code:?}: {phone}");
         }
+    }
+
+    #[test]
+    fn words_off_the_mac_never_name_apple_passwords() {
+        for os in ["android", "linux"] {
+            for words in [keeper_on(os), save_code_on(os)] {
+                assert!(!words.contains("Apple") && !words.contains("iCloud") && !words.contains("Touch ID"), "{os}: {words}");
+            }
+        }
+        assert_eq!(keeper_on("macos"), "Apple Passwords");
+        assert!(save_code_on("macos").contains("Apple Passwords"));
+        // The fingerprint-changed words go by the device's own sensor.
+        assert!(!sensor_named("android-biometric").contains("Touch ID"));
     }
 
     #[test]

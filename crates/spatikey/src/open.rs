@@ -352,7 +352,7 @@ impl EntryPage {
                     p,
                     gl,
                     &mut right,
-                    &format!("SpatiMesh and the browser extensions sign in to {} with it, once Touch ID says yes. It is never typed or shown.", passkey.rp_id),
+                    &format!("SpatiMesh and the browser extensions sign in to {} with it, once {} says yes. It is never typed or shown.", passkey.rp_id, ui::sensor_named(&view.status.kind)),
                     theme::ink_row(),
                 );
             }
@@ -1277,7 +1277,7 @@ impl SettingsPage {
                 Want::Nothing
             }
             Some(Line::NewCode) => {
-                let text = "A new recovery code replaces the old one, which stops working at once. The new one is shown once, to be saved in Apple Passwords in its place.";
+                let text = format!("A new recovery code replaces the old one, which stops working at once. The new one is shown once, to be saved in {} in its place.", ui::keeper());
                 self.confirm = Some((Confirm::new(text, "Make a new code", "Cancel"), Then::NewCode));
                 Want::Nothing
             }

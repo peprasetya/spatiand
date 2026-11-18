@@ -94,7 +94,7 @@ impl SetUp {
             p,
             gl,
             &mut column,
-            "Setting up makes the vault, asks for your finger, and shows a recovery code once: the way back in on the day Touch ID cannot open it.",
+            &format!("Setting up makes the vault, asks for your finger, and shows a recovery code once: the way back in on the day {} cannot open it.", ui::sensor_named(&view.status.kind)),
             theme::ink_row(),
         );
         column.take_top(12.0);
@@ -169,7 +169,7 @@ impl ShowCode {
                 p,
                 gl,
                 &mut column,
-                "SpatiKey will not show this code again. Is it saved in Apple Passwords as \u{201C}SpatiKey recovery\u{201D}?",
+                &format!("SpatiKey will not show this code again. Is it saved in {} as \u{201C}SpatiKey recovery\u{201D}?", ui::keeper()),
                 theme::ink(),
             );
             column.take_top(12.0);
@@ -196,14 +196,14 @@ impl ShowCode {
             p,
             gl,
             &mut column,
-            "Save it now in Apple Passwords: open Passwords, press +, call it \u{201C}SpatiKey recovery\u{201D}, and put the code in as its password. iCloud Keychain then keeps it behind Face ID or Touch ID on your Apple devices.",
+            ui::save_code_on(std::env::consts::OS),
             theme::ink(),
         );
         ui::prose(
             p,
             gl,
             &mut column,
-            "It is the only way back into the vault if the fingers enrolled in Touch ID change. There is no copy button on purpose: Spatiand\u{2019}s clipboard is shared with the computers it is linked to.",
+            &format!("It is the only way back into the vault if the fingers enrolled in {} change. There is no copy button on purpose: Spatiand\u{2019}s clipboard is shared with the computers it is linked to.", ui::sensor_named(&view.status.kind)),
             theme::ink_row(),
         );
         column.take_top(8.0);
@@ -298,9 +298,9 @@ impl Recover {
         let mut column = ui::column(all, ui::COLUMN);
         column.take_top(10.0);
         let said = if new_here {
-            format!("The vault has reached {me}, but {sensor} here has no key to it yet. Enter the recovery code you saved in Apple Passwords as \u{201C}SpatiKey recovery\u{201D} to give it one.")
+            format!("The vault has reached {me}, but {sensor} here has no key to it yet. Enter the recovery code you saved in {} as \u{201C}SpatiKey recovery\u{201D} to give it one.", ui::keeper())
         } else {
-            format!("Enter the recovery code you saved in Apple Passwords as \u{201C}SpatiKey recovery\u{201D}. SpatiKey then sets {sensor} up on {me} again, with the fingers enrolled now.")
+            format!("Enter the recovery code you saved in {} as \u{201C}SpatiKey recovery\u{201D}. SpatiKey then sets {sensor} up on {me} again, with the fingers enrolled now.", ui::keeper())
         };
         ui::prose(p, gl, &mut column, &said, theme::ink());
         column.take_top(6.0);
