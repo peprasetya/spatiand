@@ -298,15 +298,10 @@ impl Quill {
     fn close_tab(&mut self, id: u64) {
         if let Some(mut tab) = self.tabs.remove(&id) {
             self.app.unwatch(tab.stdout.as_raw_fd());
-            tab.tell(&ToTab::Quit);
-            // Given a moment to go on its own, then made to.
-            let deadline = Instant::now() + Duration::from_millis(300);
-            while Instant::now() < deadline {
-                if let Ok(Some(_)) = tab.child.try_wait() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            // Ended at once. Its shell is told by its terminal closing (SIGHUP), the same as when
+            // the tab goes on its own; waiting for it to go was up to 300 ms a tab, for a tab
+            // stuck writing to an output no one read any more longer still.
+            drop(tab.stdout);
             let _ = tab.child.kill();
             let _ = tab.child.wait();
         }
