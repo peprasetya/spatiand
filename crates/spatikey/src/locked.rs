@@ -87,7 +87,7 @@ impl SetUp {
             p,
             gl,
             &mut column,
-            &format!("Only {sensor} on this device opens it, and the devices you add later with their own. The Steam Deck and the Beam Pro ask one of them each time, and only while they are on the same network as it, never over Tailscale."),
+            &format!("Only {sensor} on this device opens it, and the devices you add later with their own. Devices with no sensor of their own ask one of them each time, and only while they are on the same network as it, never over Tailscale."),
             theme::ink_row(),
         );
         ui::prose(
@@ -559,12 +559,12 @@ impl Pair {
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, view: &View) {
         let mut all = ui::page(p);
-        let me = if view.status.name.is_empty() { "This device".to_string() } else { view.status.name.clone() };
-        let mac = self.chosen.as_ref().map_or_else(|| "your Mac".to_string(), |m| m.name.clone());
+        let me = if view.status.name.is_empty() { look::this_device().to_string() } else { view.status.name.clone() };
+        let mac = self.chosen.as_ref().map_or_else(|| "a device that opens SpatiKey".to_string(), |m| m.name.clone());
         match self.stage {
             Stage::Intro => {
-                look::header(p, gl, &mut all, &format!("SpatiKey on {me}"), "asks your Mac");
-                ui::foot(p, gl, &mut all, "[Enter] Pair with your Mac", view);
+                look::header(p, gl, &mut all, &format!("SpatiKey on {me}"), "asks a device that opens SpatiKey");
+                ui::foot(p, gl, &mut all, "[Enter] Pair with a device", view);
                 let side = 150.0;
                 ui::mark(p, gl, Rect::new(all.right() - side - 20.0, all.y + 30.0, side, side));
                 let mut column = ui::column(all, (all.w - side - 90.0).min(ui::COLUMN));
@@ -574,7 +574,7 @@ impl Pair {
                     gl,
                     &mut column,
                     &format!(
-                        "{me} has no fingerprint reader, so SpatiKey here asks your Mac: each use is approved with Touch ID on the Mac, and only while both are on the same network. Tailscale does not count."
+                        "{me} has no fingerprint reader, so SpatiKey here asks a device that opens SpatiKey: each use is approved there with its own sensor, and only while both are on the same network. Tailscale does not count."
                     ),
                     theme::ink(),
                 );
@@ -582,7 +582,7 @@ impl Pair {
                     p,
                     gl,
                     &mut column,
-                    "Pair once with SpatiKey on your Mac to begin. Spatiand must be running there, and both must be on the same Wi-Fi.",
+                    "Pair once with SpatiKey on a device that opens it to begin. Spatiand must be running there, and both must be on the same Wi-Fi.",
                     theme::ink_row(),
                 );
                 column.take_top(12.0);
@@ -591,13 +591,13 @@ impl Pair {
                     Some((since, words)) => ui::waiting(p, gl, row, since, words),
                     None => {
                         self.start.focused = true;
-                        let width = Button::icon_width(p, gl, "Pair with your Mac");
-                        self.start.draw_icon(p, gl, Rect { w: width, ..row }, Icon::Link, "Pair with your Mac");
+                        let width = Button::icon_width(p, gl, "Pair with a device");
+                        self.start.draw_icon(p, gl, Rect { w: width, ..row }, Icon::Link, "Pair with a device");
                     }
                 }
             }
             Stage::Found => {
-                look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Pair with your Mac", "");
+                look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Pair with a device", "");
                 ui::foot(p, gl, &mut all, "[\u{2191}] [\u{2193}] Choose  [Enter] Pair  [Esc] Back", view);
                 let mut column = ui::column(all, ui::COLUMN);
                 let mut foot = column.take_bottom(Button::HEIGHT);
@@ -615,12 +615,12 @@ impl Pair {
                         p,
                         gl,
                         &mut column,
-                        "No Mac answered on this network. SpatiKey answers from inside Spatiand: start Spatiand on the Mac, and put both on the same Wi-Fi. Over Tailscale it does not answer.",
+                        "No device answered on this network. SpatiKey answers from inside Spatiand: start Spatiand on the device that opens SpatiKey, and put both on the same Wi-Fi. Over Tailscale it does not answer.",
                         theme::ink_row(),
                     );
                     return;
                 }
-                ui::prose(p, gl, &mut column, "Macs on this network with SpatiKey. Choose yours:", theme::ink_row());
+                ui::prose(p, gl, &mut column, "Devices on this network with SpatiKey. Choose yours:", theme::ink_row());
                 let rows: Vec<Row> = self
                     .macs
                     .iter()
@@ -781,7 +781,7 @@ impl Locked {
             centred(p, gl, &mut column, "One touch opens SpatiKey in this window. It closes again when the window does, or when it sits unused.", theme::ink_hint());
             return;
         }
-        centred(p, gl, &mut column, &format!("Each use is approved with Touch ID on {}.", view.mac), theme::ink_hint());
+        centred(p, gl, &mut column, &format!("Each use is approved with {} on {}.", view.there_sensor(), view.mac), theme::ink_hint());
         column.take_top(6.0);
         for approver in &view.status.approvers {
             let me = if view.status.name.is_empty() { "this device".to_string() } else { view.status.name.clone() };

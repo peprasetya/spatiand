@@ -53,7 +53,7 @@ pub struct ListPage {
 impl ListPage {
     pub fn new() -> ListPage {
         let mut search = Field::default();
-        search.hint = "Search".into();
+        search.hint = "Find in SpatiKey".into();
         search.focused = true;
         ListPage { search, tabs: Tabs::default(), list: ui::keyed_list(), add: Button::default(), cog: Button::default(), lock: Button::default(), shown: Vec::new() }
     }
@@ -440,7 +440,7 @@ impl EntryPage {
         }
         if self.delete.input(input) {
             let title = if entry.title.is_empty() { "this entry".to_string() } else { entry.title.clone() };
-            self.confirm = Some(Confirm::careful(format!("Delete {title}? It goes from SpatiKey on every Spatiand, and cannot be had back."), "Delete", "Keep it"));
+            self.confirm = Some(Confirm::careful(format!("Delete {title}? It goes from SpatiKey on every Spatiand, and cannot be had back."), "Delete", "Cancel"));
             return Want::Nothing;
         }
         if actions.contains(&Action::Eye) && self.eye.input(input) {
@@ -656,10 +656,10 @@ impl Edit {
 
     /// The save was refused: another device changed or deleted the entry since this began.
     pub fn stale(&mut self) {
-        self.stale = Some(Confirm::careful(
+        self.stale = Some(Confirm::new(
             "This entry was changed on another device since you began. Load that version? What you changed here stays as you typed it; the rest becomes the newer one's. Nothing is saved until you press Save.",
             "Load it",
-            "Not now",
+            "Cancel",
         ));
     }
 
@@ -834,7 +834,7 @@ impl Edit {
         if self.cancel.input(input) || matches!(input, Input::Key { key: Key::Escape, .. }) {
             // Changes are not let go of without asking, as quitting does not.
             if self.changed() {
-                self.leaving = Some(Confirm::careful("Leave without saving? The changes to this entry are lost.", "Leave", "Keep editing"));
+                self.leaving = Some(Confirm::careful("Leave without saving? The changes to this entry are lost.", "Leave", "Cancel"));
                 return Want::Nothing;
             }
             return self.back();
@@ -1152,7 +1152,7 @@ impl SettingsPage {
             heading(match (view.on_mac(), view.sensor()) {
                 (true, "Touch ID") => "Touch ID".into(),
                 (true, _) => "Fingerprint".into(),
-                (false, _) => format!("Touch ID on {}", view.mac),
+                (false, _) => format!("{} on {}", view.there_sensor(), view.mac),
             }),
             (Line::Touch, Row::with("A touch lasts", ui::span(settings.touch_secs)).icon(Icon::Lock)),
             (Line::Open, Row::with("SpatiKey stays open", format!("{} unused", ui::span(settings.open_secs).to_lowercase())).icon(Icon::SortRecent)),
@@ -1249,7 +1249,7 @@ impl SettingsPage {
             }
             Some(Line::Device { fp, name }) => {
                 let text = format!("Forget {name}? It can no longer ask {} to open SpatiKey, until it pairs again.", view.mac);
-                self.confirm = Some((Confirm::careful(text, "Forget", "Keep it"), Then::Forget(fp)));
+                self.confirm = Some((Confirm::careful(text, "Forget", "Cancel"), Then::Forget(fp)));
                 Want::Nothing
             }
             Some(Line::Holder { fp, name }) if !fp.is_empty() => {
@@ -1263,7 +1263,7 @@ impl SettingsPage {
                     "Remove {name}? It will no longer open SpatiKey with its own finger: to be added again it asks again, or is given the recovery code.{new_code} {} here says yes.",
                     view.sensor()
                 );
-                self.confirm = Some((Confirm::careful(text, "Remove", "Keep it"), Then::Forget(fp)));
+                self.confirm = Some((Confirm::careful(text, "Remove", "Cancel"), Then::Forget(fp)));
                 Want::Nothing
             }
             Some(Line::Asking { fp, name, code }) => {
@@ -1271,7 +1271,7 @@ impl SettingsPage {
                     "Add {name}? Only if {name} shows {code} right now. It will open every password here with its own finger. {} here says yes.",
                     view.sensor()
                 );
-                self.confirm = Some((Confirm::careful(text, "Add it", "Cancel"), Then::Approve { fp, code }));
+                self.confirm = Some((Confirm::new(text, "Add it", "Cancel"), Then::Approve { fp, code }));
                 Want::Nothing
             }
             Some(Line::TurnDown { fp, name }) => {

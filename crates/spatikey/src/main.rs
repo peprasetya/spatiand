@@ -50,7 +50,7 @@ const WINDOW: (u32, u32) = (1280, 860);
 /// assistant, and listed to any program that asks what windows there are.
 const TITLE: &str = "SpatiKey";
 /// How long something done is said at the foot.
-const SAID_FOR: Duration = Duration::from_secs(6);
+const SAID_FOR: Duration = Duration::from_secs(5);
 /// How often a device looks again whether its Mac is on this network, while it is locked.
 const LOOK_FOR_MAC: Duration = Duration::from_secs(15);
 /// How often a device waiting to be added as a holder looks whether it has been.
@@ -169,9 +169,9 @@ fn start_asking(demo: &Option<String>, wake: Arc<std::fs::File>) -> Asker {
 fn mac_of(status: &StatusAnswer) -> String {
     // A device with biometrics that does not open the vault yet asks a holder meanwhile, if it can.
     if status.opens_here || (status.can_set_up && status.approvers.is_empty()) {
-        return if status.name.is_empty() { "this Mac".into() } else { status.name.clone() };
+        return if status.name.is_empty() { "this device".into() } else { status.name.clone() };
     }
-    status.approvers.iter().find(|a| a.near).or(status.approvers.first()).map_or_else(|| "your Mac".into(), |a| a.name.clone())
+    status.approvers.iter().find(|a| a.near).or(status.approvers.first()).map_or_else(|| "a device that opens SpatiKey".into(), |a| a.name.clone())
 }
 
 /// The screen a closed SpatiKey shows, from how things stand.
@@ -360,9 +360,9 @@ impl SpatiKey {
                 let words = if self.status.opens_here {
                     format!("{} on this device", ui::sensor(&self.status.kind))
                 } else if self.on_mac() || !self.status.approvers.is_empty() {
-                    format!("Asking {}", self.mac)
+                    format!("Asking {}\u{2026}", self.mac)
                 } else {
-                    format!("Touch ID on {}", self.mac)
+                    format!("{} on {}", ui::sensor_of(&self.status, &self.mac), self.mac)
                 };
                 self.ask_waiting(Asked::Open, Request::Open, words);
             }
@@ -376,7 +376,7 @@ impl SpatiKey {
             }
             Want::AskToHold => {
                 let name = self.status.name.clone();
-                self.ask_waiting(Asked::HolderRequest, Request::HolderRequest { name }, "Making this device\u{2019}s key");
+                self.ask_waiting(Asked::HolderRequest, Request::HolderRequest { name }, "Making this device\u{2019}s key\u{2026}");
             }
             Want::Approve { fp, code } => {
                 if let Some(session) = self.session.clone() {
@@ -393,9 +393,9 @@ impl SpatiKey {
                 let words = format!("{} on this device", ui::sensor(&self.status.kind));
                 self.ask_waiting(Asked::Recover, Request::Recover { code: code.to_string() }, words);
             }
-            Want::Find => self.ask_waiting(Asked::Find, Request::Find, "Looking for Macs on this network"),
+            Want::Find => self.ask_waiting(Asked::Find, Request::Find, "Looking for Macs on this network\u{2026}"),
             Want::PairWith(mac) => {
-                let (fp, words) = (mac.fp.clone(), format!("Waiting for {}", mac.name));
+                let (fp, words) = (mac.fp.clone(), format!("Waiting for {}\u{2026}", mac.name));
                 self.ask_waiting(Asked::PairWith(mac), Request::PairWith { fp }, words);
             }
             Want::PairConfirm(fp, ok) => {
@@ -403,7 +403,7 @@ impl SpatiKey {
                     if let Screen::Pair(pair) = &mut self.screen {
                         pair.stage = Stage::Found;
                     }
-                    self.trouble = Some("Not paired: the digits were not the same. Choose the Mac again to start over.".into());
+                    self.trouble = Some("Not paired: the digits were not the same. Choose the device again to start over.".into());
                 }
                 self.ask(Asked::PairConfirm(ok), Request::PairConfirm { fp, ok });
             }
@@ -420,17 +420,17 @@ impl SpatiKey {
             }
             Want::Edit(id) => {
                 if let Some(session) = self.session.clone() {
-                    self.ask_waiting(Asked::Fresh(id.clone()), Request::Get { session, id }, "Opening");
+                    self.ask_waiting(Asked::Fresh(id.clone()), Request::Get { session, id }, "Opening\u{2026}");
                 }
             }
             Want::Reload(id) => {
                 if let Some(session) = self.session.clone() {
-                    self.ask_waiting(Asked::Fresh(id.clone()), Request::Get { session, id }, "Loading the newer version");
+                    self.ask_waiting(Asked::Fresh(id.clone()), Request::Get { session, id }, "Loading the newer version\u{2026}");
                 }
             }
             Want::Save { entry, based_on } => {
                 if let Some(session) = self.session.clone() {
-                    self.ask_waiting(Asked::Put, Request::Put { session, entry: *entry, based_on }, "Saving");
+                    self.ask_waiting(Asked::Put, Request::Put { session, entry: *entry, based_on }, "Saving\u{2026}");
                 }
             }
             Want::Delete(id) => {
@@ -441,7 +441,7 @@ impl SpatiKey {
             Want::Type { id, fields } => {
                 let (Some(session), Some(target)) = (self.session.clone(), self.target.clone()) else { return };
                 let name = ui::target_name(&target);
-                let words = format!("Typing into {name}");
+                let words = format!("Typing into {name}\u{2026}");
                 self.ask_waiting(Asked::Type(name), Request::Type { session: Some(session), id, fields, window: Some(target.window) }, words);
             }
             Want::Settings => self.show_settings(),
@@ -454,7 +454,7 @@ impl SpatiKey {
                 if let Some(session) = self.session.clone() {
                     // A holder goes with a new touch here, and may bring a new recovery code.
                     let holder = self.devices.as_ref().is_some_and(|d| d.holders.iter().any(|h| h.fp.eq_ignore_ascii_case(&fp)));
-                    let words = if holder { format!("{} on this device", ui::sensor(&self.status.kind)) } else { "Forgetting".to_string() };
+                    let words = if holder { format!("{} on this device", ui::sensor(&self.status.kind)) } else { "Forgetting\u{2026}".to_string() };
                     self.code_coming = true;
                     self.ask_waiting(Asked::Forget, Request::ForgetDevice { session, fp, recovery_code: None }, words);
                 }
@@ -462,7 +462,7 @@ impl SpatiKey {
             Want::NewCode => {
                 if let Some(session) = self.session.clone() {
                     self.code_coming = true;
-                    self.ask_waiting(Asked::RecoveryNew, Request::RecoveryNew { session }, "Making a new code");
+                    self.ask_waiting(Asked::RecoveryNew, Request::RecoveryNew { session }, "Making a new code\u{2026}");
                 }
             }
         }
@@ -711,7 +711,7 @@ impl SpatiKey {
         if refusal.code == Code::BadSession && self.session.is_some() {
             let kept = self.keep_editor();
             self.lock();
-            let mut said = ui::meaning(&refusal, &self.mac, self.here());
+            let mut said = ui::meaning(&refusal, &self.mac, self.here(), ui::kind_of(&self.status, &self.mac));
             if kept {
                 said.push_str(" The entry you were changing is kept: it is back when SpatiKey opens.");
             }
@@ -762,7 +762,7 @@ impl SpatiKey {
                 self.ask_list();
             }
             Asked::Status { route: true } if matches!(self.screen, Screen::Waiting(_)) => {
-                self.screen = Screen::Away(Away::new(ui::meaning(&refusal, &self.mac, self.here())));
+                self.screen = Screen::Away(Away::new(ui::meaning(&refusal, &self.mac, self.here(), ui::kind_of(&self.status, &self.mac))));
                 return;
             }
             Asked::PairWith(_) => {
@@ -797,7 +797,7 @@ impl SpatiKey {
             _ => {}
         }
         self.said = None;
-        self.trouble = Some(ui::meaning(&refusal, &self.mac, self.here()));
+        self.trouble = Some(ui::meaning(&refusal, &self.mac, self.here(), ui::kind_of(&self.status, &self.mac)));
     }
 
     /// Tell the service that this window is in use. The service closes a session by its own
@@ -928,7 +928,7 @@ impl SpatiKey {
                     return true;
                 }
                 if matches!(self.screen, Screen::Code(_)) {
-                    self.asking = Some(Confirm::new(
+                    self.asking = Some(Confirm::careful(
                         "Quit SpatiKey? This recovery code is not said to be saved yet, and the one before it no longer opens the vault. It is shown again the next time SpatiKey opens here.",
                         "Quit",
                         "Cancel",
@@ -937,7 +937,7 @@ impl SpatiKey {
                     return true;
                 }
                 if matches!(&self.screen, Screen::Edit(edit) if edit.changed()) {
-                    self.asking = Some(Confirm::new("Quit SpatiKey? The changes to this entry are not saved, and quitting loses them.", "Quit", "Cancel"));
+                    self.asking = Some(Confirm::careful("Quit SpatiKey? The changes to this entry are not saved, and quitting loses them.", "Quit", "Cancel"));
                     self.dirty = true;
                     return true;
                 }
@@ -952,7 +952,7 @@ impl SpatiKey {
             Event::Describe { window } => {
                 // The title alone: nothing of the vault -- not even what is in it -- is for
                 // dictation or the assistant.
-                self.app.describe(*window, &Description { title: TITLE.into(), ..Description::default() });
+                self.app.describe(*window, &Description { app: TITLE.into(), title: TITLE.into(), ..Description::default() });
                 return true;
             }
             _ => {}
@@ -1045,7 +1045,7 @@ fn main() {
             woken,
             wake,
             status: StatusAnswer::default(),
-            mac: "your Mac".into(),
+            mac: "a device that opens SpatiKey".into(),
             session: None,
             settings: Settings::default(),
             entries: Vec::new(),
