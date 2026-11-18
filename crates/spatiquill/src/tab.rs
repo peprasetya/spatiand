@@ -385,6 +385,11 @@ pub fn run() -> io::Result<()> {
                 Event::Wakeup | Event::MouseCursorDirty | Event::CursorBlinkingChange => dirty = true,
                 Event::Title(title) => {
                     set_title = !title.trim().is_empty();
+                    // An empty title hands the name back to what is running: sent again at the
+                    // next look, even if it is what was sent before the program named the tab.
+                    if !set_title {
+                        named.clear();
+                    }
                     if !send(FromTab::Title(title)) {
                         return Ok(());
                     }
