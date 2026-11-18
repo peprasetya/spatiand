@@ -72,6 +72,8 @@ pub enum Told {
 pub struct Brain {
     turns: Sender<Turn>,
     stop: Arc<AtomicBool>,
+    /// What waits for the wearer's yes is to be let go before the next turn.
+    let_go: Arc<AtomicBool>,
 }
 
 impl Brain {
@@ -79,11 +81,13 @@ impl Brain {
         let (turns, waiting) = channel::<Turn>();
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
+        let let_go = Arc::new(AtomicBool::new(false));
+        let gone = let_go.clone();
         std::thread::Builder::new()
             .name("brain".into())
-            .spawn(move || think(waiting, room, voice, told, stopped))
+            .spawn(move || think(waiting, room, voice, told, stopped, gone))
             .expect("a thread for the brain");
-        Brain { turns, stop }
+        Brain { turns, stop, let_go }
     }
 
     pub fn ask(&self, turn: Turn) {
@@ -95,14 +99,25 @@ impl Brain {
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
+
+    /// Forget what waits for the wearer's yes: told to be quiet, Stop pressed, spoken over -- a
+    /// later "okay" is not the answer to it.
+    pub fn let_go(&self) {
+        self.let_go.store(true, Ordering::Relaxed);
+    }
 }
 
-fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<Told>, stop: Arc<AtomicBool>) {
+fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<Told>, stop: Arc<AtomicBool>, let_go: Arc<AtomicBool>) {
     // What waits for the wearer's yes, and since when.
     let mut held: Option<(Held, std::time::Instant)> = None;
     // One client for every turn, so its connections to hemera are kept from one to the next.
     let mut client: Option<(String, Hemera)> = None;
     while let Ok(turn) = turns.recv() {
+        if let_go.swap(false, Ordering::Relaxed) {
+            if let Some((h, _)) = held.take() {
+                log::info!("brain: {} let go: the wearer stopped it", h.what);
+            }
+        }
         let address = VoiceSettings::load(&crate::store::shared()).hemera;
         let hemera = match &client {
             Some((at, h)) if *at == address => h.clone(),

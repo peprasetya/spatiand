@@ -375,6 +375,7 @@ impl Pal {
                 if self.answering.is_some() {
                     self.brain.stop();
                 }
+                self.brain.let_go();
                 self.finished_at = None;
                 log::info!("interrupted: listening to the wearer");
             }
@@ -397,6 +398,8 @@ impl Pal {
                 if self.answering.is_some() {
                     self.brain.stop();
                 }
+                // What waited for a yes is not waiting any more.
+                self.brain.let_go();
                 self.finished_at = None;
             }
             Heard::Asked { text, ended } => self.ask(text, Some(ended)),
@@ -434,6 +437,7 @@ impl Pal {
             Want::Look => self.look = !self.look,
             Want::Stop => {
                 self.brain.stop();
+                self.brain.let_go();
                 self.voice.hush();
             }
             Want::Settings => {
