@@ -63,7 +63,12 @@ struct Tab {
 
 impl Tab {
     fn spawn(folder: Option<&Path>) -> Result<Tab, String> {
-        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        // The program running now, by the kernel's own link to it: when it has been replaced
+        // while running (an update), current_exe() is "... (deleted)" and nothing starts.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let exe = PathBuf::from("/proc/self/exe");
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let exe = std::env::current_exe().map_err(|e| format!("a tab would not start: {e}"))?;
         let mut command = Command::new(exe);
         // Where its shell starts: a folder SpatiShelf opened it in, or home.
         match folder.filter(|f| f.is_dir()) {
@@ -164,6 +169,9 @@ struct Quill {
     /// a window of its own.
     in_flight: Option<(u64, WindowId, Instant)>,
     typed_at: Instant,
+    /// A tab or a window that would not start, and when: said in every window for a while,
+    /// not only in the log.
+    failed: Option<(String, Instant)>,
     /// The text's size has changed: the cells are measured again before the next drawing.
     resize_text: bool,
 }
@@ -226,6 +234,8 @@ impl Quill {
             }
             Err(e) => {
                 log::error!("{e}");
+                self.failed = Some((e, Instant::now()));
+                self.wins.iter_mut().for_each(|w| w.dirty = true);
                 None
             }
         }
@@ -1032,6 +1042,11 @@ impl Quill {
 
     fn draw(&mut self) -> Result<(), String> {
         let blink_on = self.typed_at.elapsed() < Duration::from_millis(900) || (self.typed_at.elapsed().as_millis() / 530) % 2 == 0;
+        if self.failed.as_ref().is_some_and(|(_, at)| at.elapsed() >= Duration::from_secs(8)) {
+            self.failed = None;
+            self.wins.iter_mut().for_each(|w| w.dirty = true);
+        }
+        let failed = self.failed.clone();
         for w in 0..self.wins.len() {
             if !self.wins[w].ready {
                 continue;
@@ -1124,6 +1139,14 @@ impl Quill {
                     look::glass(p, gl, rect, 20.0, 1.0);
                     let rows: Vec<Row> = menu.items.iter().map(|(r, _)| r.clone()).collect();
                     menu.list.draw(p, gl, rect.inset(10.0), &rows);
+                }
+                if let Some((why, _)) = failed.as_ref() {
+                    let mut chars = why.chars();
+                    let note: String = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default();
+                    let width = (p.measure(gl, &note, theme::FOOTER_EM * 0.85, 8192.0).0 + 36.0).min(all.w - 24.0);
+                    let pill = Rect::new((all.w - width) * 0.5, all.h - 120.0, width, 40.0);
+                    look::glass(p, gl, pill, 20.0, 1.0);
+                    p.label(gl, &note, pill.inset(12.0), theme::FOOTER_EM * 0.85, look::trouble(), 0.5);
                 }
                 if let Some((confirm, _)) = win.asking.as_mut() {
                     confirm.draw(p, gl, all);
@@ -1298,6 +1321,7 @@ fn main() {
             listener,
             in_flight: None,
             typed_at: Instant::now(),
+            failed: None,
             resize_text: false,
         };
         if let Some((l, _)) = quill.listener.as_ref() {
