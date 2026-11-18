@@ -66,6 +66,9 @@ pub enum Pixels {
     Nv12,
     /// A `CVPixelBuffer` from VideoToolbox, two planes like [`Pixels::Nv12`], on the GPU.
     VideoToolbox,
+    /// A ten-bit `CVPixelBuffer` from VideoToolbox: two planes like [`Pixels::VideoToolbox`],
+    /// sixteen bits a sample, the ten in the top of them (P010), as [`Pixels::Dmabuf10`] is.
+    VideoToolbox10,
     /// A VAAPI surface lent as dmabufs, two planes like [`Pixels::Nv12`], on the GPU.
     Dmabuf,
     /// A ten-bit VAAPI surface lent as dmabufs: two planes like [`Pixels::Dmabuf`], sixteen
@@ -185,7 +188,8 @@ impl Picture {
         }
     }
 
-    /// The `CVPixelBufferRef`, for a [`Pixels::VideoToolbox`] picture.
+    /// The `CVPixelBufferRef`, for a [`Pixels::VideoToolbox`] or [`Pixels::VideoToolbox10`]
+    /// picture.
     pub fn pixel_buffer(&self) -> *const c_void {
         unsafe { (*self.frame).data[3] as *const c_void }
     }
@@ -1482,14 +1486,19 @@ unsafe fn settle(frame: *mut ffi::AVFrame, scaler: &mut *mut ffi::SwsContext) ->
     let _ = format;
     #[cfg(target_os = "macos")]
     if format == ffi::AV_PIX_FMT_VIDEOTOOLBOX {
-        // Eight-bit pictures stay where they are. Ten-bit ones are two sixteen-bit planes
-        // nothing here samples yet: those come down to main memory with the rest.
+        // Eight- and ten-bit pictures stay where they are, as VA-API's do on Linux. Ten-bit ones
+        // (P010) came down to main memory and were converted there every frame until 11-18.
         let frames = (*frame).hw_frames_ctx;
         let software = if frames.is_null() { ffi::AV_PIX_FMT_NONE } else { (*((*frames).data as *const ffi::AVHWFramesContext)).sw_format };
-        if software == ffi::AV_PIX_FMT_NV12 {
+        let kind = match software {
+            f if f == ffi::AV_PIX_FMT_NV12 => Some(Pixels::VideoToolbox),
+            f if f == ffi::AV_PIX_FMT_P010LE => Some(Pixels::VideoToolbox10),
+            _ => None,
+        };
+        if let (Some(kind), true) = (kind, std::env::var("SPATIAND_MEDIA_COPY").is_err()) {
             let kept = ffi::av_frame_alloc();
             ffi::av_frame_move_ref(kept, frame);
-            return Some((kept, Pixels::VideoToolbox));
+            return Some((kept, kind));
         }
     }
     #[cfg(target_os = "linux")]

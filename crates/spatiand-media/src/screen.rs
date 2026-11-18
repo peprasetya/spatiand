@@ -454,16 +454,17 @@ impl Screen {
                         }
                     }
                 }
-                Pixels::VideoToolbox => {
+                Pixels::VideoToolbox | Pixels::VideoToolbox10 => {
                     #[cfg(target_os = "macos")]
                     {
+                        let sixteen = picture.pixels == Pixels::VideoToolbox10;
                         let surface = CVPixelBufferGetIOSurface(picture.pixel_buffer());
                         if surface.is_null() {
                             log::warn!("a decoded picture has no surface behind it");
                             return;
                         }
                         for (plane, size, channels) in [(0, (w as u32, h as u32), 1), (1, (half.0 as u32, half.1 as u32), 2)] {
-                            match gl.surface_texture(surface, plane, size, channels) {
+                            match gl.surface_texture(surface, plane, size, channels, sixteen) {
                                 Ok(held) => self.borrowed.push(held),
                                 Err(e) => {
                                     log::warn!("{e}");
@@ -504,7 +505,7 @@ impl Screen {
             #[cfg(not(target_os = "android"))]
             return None;
         } else {
-            let on_gpu = matches!(picture.pixels, Pixels::VideoToolbox | Pixels::Dmabuf | Pixels::Dmabuf10);
+            let on_gpu = matches!(picture.pixels, Pixels::VideoToolbox | Pixels::VideoToolbox10 | Pixels::Dmabuf | Pixels::Dmabuf10);
             if on_gpu && borrowed.len() < 2 {
                 return None;
             }
@@ -528,7 +529,7 @@ impl Screen {
             // ten; ten in the top of sixteen (P010) want only the last 63 of 65535 back.
             let scale = match picture.pixels {
                 Pixels::Planar420Ten if self.deep => 65535.0 / 1023.0,
-                Pixels::Dmabuf10 => 65535.0 / 65472.0,
+                Pixels::Dmabuf10 | Pixels::VideoToolbox10 => 65535.0 / 65472.0,
                 _ => 1.0,
             };
             g.uniform_1_f32(program.at[12].as_ref(), scale);

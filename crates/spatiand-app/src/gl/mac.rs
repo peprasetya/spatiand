@@ -152,19 +152,22 @@ pub struct SurfaceTexture {
 }
 
 impl Gl {
-    /// One plane of an `IOSurface` as a texture: `channels` is 1 for a plane of single bytes
+    /// One plane of an `IOSurface` as a texture: `channels` is 1 for a plane of single samples
     /// (a picture's brightness), 2 for pairs (its two colour differences, interleaved), 4 for
-    /// a whole BGRA picture. The surface must outlive the texture.
+    /// a whole BGRA picture; each sample a byte, or with `sixteen` two (R16 and RG16: a ten-bit
+    /// picture's planes, P010, the ten in the top of each sixteen). The surface must outlive the
+    /// texture.
     ///
     /// # Safety
     /// `surface` must be a live `IOSurfaceRef` with such a plane of that size.
-    pub unsafe fn surface_texture(&self, surface: *const c_void, plane: u32, size: (u32, u32), channels: u8) -> Result<SurfaceTexture, String> {
+    pub unsafe fn surface_texture(&self, surface: *const c_void, plane: u32, size: (u32, u32), channels: u8, sixteen: bool) -> Result<SurfaceTexture, String> {
         use glow::HasContext;
         let (format, texture_format) = match channels {
             1 => (glow::RED as egl::Int, egl::TEXTURE_RGBA),
             2 => (glow::RG as egl::Int, egl::TEXTURE_RGBA),
             _ => (GL_BGRA_EXT, egl::TEXTURE_RGBA),
         };
+        let kind = if sixteen && channels <= 2 { glow::UNSIGNED_SHORT } else { glow::UNSIGNED_BYTE };
         let attributes = [
             egl::WIDTH, size.0 as egl::Int,
             egl::HEIGHT, size.1 as egl::Int,
@@ -172,7 +175,7 @@ impl Gl {
             egl::TEXTURE_TARGET, egl::TEXTURE_2D,
             TEXTURE_INTERNAL_FORMAT_ANGLE, format,
             egl::TEXTURE_FORMAT, texture_format,
-            TEXTURE_TYPE_ANGLE, glow::UNSIGNED_BYTE as egl::Int,
+            TEXTURE_TYPE_ANGLE, kind as egl::Int,
             egl::NONE,
         ];
         let pbuffer = self
