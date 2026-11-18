@@ -19,8 +19,15 @@
 //  Notification Center's own log is read (`log show`, which an ordinary user may run) for banners
 //  muted since the app started, every few minutes until one is found or the reminder is put away.
 //  The Settings window keeps its plain line about the switch either way.
+//
+//  With the glasses on (Room.inGlasses) the alert would be on a screen the wearer does not see:
+//  the reminder is the room's notice card instead (sp_reminder), the card OR the alert, never
+//  both. A card has one press: it opens the pane, on the Mac's screen shown in the room, and
+//  "Don't Remind Me" is the Settings window's "Remind me about this" (the same
+//  mirroringReminderDeclined).
 
 import AppKit
+import CSpatiand
 
 enum NotificationReminder {
     /// How often the log is looked at.
@@ -76,10 +83,24 @@ enum NotificationReminder {
         output.split(separator: "\n").contains { $0.contains("NotificationCenter[") && $0.contains("muted by display state (displayShared)") }
     }
 
+    /// System Settings' Notifications pane, on the Mac's screen (which the room shows).
+    static func openSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     private static func remind() {
         done = true
         stop()
         print("notifications: banners are muted while the display is shared; reminding once")
+        if Room.shared.inGlasses {
+            // The wearer is in the room and would not see an alert on the Mac's screen: the
+            // room's card instead, pressed to open the pane. "Don't remind me" is the Settings
+            // window's "Remind me about this".
+            sp_reminder("Spatiand\nNotifications are hidden: press to open Notifications settings and turn on \u{201C}Allow notifications when mirroring or sharing the display\u{201D}")
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Notifications are hidden while Spatiand runs"
         alert.informativeText = "macOS shows no notification banner while a display is mirrored or shared, and Spatiand\u{2019}s virtual screen counts as shared. So notifications from this Mac\u{2019}s apps cannot be shown in the room, nor on another device this Mac is used from.\n\nTurn on System Settings \u{203A} Notifications \u{203A} \u{201C}Allow notifications when mirroring or sharing the display\u{201D}."
@@ -91,9 +112,6 @@ enum NotificationReminder {
         if answer == .alertSecondButtonReturn {
             Settings.mirroringReminderDeclined = true
         }
-        if answer == .alertFirstButtonReturn,
-           let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
-            NSWorkspace.shared.open(url)
-        }
+        if answer == .alertFirstButtonReturn { openSettings() }
     }
 }

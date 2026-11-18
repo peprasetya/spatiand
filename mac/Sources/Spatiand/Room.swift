@@ -267,7 +267,11 @@ final class Room {
                 }
             }
         case SP_NOTICE_PRESSED:
-            DispatchQueue.main.async { Notices.shared.pressed() }
+            if text == "reminder" {
+                DispatchQueue.main.async { NotificationReminder.openSettings() }
+            } else {
+                DispatchQueue.main.async { Notices.shared.pressed() }
+            }
         case SP_DESCRIBE:
             MacDescribe.describe(bundle: text, request: id)
         case SP_FORCE_QUIT:

@@ -182,6 +182,8 @@ void sp_window_close(uint32_t id);
 // A notification to show under the clock: its sender on the first line and what it says on
 // the second, or "" for none. SP_NOTICE_PRESSED says when the wearer presses it.
 void sp_notice(const char *text);
+// The app's own reminder on the same card, for 30 s; pressed, SP_NOTICE_PRESSED with "reminder".
+void sp_reminder(const char *text);
 
 // Play to this Core Audio device; 0 for the system's default output.
 void sp_audio_output(int32_t device);

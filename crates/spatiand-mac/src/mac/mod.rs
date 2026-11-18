@@ -527,10 +527,22 @@ pub fn notice() -> String {
     NOTICE.lock().map(|mut card| card.text(Instant::now())).unwrap_or_default()
 }
 
-/// The card was pressed: it goes, and the app presses the banner it came from.
+/// What the card knows the app's own reminder by (NotificationReminder.swift: macOS mutes
+/// banners while the display is shared). Pressed, the app is told this key, not "".
+const REMINDER: &str = "reminder";
+
+/// The app's reminder about macOS's switch, on the card for 30 s: in the room, where the
+/// wearer is, instead of an alert on the Mac's screen.
+pub fn remind(text: String) {
+    NOTICE.lock().unwrap().post(REMINDER, text, Duration::from_secs(30), Instant::now());
+}
+
+/// The card was pressed: it goes, and the app presses the banner it came from (told "") or
+/// opens what its reminder is about (told "reminder").
 pub fn notice_pressed() {
-    NOTICE.lock().unwrap().press(Instant::now());
-    ffi::tell(ffi::Asked::NoticePressed, "");
+    let key = NOTICE.lock().unwrap().press(Instant::now());
+    let reminder = key.as_deref() == Some(REMINDER);
+    ffi::tell(ffi::Asked::NoticePressed, if reminder { REMINDER } else { "" });
 }
 
 // --- a Mac window's shape while it is dragged by an edge ---

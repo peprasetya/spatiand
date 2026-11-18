@@ -842,6 +842,16 @@ pub unsafe extern "C" fn sp_notice(notice: *const c_char) {
     super::noticed(text(notice));
 }
 
+/// The app's own reminder on the card (sender, then what it says); pressed, the app is told
+/// SP_NOTICE_PRESSED with "reminder".
+///
+/// # Safety
+/// `text` must be a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn sp_reminder(reminder: *const c_char) {
+    super::remind(text(reminder));
+}
+
 // --- sound ---
 
 /// Play to this Core Audio device from now on; 0 for the system's default output.

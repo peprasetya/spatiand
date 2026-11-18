@@ -25,6 +25,7 @@ struct SettingsView: View {
     @AppStorage("hotkeys", store: Defaults.store) private var hotkeys = true
     @AppStorage("gamepads", store: Defaults.store) private var gamepads = true
     @AppStorage("notifications", store: Defaults.store) private var notifications = true
+    @AppStorage("mirroringReminderDeclined", store: Defaults.store) private var mirroringReminderDeclined = false
     @AppStorage("soundPlacement", store: Defaults.store) private var soundPlacement = true
     @AppStorage("deepClickTwoFingers", store: Defaults.store) private var deepClickTwoFingers = false
     @AppStorage("deepClickTwoFingersPressure", store: Defaults.store) private var deepClickTwoFingersPressure = 0.6
@@ -62,6 +63,7 @@ struct SettingsView: View {
             Section {
                 Toggle("Show this Mac\u{2019}s notifications under the clock", isOn: $notifications)
                 note("In the room, and on a device this Mac\u{2019}s windows are used from. macOS shows no banner while a screen is mirrored or shared, which Spatiand\u{2019}s virtual screen and the windows it shows elsewhere count as: turn on System Settings \u{203A} Notifications \u{203A} \u{201C}Allow notifications when mirroring or sharing the display\u{201D}, or they are heard and not seen.")
+                Toggle("Remind me about this", isOn: Binding(get: { !mirroringReminderDeclined }, set: { mirroringReminderDeclined = !$0 }))
             }
             Section("Virtual screen") {
                 Picker("Size", selection: $virtualScreen) {
