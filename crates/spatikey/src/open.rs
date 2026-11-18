@@ -1300,11 +1300,11 @@ mod tests {
     use super::*;
 
     fn escape() -> Input {
-        Input::Key { key: Key::Escape, text: None, modifiers: Default::default() }
+        Input::Key { key: Key::Escape, text: None, modifiers: Default::default(), letter: None }
     }
 
     fn enter() -> Input {
-        Input::Key { key: Key::Enter, text: None, modifiers: Default::default() }
+        Input::Key { key: Key::Enter, text: None, modifiers: Default::default(), letter: None }
     }
 
     #[test]
@@ -1333,7 +1333,7 @@ mod tests {
         assert!(matches!(edit.input(&escape(), &view), Want::Nothing));
         assert!(edit.leaving.is_none() && edit.fields[TITLE].text == "GitHub!");
         edit.input(&escape(), &view);
-        edit.input(&Input::Key { key: Key::Right, text: None, modifiers: Default::default() }, &view);
+        edit.input(&Input::Key { key: Key::Right, text: None, modifiers: Default::default(), letter: None }, &view);
         assert!(matches!(edit.input(&enter(), &view), Want::Show(id) if id == "e1"), "said yes, it leaves");
     }
 

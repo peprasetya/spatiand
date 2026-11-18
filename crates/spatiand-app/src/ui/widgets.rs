@@ -1082,7 +1082,7 @@ impl Field {
     /// Hand the field input: keys type, and the pointer puts the caret and chooses (see
     /// [`Field::pointer_input`]). What typing came to, if it came to anything.
     pub fn input(&mut self, input: &Input) -> Option<Typed> {
-        let Input::Key { key, text, modifiers } = input else {
+        let Input::Key { key, text, modifiers, .. } = input else {
             self.pointer_input(input);
             return None;
         };
@@ -1349,7 +1349,7 @@ mod confirm_tests {
     use crate::Modifiers;
 
     fn key(key: Key) -> Input {
-        Input::Key { key, text: None, modifiers: Modifiers::default() }
+        Input::Key { key, text: None, modifiers: Modifiers::default(), letter: None }
     }
 
     #[test]
@@ -1469,7 +1469,7 @@ mod field_tests {
         press(&mut f, 31.0, false);
         release(&mut f);
         assert_eq!((f.caret, f.selection()), (3, None));
-        f.input(&Input::Key { key: Key::Char('x'), text: Some("X".into()), modifiers: Modifiers::default() });
+        f.input(&Input::Key { key: Key::Char('x'), text: Some("X".into()), modifiers: Modifiers::default(), letter: Some('x') });
         assert_eq!(f.text, "holXiday.jpeg", "typed where it was put");
     }
 

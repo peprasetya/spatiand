@@ -1527,7 +1527,7 @@ impl Shelf {
                 return;
             }
         }
-        if let Input::Key { key, text, modifiers } = &input {
+        if let Input::Key { key, text, modifiers, .. } = &input {
             self.key(*key, text.as_deref().unwrap_or(""), *modifiers);
             return;
         }

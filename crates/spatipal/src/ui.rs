@@ -744,7 +744,7 @@ mod tests {
             voices: &[],
             characters: &[],
         };
-        let delete = || Input::Key { key: Key::Delete, text: None, modifiers: Modifiers { control: true, ..Default::default() } };
+        let delete = || Input::Key { key: Key::Delete, text: None, modifiers: Modifiers { control: true, ..Default::default() }, letter: None };
         let mut w = Window::new();
         // Something typed: the key is the field's.
         w.field.set("hello world");

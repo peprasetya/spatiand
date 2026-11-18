@@ -162,7 +162,11 @@ pub enum Input {
     /// extend a choice, Control (Command) to add to it.
     Press { pressed: bool, modifiers: Modifiers },
     Scroll { dx: f32, dy: f32 },
-    Key { key: Key, text: Option<String>, modifiers: Modifiers },
+    /// `letter` is the key's for a shortcut, held or not: its letter by [`crate::chord_char`]
+    /// (the key's place where the layout's letter is not Latin), `None` if it is not a letter --
+    /// so that a viewer's unmodified I or R is the same key on a Russian keyboard. What a text
+    /// field types is `text`, as ever.
+    Key { key: Key, text: Option<String>, modifiers: Modifiers, letter: Option<char> },
     /// Two fingers pinching, as a factor since the last: see [`crate::App::set_pinch_taken`].
     Pinch { scale: f32 },
 }
@@ -187,9 +191,37 @@ impl Input {
                     Key::Char(c) if modifiers.control || modifiers.logo => Key::Char(crate::keys::chord_char(c, *code)),
                     other => other,
                 };
-                Some(Input::Key { key, text: text.clone(), modifiers: *modifiers })
+                let letter = match key {
+                    Key::Char(c) => Some(crate::keys::chord_char(c, *code)).filter(|l| l.is_alphabetic()),
+                    _ => None,
+                };
+                Some(Input::Key { key, text: text.clone(), modifiers: *modifiers, letter })
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod letter_tests {
+    use super::*;
+
+    fn pressed(key: Key, code: u32, text: &str) -> Option<Input> {
+        let event = Event::Key { window: crate::WindowId(1), key, code, pressed: true, repeat: false, text: Some(text.into()), modifiers: Modifiers::default() };
+        Input::of(&event, 1.0)
+    }
+
+    #[test]
+    fn an_unmodified_key_s_letter_is_its_place_where_the_layout_is_not_latin() {
+        let letter = |input: Option<Input>| match input {
+            Some(Input::Key { letter, text, .. }) => (letter, text),
+            _ => unreachable!(),
+        };
+        // Russian: к is where r is; it types к.
+        assert_eq!(letter(pressed(Key::Char('\u{43a}'), 19, "\u{43a}")), (Some('r'), Some("\u{43a}".into())));
+        // A Latin layout's own letters stay theirs (AZERTY's a on Q's key); signs are not letters.
+        assert_eq!(letter(pressed(Key::Char('a'), 16, "a")).0, Some('a'));
+        assert_eq!(letter(pressed(Key::Char('1'), 2, "1")).0, None);
+        assert_eq!(letter(pressed(Key::Char(','), 50, ",")).0, None);
     }
 }

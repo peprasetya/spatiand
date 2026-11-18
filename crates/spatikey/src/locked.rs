@@ -834,7 +834,7 @@ mod tests {
     use super::*;
 
     fn key(key: Key) -> Input {
-        Input::Key { key, text: None, modifiers: Default::default() }
+        Input::Key { key, text: None, modifiers: Default::default(), letter: None }
     }
 
     /// Enter on "Saved it", pressed again (or held), is not also the yes to "is it saved?".

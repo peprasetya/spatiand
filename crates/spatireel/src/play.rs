@@ -914,8 +914,13 @@ impl Playing {
                 self.seeking = false;
                 self.turning = None;
             }
-            Input::Key { key, .. } => {
+            Input::Key { key, letter, .. } => {
                 let now = self.player.position();
+                // M for the menu, the key where M is whatever the layout writes on it.
+                if *letter == Some('m') {
+                    self.open_menu();
+                    return Outcome::Nothing;
+                }
                 match key {
                     Key::Space | Key::Enter => {
                         let paused = self.player.paused();
@@ -925,7 +930,6 @@ impl Playing {
                     Key::Right => self.player.seek(now + 10.0),
                     Key::Down => self.player.seek(now - 60.0),
                     Key::Up => self.player.seek(now + 60.0),
-                    Key::Char('m') => self.open_menu(),
                     Key::Escape | Key::Backspace => return Outcome::Close,
                     _ => {}
                 }

@@ -498,10 +498,10 @@ fn run(ask: Ask) -> Result<Option<Vec<PathBuf>>, String> {
                     chooser.list.input(&input);
                     None
                 }
-                Input::Key { key, text, modifiers } => match key {
+                Input::Key { key, text, modifiers, letter } => match key {
                     Key::Escape => return Ok(None),
                     Key::Up | Key::Down | Key::PageUp | Key::PageDown => {
-                        chooser.list.input(&Input::Key { key, text, modifiers });
+                        chooser.list.input(&Input::Key { key, text, modifiers, letter });
                         None
                     }
                     Key::Backspace if chooser.field.text.is_empty() => {
@@ -513,7 +513,7 @@ fn run(ask: Ask) -> Result<Option<Vec<PathBuf>>, String> {
                     Key::Enter => chooser.enter(modifiers.control || modifiers.logo),
                     _ => {
                         let before = chooser.field.text.clone();
-                        chooser.field.input(&Input::Key { key, text, modifiers });
+                        chooser.field.input(&Input::Key { key, text, modifiers, letter });
                         if chooser.field.text != before {
                             chooser.replacing = None;
                             if chooser.ask.mode != Mode::Save {

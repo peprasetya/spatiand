@@ -1346,7 +1346,7 @@ impl View {
             }
             Input::Scroll { dx, dy } => self.scrolled(*dx, *dy, all),
             Input::Pinch { scale } => self.pinched(*scale, all),
-            Input::Key { key, text, modifiers } => return self.key(*key, text.as_deref(), modifiers.control || modifiers.logo, modifiers.shift),
+            Input::Key { key, text, modifiers, letter } => return self.key(*key, text.as_deref(), *letter, modifiers.control || modifiers.logo, modifiers.shift),
             _ => {}
         }
         Want::Nothing
@@ -1472,9 +1472,13 @@ impl View {
         }
     }
 
-    fn key(&mut self, key: Key, text: Option<&str>, command: bool, shift: bool) -> Want {
+    /// A key: `letter` is its letter for a shortcut, the same key whatever the layout (Russian,
+    /// Greek ...) writes on it; `text` what it types, for the signs (+, -, 0, /).
+    fn key(&mut self, key: Key, text: Option<&str>, letter: Option<char>, command: bool, shift: bool) -> Want {
         let all = self.bounds;
         let typed = text.unwrap_or("");
+        // An unmodified letter's shortcut, Shift or not: R and r are one key.
+        let letter = letter.filter(|_| !command).map(|l| if shift { l.to_ascii_uppercase() } else { l });
         match key {
             Key::Escape => {
                 if self.info {
@@ -1496,44 +1500,44 @@ impl View {
             Key::End if !matches!(self.doc, Doc::Pdf(_)) => return self.slide_to(self.files.len().saturating_sub(1)),
             _ => {}
         }
-        if typed == "i" {
+        if letter == Some('i') {
             self.info = !self.info;
             return Want::Nothing;
         }
         let (x, y) = (all.x + all.w * 0.5, all.y + all.h * 0.5);
         match &mut self.doc {
-            Doc::Picture(shown) => match (key, typed) {
-                (_, "+" | "=") => shown.zoom_by(1.25, all, x, y),
-                (_, "-" | "_") => shown.zoom_by(0.8, all, x, y),
-                (_, "0") => {
+            Doc::Picture(shown) => match (key, typed, letter) {
+                (_, "+" | "=", _) => shown.zoom_by(1.25, all, x, y),
+                (_, "-" | "_", _) => shown.zoom_by(0.8, all, x, y),
+                (_, "0", _) => {
                     shown.zoom = None;
                     shown.centre = (0.5, 0.5);
                 }
-                (_, "1") => {
+                (_, "1", _) => {
                     let fit = shown.fit_scale(all);
                     shown.zoom = None;
                     shown.zoom_by(fit.max(1.0001), all, x, y);
                 }
-                (_, "r") => {
+                (_, _, Some('r')) => {
                     shown.turns = (shown.turns + 1) % 4;
                     shown.zoom = None;
                     shown.centre = (0.5, 0.5);
                 }
-                (_, "R") => {
+                (_, _, Some('R')) => {
                     shown.turns = (shown.turns + 3) % 4;
                     shown.zoom = None;
                     shown.centre = (0.5, 0.5);
                 }
-                (_, "3") => self.next_layout(),
-                (_, "x") => shown.swapped = !shown.swapped,
-                (_, ",") => shown.depth = (shown.depth - 0.005).max(-0.08),
-                (_, ".") => shown.depth = (shown.depth + 0.005).min(0.08),
-                (Key::Space, _) => return self.slide_by(if shift { -1 } else { 1 }),
-                (Key::Up, _) if shown.zoom.is_some() => {
+                (_, "3", _) => self.next_layout(),
+                (_, _, Some('x' | 'X')) => shown.swapped = !shown.swapped,
+                (_, ",", _) => shown.depth = (shown.depth - 0.005).max(-0.08),
+                (_, ".", _) => shown.depth = (shown.depth + 0.005).min(0.08),
+                (Key::Space, _, _) => return self.slide_by(if shift { -1 } else { 1 }),
+                (Key::Up, _, _) if shown.zoom.is_some() => {
                     shown.centre.1 -= 0.05;
                     shown.clamp(all);
                 }
-                (Key::Down, _) if shown.zoom.is_some() => {
+                (Key::Down, _, _) if shown.zoom.is_some() => {
                     shown.centre.1 += 0.05;
                     shown.clamp(all);
                 }
@@ -1582,16 +1586,16 @@ impl View {
                     }
                     (Key::Char('f'), _) if command => paper.open_find(),
                     (_, "/") => paper.open_find(),
-                    (_, "n") if !paper.found.is_empty() => {
+                    (_, _) if letter == Some('n') && !paper.found.is_empty() => {
                         paper.found_at = (paper.found_at + 1) % paper.found.len();
                         paper.go_to = Some(paper.found[paper.found_at].page);
                     }
-                    (_, "N") if !paper.found.is_empty() => {
+                    (_, _) if letter == Some('N') && !paper.found.is_empty() => {
                         paper.found_at = (paper.found_at + paper.found.len() - 1) % paper.found.len();
                         paper.go_to = Some(paper.found[paper.found_at].page);
                     }
-                    (_, "p" | "P") => paper.open_page_field(),
-                    (_, "o" | "O") if !paper.outline.is_empty() => {
+                    (_, _) if matches!(letter, Some('p' | 'P')) => paper.open_page_field(),
+                    (_, _) if matches!(letter, Some('o' | 'O')) && !paper.outline.is_empty() => {
                         let mut list = List::default();
                         list.focused = true;
                         list.cursor = paper.outline.iter().rposition(|h| h.page.is_some_and(|p| p <= page)).unwrap_or(0);
@@ -2198,7 +2202,9 @@ mod tests {
     }
 
     fn key(key: Key, text: &str) -> Input {
-        Input::Key { key, text: Some(text.to_string()).filter(|t| !t.is_empty()), modifiers: spatiand_app::Modifiers::default() }
+        let letter = text.chars().next().filter(|c| c.is_ascii_alphabetic() && text.len() == 1).map(|c| c.to_ascii_lowercase());
+        let modifiers = spatiand_app::Modifiers { shift: text.chars().next().is_some_and(|c| c.is_ascii_uppercase()), ..Default::default() };
+        Input::Key { key, text: Some(text.to_string()).filter(|t| !t.is_empty()), modifiers, letter }
     }
 
     #[test]
@@ -2345,6 +2351,29 @@ mod tests {
         view.input(&key(Key::Char('/'), "/"));
         view.input(&key(Key::Char('q'), "q"));
         assert_eq!(view.describe().1, "q");
+    }
+
+    #[test]
+    fn letter_shortcuts_are_the_key_s_place_on_any_layout() {
+        let mut view = viewing(3, 1);
+        // R on a Russian keyboard: it types к, and is the key where r is.
+        let russian = |text: &str, shift: bool| Input::Key {
+            key: Key::Char(text.chars().next().unwrap().to_lowercase().next().unwrap()),
+            text: Some(text.to_string()),
+            modifiers: spatiand_app::Modifiers { shift, ..Default::default() },
+            letter: Some('r'),
+        };
+        let turns = |view: &View| match &view.doc {
+            Doc::Picture(shown) => shown.turns,
+            _ => unreachable!(),
+        };
+        view.input(&russian("к", false));
+        assert_eq!(turns(&view), 1);
+        view.input(&russian("К", true));
+        assert_eq!(turns(&view), 0, "Shift-R the other way");
+        // I, by its place, for the picture's account.
+        view.input(&Input::Key { key: Key::Char('ш'), text: Some("ш".into()), modifiers: Default::default(), letter: Some('i') });
+        assert!(view.info);
     }
 
     #[test]
