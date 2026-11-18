@@ -308,11 +308,13 @@ impl Steady {
         let (Some(last), Some(held), Some(view)) = (self.head, self.held, self.view) else {
             return self.restart(head);
         };
-        if dt <= 0.0 {
+        if dt <= 0.0 || !head.is_finite() {
+            // A sample that is no orientation is passed over: taken in, it would make the speed
+            // and the band NaN for good.
             return view;
         }
         let step = apart(last, head);
-        if dt > STALL_SECONDS || step > JUMP_DEGREES {
+        if dt > STALL_SECONDS || !step.is_finite() || step > JUMP_DEGREES {
             return self.restart(head);
         }
         self.head = Some(head);
@@ -592,6 +594,29 @@ mod tests {
         let mut f = OneEuroFilter::new(1.0, 0.007);
         f.filter(1.0, 0.014);
         assert_eq!(f.filter(2.0, 0.0), 1.0, "must not divide by zero");
+    }
+
+    #[test]
+    fn a_sample_that_is_no_orientation_is_passed_over() {
+        let nan = glam::DQuat::from_xyzw(f64::NAN, 0.0, 0.0, f64::NAN);
+        for level in HOLDING {
+            let mut s = steady(level);
+            let at = |deg: f64| glam::DQuat::from_rotation_z(deg.to_radians());
+            for i in 0..30 {
+                s.filter(at(i as f64 * 0.01), 1.0 / 72.0);
+            }
+            assert!(s.filter(nan, 1.0 / 72.0).is_finite());
+            // And a NaN to start from.
+            let mut fresh = steady(level);
+            fresh.filter(nan, 0.0);
+            for i in 0..200 {
+                let view = s.filter(at(10.0 + i as f64 * 0.2), 1.0 / 72.0);
+                fresh.filter(at(10.0 + i as f64 * 0.2), 1.0 / 72.0);
+                assert!(view.is_finite() && s.band().is_finite() && s.speed.is_finite(), "{level:?} {i}");
+            }
+            assert!(apart(s.filter(at(50.0), 1.0 / 72.0), at(50.0)) < 5.0, "{level:?} follows again");
+            assert!(fresh.band().is_finite() && fresh.speed.is_finite(), "{level:?}");
+        }
     }
 
     /// The frame rates the room runs at: the Mac's and the Beam Pro's 60, the Deck's 72, 90 for
