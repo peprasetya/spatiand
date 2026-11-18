@@ -6,14 +6,14 @@
 
 use std::time::Instant;
 
-use spatiand_app::ui::{look, theme, Button, Field, Icon, Input, List, Painter, Rect, Row, Tabs, Typed};
+use spatiand_app::ui::{look, theme, Button, Confirm, Field, Icon, Input, List, Painter, Rect, Row, Tabs, Typed};
 use spatiand_app::{Gl, Key};
 use spatikey_core::entry::{Entry, Kind, Summary, Totp};
 use spatikey_core::wire;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::locked::is_copy;
-use crate::ui::{self, Confirm, View, Want};
+use crate::ui::{self, View, Want};
 
 /// What an entry is called: its title, or failing that what it is for.
 pub fn title_of(summary: &Summary) -> String {
@@ -407,7 +407,8 @@ impl EntryPage {
             p.label(gl, &format!("Changed {}", ui::date(entry.changed)), line, theme::FOOTER_EM, theme::ink_hint(), 0.0);
         }
         if let Some(confirm) = self.confirm.as_mut() {
-            confirm.draw(p, gl);
+            let all = p.bounds();
+            confirm.draw(p, gl, all);
         }
     }
 
@@ -439,7 +440,7 @@ impl EntryPage {
         }
         if self.delete.input(input) {
             let title = if entry.title.is_empty() { "this entry".to_string() } else { entry.title.clone() };
-            self.confirm = Some(Confirm::new(format!("Delete {title}? It goes from SpatiKey on every Spatiand, and cannot be had back."), "Delete", "Keep it"));
+            self.confirm = Some(Confirm::careful(format!("Delete {title}? It goes from SpatiKey on every Spatiand, and cannot be had back."), "Delete", "Keep it"));
             return Want::Nothing;
         }
         if actions.contains(&Action::Eye) && self.eye.input(input) {
@@ -655,7 +656,7 @@ impl Edit {
 
     /// The save was refused: another device changed or deleted the entry since this began.
     pub fn stale(&mut self) {
-        self.stale = Some(Confirm::new(
+        self.stale = Some(Confirm::careful(
             "This entry was changed on another device since you began. Load that version? What you changed here stays as you typed it; the rest becomes the newer one's. Nothing is saved until you press Save.",
             "Load it",
             "Not now",
@@ -783,7 +784,8 @@ impl Edit {
             }
         }
         if let Some(confirm) = self.leaving.as_mut().or(self.stale.as_mut()) {
-            confirm.draw(p, gl);
+            let all = p.bounds();
+            confirm.draw(p, gl, all);
         }
     }
 
@@ -832,7 +834,7 @@ impl Edit {
         if self.cancel.input(input) || matches!(input, Input::Key { key: Key::Escape, .. }) {
             // Changes are not let go of without asking, as quitting does not.
             if self.changed() {
-                self.leaving = Some(Confirm::new("Leave without saving? The changes to this entry are lost.", "Leave", "Keep editing"));
+                self.leaving = Some(Confirm::careful("Leave without saving? The changes to this entry are lost.", "Leave", "Keep editing"));
                 return Want::Nothing;
             }
             return self.back();
@@ -1206,7 +1208,8 @@ impl SettingsPage {
         self.lines.focused = self.confirm.is_none();
         self.lines.draw(p, gl, ui::column(all, ui::COLUMN.max(1100.0)), &rows);
         if let Some((confirm, _)) = self.confirm.as_mut() {
-            confirm.draw(p, gl);
+            let all = p.bounds();
+            confirm.draw(p, gl, all);
         }
     }
 
@@ -1246,7 +1249,7 @@ impl SettingsPage {
             }
             Some(Line::Device { fp, name }) => {
                 let text = format!("Forget {name}? It can no longer ask {} to open SpatiKey, until it pairs again.", view.mac);
-                self.confirm = Some((Confirm::new(text, "Forget", "Keep it"), Then::Forget(fp)));
+                self.confirm = Some((Confirm::careful(text, "Forget", "Keep it"), Then::Forget(fp)));
                 Want::Nothing
             }
             Some(Line::Holder { fp, name }) if !fp.is_empty() => {
@@ -1260,7 +1263,7 @@ impl SettingsPage {
                     "Remove {name}? It will no longer open SpatiKey with its own finger: to be added again it asks again, or is given the recovery code.{new_code} {} here says yes.",
                     view.sensor()
                 );
-                self.confirm = Some((Confirm::new(text, "Remove", "Keep it"), Then::Forget(fp)));
+                self.confirm = Some((Confirm::careful(text, "Remove", "Keep it"), Then::Forget(fp)));
                 Want::Nothing
             }
             Some(Line::Asking { fp, name, code }) => {
@@ -1268,17 +1271,17 @@ impl SettingsPage {
                     "Add {name}? Only if {name} shows {code} right now. It will open every password here with its own finger. {} here says yes.",
                     view.sensor()
                 );
-                self.confirm = Some((Confirm::new(text, "Add it", "Cancel"), Then::Approve { fp, code }));
+                self.confirm = Some((Confirm::careful(text, "Add it", "Cancel"), Then::Approve { fp, code }));
                 Want::Nothing
             }
             Some(Line::TurnDown { fp, name }) => {
                 let text = format!("Turn {name} down? It is not added; it can ask again.");
-                self.confirm = Some((Confirm::new(text, "Turn down", "Cancel"), Then::TurnDown(fp)));
+                self.confirm = Some((Confirm::careful(text, "Turn down", "Cancel"), Then::TurnDown(fp)));
                 Want::Nothing
             }
             Some(Line::NewCode) => {
                 let text = format!("A new recovery code replaces the old one, which stops working at once. The new one is shown once, to be saved in {} in its place.", ui::keeper());
-                self.confirm = Some((Confirm::new(text, "Make a new code", "Cancel"), Then::NewCode));
+                self.confirm = Some((Confirm::careful(text, "Make a new code", "Cancel"), Then::NewCode));
                 Want::Nothing
             }
             Some(Line::Recover) => Want::RecoverPage,

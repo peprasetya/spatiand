@@ -1278,8 +1278,8 @@ impl Button {
 /// A question over a window, answered yes or no: "Close this tab? sleep is still running in
 /// it." The pane floats over everything, the window dimmed behind it; while it is up the
 /// application gives it all of the input. Return answers with the button lit (the yes, to
-/// begin with), Escape is no, the arrows and Tab go between the two, the pointer presses
-/// either.
+/// begin with, or the no for [`Confirm::careful`]), Escape is no, the arrows and Tab go between
+/// the two, the pointer presses either.
 #[derive(Debug)]
 pub struct Confirm {
     pub text: String,
@@ -1293,6 +1293,13 @@ pub struct Confirm {
 impl Confirm {
     pub fn new(text: impl Into<String>, yes: impl Into<String>, no: impl Into<String>) -> Confirm {
         Confirm { text: text.into(), yes_label: yes.into(), no_label: no.into(), yes: Button::default(), no: Button::default(), on_yes: true }
+    }
+
+    /// A question whose yes destroys or ends something -- delete, empty, forget, remove, quit or
+    /// close with work going -- which starts on the no: a Return typed on from what came before
+    /// it loses nothing.
+    pub fn careful(text: impl Into<String>, yes: impl Into<String>, no: impl Into<String>) -> Confirm {
+        Confirm { on_yes: false, ..Confirm::new(text, yes, no) }
     }
 
     /// Drawn over `all`, the whole window.
@@ -1347,6 +1354,16 @@ mod confirm_tests {
 
     fn key(key: Key) -> Input {
         Input::Key { key, text: None, modifiers: Modifiers::default(), letter: None }
+    }
+
+    #[test]
+    fn a_careful_question_starts_on_the_no() {
+        let mut c = Confirm::careful("Delete it? It cannot be had back.", "Delete", "Cancel");
+        assert_eq!(c.input(&key(Key::Enter)), Some(false));
+        let mut c = Confirm::careful("Delete it?", "Delete", "Cancel");
+        assert_eq!(c.input(&key(Key::Left)), None);
+        assert_eq!(c.input(&key(Key::Enter)), Some(true));
+        assert_eq!(Confirm::careful("Delete it?", "Delete", "Cancel").input(&key(Key::Escape)), Some(false));
     }
 
     #[test]
