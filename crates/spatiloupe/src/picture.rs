@@ -224,7 +224,11 @@ fn moving(bytes: &[u8], format: Option<image::ImageFormat>, largest: u32) -> Opt
 }
 
 fn by_ffmpeg(path: &Path, largest: u32) -> Result<Picture, String> {
-    let still = spatiand_media::still::grab(&crate::place::source(path), largest).ok_or("not a picture this can read")?;
+    let still = match crate::place::remote(path) {
+        Some(_) => spatiand_media::still::grab(&crate::place::source(path), largest),
+        None => spatiand_media::still::grab_file(path, largest),
+    };
+    let still = still.ok_or("not a picture this can read")?;
     let image = RgbaImage::from_raw(still.width, still.height, still.rgba).ok_or("a picture of the wrong size")?;
     let image = fit(DynamicImage::ImageRgba8(image), largest).to_rgba8();
     let original = (still.width, still.height);

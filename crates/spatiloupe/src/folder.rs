@@ -59,11 +59,10 @@ pub fn home() -> PathBuf {
 pub fn list(folder: &Path) -> Result<Vec<Entry>, String> {
     let mut entries: Vec<Entry> = crate::place::list(folder)?
         .into_iter()
-        .filter_map(|(name, is_dir, size)| {
+        .filter_map(|(name, path, is_dir, size)| {
             if name.starts_with('.') {
                 return None;
             }
-            let path = crate::place::join(folder, &name);
             let kind = if is_dir {
                 if is_package(&name) {
                     return None;
@@ -388,6 +387,24 @@ mod tests {
         }
         let names: Vec<String> = list(&dir).unwrap().into_iter().map(|e| e.name).collect();
         assert_eq!(names, ["trip", "a.jpg", "b.HEIC", "helmet.glb", "paper.pdf"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_utf8_is_listed_where_it_is() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = std::env::temp_dir().join(format!("spatiloupe-bytes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // "café.png" in Latin-1, as an old camera card or a zip may name it.
+        let name = std::ffi::OsStr::from_bytes(b"caf\xe9.png");
+        std::fs::write(dir.join(name), b"x").unwrap();
+        let entries = list(&dir).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, dir.join(name));
+        assert!(entries[0].path.is_file());
+        assert_eq!(entries[0].name, "caf\u{FFFD}.png");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

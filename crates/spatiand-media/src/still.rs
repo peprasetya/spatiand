@@ -19,7 +19,23 @@ pub struct Still {
 /// A frame of the film at `path`, no wider than `width`. `None` for anything that will not
 /// give one, without saying why: a tile with no picture is all that comes of it.
 pub fn grab(path: &str, width: u32) -> Option<Still> {
-    let name = CString::new(path).ok()?;
+    grab_named(CString::new(path).ok()?, width)
+}
+
+/// The same, of a file on this machine by the system's own name for it: one that is not UTF-8
+/// is opened as it is, where text would have been a different name.
+pub fn grab_file(path: &std::path::Path, width: u32) -> Option<Still> {
+    #[cfg(unix)]
+    let name = {
+        use std::os::unix::ffi::OsStrExt;
+        CString::new(path.as_os_str().as_bytes()).ok()?
+    };
+    #[cfg(not(unix))]
+    let name = CString::new(path.to_str()?).ok()?;
+    grab_named(name, width)
+}
+
+fn grab_named(name: CString, width: u32) -> Option<Still> {
     unsafe {
         let mut format = ptr::null_mut();
         if ffi::avformat_open_input(&mut format, name.as_ptr(), ptr::null(), ptr::null_mut()) < 0 {
