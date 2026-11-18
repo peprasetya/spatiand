@@ -317,19 +317,27 @@ pub struct Playing {
 }
 
 /// The `.srt` that goes with a film on this machine: the one with its name, or with its
-/// name and a language after it (`Film.en.srt`).
+/// name and a language after it (`Film.en.srt`, `Film.pt-BR.forced.srt`).
 fn beside(film: &str) -> Vec<Cue> {
     let path = std::path::Path::new(film);
     let (Some(folder), Some(stem)) = (path.parent(), path.file_stem().and_then(|s| s.to_str())) else { return Vec::new() };
     let Ok(entries) = std::fs::read_dir(folder) else { return Vec::new() };
-    let mut found: Vec<std::path::PathBuf> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("srt")) && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(stem)))
-        .collect();
+    let mut found: Vec<std::path::PathBuf> = entries.flatten().map(|entry| entry.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| goes_with(stem, n))).collect();
     // The plainest name first: `Film.srt` before `Film.fr.srt`.
     found.sort_by_key(|p| p.as_os_str().len());
-    found.first().and_then(|p| std::fs::read(p).ok()).map(|bytes| subs::srt(&String::from_utf8_lossy(&bytes))).unwrap_or_default()
+    found.first().and_then(|p| std::fs::read(p).ok()).map(|bytes| subs::srt(&subs::text_of(&bytes))).unwrap_or_default()
+}
+
+/// Whether the file `name` is subtitles for a film whose name without its ending is `stem`:
+/// `stem.srt`, or `stem.<tag>.srt` where the tag is words (a language, "forced", "sdh"). Taken
+/// by what the name began with, "Alien.mkv" took "Aliens.srt", and "Alien" its sequel's.
+fn goes_with(stem: &str, name: &str) -> bool {
+    let Some(before) = name.len().checked_sub(4).filter(|&at| name.is_char_boundary(at) && name[at..].eq_ignore_ascii_case(".srt")).map(|at| &name[..at]) else { return false };
+    if before == stem {
+        return true;
+    }
+    let Some(tag) = before.strip_prefix(stem).and_then(|rest| rest.strip_prefix('.')) else { return false };
+    !tag.is_empty() && tag.split('.').all(|word| !word.is_empty() && word.len() <= 12 && word.chars().all(|c| c.is_alphabetic() || c == '-' || c == '_'))
 }
 
 impl Playing {
@@ -1174,6 +1182,19 @@ mod tests {
         // The right eye of a VR180 pair side by side: the middle of its own half.
         let right = sky_screen(Rect::new(2880.0, 0.0, 2880.0, 2880.0), true);
         assert!((right.x + right.w / 2.0 - 4320.0).abs() < 0.1 && (right.w - 1024.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn subtitles_go_with_the_film_of_their_name_and_no_other() {
+        assert!(goes_with("Alien", "Alien.srt"));
+        assert!(goes_with("Alien", "Alien.SRT"));
+        assert!(goes_with("Alien", "Alien.en.srt"));
+        assert!(goes_with("Alien", "Alien.pt-BR.forced.srt"));
+        assert!(!goes_with("Alien", "Aliens.srt"));
+        assert!(!goes_with("Alien", "Alien 3.srt"));
+        assert!(!goes_with("Alien", "Alien.2.srt"));
+        assert!(!goes_with("Alien", "Alien.en.sub"));
+        assert!(!goes_with("Alien", "Alien..srt"));
     }
 
     #[test]

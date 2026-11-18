@@ -84,6 +84,38 @@ fn stamp(text: &str) -> Option<f64> {
     Some(h.trim().parse::<f64>().ok()? * 3600.0 + m.trim().parse::<f64>().ok()? * 60.0 + s.trim().parse::<f64>().ok()?)
 }
 
+/// A subtitle file's bytes as text, whatever it was saved as: UTF-8 (with its mark or without),
+/// UTF-16 with its mark, either way round, or -- not being UTF-8 -- Windows' Western code page
+/// (Latin-1 and its additions), which most old subtitles for Western films are in. Read as
+/// UTF-8 whatever it was, a UTF-16 file was nothing and an old one's accents were marks.
+pub fn text_of(bytes: &[u8]) -> String {
+    let utf16 = |rest: &[u8], big: bool| {
+        let units: Vec<u16> = rest.chunks_exact(2).map(|p| if big { u16::from_be_bytes([p[0], p[1]]) } else { u16::from_le_bytes([p[0], p[1]]) }).collect();
+        String::from_utf16_lossy(&units)
+    };
+    match bytes {
+        [0xEF, 0xBB, 0xBF, rest @ ..] => String::from_utf8_lossy(rest).into_owned(),
+        [0xFF, 0xFE, rest @ ..] => utf16(rest, false),
+        [0xFE, 0xFF, rest @ ..] => utf16(rest, true),
+        _ => match std::str::from_utf8(bytes) {
+            Ok(text) => text.to_string(),
+            Err(_) => bytes.iter().map(|&b| windows_1252(b)).collect(),
+        },
+    }
+}
+
+/// A byte of Windows-1252 as the character it is.
+fn windows_1252(byte: u8) -> char {
+    const HIGH: [char; 32] = [
+        '\u{20ac}', '\u{81}', '\u{201a}', '\u{192}', '\u{201e}', '\u{2026}', '\u{2020}', '\u{2021}', '\u{2c6}', '\u{2030}', '\u{160}', '\u{2039}', '\u{152}', '\u{8d}', '\u{17d}', '\u{8f}',
+        '\u{90}', '\u{2018}', '\u{2019}', '\u{201c}', '\u{201d}', '\u{2022}', '\u{2013}', '\u{2014}', '\u{2dc}', '\u{2122}', '\u{161}', '\u{203a}', '\u{153}', '\u{9d}', '\u{17e}', '\u{178}',
+    ];
+    match byte {
+        0x80..=0x9F => HIGH[(byte - 0x80) as usize],
+        _ => byte as char,
+    }
+}
+
 /// The cues of an `.srt` file. Whatever in it cannot be read is left out, and the rest kept:
 /// one bad block is not a reason to show no subtitles at all.
 pub fn srt(text: &str) -> Vec<Cue> {
@@ -131,6 +163,16 @@ mod tests {
         assert_eq!(cues[0], Cue { start: 1.0, end: 3.5, words: Words::Text("Hello\nthere".into()) });
         assert_eq!(cues[1].start, 60.25);
         assert_eq!(cues[1].words, Words::Text("- Who?".into()));
+    }
+
+    #[test]
+    fn a_subtitle_file_is_read_whatever_it_was_saved_as() {
+        assert_eq!(text_of("Caf\u{e9}".as_bytes()), "Caf\u{e9}");
+        assert_eq!(text_of(b"\xEF\xBB\xBFCaf\xC3\xA9"), "Caf\u{e9}");
+        assert_eq!(text_of(b"\xFF\xFEC\0a\0f\0\xE9\0"), "Caf\u{e9}");
+        assert_eq!(text_of(b"\xFE\xFF\0C\0a\0f\0\xE9"), "Caf\u{e9}");
+        // Not UTF-8: Windows' Western code page, its quotes and its euro included.
+        assert_eq!(text_of(b"Caf\xE9 \x93ol\xE9\x94 \x80"), "Caf\u{e9} \u{201c}ol\u{e9}\u{201d} \u{20ac}");
     }
 
     #[test]
