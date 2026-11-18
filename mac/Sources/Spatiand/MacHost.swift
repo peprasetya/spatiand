@@ -265,6 +265,8 @@ final class MacHost {
     /// The session has gone; the applications stay, and so does what it launched.
     private func detach() {
         attached = false
+        // The next session is sent the catalogue whatever this one was sent.
+        lastCatalog = ""
         clipboard.connected = false
         for s in shared.values { s.capture.invalidate(); s.encoder?.invalidate() }
         shared = [:]
@@ -299,6 +301,7 @@ final class MacHost {
     private var installed: [Room.Installed] = []
     private var installedLooked = Date.distantPast
     private var catalogBusy = false
+    private var catalogAgain = false
     private var lastRunning = ""
 
     /// **Every application this Mac can start, not only the ones running** (the owner,
@@ -309,7 +312,10 @@ final class MacHost {
     /// application run from a download folder), so that its windows can still be asked for.
     /// The list and its icons are read off the main thread: eighty bundles and their pictures.
     private func sendCatalog(force: Bool) {
-        guard link != nil, attached, !catalogBusy else { return }
+        guard link != nil, attached else { return }
+        // **One asked for while a listing is under way is done when it ends**: a session that
+        // attaches again then was otherwise never sent the catalogue (its launcher stayed empty).
+        guard !catalogBusy else { if force { catalogAgain = true }; return }
         let running = runningApps()
         let runningKey = running.compactMap { $0.bundleIdentifier }.sorted().joined(separator: ",")
         let stale = Date().timeIntervalSince(installedLooked) > 30
@@ -343,10 +349,15 @@ final class MacHost {
                     list.append(entry)
                 }
                 let key = list.compactMap { $0["id"] as? String }.joined(separator: ",")
-                guard self.attached, force || key != self.lastCatalog else { return }
-                self.lastCatalog = key
-                print("host: \(list.count) applications offered to the session")
-                self.link?.say(["Catalog": ["apps": list]])
+                if self.attached, force || key != self.lastCatalog {
+                    self.lastCatalog = key
+                    print("host: \(list.count) applications offered to the session")
+                    self.link?.say(["Catalog": ["apps": list]])
+                }
+                if self.catalogAgain {
+                    self.catalogAgain = false
+                    self.sendCatalog(force: true)
+                }
             }
         }
     }
