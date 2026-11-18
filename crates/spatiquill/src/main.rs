@@ -118,7 +118,11 @@ struct Win {
     active: usize,
     size: (u32, u32),
     ready: bool,
+    /// Something in it has changed since it was drawn: only such a window is drawn again (and
+    /// one whose cursor blinks).
     dirty: bool,
+    /// The cursor's blink as last drawn.
+    blink_drawn: bool,
     focused: bool,
     pointer: (f32, f32),
     /// Scrolling not yet a whole line.
@@ -260,6 +264,7 @@ impl Quill {
             size: WINDOW,
             ready: false,
             dirty: true,
+            blink_drawn: true,
             focused: false,
             pointer: (0.0, 0.0),
             wheel: 0.0,
@@ -443,6 +448,8 @@ impl Quill {
     fn hear(&mut self) {
         let mut ended = Vec::new();
         let mut copied = None;
+        // The tabs with something new to show: only their windows are drawn again.
+        let mut changed = Vec::new();
         for (&id, tab) in self.tabs.iter_mut() {
             if !matches!(tab.state, TabState::Running) {
                 continue;
@@ -465,7 +472,11 @@ impl Quill {
                 }
             }
             let mut exited = false;
+            if gone {
+                changed.push(id);
+            }
             while let Some(message) = tab.gather.next() {
+                changed.push(id);
                 match message {
                     FromTab::Screen(screen) => tab.screen = screen,
                     FromTab::Title(title) => tab.title = title,
@@ -496,7 +507,11 @@ impl Quill {
             }
         }
         for win in &mut self.wins {
-            win.dirty = true;
+            // A tab's mark on the bar is lit for three seconds after it rang.
+            let ringing = win.tabs.iter().filter_map(|t| self.tabs.get(t)).any(|t| t.rang.is_some_and(|at| at.elapsed() < Duration::from_millis(3300)));
+            if ringing || win.tabs.iter().any(|t| changed.contains(t)) {
+                win.dirty = true;
+            }
         }
         // Onto the room's clipboard, which is every machine's it can see (the Mac's pasteboard,
         // a host's), as every Spatiand application copies.
@@ -574,8 +589,9 @@ impl Quill {
     }
 
     fn handle(&mut self, event: Event) -> bool {
-        // Dark or light: every window drawn again in the theme's new colours.
-        if let Event::Look { .. } = event {
+        // Dark or light: every window drawn again in the theme's new colours. One picture or
+        // two, or another size of eye: drawn again for it.
+        if let Event::Look { .. } | Event::Mode(_) | Event::EyeSize { .. } = event {
             self.wins.iter_mut().for_each(|w| w.dirty = true);
             return true;
         }
@@ -1110,6 +1126,13 @@ impl Quill {
             if !self.wins[w].ready {
                 continue;
             }
+            // Nothing new in it, and its cursor where its blink had it: drawn as it was. Every
+            // window was drawn whenever any tab of any window showed something.
+            let blinks = self.wins[w].focused && blink_on != self.wins[w].blink_drawn;
+            if !self.wins[w].dirty && !blinks && self.grid.is_some() && !self.resize_text {
+                continue;
+            }
+            self.wins[w].blink_drawn = blink_on;
             let id = self.wins[w].id;
             // Text first: the cells it makes decide how many fit.
             if self.grid.is_none() || self.resize_text {
