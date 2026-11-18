@@ -34,12 +34,25 @@ pub fn plain(ass: &str) -> String {
     let text = ass.splitn(9, ',').nth(8).unwrap_or(ass);
     let mut out = String::new();
     let mut depth = 0;
+    // Inside a drawing (`{\p1}` to `{\p0}`): what is between is a path, not words. It was
+    // shown as "m 0 0 l 10 10".
+    let mut drawing = false;
+    let mut block = String::new();
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '{' => depth += 1,
-            '}' if depth > 0 => depth -= 1,
-            _ if depth > 0 => {}
+            '{' => {
+                depth += 1;
+                block.clear();
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if let Some(scale) = drawing_scale(&block) {
+                    drawing = scale > 0;
+                }
+            }
+            _ if depth > 0 => block.push(c),
+            _ if drawing => {}
             '\\' => match chars.peek() {
                 Some('N') | Some('n') => {
                     chars.next();
@@ -57,20 +70,39 @@ pub fn plain(ass: &str) -> String {
     tidy(&out)
 }
 
+/// The scale of the last `\p` in an override block, if it has one: 0 ends a drawing, more begins
+/// one.
+fn drawing_scale(block: &str) -> Option<u32> {
+    block.split('\\').filter_map(|tag| tag.strip_prefix('p')).filter_map(|n| n.trim().parse().ok()).last()
+}
+
 fn tidy(text: &str) -> String {
     text.lines().map(str::trim).filter(|line| !line.is_empty()).collect::<Vec<_>>().join("\n")
 }
 
-/// The markup an `.srt` file is allowed (`<i>`, `<font ...>`) taken out.
+/// The markup an `.srt` file is allowed (`<i>`, `<font ...>`) taken out, and the ASS overrides
+/// many have as well (`{\an8}`, put it at the top; `{\i1}`). Only what is a tag: a `<` that does
+/// not begin one ("x < 3", "<3") is a letter -- it took the rest of the cue with it.
 fn unmarked(text: &str) -> String {
     let mut out = String::new();
-    let mut inside = false;
-    for c in text.chars() {
-        match c {
-            '<' => inside = true,
-            '>' if inside => inside = false,
-            _ if !inside => out.push(c),
-            _ => {}
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        let after = &rest[c.len_utf8()..];
+        let tag = match c {
+            '<' => {
+                let name = after.strip_prefix('/').unwrap_or(after);
+                let closed = after.find('>').filter(|&end| !after[..end].contains(['<', '\n']));
+                closed.filter(|_| name.starts_with(|c: char| c.is_ascii_alphabetic()))
+            }
+            '{' if after.starts_with('\\') => after.find('}').filter(|&end| !after[..end].contains('\n')),
+            _ => None,
+        };
+        match tag {
+            Some(end) => rest = &after[end + 1..],
+            None => {
+                out.push(c);
+                rest = after;
+            }
         }
     }
     out
@@ -119,10 +151,22 @@ fn windows_1252(byte: u8) -> char {
 /// The cues of an `.srt` file. Whatever in it cannot be read is left out, and the rest kept:
 /// one bad block is not a reason to show no subtitles at all.
 pub fn srt(text: &str) -> Vec<Cue> {
-    let text = text.trim_start_matches('\u{feff}').replace("\r\n", "\n");
+    let text = text.trim_start_matches('\u{feff}').replace("\r\n", "\n").replace('\r', "\n");
     let mut cues = Vec::new();
-    for block in text.split("\n\n") {
-        let mut lines = block.lines().skip_while(|line| !line.contains("-->"));
+    // Blocks are parted by a line with nothing on it -- or only spaces, which many files have
+    // and which, parted by "\n\n" alone, ran two cues into one.
+    let mut blocks: Vec<Vec<&str>> = vec![Vec::new()];
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            if blocks.last().is_some_and(|b| !b.is_empty()) {
+                blocks.push(Vec::new());
+            }
+        } else {
+            blocks.last_mut().unwrap().push(line);
+        }
+    }
+    for block in blocks {
+        let mut lines = block.into_iter().skip_while(|line| !line.contains("-->"));
         let Some(times) = lines.next() else { continue };
         let Some((from, to)) = times.split_once("-->") else { continue };
         // After the end time there may be where on the screen it goes; not ours to honour.
@@ -151,8 +195,10 @@ mod tests {
     #[test]
     fn an_ass_event_is_its_text_and_nothing_else() {
         assert_eq!(plain("12,0,Default,,0,0,0,,Hello, {\\i1}world{\\i0}\\Nand you"), "Hello, world\nand you");
-        // A drawing, which is all override and no words.
-        assert_eq!(plain("3,0,Sign,,0,0,0,,{\\p1}m 0 0 l 10 10{\\p0}"), "m 0 0 l 10 10");
+        // A drawing, which is a path and no words: nothing of it is shown.
+        assert_eq!(plain("3,0,Sign,,0,0,0,,{\\p1}m 0 0 l 10 10{\\p0}"), "");
+        assert_eq!(plain("3,0,Sign,,0,0,0,,{\\an7\\p2}m 0 0 l 10 10 l 0 10{\\p0}Exit"), "Exit");
+        assert_eq!(plain("3,0,Sign,,0,0,0,,{\\pos(10,20)\\pbo0}Sign"), "Sign");
         assert_eq!(plain("1,0,Default,,0,0,0,,  spaced\\hout  "), "spaced out");
     }
 
@@ -163,6 +209,16 @@ mod tests {
         assert_eq!(cues[0], Cue { start: 1.0, end: 3.5, words: Words::Text("Hello\nthere".into()) });
         assert_eq!(cues[1].start, 60.25);
         assert_eq!(cues[1].words, Words::Text("- Who?".into()));
+    }
+
+    #[test]
+    fn an_srt_file_s_other_markup_is_dropped_and_its_letters_kept() {
+        // ASS overrides in an .srt, a blank line holding spaces, and a "<" that is a letter.
+        let cues = srt("1\n00:00:01,000 --> 00:00:02,000\n{\\an8}Up <b>here</b>\n  \n2\n00:00:03,000 --> 00:00:04,000\nx < 3 and <3 too\nnext line\n");
+        assert_eq!(cues.len(), 2);
+        assert_eq!(cues[0].words, Words::Text("Up here".into()));
+        assert_eq!(cues[1].words, Words::Text("x < 3 and <3 too\nnext line".into()));
+        assert_eq!(unmarked("<font color=\"#ff0\">a</font> {b} {\\i1}c{\\i0}"), "a {b} c");
     }
 
     #[test]
