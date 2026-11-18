@@ -19,7 +19,7 @@
 // public_key, alg, transports}, a get's {credential_id, client_data_json, authenticator_data,
 // signature, user_handle}.
 //
-// With no PublicKeyCredential (SpatiMesh on WPE, where ENABLE_WEB_AUTHN is off) it defines WebAuthn
+// With no PublicKeyCredential (a browser without WebAuthn; Chromium has it) it defines WebAuthn
 // itself -- Credential, PublicKeyCredential, the authenticator responses and a CredentialsContainer
 // as navigator.credentials -- in secure contexts only, as browsers do. Where the browser has its
 // own (the extensions) it keeps it and wraps create() and get(): what SpatiKey answers is handed to
