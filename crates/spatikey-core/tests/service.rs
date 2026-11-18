@@ -946,6 +946,20 @@ fn the_socket_answers_this_user_and_names_the_program() {
     assert_eq!(other.ask(Request::List { session: opened.session.clone() }).unwrap_err().code, Code::BadSession);
     let listed: ListAnswer = client.ask_as(Request::List { session: opened.session.clone() }).unwrap();
     assert!(listed.entries.is_empty());
+    // An entry put, read, typed out and deleted by its id, over the socket as the window asks:
+    // the entry's id and the envelope's are not one.
+    let session = opened.session.clone();
+    let id = client.ask_as::<IdAnswer>(Request::Put { session: session.clone(), entry: login("GitHub", "github.com", "me", "pw"), based_on: None }).unwrap().id;
+    let got: GetAnswer = client.ask_as(Request::Get { session: session.clone(), id: id.clone() }).unwrap();
+    assert_eq!(got.entry.password, "pw");
+    let revealed: RevealAnswer = client.ask_as(Request::Reveal { session: Some(session.clone()), id: id.clone(), fields: vec![Field::Username] }).unwrap();
+    assert_eq!(revealed.values, ["me"]);
+    assert_eq!(client.ask(Request::Totp { session: Some(session.clone()), id: id.clone() }).unwrap_err().code, Code::NoMatch);
+    client.ask(Request::Delete { session: session.clone(), id: id.clone() }).unwrap();
+    // As a window before 2026-11-18 wrote it, the entry's id a second "id".
+    let older = format!(r#"{{"id":77,"op":"get","session":"{session}","id":"{id}"}}"#);
+    let reply: Reply = serde_json::from_slice(&client.relay(older.as_bytes()).unwrap()).unwrap();
+    assert_eq!((reply.id, reply.err.map(|e| e.code)), (77, Some(Code::NoMatch)), "read, and found deleted");
 
     // Raw, as the browsers' host relays: what is not JSON is refused with id 0, and the
     // connection carries on.
