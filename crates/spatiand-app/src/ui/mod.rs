@@ -144,6 +144,9 @@ pub mod theme {
     pub fn separator() -> Color { wash(0.10) }
     pub fn scroll_track() -> Color { wash(0.08) }
     pub fn scroll_thumb() -> Color { pick([0.42, 0.68, 1.0, 0.70], [0.16, 0.44, 0.95, 0.70]) }
+    /// The room's blue as light spilling round what is lit (a tile with the keys, a hovered
+    /// button, the active tab, where a carried thing will land), at `alpha`.
+    pub fn glow(alpha: f32) -> Color { [0.30, 0.62, 1.0, alpha] }
 
     /// The gap between rows, and between tiles.
     pub const ROW_GAP: f32 = 4.0;

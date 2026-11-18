@@ -345,7 +345,7 @@ const CAPTION_ROOM: f32 = CAPTION * 1.4 + CAPTION_DETAIL * 1.4 + 10.0;
 fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, selected: bool, focused: bool, hover: bool) {
     let frame = Rect { h: picture, ..cell };
     if selected && focused {
-        p.glow(gl, frame, theme::ROW_RADIUS, [0.30, 0.62, 1.0, 0.42], 22.0);
+        p.glow(gl, frame, theme::ROW_RADIUS, theme::glow(0.42), 22.0);
         p.fill(gl, frame.inset(-3.0), theme::ROW_RADIUS + 3.0, theme::mark());
     } else if selected {
         p.fill(gl, frame.inset(-2.0), theme::ROW_RADIUS + 2.0, theme::wash(0.28));
@@ -1248,7 +1248,7 @@ impl Button {
         };
         let radius = if label.is_empty() { rect.h.min(rect.w) * 0.5 } else { theme::ROW_RADIUS };
         if self.hover || lit {
-            p.glow(gl, rect, radius, [0.30, 0.62, 1.0, 0.18], 12.0);
+            p.glow(gl, rect, radius, theme::glow(0.18), 12.0);
         }
         p.fill(gl, rect, radius, ground);
         let ink = if self.focused || self.hover { theme::ink() } else { theme::ink_row() };
@@ -1309,7 +1309,7 @@ impl Confirm {
         let (_, text_h) = p.measure_left(gl, &self.text, em, w - 56.0);
         let h = 28.0 + text_h + 28.0 + Button::HEIGHT + 28.0;
         let pane = Rect::new(all.x + (all.w - w) * 0.5, all.y + (all.h * 0.36 - h * 0.5).max(24.0), w, h);
-        p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
+        super::look::scrim(p, gl, all);
         p.fill(gl, pane, 24.0, theme::ground());
         super::look::glass(p, gl, pane, 24.0, 1.0);
         let mut inner = pane.inset(28.0);

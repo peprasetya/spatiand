@@ -1988,7 +1988,7 @@ impl Shelf {
             let active = i == self.active;
             let hover = rect.contains(self.pointer.0, self.pointer.1);
             if active {
-                p.glow(gl, rect, 14.0, [0.30, 0.62, 1.0, 0.14], 16.0);
+                p.glow(gl, rect, 14.0, theme::glow(0.14), 16.0);
                 p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
                 room::rule(p, gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5));
             } else if hover {
@@ -1997,7 +1997,7 @@ impl Shelf {
             let dot = if tab.crashed.is_some() {
                 room::trouble()
             } else if !tab.doing.is_empty() {
-                [1.0, 0.85, 0.4, 1.0]
+                room::AMBER
             } else if matches!(tab.place, Place::Remote(..)) {
                 room::VIOLET
             } else if active {
@@ -2135,7 +2135,7 @@ impl Shelf {
                     let face = Rect { h: TILE, ..cell };
                     let hover = cell.contains(pointer.0, pointer.1);
                     if selected {
-                        p.glow(gl, face, 16.0, [0.30, 0.62, 1.0, 0.40], 18.0);
+                        p.glow(gl, face, 16.0, theme::glow(0.40), 18.0);
                         p.fill(gl, face.inset(-4.0), 18.0, theme::mark());
                     } else if is_cursor {
                         p.fill(gl, face.inset(-3.0), 17.0, theme::wash(0.30));
@@ -2293,7 +2293,7 @@ impl Shelf {
             }
             Overlay::Ask { what, field, ok, cancel } => {
                 let pane = Rect::new(all.w * 0.5 - 380.0, all.h * 0.32, 760.0, 250.0);
-                p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
+                room::scrim(p, gl, all);
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(28.0);
                 let title = match what {
@@ -2311,7 +2311,7 @@ impl Shelf {
             Overlay::Confirm { confirm, .. } => confirm.draw(p, gl, all),
             Overlay::Network { connect, close } => {
                 let pane = Rect::new(all.w * 0.5 - 460.0, all.h * 0.22, 920.0, 440.0);
-                p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
+                room::scrim(p, gl, all);
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(30.0);
                 p.label(gl, "Your remotes, for other apps", inner.take_top(50.0), theme::TITLE_EM * 0.75, theme::ink(), 0.0);
@@ -2340,7 +2340,7 @@ impl Shelf {
             }
             Overlay::About { close } => {
                 let pane = Rect::new(all.w * 0.5 - 460.0, all.h * 0.2, 920.0, 480.0);
-                p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
+                room::scrim(p, gl, all);
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(30.0);
                 p.label(gl, "SpatiShelf", inner.take_top(50.0), theme::TITLE_EM * 0.8, theme::ink(), 0.0);

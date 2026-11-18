@@ -1218,7 +1218,7 @@ impl Quill {
                 if let Some(drag) = win.drag.as_ref().filter(|d| d.torn) {
                     let label = tabs.get(&drag.tab).map(|t| t.label()).unwrap_or_default();
                     let ghost = Rect::new(drag.at.0 - 140.0, drag.at.1 - 26.0, 280.0, 52.0);
-                    p.glow(gl, ghost, 26.0, [0.30, 0.62, 1.0, 0.45], 26.0);
+                    p.glow(gl, ghost, 26.0, theme::glow(0.45), 26.0);
                     look::glass(p, gl, ghost, 26.0, 1.0);
                     p.label(gl, &label, ghost.inset(16.0), theme::ROW_EM * 0.8, theme::ink(), 0.5);
                     let hint = if win.tabs.len() == 1 && true { "Let go over another SpatiQuill window to move it there" } else { "Let go to open it in a window of its own, or over another SpatiQuill window" };
@@ -1424,7 +1424,7 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
             rect
         };
         if active {
-            p.glow(gl, rect, 14.0, [0.30, 0.62, 1.0, if win.focused { 0.18 } else { 0.06 }], 16.0);
+            p.glow(gl, rect, 14.0, theme::glow(if win.focused { 0.18 } else { 0.06 }), 16.0);
             p.gradient(gl, rect, 14.0, theme::wash(0.11), theme::wash(0.05));
             look::rule(p, gl, Rect::new(rect.x + 16.0, rect.bottom() - 3.0, rect.w - 32.0, 2.5));
         } else if hover {
@@ -1433,7 +1433,7 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
         // A mark for how the tab is: running, rung, stopped.
         let colour = match tab.state {
             TabState::Crashed(_) => look::trouble(),
-            TabState::Running if tab.rang.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) => [1.0, 0.85, 0.4, 1.0],
+            TabState::Running if tab.rang.is_some_and(|t| t.elapsed() < Duration::from_secs(3)) => look::AMBER,
             TabState::Running => if active { look::TEAL } else { theme::ink_hint() },
         };
         p.fill(gl, Rect::new(rect.x + 16.0, rect.y + rect.h * 0.5 - 4.0, 8.0, 8.0), 4.0, colour);

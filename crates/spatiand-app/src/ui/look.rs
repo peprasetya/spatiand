@@ -9,6 +9,8 @@ use crate::Gl;
 pub const TEAL: Color = [0.086, 0.902, 0.753, 1.0];
 pub const BLUE: Color = [0.216, 0.651, 0.969, 1.0];
 pub const VIOLET: Color = [0.561, 0.420, 0.949, 1.0];
+/// Something busy, or a tab whose program rang the bell: a dot's colour.
+pub const AMBER: Color = [1.0, 0.85, 0.4, 1.0];
 /// What went wrong is said in.
 pub fn trouble() -> Color {
     if theme::dark() { [1.0, 0.62, 0.55, 1.0] } else { [0.78, 0.18, 0.12, 1.0] }
@@ -214,6 +216,11 @@ pub fn glass(p: &mut Painter, gl: &Gl, rect: Rect, radius: f32, strength: f32) {
         p.gradient(gl, rect, radius, [1.0, 1.0, 1.0, 0.88 * strength], [0.955, 0.962, 0.978, 0.92 * strength]);
         p.fill(gl, Rect { h: 1.5, ..rect.inset(radius * 0.6) }, 0.75, [1.0, 1.0, 1.0, 0.6 * strength]);
     }
+}
+
+/// The window dimmed behind a pane, a question or a menu over it.
+pub fn scrim(p: &mut Painter, gl: &Gl, all: Rect) {
+    p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
 }
 
 /// A small rounded word on a wash of colour: what a thing is, at a glance ("3D", "PDF").

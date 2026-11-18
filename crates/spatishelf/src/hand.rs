@@ -977,10 +977,10 @@ impl Shelf {
         }
         if let Some(target) = self.incoming.as_ref().and_then(|i| i.target.as_ref()) {
             if target.rect != self.content {
-                p.glow(gl, target.rect, 16.0, [0.30, 0.62, 1.0, 0.45], 18.0);
+                p.glow(gl, target.rect, 16.0, theme::glow(0.45), 18.0);
                 p.fill(gl, target.rect.inset(-3.0), 16.0, [0.42, 0.68, 1.0, 0.22]);
             } else {
-                p.glow(gl, self.content.inset(4.0), 18.0, [0.30, 0.62, 1.0, 0.25], 18.0);
+                p.glow(gl, self.content.inset(4.0), 18.0, theme::glow(0.25), 18.0);
             }
         }
         let Some(drag) = self.drag.as_ref() else { return };
@@ -991,12 +991,12 @@ impl Shelf {
                 // Within the pane: a folder's line, or it and what it holds.
                 let inside = target.tab.is_none() && overlaps(target.rect, self.content);
                 p.clip(gl, if inside { self.content } else { p.bounds() });
-                p.glow(gl, target.rect, 16.0, [0.30, 0.62, 1.0, 0.45], 18.0);
+                p.glow(gl, target.rect, 16.0, theme::glow(0.45), 18.0);
                 p.fill(gl, target.rect.inset(-3.0), 16.0, [0.42, 0.68, 1.0, 0.22]);
                 p.unclip(gl);
             } else {
                 // The folder on show, from inside an opened one: the pane is lit.
-                p.glow(gl, self.content.inset(4.0), 18.0, [0.30, 0.62, 1.0, 0.25], 18.0);
+                p.glow(gl, self.content.inset(4.0), 18.0, theme::glow(0.25), 18.0);
             }
         }
         // Where it would do nothing (onto itself, into its own folder or into itself), said so
