@@ -393,45 +393,45 @@ All fourteen done on 2026-11-18 (the commits in the last column). What the per-a
 
 ### SpatiShelf
 
-| # | Where | Now | Rule | Change | Size |
-|---|---|---|---|---|---|
-| 1 | `main.rs:1979-2026` | Own tab bar; close cross hit 38 | 6, 5 | `ui::TabBar` [SDK 1] | S after |
-| 2 | `main.rs:2276-2294`, `:2422-2429`, `:1356-1370` | Own menu pane, always 620 wide | 12 | `ui::Menu` [SDK 2] | S after |
-| 3 | `main.rs:2208-2214` | Own scrollbar, thumb at least 30 | 11 | `look::scrollbar` [SDK 4] | S |
-| 4 | `main.rs:1053` | Deleting for good asks with "Yes" / "No", the yes lit | 12 | `Confirm::careful(text, "Delete", "Cancel")` | S |
-| 5 | `main.rs:1175` | Forgetting a remote: "Yes" / "No", the yes lit | 12 | `Confirm::careful(.., "Forget", "Cancel")` | S |
-| 6 | `main.rs:1188` | Emptying the Trash: "Yes" / "No", the yes lit | 12 | `Confirm::careful(.., "Empty", "Cancel")` | S |
-| 7 | `main.rs:715`, `:731` | Closing a tab, quitting, with work going: the yes lit | 12 | `Confirm::careful` (labels stay) | S |
-| 8 | `main.rs:2302`, `:2317` | Pane titles at `TITLE_EM * 0.75` | 1 | `theme::TITLE_EM * 0.8` | S |
-| 9 | `main.rs:2155` | A tile's second line at `FOOTER_EM * 0.8` (18) | 1 | `theme::FOOTER_EM * 0.82` | S |
-| 10 | `main.rs:2083` (`header` 40.0), `:2113-2119` | The list's column heads are 40 high to press | 5 | `(ROW, 44.0)` | S |
-| 11 | `main.rs:2409` `DISCLOSURE: f32 = 30.0` | A folder's triangle is 30 wide to press | 5 | `44.0` (the icon stays 22; `list_layout` moves the name by the 14 more) | S |
-| 12 | `main.rs:989` | "Cut 1 item — paste where it is to go" has no full stop | 18 | End the format string with `.` | S |
-| 13 | `hand.rs:283` | Double click is a literal 450 ms | 16 | `ui::DOUBLE_CLICK` [SDK 7] | S |
-| 14 | `hand.rs:19` | `DRAG_AFTER` 7.0 | 16 | `ui::DRAG_AFTER` [SDK 7] | S |
-| 15 | `hand.rs:972`, `:974`, `:981`, `:995` | Drop-target washes are literal blues (the dark look's, in the light look too) | 2 | `:972` `theme::selected()`; `:974` `theme::mark()`; `:981`, `:995` `theme::selected()` | S |
-| 16 | `hand.rs:980`, `:983`, `:994`, `:999`; `main.rs:1991`, `:2138`; `main.rs:2000`; `main.rs:2296`, `:2314`, `:2343` | Literal glow, amber and scrim | 2 | `theme::glow(a)`, `look::AMBER`, `look::scrim` [SDK 8] | S |
-| 17 | `look.rs:66-115`, `hand.rs:206-208` | Own `size`, `when`, `keys` | 18 | `look::size`, `look::when`, `look::chord` [SDK 5, 9] | S |
-| 18 | `main.rs:2047-2054` | Own "This tab stopped" pane | 13 | `look::stopped` [SDK 11] | S |
-| 19 | `main.rs:2433` | A trashed thing of unknown origin reads "from where, not known" | 18 | Word it `"not known"` | S |
+| # | Where | Now | Rule | Change | Size | Done |
+|---|---|---|---|---|---|---|
+| ~~1~~ | `main.rs:1979-2026` | Own tab bar; close cross hit 38 | 6, 5 | `ui::TabBar` [SDK 1] | S after | done by the SDK work, checked, `b19a657` |
+| ~~2~~ | `main.rs:2276-2294`, `:2422-2429`, `:1356-1370` | Own menu pane, always 620 wide | 12 | `ui::Menu` [SDK 2] | S after | done by the SDK work, checked, `9d7f31c` |
+| ~~3~~ | `main.rs:2208-2214` | Own scrollbar, thumb at least 30 | 11 | `look::scrollbar` [SDK 4] | S | done by the SDK work, checked, `de5b8ed` |
+| ~~4~~ | `main.rs:1053` | Deleting for good asks with "Yes" / "No", the yes lit | 12 | `Confirm::careful(text, "Delete", "Cancel")` | S | done, `623f78c` |
+| ~~5~~ | `main.rs:1175` | Forgetting a remote: "Yes" / "No", the yes lit | 12 | `Confirm::careful(.., "Forget", "Cancel")` | S | done, `623f78c` |
+| ~~6~~ | `main.rs:1188` | Emptying the Trash: "Yes" / "No", the yes lit | 12 | `Confirm::careful(.., "Empty", "Cancel")` | S | done, `623f78c` |
+| ~~7~~ | `main.rs:715`, `:731` | Closing a tab, quitting, with work going: the yes lit | 12 | `Confirm::careful` (labels stay) | S | done, `623f78c` |
+| ~~8~~ | `main.rs:2302`, `:2317` | Pane titles at `TITLE_EM * 0.75` | 1 | `theme::TITLE_EM * 0.8` | S | done, `623f78c` |
+| ~~9~~ | `main.rs:2155` | A tile's second line at `FOOTER_EM * 0.8` (18) | 1 | `theme::FOOTER_EM * 0.82` | S | done, `623f78c` |
+| ~~10~~ | `main.rs:2083` (`header` 40.0), `:2113-2119` | The list's column heads are 40 high to press | 5 | `(ROW, 44.0)` | S | done, `623f78c` |
+| ~~11~~ | `main.rs:2409` `DISCLOSURE: f32 = 30.0` | A folder's triangle is 30 wide to press | 5 | `44.0` (the icon stays 22; `list_layout` moves the name by the 14 more) | S | done, `623f78c` |
+| ~~12~~ | `main.rs:989` | "Cut 1 item — paste where it is to go" has no full stop | 18 | End the format string with `.` | S | done, `623f78c` |
+| ~~13~~ | `hand.rs:283` | Double click is a literal 450 ms | 16 | `ui::DOUBLE_CLICK` [SDK 7] | S | done, `623f78c` |
+| ~~14~~ | `hand.rs:19` | `DRAG_AFTER` 7.0 | 16 | `ui::DRAG_AFTER` [SDK 7] | S | done, `623f78c` |
+| ~~15~~ | `hand.rs:972`, `:974`, `:981`, `:995` | Drop-target washes are literal blues (the dark look's, in the light look too) | 2 | `:972` `theme::selected()`; `:974` `theme::mark()`; `:981`, `:995` `theme::selected()` | S | done, `623f78c` |
+| ~~16~~ | `hand.rs:980`, `:983`, `:994`, `:999`; `main.rs:1991`, `:2138`; `main.rs:2000`; `main.rs:2296`, `:2314`, `:2343` | Literal glow, amber and scrim | 2 | `theme::glow(a)`, `look::AMBER`, `look::scrim` [SDK 8] | S | done by the SDK work, checked, `f853578` |
+| ~~17~~ | `look.rs:66-115`, `hand.rs:206-208` | Own `size`, `when`, `keys` | 18 | `look::size`, `look::when`, `look::chord` [SDK 5, 9] | S | done by the SDK work, checked, `56baea9, a1b54dc` |
+| ~~18~~ | `main.rs:2047-2054` | Own "This tab stopped" pane | 13 | `look::stopped` [SDK 11] | S | done by the SDK work, checked, `ccf2c66` |
+| ~~19~~ | `main.rs:2433` | A trashed thing of unknown origin reads "from where, not known" | 18 | Word it `"not known"` | S | done, `623f78c` |
 
 ### SpatiQuill
 
-| # | Where | Now | Rule | Change | Size |
-|---|---|---|---|---|---|
-| 1 | `main.rs:1366-1453` | Own tab bar; close cross hit 38 | 6, 5 | `ui::TabBar` [SDK 1] | S after |
-| 2 | `main.rs:217-225`, `:1074-1124`, `:1230-1237` | Own menu pane, 420 wide | 12 | `ui::Menu` [SDK 2] | S after |
-| 3 | `main.rs:1063`, `:1065` | The menu says "Ctrl+C", "Ctrl+V" on the Mac too | 18 | `look::chord("C")`, `look::chord("V")` [SDK 9] | S |
-| 4 | `main.rs:774`, `:1081` | The menu opens on a right click only: no way to it with a head pointer | 12 | A press held 800 ms within `ui::DRAG_AFTER` on the text opens it at the pointer, as `shelf/hand.rs:21`; the press then chooses nothing | M |
-| 5 | `main.rs:848` | Double click is a literal 400 ms | 16 | `ui::DOUBLE_CLICK` [SDK 7] | S |
-| 6 | `main.rs:1188` | The caret and the selection are literal colours | 2 | `theme::always_dark(theme::mark)` and `[look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.40]` | S |
-| 7 | `main.rs:1205-1209` | Own scrollbar | 11 | `look::scrollbar` [SDK 4] | S |
-| 8 | `main.rs:1211` | "{n} lines up    Shift-End goes to the foot": a chord written with a hyphen, in a sentence | 18 | `format!("{} lines up", n)` and, after it in the pill, `look::keys(.., "[Shift+End] Foot", ..)` | S |
-| 9 | `main.rs:1195-1203` | Own "This tab stopped" pane | 13 | `look::stopped` [SDK 11] | S |
-| 10 | `main.rs:384` | Closing or quitting with something running: the yes lit | 12 | `Confirm::careful` (labels stay) | S |
-| 11 | `main.rs:1221`, `:1425`, `:1436` | Literal glow and amber | 2 | `theme::glow(a)`, `look::AMBER` [SDK 8] | S |
-| 12 | `main.rs:1240` | What went wrong is capitalised as it is drawn, because it is made in lower case | 13 | Capitalise where each is made (the `failed = Some((..))` sites) and end each with a full stop; drop the capitalising here | S |
-| 13 | whole window | In the light look the bar and margins are light and the terminal is its dark palette | 2 | Decisions 2 | S |
+| # | Where | Now | Rule | Change | Size | Done |
+|---|---|---|---|---|---|---|
+| ~~1~~ | `main.rs:1366-1453` | Own tab bar; close cross hit 38 | 6, 5 | `ui::TabBar` [SDK 1] | S after | done by the SDK work, checked, `b19a657` |
+| ~~2~~ | `main.rs:217-225`, `:1074-1124`, `:1230-1237` | Own menu pane, 420 wide | 12 | `ui::Menu` [SDK 2] | S after | done by the SDK work, checked, `9d7f31c` |
+| ~~3~~ | `main.rs:1063`, `:1065` | The menu says "Ctrl+C", "Ctrl+V" on the Mac too | 18 | `look::chord("C")`, `look::chord("V")` [SDK 9] | S | done by the SDK work, checked, `a1b54dc` |
+| ~~4~~ | `main.rs:774`, `:1081` | The menu opens on a right click only: no way to it with a head pointer | 12 | A press held 800 ms within `ui::DRAG_AFTER` on the text opens it at the pointer, as `shelf/hand.rs:21`; the press then chooses nothing | M | done, `9869b7b` (the hold checked in the run loop every 100 ms while a press is down) |
+| ~~5~~ | `main.rs:848` | Double click is a literal 400 ms | 16 | `ui::DOUBLE_CLICK` [SDK 7] | S | done, `9869b7b` |
+| ~~6~~ | `main.rs:1188` | The caret and the selection are literal colours | 2 | `theme::always_dark(theme::mark)` and `[look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.40]` | S | done, `9869b7b` |
+| ~~7~~ | `main.rs:1205-1209` | Own scrollbar | 11 | `look::scrollbar` [SDK 4] | S | done by the SDK work, checked, `de5b8ed` |
+| ~~8~~ | `main.rs:1211` | "{n} lines up    Shift-End goes to the foot": a chord written with a hyphen, in a sentence | 18 | `format!("{} lines up", n)` and, after it in the pill, `look::keys(.., "[Shift+End] Foot", ..)` | S | done, `9869b7b` |
+| ~~9~~ | `main.rs:1195-1203` | Own "This tab stopped" pane | 13 | `look::stopped` [SDK 11] | S | done by the SDK work, checked, `ccf2c66` |
+| ~~10~~ | `main.rs:384` | Closing or quitting with something running: the yes lit | 12 | `Confirm::careful` (labels stay) | S | done, `9869b7b` |
+| ~~11~~ | `main.rs:1221`, `:1425`, `:1436` | Literal glow and amber | 2 | `theme::glow(a)`, `look::AMBER` [SDK 8] | S | done by the SDK work, checked, `f853578` |
+| ~~12~~ | `main.rs:1240` | What went wrong is capitalised as it is drawn, because it is made in lower case | 13 | Capitalise where each is made (the `failed = Some((..))` sites) and end each with a full stop; drop the capitalising here | S | done, `9869b7b` |
+| ~~13~~ | whole window | In the light look the bar and margins are light and the terminal is its dark palette | 2 | Decisions 2 | S | done, `9869b7b` |
 
 ### SpatiPal
 
