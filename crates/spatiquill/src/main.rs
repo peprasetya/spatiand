@@ -130,6 +130,9 @@ struct Win {
     pressed_in_text: bool,
     /// Where each tab is on the bar, and its close mark, as last drawn.
     placed: Vec<(u64, Rect, Rect)>,
+    /// The first tab shown on the bar: more than fit are scrolled along it, the active one
+    /// always on show.
+    first: usize,
     plus: Rect,
     last_click: Option<(Instant, (u16, u16))>,
     menu: Option<Menu>,
@@ -259,6 +262,7 @@ impl Quill {
             selecting: None,
             pressed_in_text: false,
             placed: Vec::new(),
+            first: 0,
             plus: Rect::default(),
             last_click: None,
             menu: None,
@@ -619,7 +623,8 @@ impl Quill {
         if let Some((tab, from, at)) = self.in_flight {
             if from != self.wins[w].id && at.elapsed() < Duration::from_millis(900) {
                 self.in_flight = None;
-                let place = self.wins[w].placed.iter().position(|(_, r, _)| x < r.x + r.w * 0.5);
+                let win = &self.wins[w];
+                let place = win.placed.iter().position(|(_, r, _)| x < r.x + r.w * 0.5).map(|at| at + win.first);
                 let to = self.wins[w].id;
                 self.move_tab(tab, to, place);
                 return;
@@ -636,7 +641,7 @@ impl Quill {
             if drag.moved && !drag.torn {
                 // Along the bar: the tab goes where the pointer is.
                 let tab = drag.tab;
-                let target = drag_target(&win.placed, tab, x).min(win.tabs.len().saturating_sub(1));
+                let target = (win.first + drag_target(&win.placed, tab, x)).min(win.tabs.len().saturating_sub(1));
                 if let Some(from) = win.tabs.iter().position(|&t| t == tab) {
                     if from != target {
                         win.tabs.remove(from);
@@ -1253,20 +1258,58 @@ fn word_at(screen: &Screen, at: (u16, u16)) -> ((u16, u16), (u16, u16)) {
     ((a as u16, at.1), (b as u16, at.1))
 }
 
+/// The narrowest and widest a tab is on the bar.
+const TAB_WIDTH: (f32, f32) = (110.0, 330.0);
+
+/// How `n` tabs share a bar `room` wide: each tab's width, the first shown and how many are.
+/// As wide as they fit, between [`TAB_WIDTH`]'s; more than fit at the narrowest are scrolled
+/// along the bar from `first` (as it was), as little as keeps the `active` one on show.
+fn bar_tabs(n: usize, active: usize, first: usize, room: f32) -> (f32, usize, usize) {
+    if n == 0 {
+        return (TAB_WIDTH.1, 0, 0);
+    }
+    let width = (room / n as f32).clamp(TAB_WIDTH.0, TAB_WIDTH.1);
+    let shown = (((room + 0.5) / width).floor() as usize).clamp(1, n);
+    let first = first.min(n - shown).min(active).max((active + 1).saturating_sub(shown));
+    (width, first, shown)
+}
+
+#[cfg(test)]
+mod bar_tests {
+    use super::*;
+
+    #[test]
+    fn every_tab_fits_or_the_active_one_is_on_show() {
+        // Three on a wide bar: as wide as they may be.
+        assert_eq!(bar_tabs(3, 0, 0, 1174.0), (330.0, 0, 3));
+        // Nine: narrower, all shown (they were cut off from the eighth at 150).
+        let (w, first, shown) = bar_tabs(9, 8, 0, 1174.0);
+        assert!(w >= TAB_WIDTH.0 && w * 9.0 <= 1174.0);
+        assert_eq!((first, shown), (0, 9));
+        // Twenty: as many as fit at the narrowest, scrolled to the active one.
+        let (w, first, shown) = bar_tabs(20, 15, 0, 1174.0);
+        assert_eq!((w, shown), (TAB_WIDTH.0, 10));
+        assert_eq!(first, 6);
+        // It stays put while the active one is on show, and follows it back.
+        assert_eq!(bar_tabs(20, 10, 6, 1174.0).1, 6);
+        assert_eq!(bar_tabs(20, 2, 6, 1174.0).1, 2);
+        // Tabs closed: no scrolling past the end.
+        assert_eq!(bar_tabs(11, 10, 6, 1174.0).1, 1);
+        assert_eq!(bar_tabs(0, 0, 3, 1174.0), (330.0, 0, 0));
+    }
+}
+
 fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMap<u64, Tab>, all: Rect) {
     let bar = Rect::new(all.x + 12.0, all.y + 10.0, all.w - 24.0, BAR - 16.0);
     let plus_w = 50.0;
-    let n = win.tabs.len().max(1);
-    let width = ((bar.w - plus_w - 16.0) / n as f32).clamp(150.0, 330.0);
+    let (width, first, shown) = bar_tabs(win.tabs.len(), win.active, win.first, bar.w - plus_w - 16.0);
+    win.first = first;
     win.placed.clear();
     let mut x = bar.x;
-    for (index, &id) in win.tabs.iter().enumerate() {
+    for (index, &id) in win.tabs.iter().enumerate().skip(first).take(shown) {
         let Some(tab) = tabs.get(&id) else { continue };
         let rect = Rect::new(x, bar.y, width - 8.0, bar.h);
         x += width;
-        if rect.right() > bar.right() - plus_w {
-            break;
-        }
         let active = index == win.active;
         let hover = matches!(win.hover, Hover::Tab(t) | Hover::Close(t) if t == id);
         let dragged = win.drag.as_ref().is_some_and(|d| d.tab == id && d.moved);
