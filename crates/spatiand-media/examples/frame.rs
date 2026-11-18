@@ -34,7 +34,10 @@ fn main() -> Result<(), String> {
         std::thread::sleep(std::time::Duration::from_millis(5));
     };
     println!("{}x{} at {:.2}s, {:?}, {:?}, decoder: {}", picture.width, picture.height, picture.time, picture.pixels, picture.colour, player.info().hardware.unwrap_or("software"));
-    let (w, h) = (picture.width, picture.height);
+    // The right way up, as SpatiReel shows a flat film: a phone's taken upright is on its side.
+    let upright = player.info().upright;
+    screen.set_upright(upright);
+    let (w, h) = if upright.swap { (picture.height, picture.width) } else { (picture.width, picture.height) };
     let g = gl.api();
     let mut pixels = vec![0u8; (w * h * 4) as usize];
     unsafe {

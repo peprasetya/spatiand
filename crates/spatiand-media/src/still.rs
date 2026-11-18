@@ -227,7 +227,7 @@ fn again() -> c_int {
 }
 
 /// The display matrix among a stream's (or a grid's) side data, if it has one.
-unsafe fn side_matrix(data: *const ffi::AVPacketSideData, count: c_int) -> Option<[i32; 9]> {
+pub(crate) unsafe fn side_matrix(data: *const ffi::AVPacketSideData, count: c_int) -> Option<[i32; 9]> {
     if data.is_null() || count <= 0 {
         return None;
     }

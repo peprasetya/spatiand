@@ -82,6 +82,9 @@ uniform int u_light;
 uniform vec4 u_uv;
 // 0: flat. Otherwise how many radians of longitude the picture covers, looked at from inside.
 uniform float u_span;
+// The picture put the right way up, as `crate::still::Upright` does: across and down swapped,
+// mirrored, upside down (each 0 or 1). Only for a flat picture.
+uniform vec3 u_upright;
 uniform mat3 u_gaze;
 // The tangents of half the view's width and height.
 uniform vec2 u_tan;
@@ -127,6 +130,11 @@ vec3 colour(vec2 uv) {
 
 void main() {
     vec2 at = v_at;
+    if (u_span == 0.0) {
+        if (u_upright.y > 0.5) at.x = 1.0 - at.x;
+        if (u_upright.z > 0.5) at.y = 1.0 - at.y;
+        if (u_upright.x > 0.5) at = at.yx;
+    }
     if (u_span > 0.0) {
         // The ray through this pixel, turned to where the viewer is looking.
         vec3 ray = u_gaze * normalize(vec3((v_at.x * 2.0 - 1.0) * u_tan.x, (1.0 - v_at.y * 2.0) * u_tan.y, -1.0));
@@ -185,7 +193,7 @@ impl Default for Gaze {
 /// A compiled shader and where its uniforms are.
 struct Program {
     program: glow::Program,
-    at: [Option<glow::UniformLocation>; 16],
+    at: [Option<glow::UniformLocation>; 17],
 }
 
 impl Program {
@@ -231,13 +239,15 @@ pub struct Screen {
     borrowed: Vec<spatiand_app::gl::HardwareBufferTexture>,
     /// The picture the textures hold, kept for as long as they do.
     loaded: Option<Arc<Picture>>,
+    /// How a flat picture is put the right way up: what its film's display matrix says.
+    upright: crate::still::Upright,
     /// The textures hold ten bits in sixteen, to be scaled up as they are read.
     deep: bool,
 }
 
-const NAMES: [&str; 16] = [
+const NAMES: [&str; 17] = [
     "u_rect", "u_view", "u_y", "u_u", "u_v", "u_planes", "u_matrix", "u_offset", "u_uv", "u_span", "u_gaze", "u_tan", "u_deep", "u_light",
-    "u_ext", "u_crop",
+    "u_ext", "u_crop", "u_upright",
 ];
 
 impl Screen {
@@ -283,6 +293,7 @@ impl Screen {
                 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
                 borrowed: Vec::new(),
                 loaded: None,
+                upright: crate::still::Upright::default(),
                 deep: false,
             })
         }
@@ -317,6 +328,12 @@ impl Screen {
         }
         let _ = gl;
         self.loaded = None;
+    }
+
+    /// Draw flat pictures turned and mirrored so (`Info::upright`): a phone's film taken upright
+    /// is stored on its side, with a matrix saying how it is to be shown.
+    pub fn set_upright(&mut self, upright: crate::still::Upright) {
+        self.upright = upright;
     }
 
     /// Let go of everything it made on the GPU -- its programs, its corners and the textures of
@@ -522,6 +539,8 @@ impl Screen {
         g.uniform_4_f32(program.at[0].as_ref(), rect[0], rect[1], rect[2], rect[3]);
         g.uniform_2_f32(program.at[1].as_ref(), view.0 as f32, view.1 as f32);
         g.uniform_4_f32(program.at[8].as_ref(), uv[0], uv[1], uv[2], uv[3]);
+        let on = |b: bool| if b { 1.0 } else { 0.0 };
+        g.uniform_3_f32(program.at[16].as_ref(), on(self.upright.swap), on(self.upright.mirror), on(self.upright.flip));
         g.uniform_1_i32(
             program.at[13].as_ref(),
             match picture.colour.light {

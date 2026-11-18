@@ -228,6 +228,10 @@ pub struct Info {
     /// How wide each of the frame's pixels is, over how tall: 1 for square ones, and 0 where
     /// not known (taken as 1). A DVD's 720 x 576 frame shown at 16:9 is 64/45.
     pub sample_aspect: f64,
+    /// How the frame is to be turned and mirrored to be shown the right way up: the stream's
+    /// display matrix (a phone's film taken upright is stored on its side). `width` and
+    /// `height` are the frame's as stored.
+    pub upright: crate::still::Upright,
     pub frame_rate: f64,
     pub video_codec: String,
     /// The platform's decoder is doing the work, and its name.
@@ -803,6 +807,7 @@ impl Player {
                     info.frame_rate = timing::frame_rate(&[(stated.num, stated.den), shared.container_rate]);
                 }
                 (info.hints, info.eyes_swapped) = read_hints(stream);
+                info.upright = crate::still::Upright::of(crate::still::side_matrix((*parameters).coded_side_data, (*parameters).nb_coded_side_data));
                 info.hardware = HARDWARE.filter(|_| on_gpu).map(|(_, _, name)| name);
                 if on_gpu {
                     hardware = Some((SendPointer(stream), start, threads.len()));

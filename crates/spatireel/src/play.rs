@@ -23,6 +23,7 @@ use spatiand_app::{Anchor, App, EyeLayout, Gl, Key, Layer, Mode, WindowId};
 use spatiand_media::hints;
 use spatiand_media::player::Player;
 use spatiand_media::screen::{Gaze, Screen};
+use spatiand_media::still::Upright;
 use spatiand_media::{Eye, Packing, Projection, StereoLayout, VideoLayout};
 
 /// Where the film's picture is.
@@ -440,11 +441,26 @@ impl Playing {
         }
     }
 
-    /// The size of one eye's picture as it should be seen, in the film's own pixels down.
+    /// How the picture is turned to be the right way up: as its film's display matrix says, for
+    /// a flat film of one picture -- a phone's, taken upright. A film of two eyes, or a sphere,
+    /// is taken as it is stored.
+    fn upright(&self) -> Upright {
+        let flat = self.layout.projection == Projection::Flat && self.layout.stereo == StereoLayout::Mono;
+        if flat { self.player.info().upright } else { Upright::default() }
+    }
+
+    /// The size of one eye's picture as it should be seen, in the film's own pixels down: the
+    /// frame the right way up.
     fn eye_shape(&self) -> (f32, (u32, u32)) {
         let info = self.player.info();
         let frame = (info.width.max(2), info.height.max(2));
-        (eye_aspect(&self.layout, frame, info.sample_aspect), frame)
+        if self.upright().swap {
+            // On its side: what is across is down, and its pixels' shape turned with it.
+            let turned = (frame.1, frame.0);
+            (eye_aspect(&self.layout, turned, 1.0 / info.sample_aspect), turned)
+        } else {
+            (eye_aspect(&self.layout, frame, info.sample_aspect), frame)
+        }
     }
 
     /// Put the windows the way this film, looked at this way, wants them.
@@ -553,6 +569,8 @@ impl Playing {
         let name = self.name.clone();
         let gaze = self.gaze;
         let logical = app_shape(self.arranged);
+        let upright = self.upright();
+        self.screen.set_upright(upright);
 
         // The film's own surface, when it is the sky: the frame, whole, and nothing else.
         if let (Some(sky), Staging::Sky { .. }) = (self.sky, staging) {
