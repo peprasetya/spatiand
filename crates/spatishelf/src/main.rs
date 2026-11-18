@@ -407,7 +407,9 @@ enum Done {
 
 enum Overlay {
     None,
-    Menu { at: (f32, f32), list: List, entries: Vec<(Row, Action)> },
+    /// `chosen`: what was chosen when it opened, which its entries act on -- not what is chosen
+    /// when one is picked, after a listing that came meanwhile may have moved the cursor.
+    Menu { at: (f32, f32), list: List, entries: Vec<(Row, Action)>, chosen: Vec<Place> },
     Ask { what: Asking, field: Field, ok: Button, cancel: Button },
     /// A question (the SDK's, as every Spatiand application asks), and what a yes does.
     Confirm { confirm: Confirm, action: Action },
@@ -447,6 +449,8 @@ enum Action {
     Trash,
     /// Gone for good, after asking: Shift-Delete, or from the trash.
     Delete,
+    /// These gone for good: what the question asked about, on a yes.
+    DeleteThese(Vec<Place>),
     /// What is chosen in the trash put back where it came from.
     Restore,
     /// Everything in the trash gone for good, after asking.
@@ -529,6 +533,8 @@ struct Shelf {
     opening: opening::Opening,
     /// Quitting was asked for and agreed to: the loop ends.
     quitting: bool,
+    /// While a menu's entry is acted on: what the menu was opened for (see `chosen`).
+    pinned: Option<Vec<Place>>,
 }
 
 /// "a copy" as a sentence begins it.
@@ -591,6 +597,15 @@ impl Shelf {
 
     fn tab(&mut self) -> &mut ShelfTab {
         &mut self.tabs[self.active]
+    }
+
+    /// What an action acts on: what a menu was opened for while one of its entries is acted
+    /// on, else what is chosen in the tab in front now.
+    fn chosen(&mut self) -> Vec<Place> {
+        match &self.pinned {
+            Some(places) => places.clone(),
+            None => self.tab().chosen(),
+        }
     }
 
     fn connect(&mut self) {
@@ -935,7 +950,7 @@ impl Shelf {
             }
             Action::ForgetAlways => self.forget_always(),
             Action::Copy | Action::Cut => {
-                let chosen = self.tab().chosen();
+                let chosen = self.chosen();
                 if !chosen.is_empty() {
                     let n = chosen.len();
                     self.clipboard = Some((chosen, action == Action::Cut));
@@ -968,7 +983,7 @@ impl Shelf {
                 self.overlay = Overlay::Ask { what: Asking::NewFolder, field, ok: Button::default(), cancel: Button::default() };
             }
             Action::Trash => {
-                let chosen = self.tab().chosen();
+                let chosen = self.chosen();
                 if chosen.is_empty() {
                     return;
                 }
@@ -987,7 +1002,7 @@ impl Shelf {
                 }
             }
             Action::Delete => {
-                let chosen = self.tab().chosen();
+                let chosen = self.chosen();
                 if chosen.is_empty() {
                     return;
                 }
@@ -1002,10 +1017,12 @@ impl Shelf {
                     Some(bin) => format!("Delete {what}? It goes to {bin}, not to this machine's Trash."),
                     None => format!("Delete {what} for good? This cannot be undone."),
                 };
-                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::Delete };
+                // What the question names is what a yes deletes, whatever is chosen by then.
+                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::DeleteThese(chosen) };
             }
+            Action::DeleteThese(_) => {}
             Action::Restore => {
-                let chosen: Vec<Place> = self.tab().chosen().into_iter().filter(|p| matches!(p, Place::Local(_))).collect();
+                let chosen: Vec<Place> = self.chosen().into_iter().filter(|p| matches!(p, Place::Local(_))).collect();
                 if chosen.is_empty() {
                     return;
                 }
@@ -1036,7 +1053,7 @@ impl Shelf {
                 }
             }
             Action::CopyPath => {
-                let text = self.tab().chosen().iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
+                let text = self.chosen().iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
                 // The room's clipboard, through the SDK, as every Spatiand application's copies go
                 // (wl-copy/pbcopy are not on the Beam Pro, where the path silently stayed behind).
                 spatiand_app::clipboard::copy(text);
@@ -1060,7 +1077,7 @@ impl Shelf {
             }
             Action::Duplicate => {
                 // Each beside itself: things chosen in opened folders are copied in their own.
-                let chosen = self.tab().chosen();
+                let chosen = self.chosen();
                 if matches!(self.tab().place, Place::Local(_)) {
                     let mut by_folder: Vec<(Place, Vec<Place>)> = Vec::new();
                     for item in chosen {
@@ -1080,7 +1097,7 @@ impl Shelf {
                 self.destinations_menu(at, action == Action::CopyToMenu);
             }
             Action::Send { to, copy } => {
-                let chosen = self.tab().chosen();
+                let chosen = self.chosen();
                 self.send(chosen, to, copy);
             }
             Action::SortMenu => {
@@ -1132,8 +1149,7 @@ impl Shelf {
     /// Something confirmed.
     fn confirmed(&mut self, action: Action) {
         match action {
-            Action::Delete => {
-                let chosen = self.tab().chosen();
+            Action::DeleteThese(chosen) => {
                 let id = self.next_op;
                 self.next_op += 1;
                 self.tab().tell(&ToTab::Do { id, op: Op::Delete(chosen) });
@@ -1300,7 +1316,7 @@ impl Shelf {
         // What floats over everything has the input first.
         match &mut self.overlay {
             Overlay::None => {}
-            Overlay::Menu { at, list, entries } => {
+            Overlay::Menu { at, list, entries, chosen } => {
                 let rect = menu_rect(*at, entries.len(), self.size);
                 let outside = matches!(input, Input::Press { pressed: true, .. }) && !rect.contains(self.pointer.0, self.pointer.1);
                 if outside || matches!(input, Input::Key { key: Key::Escape, .. }) {
@@ -1309,8 +1325,11 @@ impl Shelf {
                 }
                 if let Some(row) = list.input(&input) {
                     let action = entries[row].1.clone();
+                    let chosen = std::mem::take(chosen);
                     self.overlay = Overlay::None;
+                    self.pinned = Some(chosen);
                     self.act(action);
+                    self.pinned = None;
                 }
                 return;
             }
@@ -2205,7 +2224,7 @@ impl Shelf {
         }
         match &mut self.overlay {
             Overlay::None => {}
-            Overlay::Menu { at, list, entries } => {
+            Overlay::Menu { at, list, entries, .. } => {
                 let rect = menu_rect(*at, entries.len(), size);
                 // On the ground's own colour under the glass: a menu over pictures is read, not
                 // seen through.
@@ -2533,6 +2552,7 @@ fn main() {
             incoming: None,
             opening: opening::Opening::new(),
             quitting: false,
+            pinned: None,
         };
         shelf.rebuild_side();
         let tab = ShelfTab::spawn(start)?;

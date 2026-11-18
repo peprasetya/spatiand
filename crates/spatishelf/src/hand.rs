@@ -812,7 +812,9 @@ impl Shelf {
         self.menu_at = at;
         let mut list = List::default();
         list.focused = true;
-        self.overlay = Overlay::Menu { at, list, entries };
+        // A menu opened from another's entry acts on what that one was opened for.
+        let chosen = self.chosen();
+        self.overlay = Overlay::Menu { at, list, entries, chosen };
     }
 
     fn item_menu(&mut self, at: (f32, f32)) {
