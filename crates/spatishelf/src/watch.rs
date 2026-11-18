@@ -22,6 +22,8 @@ use crate::proto::Place;
 pub const SETTLE: Duration = Duration::from_millis(250);
 /// While changes go on, it is said at least this often.
 pub const AT_MOST: Duration = Duration::from_millis(1000);
+/// How often a folder that could not be watched is tried again.
+pub const RETRY: Duration = Duration::from_secs(2);
 /// How often the remote folder on show is listed again.
 pub const REMOTE_EVERY: Duration = Duration::from_secs(15);
 
@@ -114,11 +116,31 @@ fn run(heard: Receiver<Message>, events: Sender<Message>, changed: impl Fn(Place
     // The same, and each by its real path too: what an event is looked up in.
     let mut lookup: HashMap<PathBuf, Place> = HashMap::new();
     let mut bounce = Debounce::default();
+    // The folders the system is watching now: those of `watched` it would watch, and that have
+    // not gone since. The rest are tried again every [`RETRY`] -- a folder not made yet (the
+    // trash's), removed and made again, or refused for the kernel's limit.
+    let mut live: HashSet<PathBuf> = HashSet::new();
     loop {
-        let message = match bounce.wait(Instant::now()) {
+        let missing = watcher.is_some() && watched.keys().any(|f| !live.contains(f));
+        let wait = match (bounce.wait(Instant::now()), missing) {
+            (Some(a), true) => Some(a.min(RETRY)),
+            (a, true) => a.or(Some(RETRY)),
+            (a, false) => a,
+        };
+        let message = match wait {
             Some(wait) => heard.recv_timeout(wait),
             None => heard.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
+        if let (true, Some(w)) = (missing, watcher.as_mut()) {
+            let tried: Vec<PathBuf> = watched.keys().filter(|f| !live.contains(*f)).cloned().collect();
+            for folder in &tried {
+                if w.watch(folder, RecursiveMode::NonRecursive).is_ok() {
+                    live.insert(folder.clone());
+                    // Made since it was last looked at: what is in it now is news.
+                    bounce.changed(watched[folder].clone(), Instant::now());
+                }
+            }
+        }
         match message {
             Ok(Message::Watch(places)) => {
                 let mut wanted: HashMap<PathBuf, Place> = HashMap::new();
@@ -128,12 +150,17 @@ fn run(heard: Receiver<Message>, events: Sender<Message>, changed: impl Fn(Place
                     }
                 }
                 if let Some(w) = watcher.as_mut() {
-                    for gone in watched.keys().filter(|f| !wanted.contains_key(*f)) {
+                    for gone in live.iter().filter(|f| !wanted.contains_key(*f)) {
                         let _ = w.unwatch(gone);
                     }
-                    for (folder, _) in wanted.iter().filter(|(f, _)| !watched.contains_key(*f)) {
-                        if let Err(e) = w.watch(folder, RecursiveMode::NonRecursive) {
-                            log::debug!("{} is not watched: {e}", folder.display());
+                    live.retain(|f| wanted.contains_key(f));
+                    let new: Vec<&PathBuf> = wanted.keys().filter(|f| !live.contains(*f)).collect();
+                    for folder in new {
+                        match w.watch(folder, RecursiveMode::NonRecursive) {
+                            Ok(()) => {
+                                live.insert(folder.clone());
+                            }
+                            Err(e) => log::debug!("{} is not watched yet: {e}", folder.display()),
                         }
                     }
                 }
@@ -158,6 +185,14 @@ fn run(heard: Receiver<Message>, events: Sender<Message>, changed: impl Fn(Place
                 for path in &event.paths {
                     if let Some(place) = place_for(path, &lookup) {
                         bounce.changed(place, now);
+                    }
+                    // A watched folder itself removed or moved away: its watch has gone with it
+                    // (or follows it elsewhere), and it is watched again once it is back.
+                    if live.contains(path) && matches!(event.kind, EventKind::Remove(_) | EventKind::Modify(notify::event::ModifyKind::Name(_))) {
+                        if let Some(w) = watcher.as_mut() {
+                            let _ = w.unwatch(path);
+                        }
+                        live.remove(path);
                     }
                 }
                 // Too many at once for the kernel to keep: everything watched may have changed.
@@ -241,6 +276,32 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
         std::fs::write(dir.join("inner/quiet.txt"), b"x").unwrap();
         assert!(rx.recv_timeout(Duration::from_millis(800)).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_made_later_or_made_again_is_watched() {
+        let dir = std::env::temp_dir().join(format!("spatishelf-rewatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (tx, rx) = channel();
+        let watching = start(move |p| tx.send(p).is_ok());
+        let place = Place::Local(dir.to_string_lossy().into_owned());
+        // Not there yet when asked for (a trash before anything is put in it).
+        watching.set(vec![place.clone()]);
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Watched once it is there, within a retry, and said to have changed.
+        assert_eq!(rx.recv_timeout(RETRY * 2), Ok(place.clone()));
+        std::thread::sleep(Duration::from_millis(300));
+        std::fs::write(dir.join("a.txt"), b"x").unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)), Ok(place.clone()));
+        // Removed and made again: watched again.
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        std::fs::create_dir_all(&dir).unwrap();
+        while rx.recv_timeout(RETRY * 2).is_ok() {}
+        std::fs::write(dir.join("b.txt"), b"x").unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)), Ok(place), "heard in the folder made again");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
