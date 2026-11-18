@@ -55,6 +55,8 @@ pub enum Heard {
     Called,
     /// The wearer began speaking over it: it has stopped speaking, and stops answering.
     Interrupted,
+    /// A phrase was heard and let go: not meant for it, not words, or not written.
+    LetGo,
 }
 
 /// What the ears are doing.
@@ -482,12 +484,12 @@ impl Judge {
                         // What was said in the room, not to it: not its words in the log.
                         log::debug!("ears: let go, {why}: {} characters ({seconds:.1} s, sure {sure:.2})", t.chars().count());
                     }
-                    return self.tell(Heard::Ear(now));
+                    return self.tell(Heard::Ear(now)) && self.tell(Heard::LetGo);
                 }
             },
             Err(why) => {
                 log::warn!("ears: {why}");
-                return self.tell(Heard::Ear(now));
+                return self.tell(Heard::Ear(now)) && self.tell(Heard::LetGo);
             }
         };
         let called = self.name.lock().unwrap().clone();
@@ -495,7 +497,7 @@ impl Judge {
         let meant = meant(&text, &called, self.once.swap(false, Ordering::Relaxed) || in_conversation);
         let Some(meant) = meant else {
             log::debug!("ears: not for us: {} characters", text.chars().count());
-            return self.tell(Heard::Ear(now));
+            return self.tell(Heard::Ear(now)) && self.tell(Heard::LetGo);
         };
         self.conversation.touch();
         log::info!("ears: heard {meant:?}{}", if in_conversation { " (in the conversation)" } else { "" });
@@ -587,20 +589,26 @@ pub fn is_hush(text: &str) -> bool {
 /// named Mera. Wait, what is the capital of France?"), or nothing but them when the gate took its
 /// voice for the wearer's. Mostly its own words -- three in four of the longer words (four
 /// letters or more, at least three of them) are words it said in the last half minute -- and it
-/// was its own voice: `None`. Else its own words at the start are taken off. A safeguard behind
-/// the canceller and the gate; Whisper does not write its words as they were said ("that's" for
-/// "that"), so it goes by words, not by the sentence.
+/// was its own voice: `None`. Else its own words at the start are taken off: as many as are, in
+/// that order, words it said one after another (the end of its sentence, heard before the
+/// wearer's) -- not every word it happened to say somewhere ("Is that the only one?" is the
+/// wearer's, though it said "is", "that" and "one"). A safeguard behind the canceller and the
+/// gate; Whisper does not write its words as they were said ("that's" for "that"), so it goes by
+/// words, not by the sentence.
 pub fn not_its_own(text: &str, lately_said: &str) -> Option<String> {
     let plain = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase().replace('\'', "");
-    let said: std::collections::HashSet<String> = lately_said.split_whitespace().map(plain).filter(|w| !w.is_empty()).collect();
+    let in_order: Vec<String> = lately_said.split_whitespace().map(plain).filter(|w| !w.is_empty()).collect();
+    let said: std::collections::HashSet<&String> = in_order.iter().collect();
     let words: Vec<&str> = text.split_whitespace().collect();
     let long: Vec<String> = words.iter().map(|w| plain(w)).filter(|w| w.chars().count() >= 4).collect();
     let its = long.iter().filter(|w| said.contains(*w)).count();
     if long.len() >= 3 && its * 4 >= long.len() * 3 {
         return None;
     }
-    // Its own words at the start: as long a run of them as there is, if more than one.
-    let run = words.iter().take_while(|w| said.contains(&plain(w))).count();
+    // Its own words at the start: the longest run of them that it said one after another, if
+    // more than one.
+    let heard: Vec<String> = words.iter().map(|w| plain(w)).collect();
+    let run = (0..in_order.len()).map(|from| in_order[from..].iter().zip(&heard).take_while(|(a, b)| a == b).count()).max().unwrap_or(0);
     let cut = if run >= 2 { run } else { 0 };
     let rest = words[cut..].join(" ");
     let rest = rest.trim_start_matches(|c: char| !c.is_alphanumeric()).trim().to_string();
@@ -697,6 +705,16 @@ mod tests {
         let said = "Once, on a rock that the maps argued about, there stood a light. Iwan was not a large man, and his hair had gone the colour of the sea.";
         assert_eq!(not_its_own("Once on a rock that's- Iwan was not a large man, and his hair had gone the color of-", said), None);
         assert_eq!(not_its_own("and what does Iwan do at night?", said).as_deref(), Some("and what does Iwan do at night?"));
+    }
+
+    #[test]
+    fn only_its_own_words_in_their_order_are_taken_off() {
+        // Words it said, but not one after another: the wearer's question, whole.
+        let said = "That is the only lighthouse on the coast, and one of the oldest. What a place it is.";
+        assert_eq!(not_its_own("Is that the only one?", said).as_deref(), Some("Is that the only one?"));
+        assert_eq!(not_its_own("What is the capital of France?", "Is it the right time? What a day.").as_deref(), Some("What is the capital of France?"));
+        // The end of its own sentence first: that much is taken off.
+        assert_eq!(not_its_own("lovely in spring. What is the capital of France?", "Paris is lovely in spring.").as_deref(), Some("What is the capital of France?"));
     }
 
     #[test]

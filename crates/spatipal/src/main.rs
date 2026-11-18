@@ -413,6 +413,9 @@ impl Pal {
                 }
                 self.ear = ear;
             }
+            // The phrase after speaking over it came to nothing: what is heard later is not
+            // checked against its voice.
+            Heard::LetGo => self.interrupted = None,
             Heard::Called => {
                 let _ = self.app.room_ask(&json!({"do": "avatar", "wave": true}).to_string(), channel().0);
                 // Its name alone: it answers, and listens for what comes next without it --
