@@ -724,7 +724,20 @@ impl Shelf {
         tab.tell(&ToTab::Quit);
         let _ = tab.child.kill();
         let _ = tab.child.wait();
+        // The tab in front stays in front: one closed before it moves it one along. A name
+        // being typed over in the tab closed goes; in one after it, it moves with its tab.
+        if at < self.active {
+            self.active -= 1;
+        } else if at == self.active {
+            // A rename due in it is of a thing in it.
+            self.rename_due = None;
+        }
         self.active = self.active.min(self.tabs.len() - 1);
+        match self.renaming.as_ref().map(|r| r.tab) {
+            Some(t) if t == at => self.renaming = None,
+            Some(t) if t > at => self.renaming.as_mut().unwrap().tab -= 1,
+            _ => {}
+        }
     }
 
     fn fail(&mut self, what: impl Into<String>) {
