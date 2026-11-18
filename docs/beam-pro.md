@@ -269,3 +269,30 @@ Bluetooth page opens, as for Web Bluetooth).
   over instead (above).
   Android revokes it at every reboot. Spatiand gets it back on the device itself through
   Wireless debugging (above), which Android enables only while connected to Wi-Fi.
+
+## 2026-11-17 and 11-18: what changed on the phone, and what was not run on it
+
+The Beam Pro was off the network on the night of 2026-11-18 (Tailscale offline, no adb), so these
+are checked by `cargo ndk check` and tests, not seen on the device:
+
+* **Spatiand's own applications hand the room their frames without a copy** (76b3d10): the texture
+  a window is drawn into is an Android hardware buffer, sent through `zwp_linux_dmabuf_v1` as
+  SpatiMesh's Chromium's frames are (see the table above), with each frame's fence down the same
+  socket; when the room has not offered the modifier or a buffer cannot be had, the picture is read
+  back and sent as `wl_shm` as before, said once in the log, and `SPATIAND_APP_COPY=1` asks for
+  that. It compiled and was not run on a phone when it was written.
+* **The waiting screen** says what the Deck's says, from the same code (`waiting.rs`,
+  `phone_message`, with the glasses this build knows from `spatiand-hmd`'s `devices.toml`); after
+  glasses have been in the session an unplug says "Glasses disconnected / Your windows are still
+  open" (b5ad215).
+* **The network bytes fed to nothing are gone** (1aa5516): the Deck's monitors were taken from the
+  phone's touch area on 2026-09-27 at the owner's word and a feed to them had come back; `Native.traffic`
+  and `ANDROID_TRAFFIC` are removed. Showing them again would undo that request.
+* **Leaving Spatiand with a recording going** finishes its file first (up to 4 s before the
+  process is killed); a recording that fails (storage full) is finished as far as it got and the
+  room says why; a MediaCodec error is an error (40137a9, b99f984, b690169).
+* **The status pill's bolt** shows whenever the battery is on power, not only while charge goes in
+  (f1829d3). **A password copied** on the phone stays there; one copied in the room is put on it
+  marked sensitive (d701ba7). **Steadiness** and the press that goes down where the pointer rested
+  apply here as on the Deck (docs/state.md). SpatiKey holds the vault on a phone with a strong
+  fingerprint or face (docs/spatikey.md); the Beam Pro has no sensor, so it stays a forwarder.
