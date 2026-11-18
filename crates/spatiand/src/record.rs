@@ -68,6 +68,45 @@ enum Message {
     Stop,
 }
 
+/// Recordings whose thread has not finished its file yet.
+static WRITING: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+static WRITTEN: std::sync::Condvar = std::sync::Condvar::new();
+
+/// **Wait, up to `within`, for every recording stopped to have its file finished**: for leaving,
+/// before the process ends -- which ended a recording's thread while it waited for the encoder's
+/// last pictures, its file unfinished. Whether they all were.
+pub fn wait_finished(within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    while *writing > 0 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            log::warn!("recording: {} file(s) still being finished; leaving anyway", *writing);
+            return false;
+        }
+        writing = WRITTEN.wait_timeout(writing, left).unwrap_or_else(|e| e.into_inner()).0;
+    }
+    true
+}
+
+/// One recording's thread, counted from before it starts until its file is finished.
+struct Writing;
+
+impl Writing {
+    fn new() -> Writing {
+        *WRITING.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        Writing
+    }
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        *writing = writing.saturating_sub(1);
+        WRITTEN.notify_all();
+    }
+}
+
 /// A sound being captured into a ring, and how many channels it has.
 struct Source {
     title: &'static str,
@@ -208,9 +247,11 @@ impl Recorder {
         let shown = path.clone();
         let failed = Arc::new(Mutex::new(None));
         let failing = failed.clone();
+        let writing = Writing::new();
         let thread = std::thread::Builder::new()
             .name("recorder".into())
             .spawn(move || {
+                let _writing = writing;
                 match run(encoder, writer, sources, rate, started, from_session, give_back) {
                     Ok(seconds) => log::info!(
                         "recording: saved {:.0} s to {}",

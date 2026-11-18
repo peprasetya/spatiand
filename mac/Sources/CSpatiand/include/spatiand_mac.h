@@ -64,6 +64,8 @@ typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, dou
 void sp_begin(sp_asked_fn callback, void *user);
 void sp_end(void);
 bool sp_running(void);
+/// Wait up to `seconds` for a recording stopped with the session to have its file finished.
+bool sp_recordings_finished(double seconds);
 
 // The CALayer on the glasses' screen to draw into, its size in pixels (twice as wide as high
 // and more is two eyes side by side), and the CGDirectDisplayID it is on, whose refresh paces

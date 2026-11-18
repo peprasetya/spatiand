@@ -203,6 +203,13 @@ pub extern "C" fn sp_running() -> bool {
     ALIVE.load(Ordering::SeqCst)
 }
 
+/// Wait, up to `seconds`, for a recording stopped with the session to have its file finished,
+/// before the app quits; whether it was.
+#[no_mangle]
+pub extern "C" fn sp_recordings_finished(seconds: f64) -> bool {
+    super::record::wait_finished(std::time::Duration::from_secs_f64(seconds.clamp(0.0, 10.0)))
+}
+
 /// The layer on the glasses' screen to draw into, its size in pixels, and which display it is on
 /// (a `CGDirectDisplayID`; 0 for the Mac's own), whose refresh is the frame clock. A null layer
 /// draws into nothing, at that size: the tests'.

@@ -254,7 +254,16 @@ public class MainActivity extends Activity implements SensorEventListener {
         ui.postDelayed(() -> {
             closeGlassesWindow();
             finishAndRemoveTask();
-            ui.postDelayed(() -> android.os.Process.killProcess(android.os.Process.myPid()), 500);
+            // A recording going was stopped with the room: its file is finished (the encoder's
+            // last pictures waited for, up to 3 s) before the process ends, not cut off. Off the
+            // main thread; the process ends after it either way, at least as late as before.
+            new Thread(() -> {
+                long since = android.os.SystemClock.uptimeMillis();
+                Native.finishRecordings(4000);
+                long left = 500 - (android.os.SystemClock.uptimeMillis() - since);
+                if (left > 0) android.os.SystemClock.sleep(left);
+                android.os.Process.killProcess(android.os.Process.myPid());
+            }, "leaving").start();
         }, 600);
     }
 

@@ -393,6 +393,14 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_takeRecording(env: *mut 
     }
 }
 
+/// `Native.finishRecordings(ms)`: wait, up to `ms`, for a recording stopped as the app leaves
+/// to have its file finished; whether it was. From a thread of the app's own, before the
+/// process is ended.
+#[no_mangle]
+pub extern "system" fn Java_id_prasetya_spatiand_Native_finishRecordings(_env: *mut JNIEnv, _class: jclass, ms: jint) -> jboolean {
+    super::record::wait_finished(std::time::Duration::from_millis(ms.max(0) as u64)) as jboolean
+}
+
 /// `Native.nextBuzz()`: the next buzz for the phone -- 0 click, 1 tick, 2 alert -- waiting up
 /// to a second for one; −1 for none. Called from a thread of the app's own.
 #[no_mangle]

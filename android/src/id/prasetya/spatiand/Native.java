@@ -24,6 +24,9 @@ final class Native {
     /** A finished recording's path, to be moved to Movies/Spatiand; null for none. */
     static native String takeRecording();
 
+    /** Wait up to ms for a recording stopped as the app leaves to have its file finished. */
+    static native boolean finishRecordings(int ms);
+
     /** Start the session, once; it runs for the life of the process. */
     static native void begin();
 

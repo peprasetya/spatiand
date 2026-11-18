@@ -54,6 +54,45 @@ pub fn toggle_asked() -> &'static AtomicBool {
     &ASKED
 }
 
+/// Recordings whose thread has not finished its file yet.
+static WRITING: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+static WRITTEN: std::sync::Condvar = std::sync::Condvar::new();
+
+/// **Wait, up to `within`, for every recording stopped to have its file finished**: for leaving,
+/// before the process ends -- which ended a recording's thread while it waited for the encoder's
+/// last pictures, its file unfinished. Whether they all were.
+pub fn wait_finished(within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    while *writing > 0 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            log::warn!("recording: {} file(s) still being finished; leaving anyway", *writing);
+            return false;
+        }
+        writing = WRITTEN.wait_timeout(writing, left).unwrap_or_else(|e| e.into_inner()).0;
+    }
+    true
+}
+
+/// One recording's thread, counted from before it starts until its file is finished.
+struct Writing;
+
+impl Writing {
+    fn new() -> Writing {
+        *WRITING.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        Writing
+    }
+}
+
+impl Drop for Writing {
+    fn drop(&mut self) {
+        let mut writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+        *writing = writing.saturating_sub(1);
+        WRITTEN.notify_all();
+    }
+}
+
 /// One sound track: where it comes from, and how much of it has been written.
 struct Sound {
     title: &'static str,
@@ -150,9 +189,11 @@ impl Recorder {
         let saying = why.clone();
         let shown = path.clone();
         let size_now = (size.0 as u32, size.1 as u32);
+        let writing = Writing::new();
         std::thread::Builder::new()
             .name("recorder".into())
             .spawn(move || {
+                let _writing = writing;
                 let result = run(output, sounds, file, size_now, started, &stopping);
                 match result {
                     Ok(seconds) => {

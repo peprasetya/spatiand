@@ -236,6 +236,9 @@ final class Room {
         // A moment for the session to put the glasses back in 2D before the process goes.
         let deadline = Date().addingTimeInterval(0.6)
         while sp_running(), Date() < deadline { usleep(20_000) }
+        // A recording going was stopped with the session: its file is finished (the encoder's
+        // last pictures waited for, up to 3 s) before the app quits, not cut off.
+        _ = sp_recordings_finished(4)
         running = false
     }
 

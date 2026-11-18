@@ -187,7 +187,11 @@ fn main() {
             }
         }
         "drm" => {
-            if let Err(e) = backend_drm::run(&mut event_loop, &mut display, &mut runtime) {
+            let ran = backend_drm::run(&mut event_loop, &mut display, &mut runtime);
+            // A recording going when the session left was stopped with it: its file is
+            // finished before the process ends.
+            record::wait_finished(std::time::Duration::from_secs(4));
+            if let Err(e) = ran {
                 log::error!("drm backend failed: {e}");
                 std::process::exit(1);
             }
