@@ -174,10 +174,43 @@ fn grey(rgba: &[u8], from: (u32, u32), width: usize, height: usize) -> Vec<f32> 
 /// about 0.9 and an ordinary photograph about 0.15 (2026-11-09).
 const ALIKE: f32 = 0.6;
 
-/// How the picture is packed: by its name if that says, by its halves if not.
+/// How alike a pair's halves must be for a name that says it is one: less than a picture with
+/// nothing in its name must be, but not two halves that have nothing to do with each other.
+const NAMED_ALIKE: f32 = 0.3;
+
+/// Whether a picture's halves bear out what its name says of it: its shape first -- a pair side
+/// by side is wide, one over the other tall or square -- and then its halves, if they have
+/// detail to say anything with. "Red Cross.png", a square logo, is not two eyes.
+fn bears_out(eyes: Eyes, width: u32, height: u32, rgba: &[u8]) -> bool {
+    let aspect = width as f32 / height.max(1) as f32;
+    let across = matches!(eyes, Eyes::SideBySide | Eyes::Crossed);
+    if (across && aspect < 1.4) || (!across && aspect > 1.25) {
+        return false;
+    }
+    if width < 64 || height < 64 || rgba.len() < (width * height * 4) as usize {
+        return true;
+    }
+    let score = if across {
+        let (w, h) = (192usize, ((192.0 / aspect) as usize).max(24));
+        let grey = grey(rgba, (width, height), w, h);
+        alike(&grey, w, h, (0, 0), (w / 2, 0), (w / 2, h))
+    } else {
+        let (w, h) = (96usize, ((96.0 / aspect) as usize).max(24));
+        let grey = grey(rgba, (width, height), w, h);
+        alike(&grey, w, h, (0, 0), (0, h / 2), (w, h / 2))
+    };
+    // Halves with no detail at all -- a dark pair -- cannot gainsay the name.
+    score > NAMED_ALIKE || score <= -0.999
+}
+
+/// How the picture is packed: by its name if its shape and halves bear that out, by its halves
+/// if not. A `.jps` or `.pns` is a crossed pair whatever it looks like.
 pub fn guess(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Eyes {
+    let ending = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     if let Some(eyes) = by_name(path) {
-        return eyes;
+        if ending == "jps" || ending == "pns" || bears_out(eyes, width, height, rgba) {
+            return eyes;
+        }
     }
     // The Beam Pro's own camera names its 3D photographs and videos SV_ and writes nothing else
     // to say so -- not even its own make -- so a wide one named so is taken at its word: a
@@ -351,10 +384,28 @@ mod tests {
     #[test]
     fn names_say_what_they_say() {
         let flat = vec![0u8; 4 * 100 * 100];
+        let wide = vec![0u8; 4 * 200 * 100];
         assert_eq!(guess(Path::new("holiday.jps"), 100, 100, &flat), Eyes::Crossed);
-        assert_eq!(guess(Path::new("beach_SBS.jpg"), 100, 100, &flat), Eyes::SideBySide);
+        assert_eq!(guess(Path::new("beach_SBS.jpg"), 200, 100, &wide), Eyes::SideBySide);
         assert_eq!(guess(Path::new("tower.3d.tb.png"), 100, 100, &flat), Eyes::TopBottom);
         assert_eq!(guess(Path::new("subscription.png"), 100, 100, &flat), Eyes::Mono);
+    }
+
+    #[test]
+    fn a_name_alone_does_not_make_a_picture_two_eyes() {
+        // A square logo is not a pair side by side, whatever it is called.
+        let flat = vec![0u8; 4 * 100 * 100];
+        assert_eq!(guess(Path::new("Red Cross.png"), 100, 100, &flat), Eyes::Mono);
+        assert_eq!(guess(Path::new("sbs.png"), 100, 100, &flat), Eyes::Mono);
+        // Nor a wide picture whose halves have nothing to do with each other, nor a wide one
+        // called over and under.
+        let wide = blobs(1280, 480, 3);
+        assert_eq!(guess(Path::new("cross country.jpg"), 1280, 480, &wide), Eyes::Mono);
+        assert_eq!(guess(Path::new("tb.jpg"), 1280, 480, &wide), Eyes::Mono);
+        // A pair that is one is still told by its name which eye is which.
+        let eye = blobs(640, 480, 7);
+        let pair = side_by_side(&eye, 640, 480, 12);
+        assert_eq!(guess(Path::new("view_rl.jpg"), 1280, 480, &pair), Eyes::Crossed);
     }
 
     #[test]
