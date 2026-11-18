@@ -211,7 +211,12 @@ impl Service {
             return true;
         }
         match &env.request {
-            Request::Status | Request::Setup { .. } | Request::Recover { .. } | Request::HolderRequest { .. } | Request::Target => true,
+            Request::Status
+            | Request::Setup { .. }
+            | Request::Recover { .. }
+            | Request::RecoverySaved { .. }
+            | Request::HolderRequest { .. }
+            | Request::Target => true,
             Request::Find | Request::PairWith { .. } | Request::PairConfirm { .. } | Request::Pair { .. } => false,
             request => match session_of(request) {
                 // A session belongs to whoever opened it: here, or a holder asked.
@@ -322,6 +327,7 @@ impl Service {
             Request::Status => answer(self.status(guard)),
             Request::Setup { .. }
             | Request::Recover { .. }
+            | Request::RecoverySaved { .. }
             | Request::HolderRequest { .. }
             | Request::Type { .. }
             | Request::Target
@@ -337,7 +343,7 @@ impl Service {
             Request::Close { session } => self.close(conn, &session),
             Request::List { session } => self.list(conn, &session),
             Request::Get { session, id } => self.get(conn, &session, &id),
-            Request::Put { session, entry } => self.put(conn, &session, entry),
+            Request::Put { session, entry, based_on } => self.put(conn, &session, entry, based_on),
             Request::Delete { session, id } => self.delete(conn, &session, &id),
             Request::Totp { session, id } => self.totp(guard, conn, &who, session.as_deref(), &id),
             Request::Reveal { session, id, fields } => self.reveal(guard, conn, &who, session.as_deref(), &id, &fields),
@@ -352,8 +358,9 @@ impl Service {
                 self.type_here(guard, conn, &who, session.as_deref(), &id, &fields, window)
             }
             Request::Target => target(),
-            Request::RecoveryNew { session } => self.recovery_new(conn, &session),
+            Request::RecoveryNew { session } => self.recovery_new(conn, &who, &session),
             Request::Recover { code } => self.recover(guard, Zeroizing::new(code)),
+            Request::RecoverySaved { code } => self.recovery_saved(Zeroizing::new(code)),
             Request::Devices { session } => self.devices(conn, &session),
             Request::ForgetDevice { session, fp, recovery_code } => {
                 self.forget_device(guard, conn, &who, &session, &fp, recovery_code.map(Zeroizing::new))
@@ -584,6 +591,7 @@ impl Service {
         let vault = Vault::create_with(&self.shared, &self.local, &self.short(), &key).map_err(failed)?;
         self.enrolled(&vault, touch, name, guard.kind(), &key)?;
         let recovery_code = vault.set_recovery(&key).map_err(failed)?;
+        keep_unseen(&vault, &key, &recovery_code);
         answer(SetupAnswer { recovery_code })
     }
 
@@ -622,9 +630,25 @@ impl Service {
         let key = self.unlock(guard, &vault, who, "open SpatiKey")?;
         let entries = self.summaries(&vault, &key)?;
         let session = vault::random_hex(16);
+        // A recovery code made here that was never said to be saved, while it is still the
+        // vault's: to this device's own programs only.
+        let recovery_code = match vault.unseen_code(&key) {
+            Some(code) if who.device.is_empty() => {
+                if vault.recover(&code).is_ok_and(|opened| opened.bytes() == key.bytes()) {
+                    code.to_string()
+                } else {
+                    // Another code was made since, or the keys changed under it: it is no one's.
+                    if let Err(e) = vault.forget_unseen_code() {
+                        log::warn!("spatikey: could not let an old recovery code go: {e}");
+                    }
+                    String::new()
+                }
+            }
+            _ => String::new(),
+        };
         let open = Session { conn, vault: vault.id().to_string(), key, used: Instant::now() };
         lock(&self.sessions).insert(session.clone(), open);
-        answer(OpenAnswer { session, entries })
+        answer(OpenAnswer { session, entries, recovery_code })
     }
 
     fn close(&self, conn: ConnId, token: &str) -> Result<Value, Refusal> {
@@ -658,7 +682,7 @@ impl Service {
         value
     }
 
-    fn put(&self, conn: ConnId, token: &str, entry: Entry) -> Result<Value, Refusal> {
+    fn put(&self, conn: ConnId, token: &str, entry: Entry, based_on: Option<u64>) -> Result<Value, Refusal> {
         let mut entry = Wiping(entry);
         if !entry.id.is_empty() && !vault::is_entry_id(&entry.id) {
             return Err(refuse(Code::BadRequest, "an entry id is 32 hex digits"));
@@ -667,6 +691,14 @@ impl Service {
         let key = self.session(conn, token, &vault)?;
         let _writing = lock(&self.writing);
         let id = entry.id.clone();
+        // A change begun from what is no longer there is not written over what another device
+        // wrote (or deleted) meanwhile: the window reads it again first.
+        if let Some(based_on) = based_on.filter(|_| !id.is_empty()) {
+            let now = if vault.contains(&id) { Some(Wiping(vault.read(&key, &id).map_err(failed)?)) } else { None };
+            if !now.as_ref().is_some_and(|now| !now.0.deleted && now.0.changed == based_on) {
+                return Err(refuse(Code::Stale, "the entry changed on another device since this change was begun"));
+            }
+        }
         if let Some(passkey) = entry.passkey.as_mut().filter(|p| p.key.is_empty()) {
             // Given out without its private key: the key is the one in the vault, if it is the
             // same passkey.
@@ -973,11 +1005,30 @@ impl Service {
         nothing()
     }
 
-    fn recovery_new(&self, conn: ConnId, token: &str) -> Result<Value, Refusal> {
+    fn recovery_new(&self, conn: ConnId, who: &Who, token: &str) -> Result<Value, Refusal> {
         let vault = self.vault()?;
         let key = self.session(conn, token, &vault)?;
         let recovery_code = vault.set_recovery(&key).map_err(failed)?;
+        if who.device.is_empty() {
+            keep_unseen(&vault, &key, &recovery_code);
+        }
         answer(SetupAnswer { recovery_code })
+    }
+
+    /// The wearer saw the code kept until seen, and saved it: it goes. The code is what says so
+    /// (it opens the vault, and so the file it is kept in), as only one who saw it has it.
+    fn recovery_saved(&self, code: Zeroizing<String>) -> Result<Value, Refusal> {
+        let vault = self.vault()?;
+        let said = Zeroizing::new(crate::recovery::canonical(&code).map_err(|e| refuse(Code::BadRequest, e))?);
+        if !vault.has_unseen_code() {
+            return nothing();
+        }
+        let key = vault.recover(&said).map_err(wrong_code)?;
+        let kept = vault.unseen_code(&key).and_then(|kept| crate::recovery::canonical(&kept).ok().map(Zeroizing::new));
+        if kept.is_some_and(|kept| kept == said) {
+            vault.forget_unseen_code().map_err(failed)?;
+        }
+        nothing()
     }
 
     fn recover(&self, guard: &dyn Guard, code: Zeroizing<String>) -> Result<Value, Refusal> {
@@ -1011,7 +1062,7 @@ impl Service {
 
     fn devices(&self, conn: ConnId, token: &str) -> Result<Value, Refusal> {
         let vault = self.vault()?;
-        self.session(conn, token, &vault)?;
+        let key = self.session(conn, token, &vault)?;
         let touch_ids = vault
             .touch_devices()
             .into_iter()
@@ -1029,7 +1080,8 @@ impl Service {
                 made: a.made,
             })
             .collect();
-        answer(DevicesAnswer { allowed: self.allowed(), touch_ids, holders: holders_of(&vault), requests })
+        let removal_new_code = vault.removal_makes_new_code(&key);
+        answer(DevicesAnswer { allowed: self.allowed(), touch_ids, holders: holders_of(&vault), requests, removal_new_code })
     }
 
     /// Remove a device: from those that may ask, and from the holders. **A holder removed is new
@@ -1084,20 +1136,38 @@ impl Service {
             }
             log::info!("spatikey: removed {name} ({}) from the devices that open vault {}", &holder.device[..8.min(holder.device.len())], vault.id());
             done.rekeyed = true;
+            if let Some(code) = &made.recovery_code {
+                // Made, and the one before opens the vault no more: kept until it is seen.
+                if who.device.is_empty() {
+                    keep_unseen(&vault, &made.key, code);
+                }
+            }
             done.recovery_code = made.recovery_code.map(|code| code.to_string()).unwrap_or_default();
             done.left_out = made.left_out;
         }
         let _writing = lock(&self.writing);
         let mut forgot = done.rekeyed;
+        // Once the keys are changed, it is answered whatever fails after: the answer may carry
+        // the new recovery code, the only copy of it to be shown.
+        let after = |what: &str, result: Result<(), String>| -> Result<(), Refusal> {
+            match result {
+                Ok(()) => Ok(()),
+                Err(e) if done.rekeyed => {
+                    log::warn!("spatikey: the vault has new keys; {what} failed: {e}");
+                    Ok(())
+                }
+                Err(e) => Err(failed(e)),
+            }
+        };
         let mut allowed = self.allowed();
         let before = allowed.len();
         allowed.retain(|d| !d.fp.eq_ignore_ascii_case(fp));
         if allowed.len() != before {
-            vault::write_json(&self.local.join("allowed.json"), &allowed).map_err(failed)?;
+            after("writing the allowed list", vault::write_json(&self.local.join("allowed.json"), &allowed))?;
             forgot = true;
         }
         if vault.touch_devices().iter().any(|d| d.device.eq_ignore_ascii_case(fp)) {
-            vault.remove_touch_device(fp).map_err(failed)?;
+            after("burying its record", vault.remove_touch_device(fp))?;
             forgot = true;
         }
         if !forgot {
@@ -1350,6 +1420,8 @@ impl Service {
                     request_code: String::new(),
                 });
             }
+            // Nothing is made here that is kept until seen.
+            Request::RecoverySaved { .. } => return nothing(),
             Request::Setup { .. } | Request::Recover { .. } | Request::HolderRequest { .. } => {
                 return Err(refuse(
                     Code::NotHere,
@@ -1838,6 +1910,14 @@ fn nothing() -> Result<Value, Refusal> {
 
 fn refuse(code: Code, message: impl Into<String>) -> Refusal {
     Refusal::new(code, message)
+}
+
+/// Keep a new recovery code until it is said to be saved, should the window that asked for it go
+/// before it is shown. What fails is logged: the code is answered all the same.
+fn keep_unseen(vault: &Vault, key: &VaultKey, code: &str) {
+    if let Err(e) = vault.keep_unseen_code(key, code) {
+        log::warn!("spatikey: a new recovery code could not be kept until it is seen: {e}");
+    }
 }
 
 /// What went wrong with a recovery code: one that is not this vault's is `no_match`, said as

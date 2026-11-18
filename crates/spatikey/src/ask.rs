@@ -64,18 +64,18 @@ pub trait Service: Send {
     fn ask(&mut self, request: Request) -> Result<Value, Trouble>;
 }
 
-/// The service, over its socket. Connected when first asked; and connected again after a
-/// request outside a session fails, which is how a lost connection shows (the service restarted
-/// with Spatiand). Inside a session the session went with the connection, the service says
-/// `bad_session` on a new one, and the window goes back to its locked screen -- so a failure there
-/// is left to say what it says.
+/// The service, over its socket. Connected when first asked, and again after the connection
+/// fails (the service restarted with Spatiand) -- not after the service's own refusals, which
+/// leave it as it was. A session goes with its connection: a request made in one when the
+/// connection fails is answered `bad_session` here, and the window goes back to its locked screen.
 pub struct Socket {
     client: Option<Client>,
+    path: std::path::PathBuf,
 }
 
 impl Socket {
     pub fn new() -> Socket {
-        Socket { client: None }
+        Socket { client: None, path: spatikey_core::paths::socket() }
     }
 }
 
@@ -83,7 +83,7 @@ impl Service for Socket {
     fn ask(&mut self, request: Request) -> Result<Value, Trouble> {
         let client = match self.client.as_mut() {
             Some(client) => client,
-            None => match Client::connect("SpatiKey") {
+            None => match Client::connect_to(&self.path, "SpatiKey") {
                 Ok(client) => self.client.insert(client),
                 Err(e) => {
                     log::info!("SpatiKey's service is not there: {e}");
@@ -92,11 +92,21 @@ impl Service for Socket {
             },
         };
         let in_session = carries_session(&request);
-        let answer = client.ask(request).map_err(Trouble::Refused);
-        if !in_session && matches!(&answer, Err(Trouble::Refused(r)) if r.code == Code::Failed) {
-            self.client = None;
+        match client.try_ask(request) {
+            Ok(answer) => answer.map_err(Trouble::Refused),
+            // The connection failed: asked again on a new one. A session went with it -- the
+            // service started again -- so what was asked in one is told so at once, and the
+            // window locks, rather than every later request failing.
+            Err(lost) => {
+                self.client = None;
+                log::info!("SpatiKey's service went: {}", lost.message);
+                if in_session {
+                    Err(Trouble::Refused(Refusal::new(Code::BadSession, "the SpatiKey service started again")))
+                } else {
+                    Err(Trouble::Refused(lost))
+                }
+            }
         }
-        answer
     }
 }
 
@@ -142,6 +152,7 @@ pub fn op(request: &Request) -> &'static str {
         Request::Target => "target",
         Request::RecoveryNew { .. } => "recovery_new",
         Request::Recover { .. } => "recover",
+        Request::RecoverySaved { .. } => "recovery_saved",
         Request::Devices { .. } => "devices",
         Request::ForgetDevice { .. } => "forget_device",
         Request::Settings { .. } => "settings",
@@ -228,5 +239,51 @@ impl Asker {
                 Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => return,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spatikey_core::wire::{read_frame, write_frame};
+    use std::os::unix::net::UnixListener;
+
+    /// A service that refuses the first request on a connection as `failed` and goes with the
+    /// second: the service's own refusal keeps the connection, its going drops it, and a session's
+    /// request is then told the session is gone.
+    #[test]
+    fn a_lost_connection_is_told_from_a_refusal() {
+        let dir = std::env::temp_dir().join(format!("spatikey-ask-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("socket");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = std::thread::spawn(move || {
+            let mut accepted = 0;
+            for stream in listener.incoming().take(2) {
+                let mut stream = stream.unwrap();
+                accepted += 1;
+                let asked: Value = serde_json::from_slice(&read_frame(&mut stream).unwrap()).unwrap();
+                let id = asked["id"].as_u64().unwrap();
+                let refused = format!(r#"{{"id":{id},"err":{{"code":"failed","message":"no"}}}}"#);
+                write_frame(&mut stream, refused.as_bytes()).unwrap();
+                // The second request on it: the service goes.
+                let _ = read_frame(&mut stream);
+            }
+            accepted
+        });
+        let mut socket = Socket { client: None, path };
+        let refused = socket.ask(Request::Status);
+        assert!(matches!(refused, Err(Trouble::Refused(ref r)) if r.code == Code::Failed && r.message == "no"), "{refused:?}");
+        assert!(socket.client.is_some(), "a refusal leaves the connection");
+        let lost = socket.ask(Request::List { session: "s".into() });
+        assert!(matches!(lost, Err(Trouble::Refused(ref r)) if r.code == Code::BadSession), "{lost:?}");
+        assert!(socket.client.is_none());
+        // Asked again on a new connection.
+        let again = socket.ask(Request::Status);
+        assert!(matches!(again, Err(Trouble::Refused(ref r)) if r.code == Code::Failed), "{again:?}");
+        drop(socket);
+        assert_eq!(server.join().unwrap(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

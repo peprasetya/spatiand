@@ -339,7 +339,7 @@ fn a_device_with_biometrics_is_added_by_a_holder_and_opens_the_same_vault() {
 
     // The phone takes its half up from the synced folder, and opens the vault with its own finger.
     let mut entry = login("Example", "hunter2");
-    let id = answer::<IdAnswer>(ask(&mac.service, conn, Request::Put { session: session.clone(), entry: entry.clone() })).id;
+    let id = answer::<IdAnswer>(ask(&mac.service, conn, Request::Put { session: session.clone(), entry: entry.clone(), based_on: None })).id;
     let after = status(&phone.service);
     assert!(after.opens_here && after.request_code.is_empty(), "{after:?}");
     let vault = Vault::open(&place.shared(), &place.local("Pixel")).unwrap();
@@ -354,7 +354,7 @@ fn a_device_with_biometrics_is_added_by_a_holder_and_opens_the_same_vault() {
     // What the phone saves the Mac reads.
     entry.id = id.clone();
     entry.password = "correct horse".into();
-    answer::<IdAnswer>(ask(&phone.service, phone_conn, Request::Put { session: opened.session, entry }));
+    answer::<IdAnswer>(ask(&phone.service, phone_conn, Request::Put { session: opened.session, entry, based_on: None }));
     let got: GetAnswer = answer(ask(&mac.service, conn, Request::Get { session, id }));
     assert_eq!(got.entry.password, "correct horse");
     // Nothing of the vault key in anything synced.
@@ -424,7 +424,7 @@ fn a_vault_set_up_with_one_mac_is_taken_as_it_is_and_takes_a_second_holder() {
     );
     let conn = next_conn();
     let session = open(&mac.service, conn).session;
-    answer::<IdAnswer>(ask(&mac.service, conn, Request::Put { session, entry: login("Example", "hunter2") }));
+    answer::<IdAnswer>(ask(&mac.service, conn, Request::Put { session, entry: login("Example", "hunter2"), based_on: None }));
     for (file, bytes) in &files_before {
         assert_eq!(&std::fs::read(file).unwrap(), bytes, "{} is as it was", file.display());
     }
@@ -594,7 +594,7 @@ fn removing_a_holder_gives_the_vault_new_keys_that_the_others_follow() {
     let (mac_conn, phone_conn, tablet_conn) = (next_conn(), next_conn(), next_conn());
     let session = open(&mac.service, mac_conn).session;
     let put = |service: &Service, conn, session: &str, title: &str| {
-        answer::<IdAnswer>(ask(service, conn, Request::Put { session: session.into(), entry: login(title, &format!("{title}-secret")) })).id
+        answer::<IdAnswer>(ask(service, conn, Request::Put { session: session.into(), entry: login(title, &format!("{title}-secret")), based_on: None })).id
     };
     put(&mac.service, mac_conn, &session, "GitHub");
     let phone_session = open(&phone.service, phone_conn).session;
@@ -678,7 +678,10 @@ fn a_vault_from_before_keeps_its_recovery_code_if_typed_and_is_given_a_new_one_i
         std::fs::write(place.shared().join("recovery.json"), serde_json::to_vec(&before).unwrap()).unwrap();
         let conn = next_conn();
         let session = open(&mac.service, conn).session;
-        answer::<IdAnswer>(ask(&mac.service, conn, Request::Put { session: session.clone(), entry: login("GitHub", "hunter2") }));
+        answer::<IdAnswer>(ask(&mac.service, conn, Request::Put { session: session.clone(), entry: login("GitHub", "hunter2"), based_on: None }));
+        // Said before removing: it would make a new code.
+        let devices: DevicesAnswer = answer(ask(&mac.service, conn, Request::Devices { session: session.clone() }));
+        assert!(devices.removal_new_code, "a record of the code from before is not wrapped to again");
         let recovery_code = typed.then(|| mac.recovery.clone());
         let forget = Request::ForgetDevice { session: session.clone(), fp: phone.identity.fingerprint().to_string(), recovery_code };
         let done: ForgetAnswer = answer(ask(&mac.service, conn, forget));
@@ -696,6 +699,23 @@ fn a_vault_from_before_keeps_its_recovery_code_if_typed_and_is_given_a_new_one_i
         assert_eq!(vault.entries(&key).unwrap().len(), 1);
         assert_eq!(vault.touch_devices().len(), 1);
         assert!(!status(&phone.service).opens_here);
-        assert_eq!(open(&mac.service, next_conn()).entries.len(), 1);
+        let opened = open(&mac.service, next_conn());
+        assert_eq!(opened.entries.len(), 1);
+        if typed {
+            assert!(opened.recovery_code.is_empty());
+            continue;
+        }
+        // The new code is kept until said to be saved, should the window have gone before it
+        // was shown: shown at the next opening here, sealed in this device's own folder.
+        assert_eq!(opened.recovery_code, done.recovery_code);
+        let kept = place.local("darkPhoenix").join("unseen-code.json");
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&kept).unwrap().permissions()) & 0o777, 0o600);
+        assert!(!std::fs::read_to_string(&kept).unwrap().contains(&done.recovery_code[..5]));
+        assert!(!walk(&place.shared()).iter().any(|f| f.ends_with("unseen-code.json")));
+        // Only the code itself lets it go.
+        assert_eq!(code(ask(&mac.service, next_conn(), Request::RecoverySaved { code: mac.recovery.clone() })), Code::NoMatch);
+        answer::<Value>(ask(&mac.service, next_conn(), Request::RecoverySaved { code: done.recovery_code.to_lowercase() }));
+        assert!(!kept.exists());
+        assert!(open(&mac.service, next_conn()).recovery_code.is_empty());
     }
 }

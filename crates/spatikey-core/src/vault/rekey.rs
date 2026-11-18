@@ -479,6 +479,13 @@ impl Vault {
         }
     }
 
+    /// Whether removing a holder now, with no code typed, makes a new recovery code: the record
+    /// of the code for `key` is of the kind that cannot be wrapped to again (version 1).
+    pub fn removal_makes_new_code(&self, key: &VaultKey) -> bool {
+        let Some(prev) = self.generation_of(key) else { return false };
+        self.recovery_for(&prev).is_some_and(|record| !record.rewraps())
+    }
+
     pub(crate) fn any_recovery(&self) -> bool {
         self.shared.join("recovery.json").is_file() || self.rekeys().iter().any(|r| r.recovery.is_some())
     }

@@ -258,7 +258,7 @@ fn open(service: &Service, conn: ConnId) -> String {
 }
 
 fn put(service: &Service, conn: ConnId, session: &str, entry: Entry) -> String {
-    answer::<IdAnswer>(ask(service, conn, Request::Put { session: session.into(), entry })).id
+    answer::<IdAnswer>(ask(service, conn, Request::Put { session: session.into(), entry, based_on: None })).id
 }
 
 fn get(service: &Service, conn: ConnId, session: &str, id: &str) -> Entry {
@@ -536,6 +536,41 @@ fn sessions_expire_and_belong_to_their_connection() {
 }
 
 #[test]
+fn a_change_begun_from_what_is_no_longer_there_is_refused() {
+    let place = Place::new("stale");
+    let (service, _guard, _key) = ready(&place);
+    let conn = next_conn();
+    let session = open(&service, conn);
+    let id = put(&service, conn, &session, login("GitHub", "github.com", "paulus", "one"));
+    let begun = get(&service, conn, &session, &id);
+    let put_from = |entry: &Entry, based_on: u64| Request::Put { session: session.clone(), entry: entry.clone(), based_on: Some(based_on) };
+    // Another device changes it meanwhile (a clock a millisecond on).
+    std::thread::sleep(Duration::from_millis(3));
+    let mut elsewhere = begun.clone();
+    elsewhere.password = "two".into();
+    put(&service, conn, &session, elsewhere);
+    let mut mine = begun.clone();
+    mine.password = "three".into();
+    assert_eq!(code(ask(&service, conn, put_from(&mine, begun.changed))), Code::Stale);
+    assert_eq!(get(&service, conn, &session, &id).password, "two", "the other device's change stands");
+    // Begun from what is there now, it is written; a window that does not say, as before.
+    let now = get(&service, conn, &session, &id);
+    answer::<IdAnswer>(ask(&service, conn, put_from(&mine, now.changed)));
+    assert_eq!(get(&service, conn, &session, &id).password, "three");
+    mine.password = "four".into();
+    put(&service, conn, &session, mine.clone());
+    assert_eq!(get(&service, conn, &session, &id).password, "four");
+    // Deleted meanwhile: refused, not brought back.
+    let now = get(&service, conn, &session, &id);
+    answer::<Value>(ask(&service, conn, Request::Delete { session: session.clone(), id: id.clone() }));
+    assert_eq!(code(ask(&service, conn, put_from(&mine, now.changed))), Code::Stale);
+    assert_eq!(code(ask(&service, conn, Request::Get { session: session.clone(), id: id.clone() })), Code::NoMatch);
+    // A new entry has nothing to be stale against.
+    let fresh = login("Forum", "forum.example", "me", "x");
+    answer::<IdAnswer>(ask(&service, conn, put_from(&fresh, 12345)));
+}
+
+#[test]
 fn a_session_lists_gets_and_changes_entries() {
     let place = Place::new("crud");
     let (service, guard, key) = ready(&place);
@@ -582,7 +617,7 @@ fn a_session_lists_gets_and_changes_entries() {
     assert_eq!((kept.title.as_str(), kept.passkey.unwrap().key.as_str()), ("Example (work)", "c2VjcmV0LWtleQ=="));
     let mut keyless = passkey;
     keyless.passkey.as_mut().unwrap().key.clear();
-    assert_eq!(code(ask(&service, conn, Request::Put { session: session.clone(), entry: keyless })), Code::BadRequest);
+    assert_eq!(code(ask(&service, conn, Request::Put { session: session.clone(), entry: keyless, based_on: None })), Code::BadRequest);
     assert_eq!(guard.unlocks(), 1, "all of it in the one session");
 }
 
@@ -794,6 +829,11 @@ fn devices_settings_and_a_new_recovery_code_in_a_session() {
     assert!(vault.generation_of(&recovered).is_some_and(|change| !change.is_empty()));
     assert_eq!(vault.generation_of(&key).as_deref(), Some(""));
     assert_eq!(code(ask(&service, next_conn(), Request::Devices { session })), Code::BadSession);
+    // Kept until said to be saved: shown again at the next opening here, and to nobody else.
+    let again: OpenAnswer = answer(ask(&service, next_conn(), Request::Open));
+    assert_eq!(again.recovery_code, renewed.recovery_code);
+    let deck = Who { app: "SpatiKey".into(), device: "Steam Deck".into() };
+    assert!(answer::<OpenAnswer>(ask_from(&service, next_conn(), deck, Request::Open)).recovery_code.is_empty());
 }
 
 #[test]

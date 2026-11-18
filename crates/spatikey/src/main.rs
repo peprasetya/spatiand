@@ -369,7 +369,7 @@ impl SpatiKey {
             }
             Want::Save(entry) => {
                 if let Some(session) = self.session.clone() {
-                    self.ask_waiting(Asked::Put, Request::Put { session, entry: *entry }, "Saving");
+                    self.ask_waiting(Asked::Put, Request::Put { session, entry: *entry, based_on: None }, "Saving");
                 }
             }
             Want::Delete(id) => {

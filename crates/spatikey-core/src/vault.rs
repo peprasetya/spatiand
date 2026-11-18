@@ -435,6 +435,38 @@ impl Vault {
         remove_if_there(&self.local.join("asking.json"))
     }
 
+    /// Keep a recovery code made on this device until the wearer says it is saved: sealed under
+    /// `key` (the key it opens), in this device's own folder (`unseen-code.json`, 0600), never
+    /// the synced one. A window gone before the code was shown shows it at the next opening.
+    pub fn keep_unseen_code(&self, key: &VaultKey, code: &str) -> Result<(), String> {
+        let ring = self.ring(key)?;
+        let keys = ring.head();
+        let mut plain = Zeroizing::new(Vec::with_capacity(code.len() + CHACHA20_POLY1305.tag_len()));
+        plain.extend_from_slice(code.as_bytes());
+        let nonce = keys.seal(&unseen_aad(self.id()), &mut plain)?;
+        let file = Unseen { v: 1, k: keys.id.clone(), n: b64::encode(&nonce), c: b64::encode(&plain) };
+        write_json(&self.local.join(UNSEEN), &file)
+    }
+
+    /// The code [`Vault::keep_unseen_code`] kept, if there is one that `key`'s keys open.
+    pub fn unseen_code(&self, key: &VaultKey) -> Option<Zeroizing<String>> {
+        let file = read_json::<Unseen>(&self.local.join(UNSEEN)).filter(|file| file.v == 1)?;
+        let ring = self.ring(key).ok()?;
+        let keys = ring.by(&file.k)?;
+        let nonce = b64::decode(&file.n).ok()?;
+        let mut sealed = Zeroizing::new(b64::decode(&file.c).ok()?);
+        let plain = keys.open(&unseen_aad(self.id()), &nonce, &mut sealed[..]).ok()?;
+        std::str::from_utf8(plain).ok().map(|code| Zeroizing::new(code.to_string()))
+    }
+
+    pub fn has_unseen_code(&self) -> bool {
+        self.local.join(UNSEEN).is_file()
+    }
+
+    pub fn forget_unseen_code(&self) -> Result<(), String> {
+        remove_if_there(&self.local.join(UNSEEN))
+    }
+
     pub fn has_recovery(&self) -> bool {
         self.any_recovery()
     }
@@ -558,6 +590,24 @@ fn entry_key(vault: &str, key: &VaultKey) -> Result<Zeroizing<[u8; 32]>, String>
 /// or another vault does not open.
 fn entry_aad(vault: &str, id: &str) -> String {
     format!("spatikey/1/{vault}/{id}")
+}
+
+/// A recovery code kept until it is seen ([`Vault::keep_unseen_code`]): bound to its vault and
+/// to what it is.
+fn unseen_aad(vault: &str) -> String {
+    format!("spatikey/1/{vault}/unseen-recovery-code")
+}
+
+/// Where [`Vault::keep_unseen_code`] keeps it, in the device's own folder.
+const UNSEEN: &str = "unseen-code.json";
+
+/// The file it is kept in: the key's id, nonce and ciphertext with its tag, base64.
+#[derive(Serialize, Deserialize)]
+struct Unseen {
+    v: u32,
+    k: String,
+    n: String,
+    c: String,
 }
 
 fn check_aad(vault: &str) -> String {

@@ -19,7 +19,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use spatikey_core::entry::{Entry, Kind, Passkey, Totp};
 use spatikey_core::wire::{
-    Approver, Asking, Code, Device, DevicesAnswer, FindAnswer, Found, GetAnswer, Holder, IdAnswer, ListAnswer, OpenAnswer, PairAnswer, Refusal,
+    Approver, Asking, Code, Device, DevicesAnswer, FindAnswer, ForgetAnswer, Found, GetAnswer, Holder, IdAnswer, ListAnswer, OpenAnswer, PairAnswer, Refusal,
     Request, SettingsAnswer, SetupAnswer, StatusAnswer, TargetAnswer, TotpAnswer,
 };
 
@@ -175,7 +175,7 @@ impl Service for Fake {
                 self.sessions += 1;
                 let session = format!("demo-{}", self.sessions);
                 self.session = Some(session.clone());
-                ok(OpenAnswer { session, entries: self.live().map(Entry::summary).collect() })
+                ok(OpenAnswer { session, entries: self.live().map(Entry::summary).collect(), recovery_code: String::new() })
             }
             Request::Close { .. } => {
                 self.session = None;
@@ -189,8 +189,13 @@ impl Service for Fake {
                 self.session(&session)?;
                 ok(GetAnswer { entry: self.entry(&id)?.clone() })
             }
-            Request::Put { session, mut entry } => {
+            Request::Put { session, mut entry, based_on } => {
                 self.session(&session)?;
+                if let Some(based_on) = based_on.filter(|_| !entry.id.is_empty()) {
+                    if !self.live().any(|e| e.id == entry.id && e.changed == based_on) {
+                        return Err(refused(Code::Stale, ""));
+                    }
+                }
                 let now = spatikey_core::now_ms();
                 if entry.id.is_empty() {
                     self.made += 1;
@@ -240,7 +245,7 @@ impl Service for Fake {
                 std::thread::sleep(Duration::from_millis(900));
                 let plain = |c: &str| c.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_uppercase()).collect::<String>();
                 if plain(&code) != plain(self.code) {
-                    return Err(refused(Code::BadRequest, ""));
+                    return Err(refused(Code::NoMatch, "that is not this vault's recovery code"));
                 }
                 self.touch_here = true;
                 self.fingers_changed = false;
@@ -253,7 +258,10 @@ impl Service for Fake {
                 } else {
                     Vec::new()
                 };
-                ok(DevicesAnswer { allowed: self.allowed.clone(), touch_ids: vec![device(MAC, 9)], holders: self.holders(), requests })
+                // The made-up vault's record of its code is of the kind from before: removing a
+                // holder makes a new one, as it would on the owner's.
+                let removal_new_code = true;
+                ok(DevicesAnswer { allowed: self.allowed.clone(), touch_ids: vec![device(MAC, 9)], holders: self.holders(), requests, removal_new_code })
             }
             Request::HolderRequest { .. } => {
                 std::thread::sleep(Duration::from_millis(400));
@@ -280,9 +288,17 @@ impl Service for Fake {
             }
             Request::ForgetDevice { session, fp, .. } => {
                 self.session(&session)?;
+                if fp == PHONE.1 && self.phone_added {
+                    // A holder removed: new keys, and a new code, as a real one does.
+                    self.touch()?;
+                    self.phone_added = false;
+                    self.code = NEW_CODE;
+                    return ok(ForgetAnswer { rekeyed: true, recovery_code: self.code.into(), left_out: Vec::new() });
+                }
                 self.allowed.retain(|d| d.fp != fp);
-                ok(json!({}))
+                ok(ForgetAnswer::default())
             }
+            Request::RecoverySaved { .. } => ok(json!({})),
             Request::Settings { session, set } => {
                 self.session(&session)?;
                 if let Some(set) = set {

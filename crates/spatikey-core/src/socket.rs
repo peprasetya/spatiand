@@ -282,24 +282,38 @@ impl Client {
 
     /// Ask, and wait for the answer (a person may be asked first: no time limit here).
     pub fn ask(&mut self, request: Request) -> Result<Value, Refusal> {
+        self.try_ask(request).and_then(|answered| answered)
+    }
+
+    /// The same, telling the connection's failing (the outer `Err`: it is not to be asked on
+    /// again -- the service went, or answered out of turn) from the service's own answer, which
+    /// may be a refusal.
+    pub fn try_ask(&mut self, request: Request) -> Result<Result<Value, Refusal>, Refusal> {
         let id = self.next;
         self.next += 1;
-        let env = Envelope { id, who: Who { app: self.app.clone(), device: String::new() }, request };
-        let json = Zeroizing::new(
-            serde_json::to_vec(&env).map_err(|e| Refusal::new(Code::BadRequest, format!("could not write the request: {e}")))?,
-        );
+        let mut env = Envelope { id, who: Who { app: self.app.clone(), device: String::new() }, request };
+        let json = serde_json::to_vec(&env).map(Zeroizing::new);
+        // Written or not, what the request carried of the vault is overwritten as it goes.
+        env.request.wipe();
         drop(env);
+        // Not written at all: the connection is as it was.
+        let json = match json {
+            Ok(json) => json,
+            Err(e) => return Ok(Err(Refusal::new(Code::BadRequest, format!("could not write the request: {e}")))),
+        };
         let answer = self
             .relay(&json)
             .map(Zeroizing::new)
             .map_err(|e| Refusal::new(Code::Failed, format!("the SpatiKey service did not answer: {e}")))?;
-        let reply: Reply = serde_json::from_slice(&answer)
-            .map_err(|_| Refusal::new(Code::Failed, "the SpatiKey service answered something this program cannot read"))?;
+        // A whole answer this program cannot read (a newer service's) leaves the connection in step.
+        let Ok(reply) = serde_json::from_slice::<Reply>(&answer) else {
+            return Ok(Err(Refusal::new(Code::Failed, "the SpatiKey service answered something this program cannot read")));
+        };
         // Id 0 answers what the service could not read as a request at all.
         if reply.id != id && reply.id != 0 {
             return Err(Refusal::new(Code::Failed, "the SpatiKey service answered another question"));
         }
-        reply.into_result()
+        Ok(reply.into_result())
     }
 
     pub fn ask_as<T: DeserializeOwned>(&mut self, request: Request) -> Result<T, Refusal> {

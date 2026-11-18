@@ -338,6 +338,7 @@ pub fn meaning(refusal: &Refusal, mac: &str, on_mac: bool) -> String {
         Code::NotHere => with_said("That cannot be done on this computer"),
         Code::Timeout => format!("{theirs} did not answer in time."),
         Code::Failed => with_said("Something went wrong in SpatiKey"),
+        Code::Stale => "That entry was changed or deleted on another device since this change was begun.".into(),
     }
 }
 
@@ -466,7 +467,7 @@ mod tests {
     fn every_refusal_has_words_and_none_is_the_code() {
         let codes = [
             Code::NoVault, Code::VaultExists, Code::Denied, Code::TouchIdUnavailable, Code::FingerprintsChanged, Code::NoApprover, Code::NotReachable,
-            Code::NotSameLan, Code::NoMatch, Code::Excluded, Code::BadRequest, Code::BadSession, Code::NotHere, Code::Timeout, Code::Failed,
+            Code::NotSameLan, Code::NoMatch, Code::Excluded, Code::BadRequest, Code::BadSession, Code::NotHere, Code::Timeout, Code::Failed, Code::Stale,
         ];
         for code in codes {
             for on_mac in [true, false] {

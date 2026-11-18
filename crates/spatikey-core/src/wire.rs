@@ -29,6 +29,21 @@ pub struct Envelope {
     pub request: Request,
 }
 
+impl Request {
+    /// Overwrite what a request carries that is secret -- an entry, a password, a recovery
+    /// code -- once it has been written out: what asks is done with it.
+    pub fn wipe(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            Request::Put { entry, .. } => entry.wipe(),
+            Request::Save { password, .. } => password.zeroize(),
+            Request::Recover { code } | Request::RecoverySaved { code } => code.zeroize(),
+            Request::ForgetDevice { recovery_code: Some(code), .. } => code.zeroize(),
+            _ => {}
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for Envelope {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Envelope, D::Error> {
         struct Fields;
@@ -157,6 +172,12 @@ pub enum Request {
     Put {
         session: String,
         entry: Entry,
+        /// The `changed` of the entry as the change was begun from: given, the entry is written
+        /// only if it is still that one, else refused `stale` (another device changed or deleted
+        /// it meanwhile). Not given (a window before 2026-11-18, a new entry), written whatever is
+        /// there, as before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        based_on: Option<u64>,
     },
     Delete {
         session: String,
@@ -219,6 +240,12 @@ pub enum Request {
     },
     /// Set Touch ID up on this Mac again from the recovery code. Answers `{}`.
     Recover {
+        code: String,
+    },
+    /// The wearer said the recovery code shown is saved: it is not shown again at the next
+    /// opening ([`OpenAnswer::recovery_code`]). The code itself, as only one who saw it has it.
+    /// Answers `{}`; a service before 2026-11-18 refuses it `bad_request`, which is no matter.
+    RecoverySaved {
         code: String,
     },
     /// Answers [`DevicesAnswer`].
@@ -415,6 +442,11 @@ pub struct ForgetAnswer {
 pub struct OpenAnswer {
     pub session: String,
     pub entries: Vec<Summary>,
+    /// A recovery code made on this device and not yet said to be saved (the window that asked
+    /// for it went first): shown again until it is ([`Request::RecoverySaved`]). Only ever to a
+    /// program on the device itself; empty otherwise.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recovery_code: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -516,6 +548,10 @@ pub struct DevicesAnswer {
     /// Devices asking to be added to them.
     #[serde(default)]
     pub requests: Vec<Asking>,
+    /// Removing a holder now would make a new recovery code too, the one there is no longer
+    /// opening the vault (its record is of the kind from before 2026-11-18).
+    #[serde(default)]
+    pub removal_new_code: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -585,6 +621,8 @@ pub enum Code {
     /// The Mac did not answer in time.
     Timeout,
     Failed,
+    /// The entry changed (or went) since the change being saved was begun: read it again.
+    Stale,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -705,7 +743,8 @@ mod tests {
             Request::Close { session: s() },
             Request::List { session: s() },
             Request::Get { session: s(), id: "e1".into() },
-            Request::Put { session: s(), entry },
+            Request::Put { session: s(), entry: entry.clone(), based_on: None },
+            Request::Put { session: s(), entry, based_on: Some(17) },
             Request::Delete { session: s(), id: "e1".into() },
             Request::Totp { session: Some(s()), id: "e1".into() },
             Request::Totp { session: None, id: "e1".into() },
@@ -735,6 +774,7 @@ mod tests {
             Request::Target,
             Request::RecoveryNew { session: s() },
             Request::Recover { code: "c".into() },
+            Request::RecoverySaved { code: "c".into() },
             Request::Devices { session: s() },
             Request::ForgetDevice { session: s(), fp: "f".into(), recovery_code: None },
             Request::ForgetDevice { session: s(), fp: "f".into(), recovery_code: Some("c".into()) },
