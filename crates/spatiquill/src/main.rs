@@ -139,6 +139,8 @@ struct Win {
     /// A question over the window, and what a yes to it does: closing what has programs
     /// running in it asks first, as Terminal on a Mac does.
     asking: Option<(Confirm, Closing)>,
+    /// The tab last told it has the keys (`ToTab::Focus`), so that it is told when it has not.
+    focus_told: Option<u64>,
 }
 
 /// What is closed once a question is answered yes.
@@ -267,6 +269,7 @@ impl Quill {
             last_click: None,
             menu: None,
             asking: None,
+            focus_told: None,
         });
         id
     }
@@ -510,6 +513,30 @@ impl Quill {
         self.size_tabs();
     }
 
+    /// Tell the tabs which has the keys: the active tab of a focused window. However that
+    /// changed -- the window's focus, another tab chosen by the pointer or a key, a tab opened,
+    /// closed, or moved between windows -- the tab that had them hears it has not (a program
+    /// that asked for focus reports, vim's autoread, tmux's focus-events), and the one that has
+    /// them hears it has. Every loss first, so a tab moved to another window ends focused.
+    fn tell_focus(&mut self) {
+        let want: Vec<Option<u64>> = (0..self.wins.len()).map(|w| if self.wins[w].focused { self.active_tab(w) } else { None }).collect();
+        for (w, want) in want.iter().enumerate() {
+            if let Some(old) = self.wins[w].focus_told.filter(|old| Some(*old) != *want) {
+                if let Some(tab) = self.tabs.get_mut(&old) {
+                    tab.tell(&ToTab::Focus(false));
+                }
+            }
+        }
+        for (w, want) in want.into_iter().enumerate() {
+            if want != self.wins[w].focus_told {
+                if let Some(tab) = want.and_then(|t| self.tabs.get_mut(&t)) {
+                    tab.tell(&ToTab::Focus(true));
+                }
+                self.wins[w].focus_told = want;
+            }
+        }
+    }
+
     fn active_tab(&self, win: usize) -> Option<u64> {
         let w = &self.wins[win];
         w.tabs.get(w.active).copied()
@@ -577,9 +604,6 @@ impl Quill {
                 self.wins[w].focused = focused;
                 if !focused {
                     self.wins[w].menu = None;
-                }
-                if let Some(tab) = self.active_tab(w).and_then(|t| self.tabs.get_mut(&t)) {
-                    tab.tell(&ToTab::Focus(focused));
                 }
             }
             Event::PointerMoved { x, y, .. } => self.pointer(w, x, y),
@@ -1167,6 +1191,7 @@ impl Quill {
                 }
             }
             self.hear();
+            self.tell_focus();
             // A tab let go of that no window claimed becomes a window of its own.
             if let Some((tab, from, at)) = self.in_flight {
                 if at.elapsed() >= Duration::from_millis(600) {
