@@ -503,6 +503,55 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
     }
 }
 
+fn list(place: &Place, kept: &Mutex<Option<Storage>>) -> Result<(Vec<Item>, Option<u64>), String> {
+    match place {
+        Place::Local(p) => list_local(p),
+        Place::Remote(r, p) => list_remote(&storage(kept)?, r, p),
+        Place::Trash => list_trash(),
+    }
+}
+
+/// The place on show, as the tab knows it.
+#[derive(Default)]
+struct Shown {
+    place: Option<Place>,
+    /// Counted up at each Go: a listing for an earlier one is of a place left, and dropped.
+    generation: u64,
+    /// Its listing, as last told: what pictures are asked of by number.
+    items: Vec<Item>,
+    /// A listing of it is under way; another was asked for meanwhile.
+    listing: bool,
+    again: bool,
+}
+
+/// The place on show listed, off the tab's own loop -- a remote that never answers keeps
+/// nothing else waiting -- and told, unless the window has gone somewhere else meanwhile;
+/// listed again if a refresh was asked for while it was.
+fn listing(shown: &Mutex<Shown>, out: &Out, kept: &Mutex<Option<Storage>>, generation: u64, place: Place) {
+    loop {
+        let result = list(&place, kept);
+        let mut now = shown.lock().unwrap();
+        if now.generation != generation {
+            return;
+        }
+        // Told while held, so that two listings are told in the order they were taken.
+        match result {
+            Ok((listed, free)) => {
+                now.items = listed.clone();
+                tell(out, &FromTab::Listed { place: place.clone(), items: listed, free });
+            }
+            Err(error) => {
+                now.items.clear();
+                tell(out, &FromTab::Failed { place: place.clone(), error });
+            }
+        }
+        if !std::mem::take(&mut now.again) {
+            now.listing = false;
+            return;
+        }
+    }
+}
+
 pub fn run() -> io::Result<()> {
     let out: Out = Arc::new(Mutex::new(io::stdout()));
     let kept: Arc<Mutex<Option<Storage>>> = Arc::new(Mutex::new(None));
@@ -552,15 +601,8 @@ pub fn run() -> io::Result<()> {
             }
         });
     }
-    let mut here: Option<Place> = None;
-    let mut items: Vec<Item> = Vec::new();
-    let list = |place: &Place, kept: &Mutex<Option<Storage>>| -> Result<(Vec<Item>, Option<u64>), String> {
-        match place {
-            Place::Local(p) => list_local(p),
-            Place::Remote(r, p) => list_remote(&storage(kept)?, r, p),
-            Place::Trash => list_trash(),
-        }
-    };
+    // The place on show and its listing, listed on a thread (see `listing`).
+    let shown: Arc<Mutex<Shown>> = Arc::new(Mutex::new(Shown::default()));
     // The folders on show, watched: a change from anywhere is told to the window.
     let watching = {
         let out = out.clone();
@@ -569,34 +611,31 @@ pub fn run() -> io::Result<()> {
     while let Ok(message) = asked.recv() {
         match message {
             ToTab::Go(place) => {
-                here = Some(place.clone());
-                match list(&place, &kept) {
-                    Ok((listed, free)) => {
-                        items = listed.clone();
-                        if !tell(&out, &FromTab::Listed { place, items: listed, free }) {
-                            return Ok(());
-                        }
-                    }
-                    Err(error) => {
-                        items.clear();
-                        if !tell(&out, &FromTab::Failed { place, error }) {
-                            return Ok(());
-                        }
-                    }
-                }
+                let mut now = shown.lock().unwrap();
+                now.generation += 1;
+                now.place = Some(place.clone());
+                // What was listed of the place left is not this one's: no pictures of it.
+                now.items.clear();
+                now.again = false;
+                now.listing = true;
+                let generation = now.generation;
+                drop(now);
+                let (out, kept, shown) = (out.clone(), kept.clone(), shown.clone());
+                std::thread::spawn(move || listing(&shown, &out, &kept, generation, place));
             }
             ToTab::Refresh => {
-                if let Some(place) = here.clone() {
-                    match list(&place, &kept) {
-                        Ok((listed, free)) => {
-                            items = listed.clone();
-                            tell(&out, &FromTab::Listed { place, items: listed, free });
-                        }
-                        Err(error) => {
-                            tell(&out, &FromTab::Failed { place, error });
-                        }
-                    }
+                let mut now = shown.lock().unwrap();
+                let Some(place) = now.place.clone() else { continue };
+                // One listing at a time: another asked for meanwhile is done once it is over.
+                if now.listing {
+                    now.again = true;
+                    continue;
                 }
+                now.listing = true;
+                let generation = now.generation;
+                drop(now);
+                let (out, kept, shown) = (out.clone(), kept.clone(), shown.clone());
+                std::thread::spawn(move || listing(&shown, &out, &kept, generation, place));
             }
             ToTab::List(place) => {
                 // On a thread: a remote's folder may take its time, or never answer, and the
@@ -604,18 +643,15 @@ pub fn run() -> io::Result<()> {
                 let out = out.clone();
                 let kept = kept.clone();
                 std::thread::spawn(move || {
-                    let items = match &place {
-                        Place::Local(p) => list_local(p),
-                        Place::Remote(r, p) => storage(&kept).and_then(|s| list_remote(&s, r, p)),
-                        Place::Trash => list_trash(),
-                    };
+                    let items = list(&place, &kept);
                     tell(&out, &FromTab::Contents { place, items: items.map(|(items, _)| items) });
                 });
             }
             ToTab::Pictures { indices, size } => {
-                let Some(place) = here.clone() else { continue };
+                let now = shown.lock().unwrap();
+                let Some(place) = now.place.clone() else { continue };
                 for index in indices {
-                    if let Some(item) = items.get(index).filter(|i| i.kind.pictured()) {
+                    if let Some(item) = now.items.get(index).filter(|i| i.kind.pictured()) {
                         let file = match &item.trashed {
                             Some(t) => Place::Local(t.file.clone()),
                             None => place.join(&item.name),
