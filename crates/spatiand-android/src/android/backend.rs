@@ -273,9 +273,13 @@ pub fn run(
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
     // How still the room and the pointer are held while the head moves a little, as on the
-    // Deck: the wearer's level, for the view (`steady_view` below) and for a press alike.
-    shell.set_steadiness(prefs.steadiness.index());
-    pointers.set_steadiness(prefs.steadiness);
+    // Deck: the wearer's level, for the view and for a press alike, and the row shows the level
+    // in effect (`SPATIAND_STEADY` overrides the wearer's, to compare).
+    // The view held still while the head only sways, at the wearer's steadiness
+    // (`spatiand_track::SteadyView`).
+    let mut steady_view = spatiand_track::SteadyView::new(prefs.steadiness);
+    shell.set_steadiness(steady_view.level().index());
+    pointers.set_steadiness(steady_view.level());
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();
@@ -287,9 +291,6 @@ pub fn run(
     let mut calibration: Option<Calibration> = None;
     let mut tracker = HeadTracker::new(stored.unwrap_or(AxisMap::XREAL_AIR), TrackerConfig::default());
     let mut sensor_memory = spatiand_track::SensorMemory::new();
-    // The view held still while the head only sways, at the wearer's steadiness
-    // (`spatiand_track::SteadyView`).
-    let mut steady_view = spatiand_track::SteadyView::new(prefs.steadiness);
     let mut awaiting_app_id: Vec<(usize, Instant, Option<u32>)> = Vec::new();
     // Asked once per pair of glasses, when they are opened: the display then goes away and
     // comes back double-width, which is a rebuild.
@@ -1008,10 +1009,9 @@ pub fn run(
                         }
                         HudAction::Look => shell.set_look(prefs.next_look()),
                         HudAction::Steadiness => {
-                            let level = prefs.next_steadiness();
-                            shell.set_steadiness(level.index());
-                            steady_view.set_level(level);
-                            pointers.set_steadiness(level);
+                            steady_view.set_level(prefs.next_steadiness());
+                            shell.set_steadiness(steady_view.level().index());
+                            pointers.set_steadiness(steady_view.level());
                         }
                         HudAction::OpenSwitcher => shell.set_windows(crate::remote::with_offered(runtime.state.open_windows())),
                         HudAction::ControllerLayout => controls.open_editor(),

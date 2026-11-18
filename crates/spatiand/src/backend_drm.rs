@@ -473,9 +473,13 @@ pub fn run(
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
     // How still the room and the pointer are held while the head moves a little: the wearer's
-    // level, for the view (`steady_view` below) and for a press (`press_hold`) alike.
-    shell.set_steadiness(prefs.steadiness.index());
-    pointers.set_steadiness(prefs.steadiness);
+    // level, for the view and for a press (`press_hold`) alike, and the row shows the level in
+    // effect (`SPATIAND_STEADY` overrides the wearer's, to compare).
+    // The view held still while the head only sways, at the wearer's steadiness, as on the Mac
+    // and the Beam Pro: see `spatiand_track::SteadyView`.
+    let mut steady_view = spatiand_track::SteadyView::new(prefs.steadiness);
+    shell.set_steadiness(steady_view.level().index());
+    pointers.set_steadiness(steady_view.level());
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
     let mut browser = crate::environment::Browser::new();
@@ -500,9 +504,6 @@ pub fn run(
     );
     // The gyro offset and the magnetometer's own field, from last time and for next time.
     let mut sensor_memory = spatiand_track::SensorMemory::new();
-    // The view held still while the head only sways, at the wearer's steadiness, as on the Mac
-    // and the Beam Pro: see `spatiand_track::SteadyView`.
-    let mut steady_view = spatiand_track::SteadyView::new(prefs.steadiness);
     // Windows that arrived before their app id was set, still to be matched to a sink.
     let mut awaiting_app_id: Vec<(usize, Option<u32>, std::time::Instant)> = Vec::new();
     // Raw samples to a file, when the session environment asks: see `imu_record`.
@@ -1739,10 +1740,9 @@ pub fn run(
                         }
                         HudAction::Look => shell.set_look(prefs.next_look()),
                         HudAction::Steadiness => {
-                            let level = prefs.next_steadiness();
-                            shell.set_steadiness(level.index());
-                            steady_view.set_level(level);
-                            pointers.set_steadiness(level);
+                            steady_view.set_level(prefs.next_steadiness());
+                            shell.set_steadiness(steady_view.level().index());
+                            pointers.set_steadiness(steady_view.level());
                         }
                         // The shell has already switched mode; all that is owed is the list,
                         // exactly as for the environment picker.
