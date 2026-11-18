@@ -57,18 +57,26 @@ pub struct Seen {
 /// The width over the height of what one eye sees, in a picture `width` by `height` whose eyes
 /// are packed as `eyes` says.
 pub fn eye_aspect(width: f32, height: f32, eyes: Eyes) -> f32 {
+    // A pair squeezed into a frame of a film's shape -- sixteen by nine -- is each eye at half
+    // its width (or height); any other shape is two views at their own.
+    eye_aspect_as(width, height, eyes, squeezed(width / height.max(1.0)))
+}
+
+/// The same, told whether each eye's view is squeezed to half along its packing -- half its
+/// width side by side, half its height one over the other -- rather than judging it by the
+/// frame's shape: a squeezed pair turned a quarter is no longer a film's shape, but its eyes are
+/// still squeezed, now along the packing it was turned to.
+fn eye_aspect_as(width: f32, height: f32, eyes: Eyes, squeeze: bool) -> f32 {
     let (w, h) = (width, height.max(1.0));
     match eyes {
         Eyes::Mono | Eyes::Pair => w / h,
-        // A pair squeezed into a frame of a film's shape -- sixteen by nine -- is each eye at
-        // half its width (or height); any other shape is two views at their own.
         Eyes::SideBySide | Eyes::Crossed => {
             let a = w * 0.5 / h;
-            if squeezed(w / h) { a * 2.0 } else { a }
+            if squeeze { a * 2.0 } else { a }
         }
         Eyes::TopBottom => {
             let a = w / (h * 0.5);
-            if squeezed(w / h) { a * 0.5 } else { a }
+            if squeeze { a * 0.5 } else { a }
         }
     }
 }
@@ -76,12 +84,17 @@ pub fn eye_aspect(width: f32, height: f32, eyes: Eyes) -> f32 {
 /// How tall what one eye sees is at a picture's own size, in its pixels: a squeezed pair's eye
 /// at the height it is unsqueezed to.
 pub fn eye_height(width: f32, height: f32, eyes: Eyes) -> f32 {
+    eye_height_as(width, height, eyes, squeezed(width / height.max(1.0)))
+}
+
+/// The same, told whether the pair is squeezed, as eye_aspect_as is.
+fn eye_height_as(width: f32, height: f32, eyes: Eyes, squeeze: bool) -> f32 {
     let (w, h) = match eyes {
         Eyes::Mono | Eyes::Pair => (width, height),
         Eyes::SideBySide | Eyes::Crossed => (width * 0.5, height),
         Eyes::TopBottom => (width, height * 0.5),
     };
-    h.max(w / eye_aspect(width, height, eyes).max(1e-3))
+    h.max(w / eye_aspect_as(width, height, eyes, squeeze).max(1e-3))
 }
 
 /// How wide a picture of this shape is when it is filling `area`: as large as it goes with a
@@ -145,6 +158,10 @@ pub struct Shown {
     right: Option<Texture>,
     /// Quarter turns clockwise.
     turns: u8,
+    /// Whether the picture has been turned a quarter (or three) since it was read: whether a
+    /// pair is squeezed is judged by the frame's shape as it was read, as a squeezed pair turned
+    /// is a film's frame on its side.
+    sideways: bool,
     /// Which frame of a moving picture is on show, and since when.
     frame: usize,
     frame_since: Instant,
@@ -175,6 +192,7 @@ impl Shown {
             texture: None,
             right: None,
             turns: 0,
+            sideways: false,
             frame: 0,
             frame_since: Instant::now(),
             uploaded: 0,
@@ -193,8 +211,9 @@ impl Shown {
     fn own_height(&self) -> f32 {
         let ratio = self.picture.original.0.max(1) as f32 / self.picture.width.max(1) as f32;
         let (w, h) = (self.picture.width as f32, self.picture.height as f32);
+        let squeeze = self.squeezed();
         let (w, h) = if self.turns % 2 == 1 { (h, w) } else { (w, h) };
-        eye_height(w, h, self.eyes()) * ratio
+        eye_height_as(w, h, self.eyes(), squeeze) * ratio
     }
 
     /// How wide it is fitted to `area`: filling it, or at its own size if that is smaller.
@@ -210,7 +229,16 @@ impl Shown {
     fn eye_aspect(&self) -> f32 {
         let (w, h) = (self.picture.width as f32, self.picture.height as f32);
         let (w, h) = if self.turns % 2 == 1 { (h, w) } else { (w, h) };
-        eye_aspect(w, h, self.eyes())
+        eye_aspect_as(w, h, self.eyes(), self.squeezed())
+    }
+
+    /// Whether a pair's views are squeezed to half: judged by the frame's shape as it was read,
+    /// so that a squeezed pair turned a quarter is still shown at its eyes' true shape, the
+    /// squeeze then running along the packing it was turned to.
+    fn squeezed(&self) -> bool {
+        let (w, h) = (self.picture.width as f32, self.picture.height as f32);
+        let (w, h) = if self.sideways { (h, w) } else { (w, h) };
+        squeezed(w / h.max(1.0))
     }
 
     /// How far it has come in over its stand-in, 0 to 1.
@@ -1945,6 +1973,7 @@ impl Shown {
         }
         // A quarter either way is done, and the picture is the right way up: nothing is left over.
         self.turns = 0;
+        self.sideways = !self.sideways;
         true
     }
 }
@@ -2061,12 +2090,47 @@ mod tests {
     }
 
     #[test]
+    fn a_squeezed_pair_turned_keeps_its_eyes_true_shape() {
+        let shape = |packing: Eyes, (w, h): (u32, u32), turns: &[u8]| {
+            let mut pair = picture(w, h);
+            pair.eyes = packing;
+            let mut shown = Shown::new(pair);
+            for &turn in turns {
+                shown.turns = turn;
+                assert!(shown.settle_turn());
+            }
+            (shown.picture.eyes, shown.picture.width, shown.picture.height, shown.eye_aspect(), shown.own_height())
+        };
+        let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+        // Half-width side by side, a film's frame of 32 by 18: each eye 16 by 18, shown 16:9.
+        let (eyes, _, _, aspect, _) = shape(Eyes::SideBySide, (32, 18), &[]);
+        assert!(eyes == Eyes::SideBySide && near(aspect, 16.0 / 9.0), "{aspect}");
+        // Turned clockwise: one over the other, 18 by 32, each eye 18 by 16 squeezed in height,
+        // shown 9:16 and 32 tall -- not 18:16 and 16 tall, the squeezed shape.
+        let (eyes, w, h, aspect, tall) = shape(Eyes::SideBySide, (32, 18), &[1]);
+        assert_eq!((eyes, w, h), (Eyes::TopBottom, 18, 32));
+        assert!(near(aspect, 9.0 / 16.0) && near(tall, 32.0), "{aspect} {tall}");
+        // And back: 16:9 again.
+        let (eyes, _, _, aspect, _) = shape(Eyes::SideBySide, (32, 18), &[1, 3]);
+        assert!(eyes == Eyes::SideBySide && near(aspect, 16.0 / 9.0), "{aspect}");
+        // Half-height one over the other turned anticlockwise: side by side, each eye 9 by 32
+        // squeezed in width, shown 9:16.
+        let (eyes, w, h, aspect, tall) = shape(Eyes::TopBottom, (32, 18), &[3]);
+        assert_eq!((eyes, w, h), (Eyes::SideBySide, 18, 32));
+        assert!(near(aspect, 9.0 / 16.0) && near(tall, 32.0), "{aspect} {tall}");
+        // A pair at full size is not squeezed either way: two 15 by 20 views turned are 20 by 15.
+        let (_, _, _, aspect, tall) = shape(Eyes::SideBySide, (30, 20), &[1]);
+        assert!(near(aspect, 4.0 / 3.0) && near(tall, 15.0), "{aspect} {tall}");
+    }
+
+    #[test]
     fn a_squeezed_pair_is_shown_at_its_true_shape() {
         let mut shown = Shown {
             picture: picture(1920, 1080),
             texture: None,
             right: None,
             turns: 0,
+            sideways: false,
             frame: 0,
             frame_since: Instant::now(),
             uploaded: 0,
@@ -2093,6 +2157,7 @@ mod tests {
             texture: None,
             right: None,
             turns: 0,
+            sideways: false,
             frame: 0,
             frame_since: Instant::now(),
             uploaded: 0,
@@ -2120,7 +2185,7 @@ mod tests {
         for (w, h, eyes) in [(4032, 3024, Eyes::Mono), (3024, 4032, Eyes::Mono), (1920, 1080, Eyes::SideBySide), (3840, 1080, Eyes::Crossed), (1920, 2160, Eyes::TopBottom)] {
             let mut picture = picture(w / 8, h / 8);
             (picture.width, picture.height, picture.eyes, picture.original) = (w, h, eyes, (w, h));
-            let shown = Shown { picture, texture: None, right: None, turns: 0, frame: 0, frame_since: Instant::now(), uploaded: 0, eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None, nearest: false };
+            let shown = Shown { picture, texture: None, right: None, turns: 0, sideways: false, frame: 0, frame_since: Instant::now(), uploaded: 0, eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None, nearest: false };
             // What the tile's thread works out from the picture's own size, and where the view
             // puts the picture once it has it.
             let tile = fitted(all, eye_aspect(w as f32, h as f32, eyes), eye_height(w as f32, h as f32, eyes));
