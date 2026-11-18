@@ -495,7 +495,7 @@ impl Playing {
             app.close(sky);
         }
         if let Ok(gl) = app.gl() {
-            self.screen.clear(gl);
+            self.screen.delete(gl);
         }
         app.set_eyes(window, EyeLayout::Mono, false);
         app.set_shape(window, None);

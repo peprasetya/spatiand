@@ -319,6 +319,26 @@ impl Screen {
         self.loaded = None;
     }
 
+    /// Let go of everything it made on the GPU -- its programs, its corners and the textures of
+    /// its own -- and of the picture: for a screen that will not draw again. Dropped without
+    /// this, every film watched left them behind for as long as the program ran.
+    pub fn delete(mut self, gl: &Gl) {
+        self.clear(gl);
+        let g = gl.api();
+        unsafe {
+            g.delete_program(self.planar.program);
+            #[cfg(target_os = "android")]
+            if let Some(external) = self.external.as_ref() {
+                g.delete_program(external.program);
+            }
+            g.delete_vertex_array(self.vao);
+            g.delete_buffer(self._corners);
+            for plane in self.planes {
+                g.delete_texture(plane);
+            }
+        }
+    }
+
     /// Make `picture` the one that is drawn. Costs nothing if it already is.
     pub fn load(&mut self, gl: &Gl, picture: &Arc<Picture>) {
         if self.loaded.as_ref().is_some_and(|loaded| Arc::ptr_eq(loaded, picture)) {
