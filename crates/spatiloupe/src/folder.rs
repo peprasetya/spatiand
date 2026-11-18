@@ -39,10 +39,13 @@ pub fn kind_of(path: &Path) -> Option<Kind> {
     }
 }
 
+/// A Mac's package -- an application, a Photos library -- which Finder shows as one thing and
+/// SpatiLoupe does not go into. Only on a Mac, and only by these endings: elsewhere a folder
+/// called "v1.app" or "St. Louis Library" is a folder.
 fn is_package(name: &str) -> bool {
+    const PACKAGES: &[&str] = &["app", "bundle", "framework", "plugin", "kext", "photoslibrary", "photolibrary", "migratedphotolibrary", "aplibrary", "musiclibrary", "tvlibrary", "imovielibrary", "fcpbundle"];
     let Some((_, ending)) = name.rsplit_once('.') else { return false };
-    let ending = ending.to_lowercase();
-    ending.ends_with("library") || ["app", "bundle", "framework", "plugin", "kext", "photoslibrary"].contains(&ending.as_str())
+    cfg!(target_os = "macos") && PACKAGES.contains(&ending.to_lowercase().as_str())
 }
 
 /// Where pictures are kept on this kind of machine.
@@ -388,6 +391,15 @@ mod tests {
         let names: Vec<String> = list(&dir).unwrap().into_iter().map(|e| e.name).collect();
         assert_eq!(names, ["trip", "a.jpg", "b.HEIC", "helmet.glb", "paper.pdf"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_mac_s_packages_are_passed_over() {
+        assert!(!is_package("St. Louis Library"));
+        assert!(!is_package("Lib.Library"));
+        assert!(!is_package("trip"));
+        assert_eq!(is_package("Photos Library.photoslibrary"), cfg!(target_os = "macos"));
+        assert_eq!(is_package("v1.app"), cfg!(target_os = "macos"));
     }
 
     #[cfg(unix)]
