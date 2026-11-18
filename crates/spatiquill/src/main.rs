@@ -636,7 +636,7 @@ impl Quill {
             if drag.moved && !drag.torn {
                 // Along the bar: the tab goes where the pointer is.
                 let tab = drag.tab;
-                let target = win.placed.iter().position(|(_, r, _)| x < r.x + r.w * 0.5).unwrap_or(win.tabs.len()).min(win.tabs.len().saturating_sub(1));
+                let target = drag_target(&win.placed, tab, x).min(win.tabs.len().saturating_sub(1));
                 if let Some(from) = win.tabs.iter().position(|&t| t == tab) {
                     if from != target {
                         win.tabs.remove(from);
@@ -1198,6 +1198,37 @@ impl Quill {
             }
             self.draw()?;
         }
+    }
+}
+
+/// Where a tab dragged along the bar goes: after every other tab whose middle the pointer is
+/// past. The dragged tab's own place, drawn under the pointer, is not counted: it was, and
+/// going right the tab swapped back and forth with its neighbour at every move.
+fn drag_target(placed: &[(u64, Rect, Rect)], dragged: u64, x: f32) -> usize {
+    placed.iter().filter(|(id, r, _)| *id != dragged && r.x + r.w * 0.5 < x).count()
+}
+
+#[cfg(test)]
+mod drag_tests {
+    use super::*;
+
+    #[test]
+    fn a_dragged_tab_goes_past_the_middles_it_is_past() {
+        let at = |id: u64, x: f32| (id, Rect::new(x, 0.0, 100.0, 40.0), Rect::default());
+        // Tabs 1, 2, 3 at 0, 110, 220; tab 1 dragged right, drawn under the pointer.
+        for x in [60.0, 100.0, 150.0] {
+            let placed = [at(1, x - 50.0), at(2, 110.0), at(3, 220.0)];
+            assert_eq!(drag_target(&placed, 1, x), 0);
+        }
+        for x in [170.0, 200.0, 260.0] {
+            let placed = [at(2, 110.0), at(1, x - 50.0), at(3, 220.0)];
+            assert_eq!(drag_target(&placed, 1, x), 1, "at {x}");
+        }
+        let placed = [at(2, 110.0), at(3, 220.0), at(1, 250.0)];
+        assert_eq!(drag_target(&placed, 1, 300.0), 2);
+        // And back left.
+        let placed = [at(2, 0.0), at(1, 10.0), at(3, 220.0)];
+        assert_eq!(drag_target(&placed, 1, 40.0), 0);
     }
 }
 
