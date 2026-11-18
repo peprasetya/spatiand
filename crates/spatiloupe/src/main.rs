@@ -175,6 +175,31 @@ struct Loupe {
     /// What a file opened at the start is, to open once its folder is listed.
     opening: Option<PathBuf>,
     left: Vec<View>,
+    /// Which of the folder's tiles the viewer's strip was last made from (`Folder::generation`).
+    strip: Option<u64>,
+    /// Word that the folder on show has changed, from its watcher, kept while it is on show.
+    changed: (Sender<()>, Receiver<()>),
+    watched: Option<notify::RecommendedWatcher>,
+    change_due: bool,
+    relisted: std::time::Instant,
+}
+
+/// Something to say when the folder at `path`, on this machine, changes: what is in it, not what
+/// is in the folders in it. `None` for a remote's, or where it cannot be watched.
+fn watch(path: &Path, changed: Sender<()>) -> Option<notify::RecommendedWatcher> {
+    use notify::Watcher;
+    if place::remote(path).is_some() {
+        return None;
+    }
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if event.is_ok_and(|e| !matches!(e.kind, notify::EventKind::Access(_))) {
+            let _ = changed.send(());
+        }
+    })
+    .map_err(|e| log::warn!("{}: not watched: {e}", path.display()))
+    .ok()?;
+    watcher.watch(path, notify::RecursiveMode::NonRecursive).map_err(|e| log::warn!("{}: not watched: {e}", path.display())).ok()?;
+    Some(watcher)
 }
 
 impl Loupe {
@@ -187,11 +212,26 @@ impl Loupe {
         let ticket = self.ticket();
         let mut folder = Folder::new(path.clone(), ticket);
         folder.cursor_on = cursor_on;
+        self.folder.give_way(&mut folder);
         self.folder = folder;
+        self.watched = watch(&path, self.changed.0.clone());
         let title = place::name(&path);
-        self.calls.send(Job::new(move || Some(Done::Listed { ticket, result: folder::list(&path) })).or(move |e| Done::Listed { ticket, result: Err(e) })).ok();
+        self.ask_listing(ticket, path);
         self.app.set_title(self.window, &format!("{title} \u{2014} SpatiLoupe"));
         self.dirty = true;
+    }
+
+    fn ask_listing(&mut self, ticket: u64, path: PathBuf) {
+        self.calls.send(Job::new(move || Some(Done::Listed { ticket, result: folder::list(&path) })).or(move |e| Done::Listed { ticket, result: Err(e) })).ok();
+    }
+
+    /// List the folder on show again, keeping what has not changed: coming back to it from a file,
+    /// and when it changes. Tiles asked for under the listing before are not this one's.
+    fn relist(&mut self) {
+        let ticket = self.ticket();
+        self.folder.ticket = ticket;
+        self.relisted = std::time::Instant::now();
+        self.ask_listing(ticket, self.folder.path.clone());
     }
 
     fn open(&mut self, index: usize) {
@@ -275,10 +315,20 @@ impl Loupe {
         let path = self.folder.path.clone();
         let title = place::name(&path);
         self.app.set_title(self.window, &format!("{title} \u{2014} SpatiLoupe"));
+        // What has come or gone while the file was looked at.
+        self.relist();
         self.dirty = true;
     }
 
     fn answers(&mut self) {
+        // The folder on show changed: listed again, unless a file is being looked at, whose place
+        // among the folder's would move under it -- it is listed again on coming back.
+        // At most once a second: a folder being copied into says so with every file.
+        self.change_due |= self.changed.1.try_iter().count() > 0;
+        if self.change_due && self.view.is_none() && matches!(self.folder.state, folder::State::Ready) && self.relisted.elapsed() > Duration::from_secs(1) {
+            self.change_due = false;
+            self.relist();
+        }
         while let Ok(done) = self.done.try_recv() {
             self.dirty = true;
             match done {
@@ -437,6 +487,15 @@ impl Loupe {
             Some(view) => self.folder.wanted_near(view.index, 14),
             None => self.folder.wanted(),
         };
+        // Tiles far from those on show let go of: a folder of ten thousand pictures is not ten
+        // thousand textures.
+        match self.view.as_ref() {
+            Some(view) => self.folder.let_go_far(view.index.saturating_sub(14)..view.index + 15),
+            None => {
+                let near = self.folder.in_view();
+                self.folder.let_go_far(near);
+            }
+        }
         for (index, path, kind) in wanted {
             let ticket = self.folder.ticket;
             // A tile that panics is left without its picture.
@@ -460,7 +519,7 @@ impl Loupe {
             self.app.set_see_through(self.window, clear);
         }
         let two = self.two;
-        let (view, folder, painter, left) = (&mut self.view, &mut self.folder, &mut self.painter, &mut self.left);
+        let (view, folder, painter, left, strip) = (&mut self.view, &mut self.folder, &mut self.painter, &mut self.left, &mut self.strip);
         self.app.draw(self.window, |gl, size| {
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
             for old in left.drain(..) {
@@ -470,8 +529,12 @@ impl Loupe {
                 Some(view) => {
                     // The strip's tiles are the folder's: the files only, in order.
                     folder.take_arrived(p, gl);
-                    view::TILES.with(|t| *t.borrow_mut() = folder.file_tiles());
-                    view::SEEN.with(|s| *s.borrow_mut() = folder.file_seen());
+                    // Made again only when a tile has changed, not on every frame.
+                    if *strip != Some(folder.generation) {
+                        *strip = Some(folder.generation);
+                        view::TILES.with(|t| *t.borrow_mut() = folder.file_tiles());
+                        view::SEEN.with(|s| *s.borrow_mut() = folder.file_seen());
+                    }
                     view.settle_turns(gl);
                     // A picture is shown on nothing; the room is its ground.
                     let ground = if view.see_through() { [0.0, 0.0, 0.0, 0.0] } else { theme::ground() };
@@ -589,6 +652,11 @@ fn main() {
             size: WINDOW,
             opening: None,
             left: Vec::new(),
+            strip: None,
+            changed: channel(),
+            watched: None,
+            change_due: false,
+            relisted: std::time::Instant::now(),
         };
         match asked {
             Some(Asked::Folder(path)) => loupe.list(path, None),

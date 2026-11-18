@@ -178,7 +178,14 @@ pub struct Folder {
     arrived: Vec<Arrived>,
     left: Vec<Texture>,
     up: Button,
+    /// Moved on whenever a tile changes -- the listing, a picture come or let go of -- so that
+    /// the viewer's strip is made again from them then, and only then.
+    pub generation: u64,
 }
+
+/// How many entries beyond those in view keep their tiles' pictures on the GPU: further off, they
+/// are let go of, and made again if they are scrolled back to.
+const TILES_KEPT: usize = 120;
 
 /// A tile's picture, come from the thread that makes them, to go on the GPU.
 pub struct Arrived {
@@ -209,6 +216,31 @@ impl Folder {
             arrived: Vec::new(),
             left: Vec::new(),
             up: Button::default(),
+            generation: 0,
+        }
+    }
+
+    /// This folder is giving way to `next`: its tiles' pictures go with it, for `next` to let go
+    /// of on the GPU when it is next drawn, rather than being left there for ever.
+    pub fn give_way(&mut self, next: &mut Folder) {
+        next.left.extend(self.left.drain(..).chain(self.tiles.drain(..).filter_map(|t| t.picture)));
+    }
+
+    /// Let go of the tiles' pictures far from `near`, the entries on show: they are asked for
+    /// again if they come back into view.
+    pub fn let_go_far(&mut self, near: std::ops::Range<usize>) {
+        if near.is_empty() {
+            return;
+        }
+        let keep = near.start.saturating_sub(TILES_KEPT)..near.end.saturating_add(TILES_KEPT);
+        for (index, tile) in self.tiles.iter_mut().enumerate() {
+            if !keep.contains(&index) {
+                if let Some(texture) = tile.picture.take() {
+                    self.left.push(texture);
+                    self.asked[index] = false;
+                    self.generation += 1;
+                }
+            }
         }
     }
 
@@ -216,14 +248,38 @@ impl Folder {
         match result {
             Err(e) => self.state = State::Failed(e),
             Ok(entries) => {
-                self.left.extend(self.tiles.drain(..).filter_map(|t| t.picture));
-                self.tiles = entries.iter().map(tile_of).collect();
-                self.seen = vec![None; entries.len()];
-                self.asked = vec![false; entries.len()];
-                let at = self.cursor_on.take().and_then(|p| entries.iter().position(|e| e.path == p));
+                // Listed again: what was there and is the same keeps its tile, picture and all,
+                // and the cursor stays on what it was on.
+                let on = self.cursor_on.take().or_else(|| self.entries.get(self.grid.cursor).map(|e| e.path.clone()));
+                let mut had: std::collections::HashMap<PathBuf, (Entry, Tile, Option<Seen>)> = std::collections::HashMap::new();
+                for ((entry, tile), seen) in self.entries.drain(..).zip(self.tiles.drain(..)).zip(self.seen.drain(..)) {
+                    had.insert(entry.path.clone(), (entry, tile, seen));
+                }
+                // Tiles on their way were asked for by the places of the listing before.
+                self.arrived.clear();
+                self.tiles.clear();
+                self.seen.clear();
+                self.asked.clear();
+                for entry in &entries {
+                    match had.remove(&entry.path).filter(|(was, _, _)| was == entry) {
+                        Some((_, tile, seen)) => {
+                            self.asked.push(tile.picture.is_some());
+                            self.tiles.push(tile);
+                            self.seen.push(seen);
+                        }
+                        None => {
+                            self.tiles.push(tile_of(entry));
+                            self.seen.push(None);
+                            self.asked.push(false);
+                        }
+                    }
+                }
+                self.left.extend(had.into_values().filter_map(|(_, tile, _)| tile.picture));
+                let at = on.and_then(|p| entries.iter().position(|e| e.path == p));
                 self.grid.cursor = at.unwrap_or(0).min(entries.len().saturating_sub(1));
                 self.entries = entries;
                 self.state = State::Ready;
+                self.generation += 1;
             }
         }
     }
@@ -233,6 +289,7 @@ impl Folder {
     /// are, or every list indexed by entry runs one short.
     pub fn add(&mut self, entry: Entry) -> usize {
         self.tiles.push(tile_of(&entry));
+        self.generation += 1;
         self.seen.push(None);
         self.asked.push(false);
         self.entries.push(entry);
@@ -259,6 +316,11 @@ impl Folder {
             }
         }
         wanted
+    }
+
+    /// The entries on show, as last drawn.
+    pub fn in_view(&self) -> std::ops::Range<usize> {
+        self.grid.in_view()
     }
 
     pub fn tiles(&self) -> &[Tile] {
@@ -298,7 +360,11 @@ impl Folder {
             p.forget(gl, old);
         }
         for Arrived { index, width, height, rgba, word, seen } in self.arrived.drain(..) {
+            self.generation += 1;
             if let Some(tile) = self.tiles.get_mut(index) {
+                if let Some(old) = tile.picture.take() {
+                    p.forget(gl, old);
+                }
                 tile.picture = p.texture(gl, &rgba, width, height).ok();
                 if let Some(word) = word {
                     tile.detail = Some(match tile.detail.take() {
@@ -391,6 +457,32 @@ mod tests {
         let names: Vec<String> = list(&dir).unwrap().into_iter().map(|e| e.name).collect();
         assert_eq!(names, ["trip", "a.jpg", "b.HEIC", "helmet.glb", "paper.pdf"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn entry(name: &str, size: u64) -> Entry {
+        Entry { name: name.into(), path: PathBuf::from("/f").join(name), kind: kind_of(Path::new(name)).unwrap_or(Kind::Folder), size }
+    }
+
+    #[test]
+    fn listed_again_the_same_entries_keep_their_tiles_and_the_cursor_its_entry() {
+        let mut folder = Folder::new(PathBuf::from("/f"), 1);
+        folder.listed(Ok(vec![entry("a.jpg", 1), entry("b.jpg", 1), entry("c.jpg", 1)]));
+        folder.grid.cursor = 1;
+        // As if b's and c's pictures had come.
+        folder.tiles[1].detail = Some("b's".into());
+        folder.seen[1] = Some(Seen { aspect: 2.0, height: 10.0, stereo: false });
+        folder.asked[1] = true;
+        folder.asked[2] = true;
+        let generation = folder.generation;
+        // A new file before them, and c changed.
+        folder.listed(Ok(vec![entry("0.jpg", 1), entry("a.jpg", 1), entry("b.jpg", 1), entry("c.jpg", 2)]));
+        assert!(folder.generation > generation);
+        assert_eq!(folder.grid.cursor, 2, "still on b");
+        assert_eq!(folder.tiles[2].detail.as_deref(), Some("b's"));
+        assert_eq!(folder.seen[2].map(|s| s.aspect), Some(2.0));
+        // c is new as it is now, and asked for again; b, with no picture yet, too.
+        assert_eq!(folder.asked, [false, false, false, false]);
+        assert_eq!(folder.tiles.len(), 4);
     }
 
     #[test]

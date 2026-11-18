@@ -1058,8 +1058,7 @@ impl View {
             let foot = Rect::new(all.x + (all.w - wanted) * 0.5, all.bottom() - height - 26.0, wanted, height);
             self.foot = foot;
             look::glass(p, gl, foot, 22.0, alpha);
-            let tiles = TILES.with(|t| t.borrow().clone());
-            self.strip.draw(p, gl, foot, &tiles, width);
+            TILES.with(|tiles| self.strip.draw(p, gl, foot, &tiles.borrow(), width));
         } else if let Doc::Model(_) = self.doc {
             let foot = Rect::new(all.x + 28.0, all.bottom() - 70.0, all.w - 56.0, 40.0);
             look::keys(p, gl, foot, "[Drag] Turn  [Scroll] Nearer  [Space] Spin  [0] Reset", 0.5, alpha);

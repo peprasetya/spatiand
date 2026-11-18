@@ -5346,6 +5346,7 @@ dependencies = [
  "image",
  "kamadak-exif",
  "log",
+ "notify",
  "pdfium-render",
  "png",
  "resvg",
