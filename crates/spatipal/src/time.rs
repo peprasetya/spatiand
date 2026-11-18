@@ -69,24 +69,48 @@ pub fn short(epoch: u64) -> String {
 }
 
 /// A time the model wrote, as a moment: `20:00` (today, or tomorrow when that has passed),
-/// `2026-10-29 08:30`, `2026-10-29T08:30(:00)`.
+/// `2026-10-29 08:30`, `2026-10-29T08:30(:00)`, `8:30pm`, `08:30 PM`. `None` for anything it
+/// cannot read all of -- a part that is not a number is not taken as 0 -- for a day or month
+/// that does not exist, and for a date and time already past.
 pub fn parse_local(at: &str, now: u64) -> Option<u64> {
-    let at = at.trim().replace('T', " ").replace('.', ":");
+    let at = at.trim().replace('T', " ").to_lowercase();
+    // Twelve hours or twenty-four: "8:30pm", "8 p.m.", "08:30 PM".
+    let (at, half) = match ["a.m.", "p.m.", "am", "pm"].iter().find(|s| at.ends_with(*s)) {
+        Some(s) => (at[..at.len() - s.len()].trim().to_string(), Some(s.starts_with('p'))),
+        None => (at, None),
+    };
+    let at = at.replace('.', ":");
     let (date, clock) = match at.split_once(' ') {
-        Some((d, c)) => (Some(d.to_string()), c.to_string()),
+        Some((d, c)) => (Some(d.to_string()), c.trim().to_string()),
         None => (None, at.clone()),
     };
-    let mut parts = clock.split(':').map(|p| p.trim().parse::<u32>().ok());
-    let hour = parts.next()??;
-    let minute = parts.next().flatten().unwrap_or(0);
+    let parts: Vec<u32> = clock.split(':').map(|p| p.trim().parse::<u32>().ok()).collect::<Option<_>>()?;
+    let (mut hour, minute) = match parts.as_slice() {
+        [h] => (*h, 0),
+        [h, m] => (*h, *m),
+        [h, m, s] if *s <= 59 => (*h, *m),
+        _ => return None,
+    };
+    if let Some(pm) = half {
+        if !(1..=12).contains(&hour) {
+            return None;
+        }
+        hour = hour % 12 + if pm { 12 } else { 0 };
+    }
     if hour > 23 || minute > 59 {
         return None;
     }
     match date {
         Some(d) => {
-            let mut ymd = d.split('-').map(|p| p.parse::<u32>().ok());
-            let (y, m, day) = (ymd.next()??, ymd.next()??, ymd.next()??);
-            moment(y as i32, m, day, hour, minute)
+            let ymd: Vec<u32> = d.split('-').map(|p| p.parse::<u32>().ok()).collect::<Option<_>>()?;
+            let [y, m, day] = ymd.as_slice() else { return None };
+            let (y, m, day) = (*y, *m, *day);
+            let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+            let days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            if !(1..=12).contains(&m) || day == 0 || day > days[m as usize - 1] {
+                return None;
+            }
+            moment(y as i32, m, day, hour, minute).filter(|t| *t > now)
         }
         None => {
             let today = local(now);
@@ -109,6 +133,30 @@ mod tests {
         assert_eq!(parse_local("2026-11-02T07:05:00", now), moment(2026, 11, 2, 7, 5));
         assert_eq!(parse_local("25:00", now), None);
         assert_eq!(parse_local("soon", now), None);
+    }
+
+    #[test]
+    fn a_time_is_read_whole_or_not_at_all() {
+        let now = moment(2026, 10, 28, 9, 40).unwrap();
+        // Twelve hours: the minutes and the half of the day are read.
+        assert_eq!(parse_local("8:30pm", now), moment(2026, 10, 28, 20, 30));
+        assert_eq!(parse_local("08:30 PM", now), moment(2026, 10, 28, 20, 30));
+        assert_eq!(parse_local("12:15 am", now), moment(2026, 10, 29, 0, 15));
+        assert_eq!(parse_local("12 pm", now), moment(2026, 10, 28, 12, 0));
+        assert_eq!(parse_local("8 p.m.", now), moment(2026, 10, 28, 20, 0));
+        assert_eq!(parse_local("2026-11-02 7:05 am", now), moment(2026, 11, 2, 7, 5));
+        assert_eq!(parse_local("13:00 pm", now), None);
+        // A part that is not a number is not 0.
+        assert_eq!(parse_local("08:xx", now), None);
+        assert_eq!(parse_local("2026-11-0x 08:30", now), None);
+        // No 13th month, no 32nd day, no 29 February in 2027: not rolled over into another.
+        assert_eq!(parse_local("2026-13-01 08:30", now), None);
+        assert_eq!(parse_local("2026-10-32 08:30", now), None);
+        assert_eq!(parse_local("2027-02-29 08:30", now), None);
+        assert_eq!(parse_local("2028-02-29 08:30", now), moment(2028, 2, 29, 8, 30));
+        // Already past: no reminder for then.
+        assert_eq!(parse_local("2026-10-28 09:00", now), None);
+        assert_eq!(parse_local("2025-01-01 09:00", now), None);
     }
 
     #[test]
