@@ -1193,13 +1193,7 @@ impl Quill {
                 p.begin_over(gl, picture, Rect::new(0.0, 0.0, picture.0 as f32, picture.1 as f32), (size.0 as f32, size.1 as f32));
                 if let Some(tab) = active {
                     if let TabState::Crashed(why) = &tab.state {
-                        let pane = Rect::new(all.w * 0.5 - 360.0, all.h * 0.5 - 110.0, 720.0, 220.0);
-                        look::glass(p, gl, pane, 24.0, 1.0);
-                        let mut inner = pane.inset(28.0);
-                        p.label(gl, "This tab stopped", inner.take_top(52.0), theme::TITLE_EM * 0.8, look::trouble(), 0.0);
-                        p.label(gl, why, inner.take_top(44.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
-                        inner.take_top(16.0);
-                        p.label(gl, "Enter starts a new shell here.    The other tabs are as they were.", inner.take_top(36.0), theme::FOOTER_EM, theme::ink_hint(), 0.0);
+                        look::stopped(p, gl, all, why, "Enter starts a new shell here.    The other tabs are as they were.");
                     }
                     if tab.screen.scrolled > 0 && tab.screen.history > 0 {
                         let track = Rect::new(all.w - 12.0, area.y, theme::SCROLL_WIDTH, area.h);

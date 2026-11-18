@@ -2045,12 +2045,7 @@ impl Shelf {
             }
         }
         if let Some(why) = &tab.crashed {
-            let pane = Rect::new(area.x + area.w * 0.5 - 340.0, area.y + area.h * 0.5 - 100.0, 680.0, 200.0);
-            room::glass(p, gl, pane, 24.0, 1.0);
-            let mut inner = pane.inset(28.0);
-            p.label(gl, "This tab stopped", inner.take_top(50.0), theme::TITLE_EM * 0.8, room::trouble(), 0.0);
-            p.label(gl, why, inner.take_top(40.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
-            p.label(gl, "Close it and open another: the other tabs are as they were.", inner.take_top(40.0), theme::FOOTER_EM, theme::ink_hint(), 0.0);
+            room::stopped(p, gl, area, why, "Close it and open another: the other tabs are as they were.");
             return;
         }
         match &tab.state {

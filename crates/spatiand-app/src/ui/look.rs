@@ -250,6 +250,18 @@ pub fn scrollbar(p: &mut Painter, gl: &Gl, track: Rect, shown: f32, total: f32, 
     p.fill(gl, Rect { y: track.y + (track.h - thumb) * progress, h: thumb, ..track }, round, theme::scroll_thumb());
 }
 
+/// A tab whose program stopped: a pane in the middle of `area` saying so, `why`, and what the
+/// wearer can do now.
+pub fn stopped(p: &mut Painter, gl: &Gl, area: Rect, why: &str, what_now: &str) {
+    let pane = Rect::new(area.x + area.w * 0.5 - 360.0, area.y + area.h * 0.5 - 110.0, 720.0, 220.0);
+    glass(p, gl, pane, 24.0, 1.0);
+    let mut inner = pane.inset(28.0);
+    p.label(gl, "This tab stopped", inner.take_top(52.0), theme::TITLE_EM * 0.8, trouble(), 0.0);
+    p.label(gl, why, inner.take_top(44.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
+    inner.take_top(16.0);
+    p.label(gl, what_now, inner.take_top(36.0), theme::FOOTER_EM, theme::ink_hint(), 0.0);
+}
+
 /// The window dimmed behind a pane, a question or a menu over it.
 pub fn scrim(p: &mut Painter, gl: &Gl, all: Rect) {
     p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
