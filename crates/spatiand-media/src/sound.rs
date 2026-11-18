@@ -341,6 +341,11 @@ impl Sound {
                         out.copy_from_slice(&((sample.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
                     }
                     if let Err(e) = socket.write_all(&bytes) {
+                        // Closed on purpose: nothing to say, and nobody else's voices to mark --
+                        // the bus may have another output by now.
+                        if stopped.load(Ordering::Relaxed) {
+                            return;
+                        }
                         log::warn!("the room stopped taking sound: {e}");
                         feed.died();
                         return;
@@ -442,6 +447,12 @@ impl Sound {
                     // is the order `f32` on the command line means.
                     let bytes = unsafe { std::slice::from_raw_parts(block.as_ptr() as *const u8, block.len() * 4) };
                     if pipe.write_all(bytes).is_err() {
+                        // Closed on purpose (the film or the page ended, the output made again
+                        // with more channels): `pw-cat` was killed, which is no news, and the
+                        // voices of the bus's next output are not this one's to mark dead.
+                        if stopped.load(Ordering::Relaxed) {
+                            return;
+                        }
                         log::warn!("sound: pw-cat has gone; the film keeps time without it");
                         feed.died();
                         return;
