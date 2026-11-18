@@ -90,6 +90,8 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
             exit(0)
         }
         handleSignals()
+        // Once, if banners are seen muted while the display is shared: see NotificationReminder.
+        NotificationReminder.start()
         // Put back as they were if the last Spatiand ended with the room holding the trackpad.
         SystemGestures.swipesOff(false)
         if let button = item.button {

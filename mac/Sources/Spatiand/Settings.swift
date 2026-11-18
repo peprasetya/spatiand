@@ -66,6 +66,13 @@ enum Settings {
         set { defaults.set(newValue, forKey: "pinnedLarge") }
     }
 
+    /// Whether the wearer said not to be reminded of macOS's "Allow notifications when mirroring or
+    /// sharing the display" switch (NotificationReminder): never asked again once said.
+    static var mirroringReminderDeclined: Bool {
+        get { defaults.bool(forKey: "mirroringReminderDeclined") }
+        set { defaults.set(newValue, forKey: "mirroringReminderDeclined") }
+    }
+
     /// Whether other devices may use this Mac's windows: it listens on a port, so it is off until asked for.
     static var hostEnabled: Bool {
         get { defaults.bool(forKey: "hostEnabled") }
