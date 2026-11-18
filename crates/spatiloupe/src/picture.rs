@@ -90,7 +90,8 @@ pub fn read_bytes(path: &Path, bytes: &[u8], largest: u32) -> Result<Picture, St
 fn read_bytes_as(path: &Path, bytes: &[u8], largest: u32, may_move: bool) -> Result<Picture, String> {
     let kind = ending(path);
     let mut picture = match kind.as_str() {
-        "svg" => drawn(bytes, largest)?,
+        // A drawing's pictures are its folder's, on this machine; a remote's has none.
+        "svg" => drawn(bytes, largest, if crate::place::remote(path).is_some() { None } else { path.parent() })?,
         "heic" | "heif" | "hif" | "avif" | "jp2" | "j2k" | "jpf" | "jpx" | "j2c" | "jxl" => by_ffmpeg(path, largest)?,
         _ => match by_image(bytes, largest, may_move && (kind == "gif" || kind == "png" || kind == "apng" || kind == "webp")) {
             Ok(picture) => picture,
@@ -235,10 +236,48 @@ fn by_ffmpeg(path: &Path, largest: u32) -> Result<Picture, String> {
     Ok(Picture::of(image, original))
 }
 
+/// The machine's fonts, for a drawing's text: read once, the first time a drawing wants them, and
+/// shared by every drawing after. Android's are in /system/fonts, which fontdb does not look in.
+fn fonts() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
+    static FONTS: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut fonts = resvg::usvg::fontdb::Database::new();
+            if cfg!(target_os = "android") {
+                fonts.load_fonts_dir("/system/fonts");
+            } else {
+                fonts.load_system_fonts();
+            }
+            std::sync::Arc::new(fonts)
+        })
+        .clone()
+}
+
+/// How a drawing is read: with the machine's fonts, and the pictures it names from its own
+/// folder -- `folder`, or none if it has none -- or below it, and nowhere else (usvg would read
+/// any file it named, from where SpatiLoupe was started if the name was relative).
+fn drawing_options(folder: Option<&Path>) -> resvg::usvg::Options<'static> {
+    let own = folder.map(|f| if f.as_os_str().is_empty() { Path::new(".") } else { f }).and_then(|f| f.canonicalize().ok());
+    let mut options = resvg::usvg::Options { resources_dir: own.clone(), fontdb: fonts(), ..Default::default() };
+    let read = resvg::usvg::ImageHrefResolver::default_string_resolver();
+    options.image_href_resolver.resolve_string = Box::new(move |href: &str, options: &resvg::usvg::Options| {
+        let own = own.as_ref()?;
+        let at = own.join(href).canonicalize().ok().filter(|at| at.starts_with(own) && at.is_file());
+        match at {
+            Some(at) => read(at.to_str()?, options),
+            None => {
+                log::warn!("a drawing names {href}, which is not a picture in its folder: left out");
+                None
+            }
+        }
+    });
+    options
+}
+
 /// An SVG, drawn so its longer side is `largest`, or its own size if that is smaller and it
-/// has one worth keeping.
-fn drawn(bytes: &[u8], largest: u32) -> Result<Picture, String> {
-    let options = resvg::usvg::Options::default();
+/// has one worth keeping. `folder` is where the pictures it names are.
+fn drawn(bytes: &[u8], largest: u32, folder: Option<&Path>) -> Result<Picture, String> {
+    let options = drawing_options(folder);
     let tree = resvg::usvg::Tree::from_data(bytes, &options).map_err(|e| e.to_string())?;
     let size = tree.size();
     let longest = size.width().max(size.height()).max(1.0);
@@ -372,6 +411,35 @@ mod tests {
         assert!(other_eye(0, (4000, 3000), (4000, 3000)));
         assert!(other_eye(stereo::DISPARITY, (1920, 1440), (4000, 3000)));
         assert!(!other_eye(stereo::DISPARITY, (3000, 3000), (4000, 3000)));
+    }
+
+    /// The first pixel of a drawing's that is not clear, if it has one.
+    fn drawn_ink(svg: &str, folder: &Path) -> Option<[u8; 4]> {
+        let picture = drawn(svg.as_bytes(), 64, Some(folder)).unwrap();
+        picture.rgba.chunks_exact(4).find(|p| p[3] > 0).map(|p| [p[0], p[1], p[2], p[3]])
+    }
+
+    #[test]
+    fn a_drawing_s_text_is_drawn() {
+        let dir = std::env::temp_dir();
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="32"><text x="2" y="26" font-size="28" fill="black">Ag</text></svg>"#;
+        assert!(drawn_ink(svg, &dir).is_some(), "the text has ink");
+    }
+
+    #[test]
+    fn a_drawing_shows_the_pictures_beside_it_and_none_elsewhere() {
+        let dir = std::env::temp_dir().join(format!("spatiloupe-svg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("drawing/parts")).unwrap();
+        std::fs::write(dir.join("drawing/parts/red.png"), png(4, 4, |_, _| [255, 0, 0, 255])).unwrap();
+        std::fs::write(dir.join("outside.png"), png(4, 4, |_, _| [0, 0, 255, 255])).unwrap();
+        let svg = |href: &str| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="8" height="8"><image width="8" height="8" xlink:href="{href}"/></svg>"#);
+        let folder = dir.join("drawing");
+        assert_eq!(drawn_ink(&svg("parts/red.png"), &folder).map(|p| p[0]), Some(255));
+        assert_eq!(drawn_ink(&svg("../outside.png"), &folder), None);
+        let outside = dir.join("outside.png");
+        assert_eq!(drawn_ink(&svg(outside.to_str().unwrap()), &folder), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
