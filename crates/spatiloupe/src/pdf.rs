@@ -34,16 +34,15 @@ pub struct Found {
 }
 
 pub enum Ask {
-    /// Draw page `page`, `width` pixels across and no more than `most_height` down. `ticket`
-    /// comes back with it.
-    Draw { page: usize, width: u32, most_height: u32, ticket: u64 },
+    /// Draw page `page`, `width` pixels across and no more than `most_height` down.
+    Draw { page: usize, width: u32, most_height: u32 },
     Find { text: String, ticket: u64 },
 }
 
 pub enum Answer {
     Opened { pages: Vec<Page>, outline: Vec<Heading>, title: Option<String> },
     Failed(String),
-    Drawn { page: usize, width: u32, height: u32, rgba: Vec<u8>, ticket: u64 },
+    Drawn { page: usize, width: u32, height: u32, rgba: Vec<u8> },
     /// The page could not be drawn: not there, or PDFium would not.
     Undrawn { page: usize },
     Found { found: Vec<Found>, ticket: u64 },
@@ -155,7 +154,7 @@ impl Pdf {
                 }
                 while let Some(ask) = queue.pop() {
                     let answer = match ask {
-                        Ask::Draw { page, width, most_height, ticket } => {
+                        Ask::Draw { page, width, most_height } => {
                             let Ok(at) = document.pages().get(page as PdfPageIndex) else {
                                 // Answered all the same: whoever asked may be waiting for it.
                                 let _ = tell.send(Answer::Undrawn { page });
@@ -174,7 +173,7 @@ impl Pdf {
                                         }
                                         px[3] = 255;
                                     }
-                                    Answer::Drawn { page, width: w, height: h, rgba, ticket }
+                                    Answer::Drawn { page, width: w, height: h, rgba }
                                 }
                                 Err(_) => Answer::Undrawn { page },
                             }
@@ -219,6 +218,14 @@ impl Pdf {
     pub fn ask(&self, ask: Ask) {
         let _ = self.asks.send(ask);
     }
+
+    /// A document whose thread is played by a test: what it answers, and what it is asked.
+    #[cfg(test)]
+    pub fn played() -> (Pdf, Sender<Answer>, Receiver<Ask>) {
+        let (asks, asked) = channel();
+        let (tell, answers) = channel();
+        (Pdf { asks, answers }, tell, asked)
+    }
 }
 
 /// How wide a page `width` by `height` is drawn to fit within a square `side` across: a long
@@ -239,7 +246,7 @@ pub fn first_page(path: &Path, side: u32) -> Option<(u32, u32, Vec<u8>)> {
         }
         _ => return None,
     };
-    pdf.ask(Ask::Draw { page: 0, width, most_height: side, ticket: 0 });
+    pdf.ask(Ask::Draw { page: 0, width, most_height: side });
     match pdf.answers.recv().ok()? {
         Answer::Drawn { width, height, rgba, .. } => Some((width, height, rgba)),
         _ => None,

@@ -284,7 +284,9 @@ pub struct Paper {
     /// How far down the column the top of the window is, in logical pixels.
     scroll: f32,
     zoom: f32,
-    ticket: u64,
+    /// Which search is the one wanted: a search's answer under an older number -- one asked
+    /// before the text was changed, or the field closed -- is not this one's.
+    finds: u64,
     contents: Option<List>,
     find: Option<Field>,
     /// The page number being typed, after `p`.
@@ -295,11 +297,37 @@ pub struct Paper {
     /// The page the wearer last asked to see, which the column is moved to once it is laid out.
     go_to: Option<usize>,
     stale: Vec<Texture>,
+    /// Pages drawn by the PDF's thread, waiting for the GL thread to put them on the GPU: this
+    /// document's own.
+    pending: Vec<(usize, u32, u32, Vec<u8>)>,
 }
 
 const PAGE_GAP: f32 = 28.0;
 
 impl Paper {
+    fn new(pdf: Pdf) -> Paper {
+        Paper {
+            pdf,
+            pages: Vec::new(),
+            outline: Vec::new(),
+            title: None,
+            drawn: HashMap::new(),
+            asked: HashMap::new(),
+            scroll: 0.0,
+            zoom: 1.0,
+            finds: 0,
+            contents: None,
+            find: None,
+            page_field: None,
+            found: Vec::new(),
+            found_at: 0,
+            finding: false,
+            go_to: None,
+            stale: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
+
     fn width(&self, area: Rect) -> f32 {
         (area.w * 0.62).min(1000.0) * self.zoom
     }
@@ -453,27 +481,7 @@ impl View {
     }
 
     pub fn open_pdf(&mut self) {
-        self.doc = Doc::Loading(Instant::now());
-        let pdf = Pdf::open(&self.entry.path);
-        self.doc = Doc::Pdf(Box::new(Paper {
-            pdf,
-            pages: Vec::new(),
-            outline: Vec::new(),
-            title: None,
-            drawn: HashMap::new(),
-            asked: HashMap::new(),
-            scroll: 0.0,
-            zoom: 1.0,
-            ticket: 0,
-            contents: None,
-            find: None,
-            page_field: None,
-            found: Vec::new(),
-            found_at: 0,
-            finding: false,
-            go_to: None,
-            stale: Vec::new(),
-        }));
+        self.doc = Doc::Pdf(Box::new(Paper::new(Pdf::open(&self.entry.path))));
     }
 
     pub fn pictured(&mut self, result: Result<Picture, String>) {
@@ -608,17 +616,16 @@ impl View {
                     self.doc = Doc::Failed(why);
                     return true;
                 }
-                pdf::Answer::Drawn { page, width, height, rgba, ticket } => {
-                    if ticket != paper.ticket {
-                        continue;
-                    }
+                // A page drawn is always wanted: its texture is what it waited for, and it is no
+                // longer asked for once it has come.
+                pdf::Answer::Drawn { page, width, height, rgba } => {
                     paper.asked.remove(&page);
                     paper.drawn_pending(page, width, height, rgba);
                 }
                 // Left as asked, so that it is not asked for again and again: it stays paper.
                 pdf::Answer::Undrawn { page } => log::warn!("page {} of {} would not draw", page + 1, self.entry.path.display()),
                 pdf::Answer::Found { found, ticket } => {
-                    if ticket != paper.ticket {
+                    if ticket != paper.finds {
                         continue;
                     }
                     paper.finding = false;
@@ -1094,23 +1101,27 @@ impl View {
                 if let Input::Key { key: Key::Escape, .. } = input {
                     paper.find = None;
                     paper.found.clear();
+                    paper.forget_finding();
                     return Want::Nothing;
                 }
+                let before = field.text.clone();
                 if let Some(typed) = field.input(input) {
                     if typed == Typed::Entered {
                         let text = field.text.trim().to_string();
                         if paper.found.is_empty() || paper.finding {
                             if !text.is_empty() {
-                                paper.ticket += 1;
+                                paper.finds += 1;
                                 paper.finding = true;
-                                paper.pdf.ask(Ask::Find { text, ticket: paper.ticket });
+                                paper.pdf.ask(Ask::Find { text, ticket: paper.finds });
                             }
                         } else {
                             paper.found_at = (paper.found_at + 1) % paper.found.len();
                             paper.go_to = Some(paper.found[paper.found_at].page);
                         }
-                    } else {
+                    } else if field.text != before {
+                        // Other words: what was found, or is being found, was for the old ones.
                         paper.found.clear();
+                        paper.forget_finding();
                     }
                     return Want::Nothing;
                 }
@@ -1446,13 +1457,17 @@ impl Paper {
     }
 
     fn drawn_pending(&mut self, page: usize, width: u32, height: u32, rgba: Vec<u8>) {
-        PENDING.with(|p| p.borrow_mut().push((page, width, height, rgba)));
+        self.pending.push((page, width, height, rgba));
+    }
+
+    /// A search going on is not waited for: its answer, when it comes, is not this one's.
+    fn forget_finding(&mut self) {
+        self.finds += 1;
+        self.finding = false;
     }
 }
 
 thread_local! {
-    /// Pages drawn by the PDF's thread, waiting for the GL thread to put them on the GPU.
-    static PENDING: std::cell::RefCell<Vec<(usize, u32, u32, Vec<u8>)>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The folder's tiles, for the strip along the foot: set by the program before drawing.
     pub static TILES: std::cell::RefCell<Vec<Tile>> = const { std::cell::RefCell::new(Vec::new()) };
     /// What the same tiles said of their pictures, beside them.
@@ -1528,7 +1543,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
     for texture in paper.stale.drain(..) {
         p.forget(gl, texture);
     }
-    let pending = PENDING.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    let pending = std::mem::take(&mut paper.pending);
     for (page, w, h, rgba) in pending {
         if let Ok(texture) = upload(gl, &rgba, w, h) {
             if let Some((old, _)) = paper.drawn.insert(page, (texture, w)) {
@@ -1583,7 +1598,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
         let good = |w: u32| (w as f32) >= pixels as f32 * 0.9 && (w as f32) <= pixels as f32 * 1.6;
         if !have.is_some_and(good) && !asked.is_some_and(good) && (near || have.is_none()) {
             paper.asked.insert(index, pixels);
-            paper.pdf.ask(Ask::Draw { page: index, width: pixels.min(6000), most_height: crate::picture::LARGEST, ticket: paper.ticket });
+            paper.pdf.ask(Ask::Draw { page: index, width: pixels.min(6000), most_height: crate::picture::LARGEST });
         }
     }
     // Pages far from view let go of: a thousand-page book is not a thousand textures.
@@ -1779,7 +1794,7 @@ impl View {
                 }
             }
             Doc::Pdf(paper) => {
-                for (texture, _) in paper.drawn.into_values() {
+                for texture in paper.drawn.into_values().map(|(texture, _)| texture).chain(paper.stale) {
                     unsafe { gl.api().delete_texture(texture.raw()) };
                 }
             }
@@ -2006,6 +2021,63 @@ mod tests {
         view.tick();
         assert!(centre(&view).0 > before.0, "moved along it");
         assert_eq!(view.slid, 0.0);
+    }
+
+    /// A PDF of two pages being read, its thread played by the test.
+    fn reading() -> (View, std::sync::mpsc::Sender<pdf::Answer>, std::sync::mpsc::Receiver<Ask>) {
+        let entry = Entry { name: "a.pdf".into(), path: PathBuf::from("/nowhere/a.pdf"), kind: Kind::Pdf, size: 1 };
+        let mut view = View::new(entry, 0, 1, vec![0]);
+        let (pdf, tell, asked) = Pdf::played();
+        view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
+        let page = pdf::Page { width: 600.0, height: 800.0 };
+        tell.send(pdf::Answer::Opened { pages: vec![page.clone(), page], outline: Vec::new(), title: None }).unwrap();
+        view.answers();
+        (view, tell, asked)
+    }
+
+    fn paper(view: &mut View) -> &mut Paper {
+        match &mut view.doc {
+            Doc::Pdf(paper) => paper,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_page_drawn_while_a_search_began_is_kept() {
+        let (mut view, tell, asked) = reading();
+        paper(&mut view).asked.insert(0, 800);
+        view.input(&key(Key::Char('/'), "/"));
+        view.input(&key(Key::Char('a'), "a"));
+        view.input(&key(Key::Enter, ""));
+        assert!(matches!(asked.try_recv(), Ok(Ask::Find { .. })));
+        // Drawn before the search was asked for, and come after it.
+        tell.send(pdf::Answer::Drawn { page: 0, width: 800, height: 1066, rgba: Vec::new() }).unwrap();
+        view.answers();
+        let paper = paper(&mut view);
+        assert!(paper.asked.is_empty(), "no longer waited for");
+        assert_eq!(paper.pending.len(), 1, "on its way to the GPU");
+    }
+
+    #[test]
+    fn what_was_found_for_words_since_changed_is_not_taken() {
+        let (mut view, tell, asked) = reading();
+        view.input(&key(Key::Char('/'), "/"));
+        view.input(&key(Key::Char('a'), "a"));
+        view.input(&key(Key::Enter, ""));
+        let Ok(Ask::Find { ticket, .. }) = asked.try_recv() else { panic!("a search") };
+        // The words changed while it was being found: its answer is for the old ones.
+        view.input(&key(Key::Char('b'), "b"));
+        assert!(!paper(&mut view).finding);
+        tell.send(pdf::Answer::Found { found: vec![pdf::Found { page: 1, rects: Vec::new() }], ticket }).unwrap();
+        view.answers();
+        assert!(paper(&mut view).found.is_empty());
+        // Asked again, for the words now there, it is taken.
+        view.input(&key(Key::Enter, ""));
+        let Ok(Ask::Find { ticket, text }) = asked.try_recv() else { panic!("a search") };
+        assert_eq!(text, "ab");
+        tell.send(pdf::Answer::Found { found: vec![pdf::Found { page: 1, rects: Vec::new() }], ticket }).unwrap();
+        view.answers();
+        assert_eq!(paper(&mut view).found.len(), 1);
     }
 
     #[test]
