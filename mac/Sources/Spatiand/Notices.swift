@@ -183,11 +183,20 @@ final class Notices {
     }
 
     /// The card in the room was pressed: press the banner, and bring what it opens into the room.
-    func pressed() {
+    /// `done` (on the main thread) is told whether the press opened an application.
+    ///
+    /// **Only a press that worked and brought another application forward brings anything in**:
+    /// a banner that has gone from the screen refuses the press, and whatever happened to be in
+    /// front was taken for what it opened -- its windows brought into the room, or shown to a
+    /// session.
+    func pressed(_ done: ((Bool) -> Void)? = nil) {
+        let before = NSWorkspace.shared.frontmostApplication?.processIdentifier
         queue.async { [self] in
-            guard let banner else { return }
-            AXUIElementPerformAction(banner, kAXPressAction as CFString)
-            after()
+            guard let banner, AXUIElementPerformAction(banner, kAXPressAction as CFString) == .success else {
+                DispatchQueue.main.async { done?(false) }
+                return
+            }
+            after(before, done)
         }
     }
 
@@ -195,12 +204,16 @@ final class Notices {
     /// Mac as a host shows its session that application's windows.
     var onOpened: ((String) -> Void)?
 
-    private func after() {
+    private func after(_ before: pid_t?, _ done: ((Bool) -> Void)?) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [self] in
-            if let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier, front != Bundle.main.bundleIdentifier {
-                if Room.shared.inGlasses { RoomWindows.shared.follow(bundle: front) }
-                onOpened?(front)
+            guard let front = NSWorkspace.shared.frontmostApplication, front.processIdentifier != before,
+                  let id = front.bundleIdentifier, id != Bundle.main.bundleIdentifier else {
+                done?(false)
+                return
             }
+            if Room.shared.inGlasses { RoomWindows.shared.follow(bundle: id) }
+            onOpened?(id)
+            done?(true)
         }
     }
 }

@@ -112,8 +112,8 @@ final class MacHost {
         // A banner the session pressed (`NoticePress`) opened an application: its windows are
         // the session's to see, as one it had started.
         Notices.shared.onOpened = { [weak self] bundle in
-            guard let self, self.attached, self.pressedNotice else { return }
-            self.pressedNotice = false
+            guard let self, self.attached, self.pressedNotice != nil else { return }
+            self.pressedNotice = nil
             print("host: the session pressed a notification; showing it the windows of \(bundle)")
             self.launched.insert(bundle)
             self.reconcile()
@@ -464,7 +464,7 @@ final class MacHost {
     }
 
     /// Whether the session has pressed a notification's card and what that opens is awaited.
-    private var pressedNotice = false
+    private var pressedNotice: UUID?
 
     /// Windows whose capture macOS refused, and when: not asked for again on their own until a
     /// while has passed, as the sound's (`soundFailed`).
@@ -728,8 +728,16 @@ final class MacHost {
             // banner is pressed, which opens what it came from, and that application's windows
             // are shown to the session (`Notices.onOpened`).
             print("host: the session pressed a notification's card")
-            pressedNotice = true
-            Notices.shared.pressed()
+            // Forgotten if the press opened nothing, and after 2 s whatever happened: a press of
+            // the room's own card later is not taken for the session's.
+            let press = UUID()
+            pressedNotice = press
+            Notices.shared.pressed { [weak self] opened in
+                if !opened, self?.pressedNotice == press { self?.pressedNotice = nil }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                if self?.pressedNotice == press { self?.pressedNotice = nil }
+            }
         case "Close":
             if let id = windowNumber(fields), let s = shared[id] {
                 // A screen is not closed, only no longer shown: and then on offer again.
