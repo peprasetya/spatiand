@@ -835,6 +835,8 @@ impl Shelf {
                     FromTab::Contents { place, items } => {
                         if tab.tree.arrived(&place, items) {
                             tab.refilter(hidden, sort, nested);
+                            // A name being typed over in an opened folder may have gone with it.
+                            listed.push(t);
                         }
                     }
                     // Changed from anywhere: listed again, the folder on show or one opened in it.
