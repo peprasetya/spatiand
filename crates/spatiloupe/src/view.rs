@@ -582,7 +582,17 @@ impl View {
     pub fn answers(&mut self) -> bool {
         let Doc::Pdf(paper) = &mut self.doc else { return false };
         let mut any = false;
-        while let Ok(answer) = paper.pdf.answers.try_recv() {
+        loop {
+            let answer = match paper.pdf.answers.try_recv() {
+                Ok(answer) => answer,
+                // Its thread has gone -- panicked in PDFium -- before the document was open: said,
+                // rather than waiting for ever.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) if paper.pages.is_empty() => {
+                    self.doc = Doc::Failed("This PDF would not open: SpatiLoupe failed reading it.".into());
+                    return true;
+                }
+                Err(_) => break,
+            };
             any = true;
             match answer {
                 pdf::Answer::Opened { pages, outline, title } => {

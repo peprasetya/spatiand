@@ -51,13 +51,46 @@ struct Ahead {
     result: Option<Result<picture::Picture, String>>,
 }
 
-type Job = Box<dyn FnOnce() -> Option<Done> + Send>;
+/// Something for a worker to do, and what to answer if it panics: a picture or an object that
+/// would not open says so, rather than its view waiting for ever.
+struct Job {
+    run: Box<dyn FnOnce() -> Option<Done> + Send>,
+    failed: Option<Box<dyn FnOnce(String) -> Done + Send>>,
+}
 
+impl Job {
+    fn new(run: impl FnOnce() -> Option<Done> + Send + 'static) -> Job {
+        Job { run: Box::new(run), failed: None }
+    }
+
+    fn or(mut self, failed: impl FnOnce(String) -> Done + Send + 'static) -> Job {
+        self.failed = Some(Box::new(failed));
+        self
+    }
+}
+
+/// What a panic said, in words.
+fn panic_words(panic: &(dyn std::any::Any + Send)) -> String {
+    let said = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned());
+    format!("SpatiLoupe failed reading it ({})", said.unwrap_or_else(|| "a panic".into()))
+}
+
+/// A thread doing jobs one after another. A job that panics -- a decoder's bug on a strange file
+/// -- is answered with what its job says, and the thread goes on to the next: one bad file does
+/// not leave every later one unread, without a word.
 fn worker(name: &str, done: Sender<Done>) -> Sender<Job> {
     let (jobs, queue) = channel::<Job>();
     let _ = std::thread::Builder::new().name(name.into()).spawn(move || {
-        for job in queue {
-            if let Some(answer) = job() {
+        for Job { run, failed } in queue {
+            let answer = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+                Ok(answer) => answer,
+                Err(panic) => {
+                    let words = panic_words(&*panic);
+                    log::error!("{words}");
+                    failed.map(|failed| failed(words))
+                }
+            };
+            if let Some(answer) = answer {
                 if done.send(answer).is_err() {
                     return;
                 }
@@ -156,7 +189,7 @@ impl Loupe {
         folder.cursor_on = cursor_on;
         self.folder = folder;
         let title = place::name(&path);
-        self.calls.send(Box::new(move || Some(Done::Listed { ticket, result: folder::list(&path) }))).ok();
+        self.calls.send(Job::new(move || Some(Done::Listed { ticket, result: folder::list(&path) })).or(move |e| Done::Listed { ticket, result: Err(e) })).ok();
         self.app.set_title(self.window, &format!("{title} \u{2014} SpatiLoupe"));
         self.dirty = true;
     }
@@ -196,11 +229,13 @@ impl Loupe {
                 // Still being read, and what it comes to is this view's: the ticket is the same.
                 Some(_) => {}
                 None => {
-                    self.calls.send(Box::new(move || still_wanted().then(|| Done::Picture { ticket, result: picture::read(&path, picture::LARGEST) }))).ok();
+                    let job = Job::new(move || still_wanted().then(|| Done::Picture { ticket, result: picture::read(&path, picture::LARGEST) }));
+                    self.calls.send(job.or(move |e| Done::Picture { ticket, result: Err(e) })).ok();
                 }
             },
             Kind::Model => {
-                self.calls.send(Box::new(move || still_wanted().then(|| Done::Model { ticket, result: model::Scene::read(&path) }))).ok();
+                let job = Job::new(move || still_wanted().then(|| Done::Model { ticket, result: model::Scene::read(&path) }));
+                self.calls.send(job.or(move |e| Done::Model { ticket, result: Err(e) })).ok();
             }
             Kind::Pdf => view.open_pdf(),
             Kind::Folder => return,
@@ -225,7 +260,8 @@ impl Loupe {
         let (current, ahead) = (self.current.clone(), self.ahead_ticket.clone());
         // Not begun if the carousel has turned for another by then; wanted still if it arrived.
         let wanted = move || current.load(Ordering::Relaxed) == ticket || ahead.load(Ordering::Relaxed) == ticket;
-        self.calls.send(Box::new(move || wanted().then(|| Done::Picture { ticket, result: picture::read(&path, picture::LARGEST) }))).ok();
+        let job = Job::new(move || wanted().then(|| Done::Picture { ticket, result: picture::read(&path, picture::LARGEST) }));
+        self.calls.send(job.or(move |e| Done::Picture { ticket, result: Err(e) })).ok();
         self.ahead = Some(Ahead { index, ticket, result: None });
     }
 
@@ -377,7 +413,8 @@ impl Loupe {
         };
         for (index, path, kind) in wanted {
             let ticket = self.folder.ticket;
-            self.pictures.send(Box::new(move || Some(Done::Tile { ticket, tile: tile_picture(&path, kind, index)? }))).ok();
+            // A tile that panics is left without its picture.
+            self.pictures.send(Job::new(move || Some(Done::Tile { ticket, tile: tile_picture(&path, kind, index)? }))).ok();
         }
         if let Some(view) = self.view.as_mut() {
             self.dirty |= view.tick();
@@ -516,6 +553,22 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_job_that_panics_is_answered_and_the_worker_goes_on() {
+        let (done, answers) = channel();
+        let jobs = worker("test", done);
+        jobs.send(Job::new(|| panic!("a decoder's bug")).or(|e| Done::Listed { ticket: 1, result: Err(e) })).unwrap();
+        jobs.send(Job::new(|| Some(Done::Listed { ticket: 2, result: Ok(Vec::new()) }))).unwrap();
+        let answer = |answers: &Receiver<Done>| match answers.recv_timeout(Duration::from_secs(5)).expect("an answer") {
+            Done::Listed { ticket, result } => (ticket, result.map(|r| r.len())),
+            _ => unreachable!(),
+        };
+        let (ticket, result) = answer(&answers);
+        assert_eq!(ticket, 1);
+        assert!(result.is_err_and(|e| e.contains("a decoder's bug")));
+        assert_eq!(answer(&answers), (2, Ok(0)));
+    }
 
     #[test]
     fn a_page_is_put_on_its_square_and_a_huge_one_is_not() {
