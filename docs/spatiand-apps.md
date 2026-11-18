@@ -877,7 +877,7 @@ Frames decoded this way equal software's bit for bit (HEVC 8 and 10 bit, VP9, H.
 from GL). **Not checked**: anything in the glasses; SpatiReel itself in either room (the
 examples draw and read back as it does, with no window); deepmagpie's VCN 5 with HEVC again (it
 is the machine everything runs on); a raw stream with no times plays as fast as it decodes, in
-software as well (a separate fault); ten-bit through the Beam Pro's reader; MPEG-2 and MPEG-4
+software as well (a separate fault, fixed on 2026-11-18, below); ten-bit through the Beam Pro's reader; MPEG-2 and MPEG-4
 Part 2 through MediaCodec.
 
 ## 2026-11-18: a raw stream plays at its own pace

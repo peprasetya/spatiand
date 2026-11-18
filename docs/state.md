@@ -5,7 +5,50 @@ commit messages carry the reasoning, and `git log` is the place to look for *why
 the way it is. The unfinished side is deliberately detailed, because that is where the next
 session starts and the thinking behind it is otherwise lost.
 
-Last updated after the sidecar landed.
+Last updated 2026-11-18 (the section below; the rest is as of the sidecar).
+
+---
+
+## 2026-11-17 and 11-18: what changed, and what was not run on hardware
+
+About two hundred and thirty commits in two days. **Almost all were verified by tests and by
+headless snapshot rooms only.** On-device evidence exists for three things: the Mac's hardware video
+decoding in SpatiMesh on Chromium 157 (measured on littleotter, docs/spatimesh-mac-port.md); what
+the owner confirmed himself (the steadiness "much better", SpatiKey's entries opening, the host
+list fixed); and the Mac's start-up crash, seen once and not again. Where a commit says "not run",
+the doc of its area says so, and that holds here.
+
+| Area | What changed | Not run on real hardware |
+|---|---|---|
+| Steadiness (all three) | The held view, the press that goes down where the pointer rested, `steadiness` in `prefs.toml`; `SPATIAND_STEADY` now sets the press look-back and the row as well as the view; one NaN head sample no longer leaves the view NaN | Measured on a recording and in tests; the owner: "much better" |
+| The pose channel in the SDK | `App::ask_poses`, `pose`, `set_frame_pose` (docs/spatiand-apps.md) | Headless room with a turning head, and the Mac's shared-memory tests; not in the glasses, not on the Beam Pro or Mac rooms (only built there) |
+| Beam Pro: frames | Spatiand's own apps hand frames as hardware buffers, without a copy | Compiled (`cargo ndk check`); the commit records no run on a phone (it was off the network) |
+| Beam Pro: other | Waiting screen from the Deck's code; the monitors' network feed removed | The Java of the feed's removal not compiled; the screen not seen |
+| Mac | A locked Mac used from nowhere; notification setting, press and reminder; recording's microphone gate; ten-bit VideoToolbox on the GPU; Bluetooth, launcher and catalogue off the main thread; menus; the room not listing itself | Built on littleotter; **not run** against a lock, a muted banner, a Bluetooth device or a re-attaching session. The Mac's last install was at 17:08 on 2026-11-18, then it was switched off: **it needs a build for the commits after it** |
+| Hosts and rooms | The room never lists itself, a re-paired host replaces its entry; hosts' notifications; menu list closing; a `.spatiapp` confined to its folder | Tests and rigs, not between two real machines (the host list: the owner confirmed it fixed) |
+| SpatiKey | Entries over the socket; rekey on removing a holder; the editor, the recovery code, the window keeping up; holders on Mac and Android | Soft-service rigs and tests; **no real Touch ID or BiometricPrompt, no device with a sensor but the Mac**; the owner: entries open |
+| Assistant | Never sees SpatiKey's or a locked profile's windows; a terminal's dictation is told where it is | Tested in the snapshot room |
+| Clipboard | A password copied on the phone or Mac stays there; one copied in the room is put on them marked secret | Tests; not seen in a password manager or Android's preview |
+| Recording | Finished on leaving, on failure and when the glasses' window goes; sound placed where it began | Tests; the Beam Pro and Mac not run |
+| Video (SpatiReel) | Raw streams at their own pace, deinterlacing, episodes chained, subtitles, upright and non-square films, non-UTF-8 names | Tests, snapshot room, the Deck's VA-API in test processes; MediaCodec and VideoToolbox with a raw stream not run |
+| Apps (Loupe, Quill, Shelf, Pal) | The review's fixes; non-UTF-8 names; look-and-feel rules and the SDK's new widgets | Tests and snapshots; the look-and-feel rows say what was seen |
+| Removed | The Rust SpatiMesh and WPE (earlier), `mse.rs` and what only its pages used, `sp_pointer_speed`, `sp_key_evdev`, press-twice-to-delete in SpatiPal and SpatiReel, SpatiKey's own Confirm | |
+
+**Open, and not hidden:**
+
+* The Mac's start-up race (ANGLE's allocator shim taking over `malloc` while AppKit makes the
+  glasses' window) is worked round by loading ANGLE early; the proper cure is an ANGLE built
+  without the shim (docs/mac.md).
+* Deinterlacing of MediaCodec and VideoToolbox frames is a shader blend, a workaround; the proper
+  one is FFmpeg with Metal on the Mac. VA-API and software use FFmpeg's own filters.
+* A protocol flag marking a window secret is wanted: today the assistant is kept from SpatiKey's
+  and the profile locks' windows by their application ids and titles, and **can still click and
+  type into a secret window**.
+* **A locked Mac still receives clipboard sync**, though it takes nothing else from a session.
+* SpatiKey's holders are not signed: a removed device that is still linked for sync can bury
+  entries (docs/spatikey.md).
+* Raw AV1 (`.obu`) cannot be seeked.
+* What waits for the next Chromium build: `third_party/chromium/patches/README.md` lists them.
 
 ---
 
