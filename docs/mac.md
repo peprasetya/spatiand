@@ -250,6 +250,52 @@ Pro it is a host like the Linux one, with these differences, which are a Mac's:
   them through Accessibility with a `RoomMenus` of its own, the window brought forward first so
   that what is chosen is done to it.
 
+## 2026-11-18: what the Mac does now, and what has not run
+
+Written in `crates/spatiand-mac` and `mac/Sources`, built on littleotter (its last install was at
+17:08 on 2026-11-18; the Mac was then switched off, so **the commits after it are not in the
+installed app**). None was run against the thing it concerns (a locked screen, a muted banner, a
+Bluetooth device, a re-attaching session); each is as far as a build and, where there is one, a
+test.
+
+* **A locked Mac is used from nowhere** (25e2e6b). As a host it takes no key, pointer, menu,
+  launch, close, resize, bringing forward or notification press from a session, answering
+  `Held(Locked)`; locking pauses every shared window, so no picture and no sound of its windows is
+  sent, and unlocking asks each for a key picture. Before, only new windows were held back.
+  **Still open:** the clipboard sync goes on while it is locked.
+* **Notifications.** "Show this Mac's notifications" off means no banner is read, none is shown
+  under the clock and none is said to a session this Mac hosts, and takes effect at once
+  (6f44f67). A press on a card whose banner has gone brings nothing in: it acts only if the banner's
+  press succeeded and another application is in front 0.8 s later (8bb4a23). The one-time
+  reminder about macOS's "Allow notifications when mirroring or sharing the display" switch
+  (06618f1, 6d2d34d: reads only the log since its last look, backs off, Return is Not Now) is a
+  card in the room while the glasses are in use and an alert on the Mac's screen otherwise, never
+  once declined (c2b7e49; the Settings window has "Remind me about this"). **Not seen:** no banner
+  was muted in a test room, so neither the card nor its press has run.
+* **Recording** does not open the microphone before it is allowed in Spatiand's menu: its
+  Microphone track is silence until then (9f87afe; not built on the Mac when written).
+* **Ten-bit films stay on the GPU**: a P010 picture from VideoToolbox is `Pixels::VideoToolbox10`,
+  its planes taken from the IOSurface as sixteen-bit textures (707b952); `SPATIAND_MEDIA_COPY`
+  brings them down to compare. Hardware decoding in SpatiMesh on Chromium 157 was checked
+  (docs/spatimesh-mac-port.md).
+* **Off the main thread.** The Bluetooth page's disconnect no longer holds the room's pointer and
+  keys, a connect given up on after 15 s is called off and each action is numbered, so a late
+  answer is not taken for the next one's (87dbdd6; **unverified:** that `closeConnection` calls
+  off a page still under way, which IOBluetooth does not say). The launcher is listed again on a
+  queue of its own, an icon is made again when its application is newer, `~/Applications` made
+  after the start is watched (efe20dc). A session that attaches while the catalogue is being listed
+  is sent it when the listing ends (4d98dbb).
+* **A host's menu list** closes when the window it was opened from closes, and a second press
+  before the next level has come is passed over (2c61215, 85c844f; levels are numbered, an older
+  peer still works).
+* **The room never lists its own machine** among the computers (1793c8d): on the Mac the room and
+  the host are one identity, and the paired list had come to name the Mac itself, dialled it every
+  second and been refused. A host paired again under another name or address replaces its entry.
+* **SpatiKey's lasting touch** is let go when the Mac locks, sleeps or changes user (9f782e1).
+* **Open:** the start-up race with ANGLE's allocator shim is worked round by loading it early;
+  the proper cure is an ANGLE built without the shim. `sp_pointer_speed` and `sp_key_evdev`,
+  which the app no longer called, are gone from the library (9bca750).
+
 ## Tests that need no glasses
 
 All are modes of the app itself; what they print is in `~/Library/Logs/Spatiand/spatiand.log`
