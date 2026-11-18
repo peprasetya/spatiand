@@ -19,7 +19,7 @@ use spatiand_app::glow::{self, HasContext};
 use spatiand_app::ui::{draw_icon, look, theme, Button, Color, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
 
-use crate::folder::{size_words, Entry, Kind};
+use crate::folder::{Entry, Kind};
 use crate::model::{self, Eye, Orbit, Renderer};
 use crate::pdf::{self, Ask, Pdf};
 use crate::picture::Picture;
@@ -1042,7 +1042,7 @@ impl View {
             }
             _ => {}
         }
-        detail.push(size_words(self.entry.size));
+        detail.push(look::size(self.entry.size));
         (name, detail.join("   \u{b7}   "))
     }
 
@@ -1148,7 +1148,7 @@ impl View {
         if let Some(folder) = crate::place::parent(&self.entry.path) {
             rows.push(("Folder".to_string(), folder.display().to_string()));
         }
-        rows.push(("Size".to_string(), size_words(self.entry.size)));
+        rows.push(("Size".to_string(), look::size(self.entry.size)));
         match &self.doc {
             Doc::Picture(shown) => {
                 let (w, h) = shown.picture.original;

@@ -409,16 +409,11 @@ pub fn span(secs: u64) -> String {
     }
 }
 
-/// A day, as the wearer's clock has it: "29 Oct 2026".
+/// When, given in milliseconds, as the wearer's clock has it and every app says it:
+/// "Today 14:47", "29 Oct", "29 Oct 2025" (`look::when`).
 pub fn date(ms: u64) -> String {
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let secs = (ms / 1000) as libc::time_t;
-    // SAFETY: localtime_r writes only into `tm`, and both live through the call.
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    if unsafe { libc::localtime_r(&secs, &mut tm) }.is_null() {
-        return String::new();
-    }
-    format!("{} {} {}", tm.tm_mday, MONTHS[tm.tm_mon.clamp(0, 11) as usize], tm.tm_year + 1900)
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    look::when(Some(look::local((ms / 1000) as i64)), look::local(now))
 }
 
 /// A button that has the keys from the start: a screen's one thing to do.

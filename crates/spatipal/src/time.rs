@@ -57,15 +57,11 @@ pub fn spoken(epoch: u64) -> String {
     }
 }
 
-/// A moment, as short as a list has room for: "22:33" today, "28/10" before.
+/// A moment in a list, as every app says it: "Today 22:33", "28 Oct", "28 Oct 2025"
+/// (`look::when`).
 pub fn short(epoch: u64) -> String {
-    let now = local(crate::store::now());
-    let then = local(epoch);
-    if (then.tm_year, then.tm_yday) == (now.tm_year, now.tm_yday) {
-        format!("{:02}:{:02}", then.tm_hour, then.tm_min)
-    } else {
-        format!("{}/{}", then.tm_mday, then.tm_mon + 1)
-    }
+    use spatiand_app::ui::look;
+    look::when(Some(look::local(epoch as i64)), look::local(crate::store::now() as i64))
 }
 
 /// A time the model wrote, as a moment: `20:00` (today, or tomorrow when that has passed),

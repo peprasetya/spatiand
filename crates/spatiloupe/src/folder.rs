@@ -120,30 +120,13 @@ pub fn natural(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-pub fn size_words(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} bytes")
-    } else if value < 10.0 {
-        format!("{value:.1} {}", UNITS[unit])
-    } else {
-        format!("{value:.0} {}", UNITS[unit])
-    }
-}
-
 /// An entry's tile before its picture has come: its name, what it is, and how big.
 fn tile_of(e: &Entry) -> Tile {
     let (icon, tint, detail) = match e.kind {
         Kind::Folder => (Some(Icon::Folder), Some(([0.20, 0.55, 0.62, 0.40], [0.10, 0.22, 0.32, 0.25])), None),
-        Kind::Model => (Some(Icon::Cube), Some(([0.45, 0.36, 0.85, 0.45], [0.18, 0.14, 0.40, 0.25])), Some(format!("3D object  \u{b7}  {}", size_words(e.size)))),
-        Kind::Pdf => (Some(Icon::Document), None, Some(format!("PDF  \u{b7}  {}", size_words(e.size)))),
-        Kind::Picture => (Some(Icon::Picture), None, Some(size_words(e.size))),
+        Kind::Model => (Some(Icon::Cube), Some(([0.45, 0.36, 0.85, 0.45], [0.18, 0.14, 0.40, 0.25])), Some(format!("3D object  \u{b7}  {}", look::size(e.size)))),
+        Kind::Pdf => (Some(Icon::Document), None, Some(format!("PDF  \u{b7}  {}", look::size(e.size)))),
+        Kind::Picture => (Some(Icon::Picture), None, Some(look::size(e.size))),
     };
     Tile { title: e.name.clone(), detail, icon, tint, ..Tile::default() }
 }
@@ -552,8 +535,5 @@ mod tests {
 
     #[test]
     fn sizes_read_as_a_person_says_them() {
-        assert_eq!(size_words(512), "512 bytes");
-        assert_eq!(size_words(1_400_000), "1.4 MB");
-        assert_eq!(size_words(23_000_000_000), "23 GB");
     }
 }

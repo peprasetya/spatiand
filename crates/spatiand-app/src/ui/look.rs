@@ -251,6 +251,59 @@ pub fn chip(p: &mut Painter, gl: &Gl, x: f32, y: f32, text: &str, color: Color) 
     rect.w
 }
 
+/// A short form of a size: "812 bytes", "1.2 MB", "34 GB".
+pub fn size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["bytes", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    match unit {
+        0 => format!("{bytes} bytes"),
+        _ if value < 10.0 => format!("{value:.1} {}", UNITS[unit]),
+        _ => format!("{value:.0} {}", UNITS[unit]),
+    }
+}
+
+/// A moment moved to this machine's own clock: what [`when`] is to be given, which reads its
+/// seconds as the hours of a day (given as they are, the hours were Greenwich's: "Today 09:52"
+/// for a file made at 16:52 in Jakarta).
+pub fn local(seconds: i64) -> i64 {
+    let t = seconds as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return seconds;
+    }
+    seconds + tm.tm_gmtoff as i64
+}
+
+/// When, as a person says it: the time today ("Today 14:47"), the day within the last 300
+/// days ("4 Oct"), the date otherwise ("4 Oct 2025"). Both `seconds` and `now` are [`local`].
+pub fn when(seconds: Option<i64>, now: i64) -> String {
+    let Some(at) = seconds else { return String::new() };
+    let (days, secs) = (at.div_euclid(86400), at.rem_euclid(86400));
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + (m <= 2) as i64;
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month = MONTHS[(m - 1).clamp(0, 11) as usize];
+    if now.div_euclid(86400) == days {
+        format!("Today {:02}:{:02}", secs / 3600, secs % 3600 / 60)
+    } else if now - at < 300 * 86400 {
+        format!("{d} {month}")
+    } else {
+        format!("{d} {month} {y}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +317,21 @@ mod tests {
         assert_eq!(shape("[O] Contents  [PgUp] [PgDn] Turn pages"), vec![vec!["[O]", "Contents"], vec!["[PgUp]", "[PgDn]", "Turn pages"]]);
         assert_eq!(shape("Drag to turn it"), vec![vec!["Drag to turn it"]]);
         assert_eq!(shape("Drag  Turn  [Space] Stop"), vec![vec!["Drag"], vec!["Turn"], vec!["[Space]", "Stop"]]);
+    }
+
+    #[test]
+    fn dates_read_as_a_person_says_them() {
+        let now = 1791989283; // 14 Oct 2026, 14:48
+        assert_eq!(when(Some(now - 60), now), "Today 14:47");
+        assert_eq!(when(Some(now - 10 * 86400), now), "4 Oct");
+        assert_eq!(when(Some(0), now), "1 Jan 1970");
+        assert_eq!(when(None, now), "");
+    }
+
+    #[test]
+    fn sizes_read_short() {
+        assert_eq!(size(512), "512 bytes");
+        assert_eq!(size(1_400_000), "1.4 MB");
+        assert_eq!(size(23_000_000_000), "23 GB");
     }
 }

@@ -1184,7 +1184,7 @@ impl Shelf {
             return;
         }
         let items = if count == 1 { "the 1 item".to_string() } else { format!("all {count} items") };
-        let text = format!("Empty the Trash? {} in it ({}) will be deleted for good. This cannot be undone.", capitalised(&items), look::size(size));
+        let text = format!("Empty the Trash? {} in it ({}) will be deleted for good. This cannot be undone.", capitalised(&items), room::size(size));
         self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::EmptyTrash };
     }
 
@@ -2150,7 +2150,7 @@ impl Shelf {
                     let detail = match &item.trashed {
                         Some(t) => format!("from {}", origin_folder(t)),
                         None if item.kind == Kind::Folder => String::new(),
-                        None => look::size(item.size),
+                        None => room::size(item.size),
                     };
                     p.label(gl, &detail, Rect { y: name.bottom(), h: 24.0, ..name }, theme::FOOTER_EM * 0.8, theme::ink_hint(), 0.5);
                 }
@@ -2198,9 +2198,9 @@ impl Shelf {
                     }
                     // A folder in the trash is counted whole, as what emptying it frees.
                     if item.kind != Kind::Folder || item.trashed.is_some() {
-                        p.label(gl, &look::size(item.size), cols[2], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
+                        p.label(gl, &room::size(item.size), cols[2], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
                     }
-                    p.label(gl, &look::when(item.modified.map(look::local), look::local(now)), cols[3], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
+                    p.label(gl, &room::when(item.modified.map(room::local), room::local(now)), cols[3], theme::DETAIL_EM * 0.9, theme::ink_detail(), 1.0);
                 }
             }
         }
@@ -2230,7 +2230,7 @@ impl Shelf {
             if *total > 0 {
                 p.fill(gl, Rect { w: bar.w * (*done as f32 / *total as f32).min(1.0), ..bar }, 4.0, room::TEAL);
             }
-            let words = if *total > 0 { format!("{what}  {} of {}", look::size(*done), look::size(*total)) } else { what.clone() };
+            let words = if *total > 0 { format!("{what}  {} of {}", room::size(*done), room::size(*total)) } else { what.clone() };
             look::status(p, gl, Rect { w: foot.w - 380.0, ..foot }, &words, false);
             return;
         }
@@ -2251,10 +2251,10 @@ impl Shelf {
         let mut words = if count == 1 { "1 item".to_string() } else { format!("{count} items") };
         if !tab.selected.is_empty() {
             let size: u64 = tab.selected.iter().filter_map(|&i| tab.items.get(i)).filter(|i| i.kind != Kind::Folder).map(|i| i.size).sum();
-            words += &format!(", {} chosen ({})", tab.selected.len(), look::size(size));
+            words += &format!(", {} chosen ({})", tab.selected.len(), room::size(size));
         }
         if let Some(free) = tab.free {
-            words += &format!("    {} free", look::size(free));
+            words += &format!("    {} free", room::size(free));
         }
         if let Place::Remote(r, _) = &tab.place {
             let kind = self.remotes.iter().find(|x| x.name == *r).map(|x| kind_word(&x.kind)).unwrap_or_default();
