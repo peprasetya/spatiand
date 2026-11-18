@@ -104,7 +104,7 @@ impl Kind {
         let ending = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
         match ending.as_str() {
             "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "heic" | "heif" | "avif" | "jp2" | "svg" | "mpo" | "jps" | "ico" | "jxl" | "raw" | "dng" | "cr2" | "nef" | "arw" => Kind::Picture,
-            "mp4" | "m4v" | "mkv" | "webm" | "mov" | "avi" | "ts" | "m2ts" | "mts" | "mpg" | "mpeg" | "wmv" | "flv" | "ogv" | "3gp" | "vob" | "strm" => Kind::Film,
+            "mp4" | "m4v" | "mkv" | "webm" | "mov" | "avi" | "ts" | "m2ts" | "mts" | "mpg" | "mpeg" | "wmv" | "flv" | "ogv" | "3gp" | "vob" | "h264" | "264" | "h265" | "265" | "hevc" | "m2v" | "ivf" | "obu" | "strm" => Kind::Film,
             "mp3" | "flac" | "m4a" | "aac" | "ogg" | "opus" | "wav" | "aiff" | "aif" | "wma" | "alac" => Kind::Music,
             "pdf" => Kind::Pdf,
             "glb" | "gltf" | "vrm" | "obj" | "stl" | "fbx" | "usdz" => Kind::Model,

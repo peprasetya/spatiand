@@ -20,7 +20,7 @@ pub struct Entry {
 
 /// What FFmpeg will play that is a film rather than a song or a picture, by how it is named.
 const FILMS: &[&str] = &[
-    "mp4", "m4v", "mkv", "webm", "mov", "avi", "ts", "m2ts", "mts", "mpg", "mpeg", "wmv", "flv", "ogv", "3gp", "vob", "strm",
+    "mp4", "m4v", "mkv", "webm", "mov", "avi", "ts", "m2ts", "mts", "mpg", "mpeg", "wmv", "flv", "ogv", "3gp", "vob", "h264", "264", "h265", "265", "hevc", "m2v", "ivf", "obu", "strm",
     // Pictures with no container round them, as a camera or an encoder leaves them: played at
     // the rate the stream states (`spatiand_media::timing`).
     "h264", "264", "h265", "265", "hevc", "m2v", "ivf",
