@@ -397,7 +397,7 @@ impl Playing {
         let info = self.player.info();
         let mut said = format!("{}, at {}.", self.name, times(self.player.position(), info.duration, info.duration_guessed));
         if let (true, Some(next)) = (self.offered(), self.next.as_ref()) {
-            said.push_str(&format!(" Next Episode is offered: {next}. N or the Next Episode button plays it."));
+            said.push_str(&format!(" Next episode is offered: {next}. N or the Next episode button plays it."));
         }
         said
     }
@@ -742,7 +742,7 @@ impl Playing {
         self.panel = panel;
         if !alone {
             // A shade behind the controls, so they can be read over a bright scene.
-            p.fill(gl, panel, 0.0, [0.02, 0.025, 0.04, 0.78]);
+            p.fill(gl, panel, 0.0, { let mut g = theme::ground(); g[3] = 0.78; g });
         }
         panel = panel.inset(theme::PAD * 0.6);
         let mut top = panel.take_top(theme::ROW_EM * 1.5);
@@ -776,8 +776,8 @@ impl Playing {
         // At the right end: Next Episode while it is offered, and the library.
         let mut right = row.right();
         if offered {
-            let width = Button::icon_width(p, gl, "Next Episode");
-            self.next_button.draw_icon(p, gl, Rect { x: right - width, w: width, ..row }, Icon::Forward, "Next Episode");
+            let width = Button::icon_width(p, gl, "Next episode");
+            self.next_button.draw_icon(p, gl, Rect { x: right - width, w: width, ..row }, Icon::Forward, "Next episode");
             right -= width + 10.0;
         }
         let width = Button::icon_width(p, gl, "Library");
