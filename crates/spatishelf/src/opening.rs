@@ -69,6 +69,9 @@ impl Opening {
     }
 }
 
+/// How many things are opened at once without asking first.
+const OPEN_WITHOUT_ASKING: usize = 10;
+
 /// Where a remote's file is fetched to for an application that takes only files.
 fn fetched_into(place: &Place) -> PathBuf {
     let mut dir = openwith::cache_dir().join("opened");
@@ -140,8 +143,20 @@ impl Shelf {
         found
     }
 
-    /// Open these with that.
+    /// Open these with that -- after asking, when they are more than a few: each may be a
+    /// window, and a program, of its own.
     pub(crate) fn open_with(&mut self, choice: Choice, places: Vec<Place>) {
+        if places.len() > OPEN_WITHOUT_ASKING {
+            let name = self.opening.name_of(&choice);
+            let text = format!("Open {} items with {name}? Each may open in a window of its own.", places.len());
+            self.overlay = crate::Overlay::Confirm { confirm: spatiand_app::ui::Confirm::new(text, "Open", "Cancel"), action: Action::OpenMany(choice, places) };
+            return;
+        }
+        self.open_now(choice, places);
+    }
+
+    /// Open these with that, now.
+    pub(crate) fn open_now(&mut self, choice: Choice, places: Vec<Place>) {
         let name = self.opening.name_of(&choice);
         let what = if places.len() == 1 { places[0].name() } else { format!("{} items", places.len()) };
         let result = match &choice {

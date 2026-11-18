@@ -427,6 +427,8 @@ enum Action {
     Open,
     /// What is chosen opened with this application.
     OpenWith(openwith::Choice),
+    /// Many things opened with this application, as asked (see `open_with`).
+    OpenMany(openwith::Choice, Vec<Place>),
     /// The applications that open the thing at the cursor, as a menu ("Open with").
     OpenWithMenu,
     /// Every application, for a choice of any ("Other...").
@@ -574,7 +576,12 @@ fn detached(mut command: Command) -> Result<(), String> {
     command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     use std::os::unix::process::CommandExt;
     command.process_group(0);
-    command.spawn().map(|_| ()).map_err(|e| e.to_string())
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    // Waited for when it ends, so that it is not left a zombie for as long as SpatiShelf runs.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 impl Shelf {
@@ -912,6 +919,7 @@ impl Shelf {
         match action {
             Action::Open => self.open(None),
             Action::OpenWith(choice) => self.chose_app(choice),
+            Action::OpenMany(..) => {}
             Action::OpenWithMenu => {
                 let at = self.menu_at;
                 self.open_with_menu(at);
@@ -1137,6 +1145,7 @@ impl Shelf {
                 self.tab().tell(&ToTab::Do { id, op: Op::EmptyTrash });
             }
             Action::CloseTab(at) => self.close_tab(at),
+            Action::OpenMany(choice, places) => self.open_now(choice, places),
             Action::Quit => self.quitting = true,
             Action::Forget(name) => {
                 if let Some(storage) = self.storage.clone() {
