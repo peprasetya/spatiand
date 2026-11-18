@@ -56,7 +56,8 @@ pub fn describe(master: i32, shell: i32) -> String {
     let name = name_of(front).unwrap_or_default();
     let name = name.trim_start_matches('-').to_string();
     if !name.is_empty() && !SHELLS.contains(&name.as_str()) {
-        return name;
+        // tmux names its client "tmux: client (/tmp/...)": the tab is named tmux.
+        return known(&name, NOT_ASKED_FOR).unwrap_or(&name).to_string();
     }
     // The shell is in front: where it is. Its own folder, which `login` does not share.
     let folder = folder_of(front).or_else(|| folder_of(shell));
@@ -99,6 +100,14 @@ fn children(pid: i32) -> Vec<i32> {
 /// helper.
 const NOT_ASKED_FOR: &[&str] = &["tmux", "screen", "gitstatusd"];
 
+/// Which of `names` a process's name is: the name itself, or one it starts with and goes on
+/// from after something that is not a letter or digit -- tmux's client calls itself "tmux:
+/// client (/tmp/...)", and the kernel's 15 bytes make gitstatusd-linux-x86_64
+/// "gitstatusd-linu".
+fn known<'a>(name: &str, names: &[&'a str]) -> Option<&'a str> {
+    names.iter().copied().find(|n| name.strip_prefix(n).is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric())))
+}
+
 /// The programs running in a tab beyond its idle shell, by name -- what closing the tab
 /// would end. `tab` is the tab's own process (`spatiquill --tab`), whose child is the shell,
 /// or on a Mac `login` and the shell under it. Empty when the shell waits at its prompt.
@@ -119,7 +128,7 @@ pub fn running(tab: i32) -> Vec<String> {
         }
         for child in children(shell) {
             let name = name_of(child).unwrap_or_default();
-            if !name.is_empty() && !NOT_ASKED_FOR.contains(&name.as_str()) {
+            if !name.is_empty() && known(&name, NOT_ASKED_FOR).is_none() {
                 names.push(name);
             }
         }
@@ -167,6 +176,18 @@ mod tests {
         assert_eq!(under, vec!["sleep".to_string()]);
         let _ = busy.kill();
         let _ = busy.wait();
+    }
+
+    #[test]
+    fn helpers_are_known_by_the_names_they_take() {
+        assert_eq!(known("tmux", NOT_ASKED_FOR), Some("tmux"));
+        assert_eq!(known("tmux: client (/", NOT_ASKED_FOR), Some("tmux"));
+        assert_eq!(known("gitstatusd-linu", NOT_ASKED_FOR), Some("gitstatusd"));
+        assert_eq!(known("screen", NOT_ASKED_FOR), Some("screen"));
+        // Another program whose name starts the same is another program.
+        assert_eq!(known("tmuxinator", NOT_ASKED_FOR), None);
+        assert_eq!(known("screenfetch", NOT_ASKED_FOR), None);
+        assert_eq!(known("vim", NOT_ASKED_FOR), None);
     }
 
     #[test]
