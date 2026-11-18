@@ -138,6 +138,16 @@ impl Chat {
         write(&folder().join("chats").join(format!("{}.json", self.id)), &serde_json::to_string(self).map_err(|e| e.to_string())?)
     }
 
+    /// The chat as its file has it now: another machine may have gone on in it.
+    pub fn load(id: &str) -> Option<Chat> {
+        std::fs::read(folder().join("chats").join(format!("{id}.json"))).ok().and_then(|b| serde_json::from_slice(&b).ok())
+    }
+
+    /// Whether `other` (the file's) is newer than this: more said in it, or changed later.
+    pub fn older_than(&self, other: &Chat) -> bool {
+        other.said.len() > self.said.len() || other.updated > self.updated
+    }
+
     pub fn forget(&self) {
         let _ = std::fs::remove_file(folder().join("chats").join(format!("{}.json", self.id)));
     }
@@ -180,6 +190,20 @@ pub fn save_reminders(all: &[Reminder]) -> Result<(), String> {
     // Long said, long gone: kept a week for "what did you remind me of".
     let keep: Vec<&Reminder> = all.iter().filter(|r| !r.done || r.due + 7 * 86_400 > now()).collect();
     write(&folder().join("reminders.json"), &serde_json::to_string_pretty(&keep).map_err(|e| e.to_string())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chat_gone_on_with_elsewhere_is_newer() {
+        let said = |n: usize| (0..n).map(|_| Said::default()).collect::<Vec<_>>();
+        let here = Chat { id: "x".into(), said: said(2), updated: 100, ..Default::default() };
+        assert!(here.older_than(&Chat { said: said(4), updated: 90, ..here.clone() }));
+        assert!(here.older_than(&Chat { updated: 101, ..here.clone() }));
+        assert!(!here.older_than(&here.clone()));
+    }
 }
 
 /// The characters there are: the built-in robot, and the wearer's own figures (`.vrm`, `.glb`)

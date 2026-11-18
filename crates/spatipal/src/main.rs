@@ -337,6 +337,12 @@ impl Pal {
         }
         let i = self.chat_for_turn();
         let chat_id = self.chats[i].id.clone();
+        // Gone on with on another machine meanwhile (the folder is synchronised): that is the
+        // chat, not what this one remembers of it, which would be saved over it.
+        if let Some(disk) = Chat::load(&chat_id).filter(|disk| self.chats[i].older_than(disk)) {
+            log::info!("chat {chat_id} changed elsewhere: taken as its file has it");
+            self.chats[i] = disk;
+        }
         let history = self.chats[i].said.clone();
         let chat = &mut self.chats[i];
         chat.said.push(Said { role: "user".into(), text: text.clone(), at: store::now(), ..Default::default() });
