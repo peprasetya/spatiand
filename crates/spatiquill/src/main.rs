@@ -38,6 +38,8 @@ use wire::{FromTab, Gather, Screen, ToTab};
 const WINDOW: (u32, u32) = (1280, 820);
 const BAR: f32 = TabBar::HEIGHT;
 const MARGIN: f32 = 18.0;
+/// How long a press held still on the text opens the menu (as `spatishelf`'s does).
+const HOLD_FOR_MENU: Duration = Duration::from_millis(800);
 const TEXT_PX: f32 = 24.0;
 
 enum TabState {
@@ -68,16 +70,16 @@ impl Tab {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let exe = PathBuf::from("/proc/self/exe");
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        let exe = std::env::current_exe().map_err(|e| format!("a tab would not start: {e}"))?;
+        let exe = std::env::current_exe().map_err(|e| format!("A tab would not start: {e}."))?;
         let mut command = Command::new(exe);
         // Where its shell starts: a folder SpatiShelf opened it in, or home.
         match folder.filter(|f| f.is_dir()) {
             Some(folder) => command.env("SPATIQUILL_FOLDER", folder),
             None => command.env_remove("SPATIQUILL_FOLDER"),
         };
-        let mut child = command.arg("--tab").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|e| format!("a tab would not start: {e}"))?;
-        let stdin = child.stdin.take().ok_or("no way to talk to the tab")?;
-        let stdout = child.stdout.take().ok_or("no way to hear the tab")?;
+        let mut child = command.arg("--tab").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().map_err(|e| format!("A tab would not start: {e}."))?;
+        let stdin = child.stdin.take().ok_or("No way to talk to the tab.")?;
+        let stdout = child.stdout.take().ok_or("No way to hear the tab.")?;
         unsafe {
             let fd = stdout.as_raw_fd();
             libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK);
@@ -143,6 +145,9 @@ struct Win {
     /// The tabs along the top; dragging one along it and tearing it off are this app's.
     bar: TabBar,
     last_click: Option<(Instant, (u16, u16))>,
+    /// A press on the text that has not moved: when and where. Held for `HOLD_FOR_MENU`, it
+    /// opens the menu there, as the right button does (a head pointer has no right button).
+    held: Option<(Instant, (f32, f32))>,
     menu: Option<Menu>,
     /// A question over the window, and what a yes to it does: closing what has programs
     /// running in it asks first, as Terminal on a Mac does.
@@ -266,6 +271,7 @@ impl Quill {
             placed: Vec::new(),
             bar: TabBar::default(),
             last_click: None,
+            held: None,
             menu: None,
             asking: None,
             focus_told: None,
@@ -369,7 +375,7 @@ impl Quill {
         };
         log::info!("asking before {closing:?}: {names} running");
         self.wins[w].menu = None;
-        self.wins[w].asking = Some((Confirm::new(text, yes, "Cancel"), closing, running));
+        self.wins[w].asking = Some((Confirm::careful(text, yes, "Cancel"), closing, running));
         true
     }
 
@@ -691,6 +697,11 @@ impl Quill {
         }
         let win = &mut self.wins[w];
         win.pointer = (x, y);
+        if let Some((_, from)) = win.held {
+            if (x - from.0).powi(2) + (y - from.1).powi(2) > ui::DRAG_AFTER * ui::DRAG_AFTER {
+                win.held = None;
+            }
+        }
         win.bar.input(&Input::Pointer { x, y });
         if let Some(drag) = win.drag.as_mut() {
             drag.at = (x, y);
@@ -796,6 +807,8 @@ impl Quill {
                     let Some(cell) = self.cell_at(w, x, y) else { return };
                     self.wins[w].pressed_in_text = true;
                     let mouse = self.tabs.get(&tab).is_some_and(|t| t.screen.mouse);
+                    // Not where the program has the mouse: the press is its own there.
+                    self.wins[w].held = (!mouse).then(|| (Instant::now(), (x, y)));
                     let right = self.right_half(w, x);
                     let t = self.tabs.get_mut(&tab).unwrap();
                     if mouse {
@@ -813,6 +826,7 @@ impl Quill {
             return;
         }
         // Let go.
+        self.wins[w].held = None;
         if let Some(drag) = self.wins[w].drag.take() {
             if drag.torn {
                 let alone = self.wins[w].tabs.len() == 1;
@@ -837,7 +851,7 @@ impl Quill {
             } else if let Some((start, end)) = self.wins[w].selecting.take() {
                 if start == end {
                     // A click, not a drag: twice on one place selects the line's word there.
-                    let double = self.wins[w].last_click.is_some_and(|(at, c)| at.elapsed() < Duration::from_millis(400) && c == start);
+                    let double = self.wins[w].last_click.is_some_and(|(at, c)| at.elapsed() < ui::DOUBLE_CLICK && c == start);
                     self.wins[w].last_click = Some((Instant::now(), start));
                     if double {
                         let (from, to) = word_at(&t.screen, start);
@@ -1048,6 +1062,21 @@ impl Quill {
         t.tell(&ToTab::Key { key: keys::number(key), code, text, shift: m.shift, control: m.control, alt: m.alt, copy_first });
     }
 
+    /// A press held still on the text opens the menu where it is; letting go then chooses
+    /// nothing (the press is no longer a selection's start).
+    fn open_held_menus(&mut self) {
+        for w in 0..self.wins.len() {
+            let Some((since, at)) = self.wins[w].held else { continue };
+            if since.elapsed() < HOLD_FOR_MENU {
+                continue;
+            }
+            self.wins[w].held = None;
+            self.wins[w].pressed_in_text = false;
+            self.open_menu(w, at);
+            self.wins[w].dirty = true;
+        }
+    }
+
     fn open_menu(&mut self, w: usize, at: (f32, f32)) {
         let selected = self.active_tab(w).and_then(|t| self.tabs.get(&t)).is_some_and(|t| t.screen.cells.iter().any(|c| c.flags & wire::flags::SELECTED != 0));
         let mut items = Vec::new();
@@ -1160,7 +1189,9 @@ impl Quill {
             let (painter, grid, wins, tabs) = (&mut self.painter, &mut self.grid, &mut self.wins, &self.tabs);
             let win = &mut wins[w];
             win.dirty = false;
-            self.app.draw(id, |gl, picture| {
+            // The terminal's colours are made for a dark ground, so the whole window stays in the
+            // dark look, bar and margins too, in the light look as well.
+            self.app.draw(id, |gl, picture| theme::always_dark(|| {
                 let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
                 p.begin(gl, picture, picture.1 as f32 / size.1 as f32, theme::ground());
                 look::backdrop(p, gl);
@@ -1177,7 +1208,7 @@ impl Quill {
                     if !tab.screen.cells.is_empty() {
                         let scale = picture.1 as f32 / size.1 as f32;
                         let _ = scale;
-                        grid.draw(gl, picture, area.x.round(), area.y.round(), &tab.screen, win.focused, blink_on, [0.45, 0.72, 1.0, 1.0], [0.216, 0.651, 0.969, 0.40]);
+                        grid.draw(gl, picture, area.x.round(), area.y.round(), &tab.screen, win.focused, blink_on, theme::always_dark(theme::mark), [look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.40]);
                     }
                 }
                 // Over the text: a tab that stopped, how far up the history the view is, and
@@ -1192,11 +1223,17 @@ impl Quill {
                         let (rows, history) = (tab.screen.rows as f32, tab.screen.history as f32);
                         // Scrolled back is from the foot: the offset from the top is what is not.
                         look::scrollbar(p, gl, track, rows, history + rows, history - tab.screen.scrolled as f32);
-                        let note = format!("{} lines up    Shift-End goes to the foot", tab.screen.scrolled);
-                        let width = p.measure(gl, &note, theme::FOOTER_EM * 0.85, 8192.0).0 + 36.0;
+                        let note = format!("{} lines up", tab.screen.scrolled);
+                        let foot = "[Shift+End] Foot";
+                        // The keycap and its word, measured as `look::keys` sets them.
+                        let (em, gap) = (theme::FOOTER_EM * 0.92, 24.0);
+                        let keys_w = p.measure(gl, "Shift+End", em * 0.86, 8192.0).0 + 16.0 + 9.0 + p.measure(gl, "Foot", em, 8192.0).0;
+                        let said_w = p.measure(gl, &note, theme::FOOTER_EM * 0.85, 8192.0).0;
+                        let width = said_w + gap + keys_w + 36.0;
                         let pill = Rect::new(all.w - width - 30.0, all.h - 64.0, width, 40.0);
                         look::glass(p, gl, pill, 20.0, 1.0);
-                        p.label(gl, &note, pill, theme::FOOTER_EM * 0.85, theme::ink_detail(), 0.5);
+                        p.label(gl, &note, Rect { x: pill.x + 18.0, w: said_w, ..pill }, theme::FOOTER_EM * 0.85, theme::ink_detail(), 0.0);
+                        look::keys(p, gl, Rect { x: pill.x + 18.0 + said_w + gap, w: keys_w, ..pill }, foot, 0.0, 1.0);
                     }
                 }
                 if let Some(drag) = win.drag.as_ref().filter(|d| d.torn) {
@@ -1216,18 +1253,17 @@ impl Quill {
                     menu.menu.draw(p, gl, &rows, Rect::new(0.0, 0.0, size.0 as f32, size.1 as f32));
                 }
                 if let Some((why, _)) = failed.as_ref() {
-                    let mut chars = why.chars();
-                    let note: String = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default();
-                    let width = (p.measure(gl, &note, theme::FOOTER_EM * 0.85, 8192.0).0 + 36.0).min(all.w - 24.0);
+                    let note: &str = why;
+                    let width = (p.measure(gl, note, theme::FOOTER_EM * 0.85, 8192.0).0 + 36.0).min(all.w - 24.0);
                     let pill = Rect::new((all.w - width) * 0.5, all.h - 120.0, width, 40.0);
                     look::glass(p, gl, pill, 20.0, 1.0);
-                    p.label(gl, &note, pill.inset(12.0), theme::FOOTER_EM * 0.85, look::trouble(), 0.5);
+                    p.label(gl, note, pill.inset(12.0), theme::FOOTER_EM * 0.85, look::trouble(), 0.5);
                 }
                 if let Some((confirm, _, _)) = win.asking.as_mut() {
                     confirm.draw(p, gl, all);
                 }
                 p.end(gl);
-            })?;
+            }))?;
         }
         Ok(())
     }
@@ -1235,13 +1271,15 @@ impl Quill {
     fn run(&mut self) -> Result<(), String> {
         loop {
             let blinking = self.wins.iter().any(|w| w.focused);
-            let wait = if self.in_flight.is_some() { 30 } else if blinking { 265 } else { 1000 };
+            let holding = self.wins.iter().any(|w| w.held.is_some());
+            let wait = if self.in_flight.is_some() { 30 } else if holding { 100 } else if blinking { 265 } else { 1000 };
             for event in self.app.wait(Some(Duration::from_millis(wait)))? {
                 if !self.handle(event) {
                     return Ok(());
                 }
             }
             self.hear();
+            self.open_held_menus();
             self.tell_focus();
             // A tab let go of that no window claimed becomes a window of its own.
             if let Some((tab, from, at)) = self.in_flight {
