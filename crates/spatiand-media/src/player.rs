@@ -845,7 +845,8 @@ impl Player {
             if !info.subtitles.is_empty() {
                 let streams: Vec<SendPointer<ffi::AVStream>> = streams.iter().map(|s| SendPointer(*s)).collect();
                 let shared = shared.clone();
-                threads.push(spawn("words", move || decode_words(streams, start, shared)));
+                let frame = (info.width, info.height);
+                threads.push(spawn("words", move || decode_words(streams, start, frame, shared)));
             }
             {
                 let source = Source { format, video_stream, start, io, _interrupt: interrupt.clone() };
@@ -990,12 +991,16 @@ impl Player {
         }
     }
 
-    /// The subtitle to show now, from the file's own track.
-    pub fn subtitle(&self) -> Option<Arc<Cue>> {
+    /// The subtitles to show now, from the file's own track, in the order they began: every one
+    /// begun and not ended -- a Blu-ray's subtitle in two pictures is two cues of the same start,
+    /// and only one of them was shown.
+    pub fn subtitles(&self) -> Vec<Arc<Cue>> {
         let now = self.position();
         let cues = self.shared.cues.lock().unwrap();
         let before = cues.partition_point(|cue| cue.start <= now);
-        cues[..before].iter().rev().take(4).find(|cue| cue.end > now).cloned()
+        let mut on: Vec<Arc<Cue>> = cues[..before].iter().rev().take(16).filter(|cue| cue.end > now).cloned().collect();
+        on.reverse();
+        on
     }
 
     /// Play faster or slower than the film was made, its sound's pitch staying where it was.
@@ -1841,7 +1846,9 @@ fn decode_sound(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
 
 /// The words: a subtitle track's packets made into cues as they come. There are few of them
 /// and each is small, so nothing here waits for room.
-fn decode_words(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Arc<Shared>) {
+/// `frame` is the film's picture's size: what a disc's subtitle pictures are placed in where
+/// their decoder does not say the size of the screen they were made for.
+fn decode_words(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, frame: (u32, u32), shared: Arc<Shared>) {
     unsafe {
         let mut decoder: Option<(u64, Decoder)> = None;
         while !shared.stop.load(Ordering::Relaxed) {
@@ -1882,7 +1889,14 @@ fn decode_words(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
             } else {
                 6.0
             };
-            let (frame_w, frame_h) = ((*decoder.context).width.max(1) as f32, (*decoder.context).height.max(1) as f32);
+            // The screen the pictures were placed on: the decoder's, or else the film's (a DVD's
+            // and a DVB broadcast's often say none, and placed by 1 x 1 they were off the screen),
+            // or else a DVD's.
+            let (frame_w, frame_h) = match ((*decoder.context).width, (*decoder.context).height) {
+                (w, h) if w > 0 && h > 0 => (w as f32, h as f32),
+                _ if frame.0 > 0 && frame.1 > 0 => (frame.0 as f32, frame.1 as f32),
+                _ => (720.0, 576.0),
+            };
             let rects = if said.rects.is_null() { &[][..] } else { std::slice::from_raw_parts(said.rects, said.num_rects as usize) };
             let mut lines: Vec<String> = Vec::new();
             let mut pictures: Vec<Words> = Vec::new();
@@ -1916,9 +1930,12 @@ fn decode_words(streams: Vec<SendPointer<ffi::AVStream>>, start: f64, shared: Ar
             if serial != shared.serial.load(Ordering::Relaxed) {
                 continue;
             }
-            // A picture with nothing in it is how a disc says "take the last one down".
-            if let Some(last) = cues.last_mut().filter(|last| last.end > begins && matches!(last.words, Words::Picture { .. })) {
-                *last = Arc::new(Cue { end: begins, ..(**last).clone() });
+            // A picture with nothing in it is how a disc says "take the last one down" -- every
+            // part of it: a Blu-ray's subtitle may be two pictures (two objects), each a cue.
+            for cue in cues.iter_mut().rev().take(16) {
+                if cue.end > begins && cue.start < begins && matches!(cue.words, Words::Picture { .. }) {
+                    *cue = Arc::new(Cue { end: begins, ..(**cue).clone() });
+                }
             }
             let text = lines.into_iter().filter(|line| !line.is_empty()).collect::<Vec<_>>().join("\n");
             let words = (!text.is_empty()).then_some(Words::Text(text)).into_iter().chain(pictures);

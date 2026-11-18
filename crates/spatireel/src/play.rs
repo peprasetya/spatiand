@@ -312,10 +312,10 @@ pub struct Playing {
     words_late: f64,
     /// The subtitle last drawn, so that a new one is a reason to draw; and a picture
     /// subtitle's texture, kept for as long as it is the one on show.
-    words_shown: Option<Arc<Cue>>,
+    words_shown: Vec<Arc<Cue>>,
     /// Held by the cue itself: by its address alone, a cue dropped and a new one made where it
     /// had been showed the old one's picture.
-    words_picture: Option<(Arc<Cue>, Texture)>,
+    words_picture: Vec<(Arc<Cue>, Texture)>,
 }
 
 /// The `.srt` that goes with a film on this machine: the one with its name, or with its
@@ -408,8 +408,8 @@ impl Playing {
             beside,
             said,
             words_late: 0.0,
-            words_shown: None,
-            words_picture: None,
+            words_shown: Vec::new(),
+            words_picture: Vec::new(),
         })
     }
 
@@ -551,8 +551,10 @@ impl Playing {
             app.close(sky);
         }
         if let Ok(gl) = app.gl() {
-            if let (Some(p), Some((_, old))) = (painter.as_mut(), self.words_picture.take()) {
-                p.forget(gl, old);
+            if let Some(p) = painter.as_mut() {
+                for (_, old) in self.words_picture.drain(..) {
+                    p.forget(gl, old);
+                }
             }
             self.screen.delete(gl);
         }
@@ -578,12 +580,8 @@ impl Playing {
         self.arrange(app, window);
         let (picture, new) = self.player.picture();
         let shown = self.controls_shown();
-        let cue = self.cue();
-        let words_changed = match (&cue, &self.words_shown) {
-            (Some(now), Some(before)) => !Arc::ptr_eq(now, before),
-            (None, None) => false,
-            _ => true,
-        };
+        let cues = self.cues();
+        let words_changed = cues.len() != self.words_shown.len() || cues.iter().zip(&self.words_shown).any(|(now, before)| !Arc::ptr_eq(now, before));
         // The controls coming or going is a reason to draw too: paused, there is no next
         // picture that would.
         let shown_changed = self.drawn_shown != Some(shown);
@@ -591,7 +589,7 @@ impl Playing {
             return Ok(false);
         }
         self.drawn_shown = Some(shown);
-        self.words_shown = cue.clone();
+        self.words_shown = cues.clone();
         self.dirty = false;
         let staging = self.staging;
         let one_eye = self.one_eye();
@@ -614,7 +612,9 @@ impl Playing {
                     }
                     clear(gl);
                     this.screen.draw(gl, size, [0.0, 0.0, size.0 as f32, size.1 as f32], [0.0, 0.0, 1.0, 1.0]);
-                    let Some(cue) = cue.as_ref() else { return };
+                    if cues.is_empty() {
+                        return;
+                    }
                     let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
                     let (w, h) = (size.0 as f32, size.1 as f32);
                     let parts: Vec<Rect> = match eyes {
@@ -626,7 +626,7 @@ impl Playing {
                         p.begin_over(gl, size, sky_screen(*part, half), WINDOW);
                         let nearer = if parts.len() == 2 { WINDOW.0 * 0.0035 } else { 0.0 };
                         let shift = if (eye == 0) != this.swapped { nearer } else { -nearer };
-                        this.words(p, gl, cue, shift, 0.0);
+                        this.words(p, gl, &cues, shift, 0.0);
                         p.end(gl);
                     }
                 })?;
@@ -641,8 +641,10 @@ impl Playing {
             }
             clear(gl);
             // A picture subtitle no longer on show lets its texture go.
-            if cue.as_ref().zip(this.words_picture.as_ref()).is_none_or(|(cue, (held, _))| !Arc::ptr_eq(cue, held)) {
-                if let (Some(p), Some((_, old))) = (painter.as_mut(), this.words_picture.take()) {
+            if let Some(p) = painter.as_mut() {
+                let (kept, gone): (Vec<_>, Vec<_>) = this.words_picture.drain(..).partition(|(held, _)| cues.iter().any(|cue| Arc::ptr_eq(cue, held)));
+                this.words_picture = kept;
+                for (_, old) in gone {
                     p.forget(gl, old);
                 }
             }
@@ -653,7 +655,7 @@ impl Playing {
                 Staging::Sky { .. } | Staging::Sound => {}
             }
             let alone = staging.controls_alone();
-            if !shown && !alone && cue.is_none() {
+            if !shown && !alone && cues.is_empty() {
                 return;
             }
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
@@ -670,14 +672,14 @@ impl Playing {
             };
             for (eye, part) in parts.iter().enumerate() {
                 p.begin_over(gl, size, *part, logical);
-                if let (Some(cue), false) = (cue.as_ref(), alone) {
+                if !cues.is_empty() && !alone {
                     // In a film with two eyes the words stand a little in front of the
                     // screen: each eye's are moved towards the other's side, so that the
                     // eyes cross slightly to read them, as they do for anything nearer.
                     let nearer = if parts.len() == 2 { logical.0 * 0.0035 } else { 0.0 };
                     let first_is_left = !this.swapped;
                     let shift = if (eye == 0) == first_is_left { nearer } else { -nearer };
-                    this.words(p, gl, cue, shift, if shown { 230.0 } else { 0.0 });
+                    this.words(p, gl, &cues, shift, if shown { 230.0 } else { 0.0 });
                 }
                 if shown || alone {
                     this.controls(p, gl, &name, position, duration, paused, alone);
@@ -688,54 +690,54 @@ impl Playing {
         Ok(true)
     }
 
-    /// The subtitle to show now, wherever subtitles are coming from.
-    fn cue(&self) -> Option<Arc<Cue>> {
+    /// The subtitles to show now, wherever subtitles are coming from: every one on show, in the
+    /// order they began.
+    fn cues(&self) -> Vec<Arc<Cue>> {
         match self.said {
-            Said::Nothing => None,
+            Said::Nothing => Vec::new(),
             Said::Beside => subs::at(&self.beside, self.player.position() - self.words_late).cloned().map(Arc::new).map(|cue| {
                 // The same cue is the same thing each time it is asked for, or every picture
                 // would look like a new subtitle.
-                match &self.words_shown {
+                match self.words_shown.first() {
                     Some(before) if **before == *cue => before.clone(),
                     _ => cue,
                 }
-            }),
-            Said::Track(_) => self.player.subtitle(),
+            }).into_iter().collect(),
+            Said::Track(_) => self.player.subtitles(),
         }
     }
 
-    /// Draw a subtitle: at the foot of the picture, `lifted` above it when the controls are
-    /// there, and `shift` to the right.
-    fn words(&mut self, p: &mut Painter, gl: &Gl, cue: &Arc<Cue>, shift: f32, lifted: f32) {
+    /// Draw the subtitles on show: their words at the foot of the picture, `lifted` above it when
+    /// the controls are there, and `shift` to the right; their pictures where they were placed.
+    fn words(&mut self, p: &mut Painter, gl: &Gl, cues: &[Arc<Cue>], shift: f32, lifted: f32) {
         let all = p.bounds();
-        match &cue.words {
-            Words::Text(text) => {
-                // A size that is the same part of the picture whatever the window: a little
-                // over a degree in the glasses, which is what a line to be read at a glance is.
-                let em = all.h * 0.046;
-                let lines: Vec<&str> = text.lines().collect();
-                let mut y = all.bottom() - all.h * 0.06 - lifted - lines.len() as f32 * em * 1.35;
-                for line in lines {
-                    let row = Rect::new(all.x + all.w * 0.06 + shift, y, all.w * 0.88, em * 1.35);
-                    // Dark all round the letters, then the letters: readable over snow.
-                    for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (2.0, 3.0)] {
-                        p.label(gl, line, Rect { x: row.x + dx, y: row.y + dy, ..row }, em, [0.0, 0.0, 0.0, 0.85], 0.5);
-                    }
-                    p.label(gl, line, row, em, [1.0, 1.0, 1.0, 1.0], 0.5);
-                    y += em * 1.35;
+        // The lines of every one in words, the earliest begun highest.
+        let lines: Vec<&str> = cues.iter().filter_map(|cue| if let Words::Text(text) = &cue.words { Some(text.lines()) } else { None }).flatten().collect();
+        if !lines.is_empty() {
+            // A size that is the same part of the picture whatever the window: a little over a
+            // degree in the glasses, which is what a line to be read at a glance is.
+            let em = all.h * 0.046;
+            let mut y = all.bottom() - all.h * 0.06 - lifted - lines.len() as f32 * em * 1.35;
+            for line in lines {
+                let row = Rect::new(all.x + all.w * 0.06 + shift, y, all.w * 0.88, em * 1.35);
+                // Dark all round the letters, then the letters: readable over snow.
+                for (dx, dy) in [(-2.0, 0.0), (2.0, 0.0), (0.0, -2.0), (0.0, 2.0), (2.0, 3.0)] {
+                    p.label(gl, line, Rect { x: row.x + dx, y: row.y + dy, ..row }, em, [0.0, 0.0, 0.0, 0.85], 0.5);
                 }
+                p.label(gl, line, row, em, [1.0, 1.0, 1.0, 1.0], 0.5);
+                y += em * 1.35;
             }
-            Words::Picture { rgba, width, height, place } => {
-                if self.words_picture.as_ref().is_none_or(|(held, _)| !Arc::ptr_eq(held, cue)) {
-                    if let Some((_, old)) = self.words_picture.take() {
-                        p.forget(gl, old);
-                    }
-                    self.words_picture = p.texture(gl, rgba, *width, *height).ok().map(|texture| (cue.clone(), texture));
-                }
-                if let Some(texture) = self.words_picture.as_ref().map(|(_, texture)| *texture) {
-                    let rect = Rect::new(all.x + place[0] * all.w + shift, all.y + place[1] * all.h - lifted.min(all.h * place[1]), place[2] * all.w, place[3] * all.h);
-                    p.image(gl, texture, rect, [0.0, 0.0, 1.0, 1.0], 0.0, [1.0, 1.0, 1.0, 1.0], false);
-                }
+        }
+        for cue in cues {
+            let Words::Picture { rgba, width, height, place } = &cue.words else { continue };
+            let held = self.words_picture.iter().find(|(held, _)| Arc::ptr_eq(held, cue)).map(|(_, texture)| *texture);
+            let texture = match held {
+                Some(texture) => Some(texture),
+                None => p.texture(gl, rgba, *width, *height).ok().inspect(|texture| self.words_picture.push((cue.clone(), *texture))),
+            };
+            if let Some(texture) = texture {
+                let rect = Rect::new(all.x + place[0] * all.w + shift, all.y + place[1] * all.h - lifted.min(all.h * place[1]), place[2] * all.w, place[3] * all.h);
+                p.image(gl, texture, rect, [0.0, 0.0, 1.0, 1.0], 0.0, [1.0, 1.0, 1.0, 1.0], false);
             }
         }
     }
