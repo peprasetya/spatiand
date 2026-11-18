@@ -47,8 +47,12 @@ const OPENING_MOST: u64 = 16 * 1024 * 1024;
 const LEAST_ASKED: u64 = 4 * 1024 * 1024;
 /// What is kept behind reading, for a demuxer that steps back.
 const KEPT_BEHIND: u64 = 16 * 1024 * 1024;
-/// How often in a row the server may fail before reading gives up.
+/// How often in a row the server may fail before reading gives up...
 const TRIES: u32 = 6;
+/// ...and for how long at the least: a Wi-Fi that drops for some seconds (the owner's, 2026-11-18:
+/// "Host is down" for twelve seconds, and the film was stopped) is waited out, what was fetched
+/// ahead playing meanwhile.
+const TRIED_FOR: Duration = Duration::from_secs(60);
 /// How many places at once reading is followed from.
 const HEADS: usize = 3;
 /// A head not read from for this long while another has been is one a seek has left.
@@ -85,6 +89,8 @@ struct State {
     next_head: u64,
     /// Failures in a row, and when the server may next be asked.
     failures: u32,
+    /// When the failures now counted began.
+    failing_since: Option<Instant>,
     retry: Instant,
     failed: Option<String>,
     ahead: u64,
@@ -299,10 +305,14 @@ impl Shared {
         let mut state = self.state.lock().unwrap();
         state.runs.retain(|run| !Arc::ptr_eq(&run.cancel, &cancel));
         match outcome {
-            Ok(_) => state.failures = 0,
+            Ok(_) => {
+                state.failures = 0;
+                state.failing_since = None;
+            }
             Err(why) if !stopped() => {
                 state.failures += 1;
-                if state.failures >= TRIES {
+                let since = *state.failing_since.get_or_insert_with(Instant::now);
+                if state.failures >= TRIES && since.elapsed() >= TRIED_FOR {
                     state.failed = Some(why);
                 } else {
                     log::warn!("{}: bytes {from}-{to} (for head {head}): {why}; asking again", self.ask.url);
@@ -427,6 +437,7 @@ impl Remote {
                 runs: Vec::new(),
                 next_head: 0,
                 failures: 0,
+                failing_since: None,
                 retry: Instant::now(),
                 failed: None,
                 ahead: OPENING_AHEAD,
