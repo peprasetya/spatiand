@@ -652,15 +652,7 @@ impl Quill {
             }
             return;
         }
-        win.hover = if let Some((id, _, close)) = win.placed.iter().find(|(_, r, _)| r.contains(x, y)) {
-            if close.inset(-6.0).contains(x, y) { Hover::Close(*id) } else { Hover::Tab(*id) }
-        } else if win.plus.contains(x, y) {
-            Hover::Plus
-        } else if y > BAR {
-            Hover::Text
-        } else {
-            Hover::Nothing
-        };
+        win.hover = hover_at(win, x, y);
         // Dragging across the terminal: a selection, or the program's own mouse.
         if win.pressed_in_text {
             let tab = self.active_tab(w);
@@ -683,7 +675,10 @@ impl Quill {
 
     fn button(&mut self, w: usize, button: PointerButton, pressed: bool) {
         let (x, y) = self.wins[w].pointer;
-        let hover = self.wins[w].hover;
+        // What is under the pointer now, by the bar as last drawn: the bar can have changed
+        // under a pointer that has not moved (a tab closed by its mark, the next one in its
+        // place), and the hover of the last move would close a tab that is gone.
+        let hover = hover_at(&self.wins[w], x, y);
         if button != PointerButton::Left {
             // The other buttons, to a program that asked for the mouse; the right opens the
             // terminal's menu over one that did not (it no longer pastes: Control-V does).
@@ -1258,6 +1253,19 @@ fn word_at(screen: &Screen, at: (u16, u16)) -> ((u16, u16), (u16, u16)) {
     ((a as u16, at.1), (b as u16, at.1))
 }
 
+/// What is at a point of a window: a tab, its close mark, the "+", the terminal.
+fn hover_at(win: &Win, x: f32, y: f32) -> Hover {
+    if let Some((id, _, close)) = win.placed.iter().find(|(_, r, _)| r.contains(x, y)) {
+        if close.inset(-6.0).contains(x, y) { Hover::Close(*id) } else { Hover::Tab(*id) }
+    } else if win.plus.contains(x, y) {
+        Hover::Plus
+    } else if y > BAR {
+        Hover::Text
+    } else {
+        Hover::Nothing
+    }
+}
+
 /// The narrowest and widest a tab is on the bar.
 const TAB_WIDTH: (f32, f32) = (110.0, 330.0);
 
@@ -1345,6 +1353,15 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
         win.placed.push((id, rect, close));
     }
     win.plus = Rect::new(x.min(bar.right() - plus_w), bar.y + (bar.h - 44.0) * 0.5, 44.0, 44.0);
+    // The bar as now placed decides what the pointer is over, until it moves.
+    if win.hover != Hover::Nothing && win.drag.is_none() {
+        let now = hover_at(win, win.pointer.0, win.pointer.1);
+        if now != win.hover {
+            // Drawn again with it.
+            win.hover = now;
+            win.dirty = true;
+        }
+    }
     if win.hover == Hover::Plus {
         p.fill(gl, win.plus, 22.0, theme::hover());
     }
