@@ -149,7 +149,32 @@ fn by_image(bytes: &[u8], largest: u32, may_move: bool) -> Result<Picture, Strin
         image.apply_orientation(orientation);
     }
     let original = (image.width(), image.height());
-    Ok(Picture::of(fit(image, largest).to_rgba8(), original))
+    Ok(Picture::of(shown(fit(image, largest)), original))
+}
+
+/// A picture as eight bits a channel of sRGB, as it is shown. A Radiance HDR or an OpenEXR's
+/// floats are light itself, linear and as bright as they are: brought within white (Reinhard's
+/// curve, white at the brightest that is not a speck -- nothing changes below 1 if that is 1)
+/// and given sRGB's curve, rather than cut off at 1 and taken for sRGB already, which showed
+/// them dark and flat with their highlights burnt out.
+fn shown(image: DynamicImage) -> RgbaImage {
+    if !matches!(image, DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_)) {
+        return image.to_rgba8();
+    }
+    let light = image.into_rgba32f();
+    let mut peaks: Vec<f32> = light.pixels().step_by((light.len() / 4 / 65536).max(1)).map(|p| p.0[0].max(p.0[1]).max(p.0[2])).filter(|v| v.is_finite()).collect();
+    peaks.sort_by(f32::total_cmp);
+    let white = peaks.get(peaks.len().saturating_sub(1) * 995 / 1000).copied().unwrap_or(1.0).clamp(1.0, 64.0);
+    let encode = |c: f32| {
+        let c = if c.is_finite() { c.max(0.0) } else { 0.0 };
+        let c = (c * (1.0 + c / (white * white)) / (1.0 + c)).min(1.0);
+        let c = if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+        (c * 255.0).round() as u8
+    };
+    RgbaImage::from_fn(light.width(), light.height(), |x, y| {
+        let p = light.get_pixel(x, y).0;
+        image::Rgba([encode(p[0]), encode(p[1]), encode(p[2]), (p[3].clamp(0.0, 1.0) * 255.0).round() as u8])
+    })
 }
 
 /// The most memory a still picture may take as it is decoded, before it is made to fit.
@@ -453,6 +478,22 @@ mod tests {
         let outside = dir.join("outside.png");
         assert_eq!(drawn_ink(&svg(outside.to_str().unwrap()), &folder), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_high_dynamic_range_picture_is_given_srgb_s_curve() {
+        // Linear 0.214 is sRGB's middle grey, 128; and 1, the brightest here, is white.
+        let light = image::Rgb32FImage::from_fn(2, 1, |x, _| if x == 0 { image::Rgb([0.214, 0.214, 0.214]) } else { image::Rgb([1.0, 1.0, 1.0]) });
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgb32F(light).write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::OpenExr).unwrap();
+        let picture = read_bytes(Path::new("grey.exr"), &bytes, 100).unwrap();
+        assert!((picture.rgba[0] as i32 - 128).abs() <= 1, "{}", picture.rgba[0]);
+        assert_eq!(picture.rgba[4], 255);
+        let bright = image::Rgb32FImage::from_fn(1000, 1, |x, _| image::Rgb([if x < 10 { 4.0 } else { 0.5 }; 3]));
+        let shown = shown(DynamicImage::ImageRgb32F(bright));
+        // Brighter than 1: the brightest is white, and the rest is brought down to make room.
+        assert_eq!(shown.get_pixel(0, 0).0[0], 255);
+        assert!(shown.get_pixel(500, 0).0[0] > 150 && shown.get_pixel(500, 0).0[0] < 200, "{:?}", shown.get_pixel(500, 0));
     }
 
     #[test]
