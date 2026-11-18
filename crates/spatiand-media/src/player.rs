@@ -1598,8 +1598,8 @@ unsafe fn drawn(frame: *mut ffi::AVFrame, decoder: &Decoder, complained: &mut bo
 }
 
 fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu: bool, start: f64, shared: Arc<Shared>, generation: u64) {
-    let _ = stream;
     unsafe {
+        let cover = (*stream.0).disposition & ffi::AV_DISPOSITION_ATTACHED_PIC as c_int != 0;
         let mut frame = ffi::av_frame_alloc();
         let mut scaler: *mut ffi::SwsContext = ptr::null_mut();
         let mut serial = shared.serial.load(Ordering::Relaxed);
@@ -1651,8 +1651,10 @@ fn decode_pictures(decoder: Decoder, stream: SendPointer<ffi::AVStream>, _on_gpu
                 let time = count.time(own, rate, (*frame).repeat_pict);
                 // Pictures from before where a seek was aimed are decoded only to get to the
                 // ones after: a seek lands on the key frame before its target.
+                // A song's cover is its one picture, at nought, wherever the song is taken up:
+                // thrown away as from before the target, a song taken up past 5 s had none.
                 let target = shared.target.lock().unwrap().0;
-                if time < target - 0.001 && serial == shared.serial.load(Ordering::Relaxed) {
+                if time < target - 0.001 && serial == shared.serial.load(Ordering::Relaxed) && !cover {
                     ffi::av_frame_unref(frame);
                     continue;
                 }
