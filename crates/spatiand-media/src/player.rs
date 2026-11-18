@@ -382,6 +382,26 @@ const UNHEARD: Duration = Duration::from_millis(500);
 
 const NO_STREAM: u64 = u64::MAX;
 
+/// When FFmpeg's own reading -- its HTTP, HLS, anything not fetched by `fetch` -- is to give
+/// up: the film closed, or opening it taking too long. Without it a server that never answers
+/// kept "Opening..." on screen for ever, and the reading thread waiting on it.
+#[derive(Default)]
+struct Interrupt {
+    stop: AtomicBool,
+    deadline: Mutex<Option<Instant>>,
+}
+
+/// How long opening a film may take, its index fetched and its streams looked at.
+const OPENING: Duration = Duration::from_secs(30);
+/// How long a read of FFmpeg's own network protocols may wait for a byte, in microseconds.
+const NETWORK_WAIT: &str = "20000000";
+
+unsafe extern "C" fn interrupted(opaque: *mut c_void) -> c_int {
+    let interrupt = &*(opaque as *const Interrupt);
+    let late = interrupt.deadline.lock().unwrap().is_some_and(|deadline| Instant::now() >= deadline);
+    (interrupt.stop.load(Ordering::Relaxed) || late) as c_int
+}
+
 /// A film being played.
 pub struct Player {
     shared: Arc<Shared>,
@@ -397,6 +417,8 @@ pub struct Player {
     hardware: Option<(SendPointer<ffi::AVStream>, f64, usize)>,
     /// A film on a web server, being fetched.
     remote: Option<crate::fetch::Remote>,
+    /// What FFmpeg's own reading is told to give up by.
+    interrupt: Arc<Interrupt>,
 }
 
 /// What is opened, owned by the reader thread once it starts.
@@ -406,6 +428,8 @@ struct Source {
     start: f64,
     /// What `format` reads through, where it is not FFmpeg's own: freed after it.
     io: Option<crate::fetch::Io>,
+    /// What `format`'s interrupt callback reads, kept for as long as `format` is.
+    _interrupt: Arc<Interrupt>,
 }
 unsafe impl Send for Source {}
 
@@ -613,19 +637,21 @@ impl Player {
         let group = &crate::SoundGroup::new();
         let name = CString::new(url).map_err(|_| "a name with a nul in it".to_string())?;
         unsafe {
-            let mut format = ptr::null_mut();
             let mut told: *mut ffi::AVDictionary = ptr::null_mut();
             let network = url.starts_with("http://") || url.starts_with("https://");
             // A film on a web server is fetched as a browser fetches one (`fetch`), where it can
             // be; what cannot is left to FFmpeg's own protocols.
             let remote = if network { crate::fetch::Remote::open(url, options) } else { None };
             let io = remote.as_ref().map(|remote| remote.io());
+            let interrupt = Arc::new(Interrupt::default());
+            *interrupt.deadline.lock().unwrap() = Some(Instant::now() + OPENING);
+            let mut format = ffi::avformat_alloc_context();
+            (*format).interrupt_callback = ffi::AVIOInterruptCB { callback: Some(interrupted), opaque: Arc::as_ptr(&interrupt) as *mut c_void };
             if let Some(io) = &io {
-                format = ffi::avformat_alloc_context();
                 (*format).pb = io.context;
                 (*format).flags |= ffi::AVFMT_FLAG_CUSTOM_IO as c_int;
             } else {
-                let own: &[(&str, &str)] = if network { &[("recv_buffer_size", NETWORK_BUFFER)] } else { &[] };
+                let own: &[(&str, &str)] = if network { &[("recv_buffer_size", NETWORK_BUFFER), ("rw_timeout", NETWORK_WAIT)] } else { &[] };
                 for (key, value) in own.iter().map(|(k, v)| (k.to_string(), v.to_string())).chain(options.iter().cloned()) {
                     if let (Ok(key), Ok(value)) = (CString::new(key.as_str()), CString::new(value.as_str())) {
                         ffi::av_dict_set(&mut told, key.as_ptr(), value.as_ptr(), 0);
@@ -634,14 +660,17 @@ impl Player {
             }
             let opened = ffi::avformat_open_input(&mut format, name.as_ptr(), ptr::null(), &mut told);
             ffi::av_dict_free(&mut told);
+            let why = |code: c_int| if code == ffi::AVERROR_EXIT { format!("no answer in {} s", OPENING.as_secs()) } else { error_text(code) };
             if opened < 0 {
-                return Err(format!("could not open {url}: {}", error_text(opened)));
+                return Err(format!("could not open {url}: {}", why(opened)));
             }
             let found = ffi::avformat_find_stream_info(format, ptr::null_mut());
             if found < 0 {
                 ffi::avformat_close_input(&mut format);
-                return Err(format!("could not read {url}: {}", error_text(found)));
+                return Err(format!("could not read {url}: {}", why(found)));
             }
+            // Open: from here a stalled read gives up by `rw_timeout`, or when the film is closed.
+            *interrupt.deadline.lock().unwrap() = None;
             let streams = std::slice::from_raw_parts((*format).streams, (*format).nb_streams as usize);
             let best = |kind, related: c_int| {
                 let index = ffi::av_find_best_stream(format, kind, -1, related, ptr::null_mut(), 0);
@@ -769,7 +798,7 @@ impl Player {
                 threads.push(spawn("words", move || decode_words(streams, start, shared)));
             }
             {
-                let source = Source { format, video_stream, start, io };
+                let source = Source { format, video_stream, start, io, _interrupt: interrupt.clone() };
                 let shared = shared.clone();
                 threads.push(spawn("reader", move || read(source, shared)));
             }
@@ -782,7 +811,7 @@ impl Player {
                 info.duration,
                 info.hardware.unwrap_or("decoded in software"),
             );
-            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware, remote })
+            Ok(Player { shared, info, threads, showing: None, lip: 0.0, hardware, remote, interrupt })
         }
     }
 
@@ -1050,6 +1079,7 @@ impl Player {
 impl Drop for Player {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
+        self.interrupt.stop.store(true, Ordering::Relaxed);
         // A read waiting on the network gives up at once.
         if let Some(remote) = self.remote.as_ref() {
             remote.close();
@@ -1157,7 +1187,7 @@ fn stay(shared: &Shared) {
 
 /// The reader: the file's packets, sorted into the two queues, and seeks.
 fn read(source: Source, shared: Arc<Shared>) {
-    let Source { mut format, video_stream, start, io } = source;
+    let Source { mut format, video_stream, start, io, _interrupt } = source;
     unsafe {
         let mut packet = ffi::av_packet_alloc();
         // A file that keeps no times: found out at its first picture packet.

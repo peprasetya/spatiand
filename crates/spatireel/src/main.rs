@@ -209,13 +209,6 @@ impl Reel {
         });
     }
 
-    /// Play a film now: for one on this machine, given at the start.
-    fn play(&mut self, source: Arc<dyn Source>, item: Item) -> Result<(), String> {
-        let play = source.play(&item)?;
-        let player = Playing::open_player(&play.url, &play.options, item.resume)?;
-        self.begin(source, item, player, &play.url)
-    }
-
     fn begin(&mut self, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, url: &str) -> Result<(), String> {
         let playing = Playing::new(self.app.gl()?, player, url, &item.name, &item.title, item.layout)?;
         self.app.set_title(self.window, &item.title);
@@ -621,10 +614,9 @@ fn main() {
                     // Not a file: an address, played as it is.
                     item.key = path.to_string_lossy().into_owned();
                 }
-                if let Err(e) = reel.play(local, item) {
-                    log::warn!("{e}");
-                    reel.screen.trouble(format!("{} would not play: {e}", path.display()));
-                }
+                // Opened as one chosen is, on a thread of its own: an address that never answers
+                // kept the window from ever being shown.
+                reel.open(local, item);
             }
             None => {}
         }
