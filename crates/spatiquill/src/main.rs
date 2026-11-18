@@ -23,7 +23,9 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -60,11 +62,11 @@ struct Tab {
 }
 
 impl Tab {
-    fn spawn(folder: Option<&str>) -> Result<Tab, String> {
+    fn spawn(folder: Option<&Path>) -> Result<Tab, String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let mut command = Command::new(exe);
         // Where its shell starts: a folder SpatiShelf opened it in, or home.
-        match folder.filter(|f| std::path::Path::new(f).is_dir()) {
+        match folder.filter(|f| f.is_dir()) {
             Some(folder) => command.env("SPATIQUILL_FOLDER", folder),
             None => command.env_remove("SPATIQUILL_FOLDER"),
         };
@@ -213,7 +215,7 @@ impl Quill {
         self.new_tab_in(None)
     }
 
-    fn new_tab_in(&mut self, folder: Option<&str>) -> Option<u64> {
+    fn new_tab_in(&mut self, folder: Option<&Path>) -> Option<u64> {
         match Tab::spawn(folder) {
             Ok(tab) => {
                 self.app.watch(tab.stdout.as_raw_fd());
@@ -259,7 +261,7 @@ impl Quill {
         self.new_window_in(None);
     }
 
-    fn new_window_in(&mut self, folder: Option<&str>) {
+    fn new_window_in(&mut self, folder: Option<&Path>) {
         if let Some(tab) = self.new_tab_in(folder) {
             self.open_window(vec![tab]);
         }
@@ -1154,15 +1156,14 @@ impl Quill {
                 }
             }
             // Another start of SpatiQuill, asking for a window.
-            let mut asked_windows: Vec<Option<String>> = Vec::new();
+            let mut asked_windows: Vec<Option<PathBuf>> = Vec::new();
             if let Some((listener, _)) = self.listener.as_ref() {
                 while let Ok((mut stream, _)) = listener.accept() {
-                    let mut asked = String::new();
+                    let mut asked = Vec::new();
                     let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-                    let _ = stream.read_to_string(&mut asked);
-                    if let Some(rest) = asked.trim().strip_prefix("window") {
-                        let folder = rest.trim();
-                        asked_windows.push((!folder.is_empty()).then(|| folder.to_string()));
+                    let _ = stream.read_to_end(&mut asked);
+                    if let Some(folder) = window_asked(&asked) {
+                        asked_windows.push(folder);
                     }
                 }
             }
@@ -1254,7 +1255,8 @@ fn draw_bar(p: &mut Painter, gl: &spatiand_app::Gl, win: &mut Win, tabs: &HashMa
 }
 
 fn main() {
-    if std::env::args().nth(1).as_deref() == Some("--tab") {
+    // In OS strings: a folder's name need not be UTF-8, and `args` panics on one that is not.
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--tab")) {
         // A tab's log is its window's, which is the program that started it.
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
         if let Err(e) = tab::run() {
@@ -1266,9 +1268,9 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     // Already running in this room: that SpatiQuill opens the window.
     let path = socket_path();
-    let folder = std::env::args().nth(1).or_else(|| std::env::var("SPATIQUILL_FOLDER").ok()).filter(|f| !f.is_empty());
+    let folder = std::env::args_os().nth(1).or_else(|| std::env::var_os("SPATIQUILL_FOLDER")).filter(|f| !f.is_empty()).map(PathBuf::from);
     if let Ok(mut stream) = UnixStream::connect(&path) {
-        if stream.write_all(format!("window {}", folder.clone().unwrap_or_default()).as_bytes()).is_ok() {
+        if stream.write_all(&window_asking(folder.as_deref())).is_ok() {
             log::info!("SpatiQuill is already running; it opens the window");
             return;
         }
@@ -1316,6 +1318,49 @@ fn main() {
     if let Err(e) = ended {
         log::error!("{e}");
         std::process::exit(1);
+    }
+}
+
+/// What another start of SpatiQuill says to the one running: `window`, and the folder to open
+/// it in, if any, after a space. The folder's bytes go as they are but for `%` and what is not
+/// printable ASCII, which go as `%XX` -- a name need not be UTF-8, and may end in a space.
+fn window_asking(folder: Option<&Path>) -> Vec<u8> {
+    let mut out = b"window".to_vec();
+    if let Some(folder) = folder {
+        out.push(b' ');
+        for &b in folder.as_os_str().as_bytes() {
+            if b == b'%' || !b.is_ascii_graphic() {
+                out.extend_from_slice(format!("%{b:02X}").as_bytes());
+            } else {
+                out.push(b);
+            }
+        }
+    }
+    out
+}
+
+/// What [`window_asking`] said: a window was asked for (`None` if not), in this folder, if any.
+fn window_asked(asked: &[u8]) -> Option<Option<PathBuf>> {
+    let rest = asked.trim_ascii().strip_prefix(b"window")?;
+    let folder = decode(rest.trim_ascii());
+    Some((!folder.is_empty()).then(|| PathBuf::from(OsString::from_vec(folder))))
+}
+
+#[cfg(test)]
+mod asking_tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_asked_for_comes_as_its_own_bytes() {
+        for folder in [&b"/tmp/caf\xe9"[..], b"/home/me/My Files ", b"/tmp/100%", b"/tmp/\xff\xfe", "/tmp/\u{65e5}\u{672c}".as_bytes()] {
+            let path = PathBuf::from(OsString::from_vec(folder.to_vec()));
+            let asked = window_asking(Some(&path));
+            assert!(asked.is_ascii());
+            assert_eq!(window_asked(&asked), Some(Some(path)));
+        }
+        assert_eq!(window_asked(&window_asking(None)), Some(None));
+        assert_eq!(window_asked(b"window /plain/old"), Some(Some(PathBuf::from("/plain/old"))));
+        assert_eq!(window_asked(b"nothing"), None);
     }
 }
 
