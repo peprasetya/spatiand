@@ -142,6 +142,23 @@ pub struct Shown {
 }
 
 impl Shown {
+    fn new(picture: Picture) -> Shown {
+        Shown {
+            picture,
+            texture: None,
+            right: None,
+            turns: 0,
+            frame: 0,
+            frame_since: Instant::now(),
+            eyes: None,
+            swapped: false,
+            depth: 0.0,
+            zoom: None,
+            centre: (0.5, 0.5),
+            drawn_at: None,
+        }
+    }
+
     fn eyes(&self) -> Eyes {
         self.eyes.unwrap_or(self.picture.eyes)
     }
@@ -461,20 +478,7 @@ impl View {
 
     pub fn pictured(&mut self, result: Result<Picture, String>) {
         self.doc = match result {
-            Ok(picture) => Doc::Picture(Box::new(Shown {
-                picture,
-                texture: None,
-                right: None,
-                turns: 0,
-                frame: 0,
-                frame_since: Instant::now(),
-                eyes: None,
-                swapped: false,
-                depth: 0.0,
-                zoom: None,
-                centre: (0.5, 0.5),
-                drawn_at: None,
-            })),
+            Ok(picture) => Doc::Picture(Box::new(Shown::new(picture))),
             Err(e) => Doc::Failed(e),
         };
         self.stir();
@@ -1663,14 +1667,91 @@ pub fn quarter_turn(picture: &mut Picture, clockwise: bool) {
     picture.original = (picture.original.1, picture.original.0);
 }
 
+/// Turn a picture holding two views packed side by side or one over the other a quarter: each
+/// eye's view turned where it is, not the frame whole -- which would put one eye's view over the
+/// other's, upside down for one of them. Side by side comes out one over the other, the left eye
+/// on top, and one over the other side by side, the left eye on the left: the packing it is now.
+pub fn quarter_turn_pair(picture: &mut Picture, eyes: Eyes, clockwise: bool) -> Eyes {
+    let (w, h) = (picture.width as usize, picture.height as usize);
+    let across = match eyes {
+        Eyes::SideBySide | Eyes::Crossed => true,
+        Eyes::TopBottom => false,
+        Eyes::Mono | Eyes::Pair => {
+            quarter_turn(picture, clockwise);
+            return eyes;
+        }
+    };
+    // Each eye's view, its own size: an odd column or row between them is left out.
+    let (ew, eh) = if across { (w / 2, h) } else { (w, h / 2) };
+    if ew == 0 || eh == 0 {
+        quarter_turn(picture, clockwise);
+        return eyes;
+    }
+    let (left, right) = eyes.halves();
+    let corner = |half: [f32; 4]| ((half[0] * w as f32).round() as usize, (half[1] * h as f32).round() as usize);
+    let (l, r) = (corner(left), corner(right));
+    let turn = |rgba: &[u8]| -> Vec<u8> {
+        let take = |(x0, y0): (usize, usize)| -> Picture {
+            let mut eye = Vec::with_capacity(ew * eh * 4);
+            for y in y0..y0 + eh {
+                eye.extend_from_slice(&rgba[(y * w + x0) * 4..(y * w + x0 + ew) * 4]);
+            }
+            let mut picture = Picture { width: ew as u32, height: eh as u32, rgba: eye, eyes: Eyes::Mono, right: None, frames: Vec::new(), first: Duration::ZERO, original: (0, 0), about: Vec::new() };
+            quarter_turn(&mut picture, clockwise);
+            picture
+        };
+        let (a, b) = (take(l), take(r));
+        // Turned, each eye is `eh` across and `ew` down.
+        let (tw, th) = (eh, ew);
+        if across {
+            // One over the other: the left eye's rows, then the right's.
+            let mut out = a.rgba;
+            out.extend_from_slice(&b.rgba);
+            out
+        } else {
+            let mut out = Vec::with_capacity(tw * th * 8);
+            for y in 0..th {
+                out.extend_from_slice(&a.rgba[y * tw * 4..(y + 1) * tw * 4]);
+                out.extend_from_slice(&b.rgba[y * tw * 4..(y + 1) * tw * 4]);
+            }
+            out
+        }
+    };
+    picture.rgba = turn(&picture.rgba);
+    let frames = std::mem::take(&mut picture.frames);
+    picture.frames = frames.into_iter().map(|(rgba, length)| (if rgba.len() == w * h * 4 { turn(&rgba) } else { rgba }, length)).collect();
+    let (tw, th) = if across { (eh, ew * 2) } else { (eh * 2, ew) };
+    picture.width = tw as u32;
+    picture.height = th as u32;
+    picture.original = (picture.original.1, picture.original.0);
+    let turned = if across { Eyes::TopBottom } else { Eyes::SideBySide };
+    picture.eyes = turned;
+    turned
+}
+
+impl Shown {
+    /// A quarter turn asked for, done on the CPU: whether it was, and the GPU's copies are to go.
+    fn settle_turn(&mut self) -> bool {
+        if self.turns % 2 == 0 {
+            return false;
+        }
+        let clockwise = self.turns == 1;
+        let eyes = self.eyes();
+        let turned = quarter_turn_pair(&mut self.picture, eyes, clockwise);
+        if self.eyes.is_some() {
+            self.eyes = Some(turned);
+        }
+        // A quarter either way is done, and the picture is the right way up: nothing is left over.
+        self.turns = 0;
+        true
+    }
+}
+
 impl View {
     /// Pictures turned by a quarter are turned for real: called before drawing.
     pub fn settle_turns(&mut self, gl: &Gl) {
         if let Doc::Picture(shown) = &mut self.doc {
-            while shown.turns % 2 == 1 {
-                let clockwise = shown.turns == 1;
-                quarter_turn(&mut shown.picture, clockwise);
-                shown.turns = if clockwise { 0 } else { 2 };
+            if shown.settle_turn() {
                 for texture in [shown.texture.take(), shown.right.take()].into_iter().flatten() {
                     unsafe { gl.api().delete_texture(texture.raw()) };
                 }
@@ -1736,6 +1817,45 @@ mod tests {
         quarter_turn(&mut p, true);
         quarter_turn(&mut p, false);
         assert_eq!(p.rgba, before);
+    }
+
+    #[test]
+    fn shift_r_turns_anticlockwise() {
+        let mut shown = Shown::new(picture(5, 3));
+        let mut expected = picture(5, 3);
+        quarter_turn(&mut expected, false);
+        shown.turns = 3;
+        assert!(shown.settle_turn());
+        assert_eq!(shown.turns, 0);
+        assert_eq!(shown.picture.rgba, expected.rgba);
+        assert_eq!((shown.picture.width, shown.picture.height), (3, 5));
+    }
+
+    #[test]
+    fn a_quarter_turn_of_a_pair_turns_each_eye_where_it_is() {
+        // Side by side, each eye 3 wide and 2 tall: the left eye's pixels 1 to 6, the right's 11
+        // to 16, in reading order.
+        let rows: [[u8; 6]; 2] = [[1, 2, 3, 11, 12, 13], [4, 5, 6, 14, 15, 16]];
+        let mut pair = picture(6, 2);
+        pair.rgba = rows.iter().flatten().flat_map(|&v| [v, 0, 0, 255]).collect();
+        let turned = quarter_turn_pair(&mut pair, Eyes::SideBySide, true);
+        assert_eq!(turned, Eyes::TopBottom);
+        assert_eq!((pair.width, pair.height), (2, 6));
+        let reds: Vec<u8> = pair.rgba.chunks_exact(4).map(|p| p[0]).collect();
+        // Each eye turned clockwise: its foot row becomes its left column. The left eye on top.
+        assert_eq!(reds, [4, 1, 5, 2, 6, 3, 14, 11, 15, 12, 16, 13]);
+        // And back the other way: side by side again, as it was.
+        let back = quarter_turn_pair(&mut pair, turned, false);
+        assert_eq!(back, Eyes::SideBySide);
+        assert_eq!((pair.width, pair.height), (6, 2));
+        let reds: Vec<u8> = pair.rgba.chunks_exact(4).map(|p| p[0]).collect();
+        assert_eq!(reds, rows.iter().flatten().copied().collect::<Vec<_>>());
+        // Crossed, the right eye's view on the left: the left eye still comes out on top.
+        let mut crossed = picture(6, 2);
+        crossed.rgba = rows.iter().flatten().flat_map(|&v| [v, 0, 0, 255]).collect();
+        quarter_turn_pair(&mut crossed, Eyes::Crossed, true);
+        let reds: Vec<u8> = crossed.rgba.chunks_exact(4).map(|p| p[0]).collect();
+        assert_eq!(reds, [14, 11, 15, 12, 16, 13, 4, 1, 5, 2, 6, 3]);
     }
 
     #[test]
