@@ -146,12 +146,23 @@ fn done(content: impl Into<String>, did: Option<String>) -> Done {
     Done { content: content.into(), picture: None, did, held: None }
 }
 
-fn held(call: &ToolCall, what: String) -> Done {
+/// Held, on the window it was meant for: the window resolved now is written into the call, so
+/// that a yes acts on the window the wearer was asked about, not on whichever is looked at then.
+fn held(call: &ToolCall, what: String, window: Option<u64>) -> Done {
+    let mut call = call.clone();
+    if let Some(w) = window {
+        let mut args: Value = serde_json::from_str(&call.arguments).unwrap_or_else(|_| json!({}));
+        if !args.is_object() {
+            args = json!({});
+        }
+        args["window"] = json!(w);
+        call.arguments = args.to_string();
+    }
     Done {
         content: format!("Held: {what} waits for the wearer's yes. Ask them, in one short sentence, and do nothing else."),
         picture: None,
         did: None,
-        held: Some(Held { call: call.clone(), what }),
+        held: Some(Held { call, what }),
     }
 }
 
@@ -204,7 +215,7 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
         "window" => {
             let action = get("action").as_str().unwrap_or("focus").to_string();
             if action == "close" && !agreed {
-                return held(call, format!("closing {}", window_name(room, window())));
+                return held(call, format!("closing {}", window_name(room, window())), window());
             }
             let answer = room.ask(with_window(json!({"do": action})));
             answer_of(answer, format!("{action} a window"))
@@ -286,6 +297,11 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
         }
         "type_text" => {
             let text = get("text").as_str().unwrap_or_default().to_string();
+            // A line's end typed is Enter pressed (the room types '\n' as Enter): in a terminal it
+            // runs what was typed, so it waits for the wearer's yes as Enter does.
+            if text.contains(['\n', '\r']) && !agreed && focused_is_terminal(room, window()) {
+                return held(call, format!("typing a command and pressing Enter in {}", window_name(room, window())), window());
+            }
             // The room's messages are small: long text goes in pieces.
             let chunks: Vec<String> = text.chars().collect::<Vec<_>>().chunks(1500).map(|c| c.iter().collect()).collect();
             let mut last = json!({});
@@ -300,7 +316,7 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
         "press_keys" => {
             let keys = get("keys").as_str().unwrap_or_default().to_string();
             if is_enter(&keys) && !agreed && focused_is_terminal(room, window()) {
-                return held(call, format!("pressing Enter in {}", window_name(room, window())));
+                return held(call, format!("pressing Enter in {}", window_name(room, window())), window());
             }
             answer_of(room.ask(with_window(json!({"do": "key", "keys": keys}))), format!("pressed {keys}"))
         }
@@ -370,24 +386,110 @@ fn window_name(room: &Room, window: Option<u64>) -> String {
     }
 }
 
+/// Whether these keys press Enter as a terminal takes it: Enter or Return with anything held
+/// (Shift-Enter, Control-Return), and Control-M and Control-J, which a terminal reads as the
+/// carriage return and the line feed.
 fn is_enter(keys: &str) -> bool {
-    matches!(keys.trim().to_lowercase().as_str(), "enter" | "return")
+    let lower = keys.trim().to_lowercase();
+    let parts: Vec<&str> = lower.split('+').map(str::trim).collect();
+    let enter = parts.iter().any(|p| matches!(*p, "enter" | "return" | "kp_enter" | "kpenter" | "numpad_enter" | "\n" | "\r"));
+    let control = parts.iter().any(|p| matches!(*p, "ctrl" | "control" | "ctl"));
+    enter || (control && parts.iter().any(|p| matches!(*p, "m" | "j")))
 }
 
-/// Whether the window acted on is a terminal, by the room's account of it.
+/// Whether the window acted on is a terminal, by the room's account of it. **Unsure is a
+/// terminal**: a list the room did not give (it did not answer in time), or a window not in it,
+/// and the action waits for the wearer's yes.
 fn focused_is_terminal(room: &Room, window: Option<u64>) -> bool {
     let mut what = json!({"do": "windows"});
     if let Some(w) = window {
         what["window"] = json!(w);
     }
     let list = room.ask(what);
-    let windows = list.get("windows").and_then(Value::as_array).cloned().unwrap_or_default();
+    let Some(windows) = list.get("windows").and_then(Value::as_array) else { return true };
     let it = match window {
         Some(w) => windows.iter().find(|x| x.get("window").and_then(Value::as_u64) == Some(w)),
         None => windows.iter().find(|x| x.get("focused").and_then(Value::as_bool) == Some(true)),
     };
-    let app = it.and_then(|x| x.get("app")).and_then(Value::as_str).unwrap_or_default().to_lowercase();
-    ["spatiquill", "terminal", "iterm", "ghostty", "kitty", "alacritty", "wezterm", "konsole", "ptyxis", "xterm"].iter().any(|t| app.contains(t))
+    let Some(app) = it.and_then(|x| x.get("app")).and_then(Value::as_str) else { return true };
+    is_terminal(app)
+}
+
+/// Whether an application is a terminal, by its name or id.
+fn is_terminal(app: &str) -> bool {
+    const TERMINALS: &[&str] = &[
+        "spatiquill", "terminal", "termux", "iterm", "ghostty", "kitty", "alacritty", "wezterm", "konsole", "ptyxis", "xterm", "rxvt", "foot", "tilix", "terminator",
+        "kgx", "console", "guake", "yakuake", "tilda", "sakura", "tabby", "hyper", "warp", "contour", "blackbox", "cool-retro-term",
+    ];
+    let app = app.to_lowercase();
+    TERMINALS.iter().any(|t| app.contains(t))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A room that answers as `answer` says, on a thread of its own.
+    fn room(answer: impl Fn(&Value) -> Value + Send + 'static) -> Room {
+        let (ask, asked) = channel::<(String, Sender<String>)>();
+        std::thread::spawn(move || {
+            for (what, reply) in asked {
+                let what: Value = serde_json::from_str(&what).unwrap();
+                let _ = reply.send(answer(&what).to_string());
+            }
+        });
+        Room { ask, wake: std::sync::Arc::new(|| {}) }
+    }
+
+    fn call(name: &str, arguments: Value) -> ToolCall {
+        ToolCall { id: "1".into(), name: name.into(), arguments: arguments.to_string() }
+    }
+
+    #[test]
+    fn enter_with_anything_held_or_as_a_control_key_is_enter() {
+        for keys in ["enter", "Return", "shift+enter", "ctrl+Return", "ctrl+m", "Control+J", "ctrl + m", "kp_enter"] {
+            assert!(is_enter(keys), "{keys:?}");
+        }
+        for keys in ["escape", "ctrl+l", "m", "j", "cmd+shift+t", "tab"] {
+            assert!(!is_enter(keys), "{keys:?}");
+        }
+    }
+
+    #[test]
+    fn a_terminal_by_its_name_and_unsure_is_one() {
+        assert!(is_terminal("com.termux") && is_terminal("org.gnome.Console") && is_terminal("foot"));
+        assert!(!is_terminal("id.prasetya.spatiand.spatimesh"));
+        // The room gone, or not answering: a terminal, to be sure.
+        let (ask, asked) = channel();
+        drop(asked);
+        assert!(focused_is_terminal(&Room { ask, wake: std::sync::Arc::new(|| {}) }, Some(3)));
+        let browser = room(|_| json!({"windows": [{"window": 3, "app": "spatimesh", "focused": true}]}));
+        assert!(!focused_is_terminal(&browser, Some(3)));
+        assert!(focused_is_terminal(&browser, Some(9)));
+    }
+
+    #[test]
+    fn a_line_typed_into_a_terminal_waits_and_keeps_its_window() {
+        let typed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let t = typed.clone();
+        let terminal = room(move |what| match what["do"].as_str() {
+            Some("target") => json!({"window": 7}),
+            Some("windows") => json!({"windows": [{"window": 7, "app": "com.termux", "focused": true}]}),
+            _ => {
+                t.lock().unwrap().push(what.clone());
+                json!({})
+            }
+        });
+        for c in [call("type_text", json!({"text": "rm -rf build\n"})), call("press_keys", json!({"keys": "shift+enter"})), call("press_keys", json!({"keys": "ctrl+j"})), call("window", json!({"action": "close"}))] {
+            let held = run(&c, &terminal).held.expect("held");
+            // The window it was asked about, written into the call: a yes acts on that one.
+            assert_eq!(serde_json::from_str::<Value>(&held.call.arguments).unwrap()["window"], 7, "{}", c.name);
+        }
+        assert!(typed.lock().unwrap().is_empty(), "nothing typed or pressed before the yes");
+        // Typed without a line's end, it is typed.
+        assert!(run(&call("type_text", json!({"text": "ls"})), &terminal).held.is_none());
+        assert_eq!(typed.lock().unwrap().len(), 1);
+    }
 }
 
 /// A window's size in pixels, for scrolling by pages.
