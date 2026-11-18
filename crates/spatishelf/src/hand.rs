@@ -16,7 +16,7 @@ use crate::openwith::Choice;
 use crate::{list_columns, list_layout, look, own_program, places, tree, Action, Overlay, Shelf, SideRow, SortBy, View, ROW, TILE};
 
 /// How far a press moves before it is a drag (or a band), in the window's pixels.
-const DRAG_AFTER: f32 = 7.0;
+use spatiand_app::ui::DRAG_AFTER;
 /// How long a press held still opens the menu: the right button for a pad or a hand.
 const HOLD_FOR_MENU: Duration = Duration::from_millis(800);
 /// How long after the click on a chosen name its renaming starts: a second click before then
@@ -218,7 +218,7 @@ impl Shelf {
                 (cell, face, name)
             }
             View::List => {
-                let rect = Rect::new(c.x, c.y + 40.0 + at as f32 * ROW - tab.scroll, c.w, ROW - 4.0);
+                let rect = Rect::new(c.x, c.y + 44.0 + at as f32 * ROW - tab.scroll, c.w, ROW - 4.0);
                 let depth = tab.shown.get(at).map_or(0, |&i| tab.depth(i));
                 let (_, face, name) = list_layout(rect, depth, tab.place == Place::Trash);
                 (rect, face, name)
@@ -256,8 +256,8 @@ impl Shelf {
             return;
         }
         // The list's heads sort it.
-        if self.view == View::List && y < self.content.y + 40.0 {
-            let cols = list_columns(Rect::new(self.content.x, self.content.y, self.content.w, 40.0), self.tabs[self.active].place == Place::Trash);
+        if self.view == View::List && y < self.content.y + 44.0 {
+            let cols = list_columns(Rect::new(self.content.x, self.content.y, self.content.w, 44.0), self.tabs[self.active].place == Place::Trash);
             let by = [SortBy::Name, SortBy::Kind, SortBy::Size, SortBy::Modified];
             if let Some(i) = cols.iter().position(|c| c.contains(x, y)) {
                 self.act(Action::Sort(by[i]));
@@ -275,7 +275,7 @@ impl Shelf {
             return;
         }
         let on_name = hit.is_some_and(|at| self.cell(at).2.inset(-4.0).contains(x, y));
-        let double = hit.is_some() && self.last_click.is_some_and(|(t, i)| t.elapsed() < Duration::from_millis(450) && Some(i) == hit);
+        let double = hit.is_some() && self.last_click.is_some_and(|(t, i)| t.elapsed() < spatiand_app::ui::DOUBLE_CLICK && Some(i) == hit);
         let tab = &mut self.tabs[self.active];
         let mut press = Press { at: (x, y), on: hit, when: Instant::now(), choose_on_release: false, rename_on_release: false, moved: false };
         match hit {
@@ -493,7 +493,7 @@ impl Shelf {
             if self.view == View::List {
                 // Onto a folder's line, into it; onto what an opened folder holds, into that
                 // folder; anywhere else, into the folder on show (see `tree::aim`).
-                let row = if y < self.content.y + 40.0 { None } else { self.line_at(y) };
+                let row = if y < self.content.y + 44.0 { None } else { self.line_at(y) };
                 let aim = tree::aim(&tab.entries, &tab.items, &tab.shown, row, &tab.place);
                 let (rect, closed) = match aim.line {
                     Some(line) if aim.within => {
@@ -962,16 +962,16 @@ impl Shelf {
             let (x, y) = self.pointer;
             let rect = Rect::new(x0.min(x), y0.min(y), (x - x0).abs(), (y - y0).abs());
             p.clip(gl, self.content);
-            p.fill(gl, rect, 4.0, [0.42, 0.68, 1.0, 0.16]);
+            p.fill(gl, rect, 4.0, theme::selected());
             for edge in [Rect { h: 1.5, ..rect }, Rect { y: rect.bottom() - 1.5, h: 1.5, ..rect }, Rect { w: 1.5, ..rect }, Rect { x: rect.right() - 1.5, w: 1.5, ..rect }] {
-                p.fill(gl, edge, 0.0, [0.45, 0.72, 1.0, 0.8]);
+                p.fill(gl, edge, 0.0, theme::mark());
             }
             p.unclip(gl);
         }
         if let Some(target) = self.incoming.as_ref().and_then(|i| i.target.as_ref()) {
             if target.rect != self.content {
                 p.glow(gl, target.rect, 16.0, theme::glow(0.45), 18.0);
-                p.fill(gl, target.rect.inset(-3.0), 16.0, [0.42, 0.68, 1.0, 0.22]);
+                p.fill(gl, target.rect.inset(-3.0), 16.0, theme::selected());
             } else {
                 p.glow(gl, self.content.inset(4.0), 18.0, theme::glow(0.25), 18.0);
             }
@@ -985,7 +985,7 @@ impl Shelf {
                 let inside = target.tab.is_none() && overlaps(target.rect, self.content);
                 p.clip(gl, if inside { self.content } else { p.bounds() });
                 p.glow(gl, target.rect, 16.0, theme::glow(0.45), 18.0);
-                p.fill(gl, target.rect.inset(-3.0), 16.0, [0.42, 0.68, 1.0, 0.22]);
+                p.fill(gl, target.rect.inset(-3.0), 16.0, theme::selected());
                 p.unclip(gl);
             } else {
                 // The folder on show, from inside an opened one: the pane is lit.

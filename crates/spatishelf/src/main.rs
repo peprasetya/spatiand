@@ -712,7 +712,7 @@ impl Shelf {
         match Self::unfinished_in(&[&self.tabs[at]]) {
             Some(what) => {
                 let text = format!("Close this tab? {what} still going in it, and closing the tab stops it part way.");
-                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Close", "Cancel"), action: Action::CloseTab(at) };
+                self.overlay = Overlay::Confirm { confirm: Confirm::careful(text, "Close", "Cancel"), action: Action::CloseTab(at) };
             }
             None => self.close_tab(at),
         }
@@ -728,7 +728,7 @@ impl Shelf {
         let Some(what) = Self::unfinished_in(&tabs) else { return false };
         let text = format!("Quit SpatiShelf? {what} still going, and quitting stops it part way.");
         log::info!("asking before quitting: {what} still going");
-        self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Quit", "Cancel"), action: Action::Quit };
+        self.overlay = Overlay::Confirm { confirm: Confirm::careful(text, "Quit", "Cancel"), action: Action::Quit };
         true
     }
 
@@ -986,7 +986,7 @@ impl Shelf {
                 if !chosen.is_empty() {
                     let n = chosen.len();
                     self.clipboard = Some((chosen, action == Action::Cut));
-                    self.say(format!("{} {} \u{2014} paste where it is to go", if action == Action::Cut { "Cut" } else { "Copied" }, if n == 1 { "1 item".to_string() } else { format!("{n} items") }));
+                    self.say(format!("{} {} \u{2014} paste where it is to go.", if action == Action::Cut { "Cut" } else { "Copied" }, if n == 1 { "1 item".to_string() } else { format!("{n} items") }));
                 }
             }
             Action::Paste => {
@@ -1050,7 +1050,7 @@ impl Shelf {
                     None => format!("Delete {what} for good? This cannot be undone."),
                 };
                 // What the question names is what a yes deletes, whatever is chosen by then.
-                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::DeleteThese(chosen) };
+                self.overlay = Overlay::Confirm { confirm: Confirm::careful(text, "Delete", "Cancel"), action: Action::DeleteThese(chosen) };
             }
             Action::DeleteThese(_) => {}
             Action::Restore => {
@@ -1172,7 +1172,7 @@ impl Shelf {
                 }
             }
             Action::Forget(name) => {
-                self.overlay = Overlay::Confirm { confirm: Confirm::new(format!("Forget the remote {name}? Its files are not touched; only SpatiShelf's way to them goes."), "Yes", "No"), action: Action::Forget(name) };
+                self.overlay = Overlay::Confirm { confirm: Confirm::careful(format!("Forget the remote {name}? Its files are not touched; only SpatiShelf's way to them goes."), "Forget", "Cancel"), action: Action::Forget(name) };
             }
         }
     }
@@ -1185,7 +1185,7 @@ impl Shelf {
         }
         let items = if count == 1 { "the 1 item".to_string() } else { format!("all {count} items") };
         let text = format!("Empty the Trash? {} in it ({}) will be deleted for good. This cannot be undone.", capitalised(&items), room::size(size));
-        self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::EmptyTrash };
+        self.overlay = Overlay::Confirm { confirm: Confirm::careful(text, "Empty", "Cancel"), action: Action::EmptyTrash };
     }
 
     /// Something confirmed.
@@ -1841,7 +1841,7 @@ impl Shelf {
     /// Which line of the list, a thing or a note, is at a height of the content.
     fn line_at(&self, y: f32) -> Option<usize> {
         let tab = &self.tabs[self.active];
-        let row = ((y - self.content.y - 40.0 + tab.scroll) / ROW).floor();
+        let row = ((y - self.content.y - 44.0 + tab.scroll) / ROW).floor();
         (row >= 0.0 && (row as usize) < tab.shown.len()).then_some(row as usize)
     }
 
@@ -2049,7 +2049,7 @@ impl Shelf {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let (cell_h, header) = match view {
             View::Grid => (TILE + 64.0, 0.0),
-            View::List => (ROW, 40.0),
+            View::List => (ROW, 44.0),
         };
         let rows_total = tab.shown.len().div_ceil(columns);
         let content_h = rows_total as f32 * cell_h + header;
@@ -2121,7 +2121,7 @@ impl Shelf {
                         None if item.kind == Kind::Folder => String::new(),
                         None => room::size(item.size),
                     };
-                    p.label(gl, &detail, Rect { y: name.bottom(), h: 24.0, ..name }, theme::FOOTER_EM * 0.8, theme::ink_hint(), 0.5);
+                    p.label(gl, &detail, Rect { y: name.bottom(), h: 24.0, ..name }, theme::FOOTER_EM * 0.82, theme::ink_hint(), 0.5);
                 }
                 View::List => {
                     let rect = Rect::new(area.x, y, area.w, ROW - 4.0);
@@ -2259,7 +2259,7 @@ impl Shelf {
                 let title = match what {
                     Asking::NewFolder => "A new folder".to_string(),
                 };
-                p.label(gl, &title, inner.take_top(48.0), theme::TITLE_EM * 0.75, theme::ink(), 0.0);
+                p.label(gl, &title, inner.take_top(48.0), theme::TITLE_EM * 0.8, theme::ink(), 0.0);
                 inner.take_top(10.0);
                 field.draw(p, gl, inner.take_top(Field::HEIGHT));
                 let mut buttons = inner.take_bottom(Button::HEIGHT);
@@ -2274,7 +2274,7 @@ impl Shelf {
                 room::scrim(p, gl, all);
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(30.0);
-                p.label(gl, "Your remotes, for other apps", inner.take_top(50.0), theme::TITLE_EM * 0.75, theme::ink(), 0.0);
+                p.label(gl, "Your remotes, for other apps", inner.take_top(50.0), theme::TITLE_EM * 0.8, theme::ink(), 0.0);
                 let (_, h) = p.text(gl, "Spatiand's apps reach your remotes by themselves. Other apps reach them as a network folder (WebDAV) on this machine, which only this machine can open:", inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::ink_detail());
                 inner.take_top(h + 18.0);
                 match &storage {
@@ -2366,7 +2366,7 @@ fn list_columns(rect: Rect, wide: bool) -> [Rect; 4] {
 
 /// How far in each step into an opened folder is, and the width the triangle takes.
 const INDENT: f32 = 30.0;
-const DISCLOSURE: f32 = 30.0;
+const DISCLOSURE: f32 = 44.0;
 
 /// A line of the list at `depth`: its triangle (a folder's), its picture and its name, within
 /// the name's column; the other columns are where they are on every line.
@@ -2381,7 +2381,7 @@ fn list_layout(rect: Rect, depth: usize, wide: bool) -> (Rect, Rect, Rect) {
 
 /// Where a thing in the trash came from, as its folder, the home folder written `~`.
 fn origin_folder(trashed: &proto::Trashed) -> String {
-    let Some(origin) = trashed.origin.as_deref() else { return "where, not known".into() };
+    let Some(origin) = trashed.origin.as_deref() else { return "not known".into() };
     let folder = std::path::Path::new(origin).parent().map(|p| proto::shown(&p.to_string_lossy()).into_owned()).unwrap_or_default();
     match home().map(|h| h.to_string_lossy().into_owned()) {
         Some(h) if folder == h => "~".into(),
