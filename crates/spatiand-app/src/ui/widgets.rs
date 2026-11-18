@@ -141,11 +141,7 @@ impl List {
         }
         if scrolls && visible > 0 {
             let track = Rect::new(rect.right() - theme::SCROLL_WIDTH, rect.y, theme::SCROLL_WIDTH, visible as f32 * per_row - theme::ROW_GAP);
-            p.fill(gl, track, theme::SCROLL_WIDTH * 0.5, theme::scroll_track());
-            let thumb = (track.h * visible as f32 / rows.len() as f32).max(theme::SCROLL_WIDTH * 4.0).min(track.h);
-            let progress = self.first as f32 / (rows.len() - visible) as f32;
-            let thumb = Rect { y: track.y + (track.h - thumb) * progress, h: thumb, ..track };
-            p.fill(gl, thumb, theme::SCROLL_WIDTH * 0.5, theme::scroll_thumb());
+            super::look::scrollbar(p, gl, track, visible as f32, rows.len() as f32, self.first as f32);
         }
     }
 
@@ -452,10 +448,7 @@ impl Grid {
         p.unclip(gl);
         if content > rect.h {
             let track = Rect::new(rect.right() - theme::SCROLL_WIDTH, rect.y, theme::SCROLL_WIDTH, rect.h);
-            p.fill(gl, track, theme::SCROLL_WIDTH * 0.5, theme::scroll_track());
-            let thumb = (track.h * rect.h / content).max(theme::SCROLL_WIDTH * 4.0);
-            let progress = self.scroll / (content - rect.h);
-            p.fill(gl, Rect { y: track.y + (track.h - thumb) * progress, h: thumb, ..track }, theme::SCROLL_WIDTH * 0.5, theme::scroll_thumb());
+            super::look::scrollbar(p, gl, track, rect.h, content, self.scroll);
         }
     }
 

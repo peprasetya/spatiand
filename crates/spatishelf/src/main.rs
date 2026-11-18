@@ -2206,11 +2206,8 @@ impl Shelf {
         }
         p.unclip(gl);
         if content_h > area.h {
-            let track = Rect::new(area.right() - 5.0, area.y + header, 5.0, area.h - header);
-            p.fill(gl, track, 2.5, theme::scroll_track());
-            let h = (track.h * area.h / content_h).max(30.0);
-            let y = track.y + (track.h - h) * (tab.scroll / (content_h - area.h).max(1.0));
-            p.fill(gl, Rect { y, h, ..track }, 2.5, theme::scroll_thumb());
+            let track = Rect::new(area.right() - theme::SCROLL_WIDTH, area.y + header, theme::SCROLL_WIDTH, area.h - header);
+            room::scrollbar(p, gl, track, area.h, content_h, tab.scroll);
         }
         if let Some(at) = self.renaming_at() {
             let rect = self.rename_rect(at);

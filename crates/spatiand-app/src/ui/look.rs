@@ -236,6 +236,20 @@ pub fn this_device() -> &'static str {
     }
 }
 
+/// A scrollbar in `track` (`theme::SCROLL_WIDTH` wide, at the right of what scrolls): `shown`
+/// of `total` is in view, from `offset`, all three in one unit (rows, lines, pixels). The
+/// thumb is never shorter than `SCROLL_WIDTH * 4`. Nothing is drawn when all of it fits.
+pub fn scrollbar(p: &mut Painter, gl: &Gl, track: Rect, shown: f32, total: f32, offset: f32) {
+    if total <= shown || track.h <= 0.0 {
+        return;
+    }
+    let round = theme::SCROLL_WIDTH * 0.5;
+    p.fill(gl, track, round, theme::scroll_track());
+    let thumb = (track.h * shown / total).max(theme::SCROLL_WIDTH * 4.0).min(track.h);
+    let progress = (offset / (total - shown)).clamp(0.0, 1.0);
+    p.fill(gl, Rect { y: track.y + (track.h - thumb) * progress, h: thumb, ..track }, round, theme::scroll_thumb());
+}
+
 /// The window dimmed behind a pane, a question or a menu over it.
 pub fn scrim(p: &mut Painter, gl: &Gl, all: Rect) {
     p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);

@@ -1202,12 +1202,10 @@ impl Quill {
                         p.label(gl, "Enter starts a new shell here.    The other tabs are as they were.", inner.take_top(36.0), theme::FOOTER_EM, theme::ink_hint(), 0.0);
                     }
                     if tab.screen.scrolled > 0 && tab.screen.history > 0 {
-                        let track = Rect::new(all.w - 12.0, area.y, 5.0, area.h);
-                        p.fill(gl, track, 2.5, theme::scroll_track());
-                        let total = tab.screen.history as f32 + tab.screen.rows as f32;
-                        let h = (track.h * tab.screen.rows as f32 / total).max(30.0);
-                        let top = track.y + (track.h - h) * (1.0 - tab.screen.scrolled as f32 / tab.screen.history as f32);
-                        p.fill(gl, Rect { y: top, h, ..track }, 2.5, theme::scroll_thumb());
+                        let track = Rect::new(all.w - 12.0, area.y, theme::SCROLL_WIDTH, area.h);
+                        let (rows, history) = (tab.screen.rows as f32, tab.screen.history as f32);
+                        // Scrolled back is from the foot: the offset from the top is what is not.
+                        look::scrollbar(p, gl, track, rows, history + rows, history - tab.screen.scrolled as f32);
                         let note = format!("{} lines up    Shift-End goes to the foot", tab.screen.scrolled);
                         let width = p.measure(gl, &note, theme::FOOTER_EM * 0.85, 8192.0).0 + 36.0;
                         let pill = Rect::new(all.w - width - 30.0, all.h - 64.0, width, 40.0);
