@@ -148,6 +148,9 @@ pub struct Shown {
     /// Which frame of a moving picture is on show, and since when.
     frame: usize,
     frame_since: Instant,
+    /// Which frame the GPU's copy holds: put there once each time the frame changes, not each
+    /// time the window is drawn.
+    uploaded: usize,
     /// The packing the wearer chose over the one guessed.
     eyes: Option<Eyes>,
     swapped: bool,
@@ -174,6 +177,7 @@ impl Shown {
             turns: 0,
             frame: 0,
             frame_since: Instant::now(),
+            uploaded: 0,
             eyes: None,
             swapped: false,
             depth: 0.0,
@@ -645,7 +649,9 @@ impl View {
         let fading = self.chrome() > 0.0 && self.chrome() < 1.0 || self.last_stir.elapsed() < CHROME_STAYS + Duration::from_millis(600);
         let moving = match &self.doc {
             Doc::Loading(_) => true,
-            Doc::Picture(shown) => !shown.picture.frames.is_empty() || shown.faded_in() < 1.0,
+            // A moving picture is not drawn over and over for it: `next_wake` wakes the program
+            // when its next frame is due, and `tick` says it is to be drawn.
+            Doc::Picture(shown) => shown.faded_in() < 1.0,
             Doc::Model(object) => object.turning || object.renderer.is_none(),
             Doc::Pdf(paper) => paper.pages.is_empty() || paper.finding,
             Doc::Failed(_) => false,
@@ -903,15 +909,17 @@ impl View {
                         shown.right = upload(gl, rgba, *w, *h).ok();
                     }
                     shown.frame = 0;
+                    shown.uploaded = 0;
                     // Once: put back after a quarter turn, it is not new.
                     shown.drawn_at.get_or_insert_with(Instant::now);
                 }
                 if let Some(texture) = shown.texture {
-                    if !shown.picture.frames.is_empty() && eye != Eye::Right {
+                    if !shown.picture.frames.is_empty() && shown.uploaded != shown.frame {
                         let rgba = if shown.frame == 0 { &shown.picture.rgba } else { &shown.picture.frames[shown.frame - 1].0 };
                         if rgba.len() == (texture.width * texture.height * 4) as usize {
                             replace(gl, texture, rgba);
                         }
+                        shown.uploaded = shown.frame;
                     }
                     let use_right = shown.eyes() == Eyes::Pair && (eye == Eye::Right) != shown.swapped;
                     let which = if use_right { shown.right.unwrap_or(texture) } else { texture };
@@ -2058,6 +2066,7 @@ mod tests {
             turns: 0,
             frame: 0,
             frame_since: Instant::now(),
+            uploaded: 0,
             eyes: Some(Eyes::SideBySide),
             swapped: false,
             depth: 0.0,
@@ -2083,6 +2092,7 @@ mod tests {
             turns: 0,
             frame: 0,
             frame_since: Instant::now(),
+            uploaded: 0,
             eyes: None,
             swapped: false,
             depth: 0.0,
@@ -2107,7 +2117,7 @@ mod tests {
         for (w, h, eyes) in [(4032, 3024, Eyes::Mono), (3024, 4032, Eyes::Mono), (1920, 1080, Eyes::SideBySide), (3840, 1080, Eyes::Crossed), (1920, 2160, Eyes::TopBottom)] {
             let mut picture = picture(w / 8, h / 8);
             (picture.width, picture.height, picture.eyes, picture.original) = (w, h, eyes, (w, h));
-            let shown = Shown { picture, texture: None, right: None, turns: 0, frame: 0, frame_since: Instant::now(), eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None, nearest: false };
+            let shown = Shown { picture, texture: None, right: None, turns: 0, frame: 0, frame_since: Instant::now(), uploaded: 0, eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None, nearest: false };
             // What the tile's thread works out from the picture's own size, and where the view
             // puts the picture once it has it.
             let tile = fitted(all, eye_aspect(w as f32, h as f32, eyes), eye_height(w as f32, h as f32, eyes));
@@ -2147,6 +2157,22 @@ mod tests {
         // A large picture is still fitted to the window as it was.
         let large = Shown::new(picture(4000, 3000));
         assert!((large.placed(all).w - fit_width(stage(all), 4.0 / 3.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_moving_picture_wakes_for_its_next_frame_and_not_before() {
+        let mut moving = picture(2000, 1500);
+        moving.first = Duration::from_millis(500);
+        moving.frames = vec![(moving.rgba.clone(), Duration::from_millis(500))];
+        let mut view = viewing(3, 1);
+        view.doc = Doc::Picture(Box::new(Shown::new(moving)));
+        if let Doc::Picture(shown) = &mut view.doc {
+            shown.drawn_at = Some(Instant::now() - FADES_IN);
+        }
+        view.last_stir = Instant::now() - CHROME_STAYS - Duration::from_secs(2);
+        assert!(!view.animating(), "not drawn every 16 ms");
+        let wake = view.next_wake().expect("woken for the next frame");
+        assert!(wake > Duration::from_millis(400) && wake <= Duration::from_millis(500), "{wake:?}");
     }
 
     #[test]
