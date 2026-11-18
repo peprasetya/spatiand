@@ -80,13 +80,13 @@ impl Source for Local {
     // trait's own, which do nothing.
 }
 
-#[cfg(test)]
+// Linux's and Android's: a Mac's file system takes no name that is not UTF-8.
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
     /// A name that is not UTF-8 (Latin-1's "é", as an old card or a copied disc has it): listed,
     /// and what is played is the file itself, not its name made text.
-    #[cfg(target_os = "linux")]
     #[test]
     fn a_film_whose_name_is_not_utf8_is_played_by_its_own_name() {
         use std::os::unix::ffi::OsStrExt;
