@@ -225,8 +225,8 @@ impl Window {
         let hovered = self.chats.hovered();
         let armed = self.armed.as_ref().filter(|(_, at)| at.elapsed() < ARMED_FOR).and_then(|(id, _)| view.chats.iter().position(|c| &c.id == id));
         let mut rows = rows;
-        // The chat under the pointer shows its bin where its time was.
-        if let Some(row) = hovered.or(armed).and_then(|i| rows.get_mut(i)) {
+        // The chat under the pointer shows its bin where its time was; one armed shows it asking.
+        if let Some(row) = armed.or(hovered).and_then(|i| rows.get_mut(i)) {
             row.trailing = None;
         }
         self.chats.draw(p, gl, side, &rows);
@@ -236,7 +236,7 @@ impl Window {
             }
         }
         self.forget_row = None;
-        if let Some(i) = hovered.or(armed) {
+        if let Some(i) = armed.or(hovered) {
             if let Some(r) = self.chats.row_rect(i) {
                 let asking = armed == Some(i);
                 let w = if asking { 210.0 } else { 44.0 };
@@ -381,10 +381,14 @@ impl Window {
         } else if self.send.input(&input) {
             return self.take_field();
         }
-        // A chat is forgotten with its bin (pressed twice), or Control/Super-Delete on the one open.
+        // A chat is forgotten with its bin (pressed twice), or Control/Super-Delete on the one open
+        // -- pressed twice too, as the bin is, and only with nothing typed: in the field it is
+        // the field's (Control-Delete deletes the word ahead).
         if let Input::Key { key: spatiand_app::Key::Delete, modifiers, .. } = &input {
-            if (modifiers.logo || modifiers.control) && view.current.is_some() {
-                return view.current.and_then(|i| view.chats.get(i)).map(|c| Want::ForgetChat(c.id.clone()));
+            if (modifiers.logo || modifiers.control) && self.field.text.is_empty() {
+                if let Some(id) = view.current.and_then(|i| view.chats.get(i)).map(|c| c.id.clone()) {
+                    return self.arm_or_forget(id);
+                }
             }
         }
         if let Some(Typed::Entered) = self.field.input(&input) {
@@ -712,4 +716,49 @@ impl Block {
 /// (`**`, `__`, a backtick) taken out, and a trailing line's end.
 fn shown(text: &str) -> String {
     text.replace("**", "").replace("__", "").replace('`', "").trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spatiand_app::{Key, Modifiers};
+
+    #[test]
+    fn control_delete_forgets_the_open_chat_only_pressed_twice_and_with_nothing_typed() {
+        let chats: Vec<Chat> = ["a", "b"].iter().map(|id| Chat { id: id.to_string(), ..Default::default() }).collect();
+        let (settings, speech) = (Settings::default(), VoiceSettings::default());
+        let view = View {
+            chats: &chats,
+            current: Some(1),
+            answering: None,
+            settings: &settings,
+            speech: &speech,
+            listening: false,
+            look: false,
+            status: "",
+            trouble: None,
+            models: &[],
+            voices: &[],
+            characters: &[],
+        };
+        let delete = || Input::Key { key: Key::Delete, text: None, modifiers: Modifiers { control: true, ..Default::default() } };
+        let mut w = Window::new();
+        // Something typed: the key is the field's.
+        w.field.set("hello world");
+        assert!(w.input(delete(), &view).is_none());
+        assert!(w.input(delete(), &view).is_none());
+        // Nothing typed: the first press asks, the second forgets the chat open, by its id.
+        w.field.set("");
+        assert!(w.input(delete(), &view).is_none());
+        assert!(matches!(w.input(delete(), &view), Some(Want::ForgetChat(id)) if id == "b"));
+    }
+
+    #[test]
+    fn the_bin_forgets_the_chat_it_was_pressed_on() {
+        let mut w = Window::new();
+        assert!(w.arm_or_forget("a".into()).is_none());
+        // Another chat on that row by the second press: it is asked about first.
+        assert!(w.arm_or_forget("b".into()).is_none());
+        assert!(matches!(w.arm_or_forget("b".into()), Some(Want::ForgetChat(id)) if id == "b"));
+    }
 }
