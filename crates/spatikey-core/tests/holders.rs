@@ -653,7 +653,7 @@ fn removing_a_holder_gives_the_vault_new_keys_that_the_others_follow() {
     // A recovery code typed with a removal is to be the vault's: a wrong one removes nobody.
     let now = vault.recover(&mac.recovery).unwrap();
     assert_eq!(code(ask(&mac.service, mac_conn, forget(&tablet_fp, Some("not a code".into())))), Code::BadRequest);
-    assert_eq!(code(ask(&mac.service, mac_conn, forget(&tablet_fp, Some(spatikey_core::recovery::new_code())))), Code::Denied);
+    assert_eq!(code(ask(&mac.service, mac_conn, forget(&tablet_fp, Some(spatikey_core::recovery::new_code())))), Code::NoMatch);
     assert_eq!(vault.touch_devices().len(), 3, "a wrong code removes nobody");
     let done: ForgetAnswer = answer(ask(&mac.service, mac_conn, forget(&tablet_fp, Some(mac.recovery.to_lowercase()))));
     assert!(done.rekeyed && done.recovery_code.is_empty());

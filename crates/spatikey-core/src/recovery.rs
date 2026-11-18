@@ -57,6 +57,10 @@ impl RecoveryRecord {
     }
 }
 
+/// What a code that is well formed and not this vault's is told: the service answers it as
+/// such (`no_match`), not as a finger refused.
+pub const WRONG_CODE: &str = "that recovery code does not open this vault";
+
 /// Argon2id's cost: 64 MiB, 3 passes, 1 lane.
 pub const COST: (u32, u32, u32) = (65536, 3, 1);
 
@@ -198,7 +202,7 @@ pub fn unwrap(record: &RecoveryRecord, code: &str, vault_id: &str) -> Result<Vau
         let public = p256::elliptic_curve::sec1::ToEncodedPoint::to_encoded_point(&secret.public_key(), false).as_bytes().to_vec();
         // The code makes the key the record names, or it is another code (or another record's salt).
         if b64::decode(&record.public)? != public {
-            return Err("that recovery code does not open this vault".into());
+            return Err(WRONG_CODE.into());
         }
         let wrapped = b64::decode(&record.wrapped)?;
         if wrapped.len() != crate::holders::WRAPPED_LEN {
@@ -208,7 +212,7 @@ pub fn unwrap(record: &RecoveryRecord, code: &str, vault_id: &str) -> Result<Vau
             .map_err(|_| "the recovery record's wrap is not a wrap".to_string())?;
         let shared = p256::ecdh::diffie_hellman(secret.to_nonzero_scalar(), ephemeral.as_affine());
         return crate::holders::open_with_shared_as(shared.raw_secret_bytes(), &public, &wrapped, aad2(vault_id).as_bytes())
-            .map_err(|_| "that recovery code does not open this vault".to_string());
+            .map_err(|_| WRONG_CODE.to_string());
     }
     let nonce = b64::decode(&record.n)?;
     let mut sealed = Zeroizing::new(b64::decode(&record.c)?);
@@ -216,7 +220,7 @@ pub fn unwrap(record: &RecoveryRecord, code: &str, vault_id: &str) -> Result<Vau
     let nonce = Nonce::try_assume_unique_for_key(&nonce).map_err(|_| "a nonce of the wrong length".to_string())?;
     let key = wrapping
         .open_in_place(nonce, Aad::from(aad(vault_id).as_bytes()), &mut sealed[..])
-        .map_err(|_| "that recovery code does not open this vault".to_string())?;
+        .map_err(|_| WRONG_CODE.to_string())?;
     VaultKey::from_bytes(key)
 }
 

@@ -486,7 +486,7 @@ impl Vault {
     /// The newest vault key, from the recovery code: where the keys were changed, the last of the
     /// line, and [`RIVALS`] where there are two lines the code opens.
     pub(crate) fn recover_newest(&self, code: &str) -> Result<VaultKey, String> {
-        let wrong = || "that recovery code does not open this vault".to_string();
+        let wrong = || recovery::WRONG_CODE.to_string();
         let leaves = self.leaves("");
         if leaves.is_empty() {
             let record = self.recovery_file().ok_or("this vault has no recovery code")?;
@@ -576,7 +576,7 @@ impl Vault {
                 // No code is needed; one typed all the same is to be the vault's.
                 if let RecoveryPlan::Keep(code) = plan {
                     if !recovery::unwrap(&record, code, self.id()).is_ok_and(|opened| opened.bytes() == key.bytes()) {
-                        return Err("that recovery code is not this vault's".into());
+                        return Err(recovery::WRONG_CODE.into());
                     }
                 }
                 Some(recovery::rewrap(&record, &new, self.id(), &id)?)
@@ -585,7 +585,7 @@ impl Vault {
                 let code = match plan {
                     RecoveryPlan::Keep(code) => {
                         if !recovery::unwrap(&record, code, self.id()).is_ok_and(|opened| opened.bytes() == key.bytes()) {
-                            return Err("that recovery code is not this vault's".into());
+                            return Err(recovery::WRONG_CODE.into());
                         }
                         Zeroizing::new(code.to_string())
                     }

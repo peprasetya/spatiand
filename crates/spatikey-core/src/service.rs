@@ -992,7 +992,7 @@ impl Service {
                 format!("{} cannot be used on this device now", holders::sensor(guard.kind())),
             ));
         }
-        let key = vault.recover(&code).map_err(|e| refuse(Code::Denied, e))?;
+        let key = vault.recover(&code).map_err(wrong_code)?;
         let _prompt = lock(&self.prompt);
         let what = match guard.kind() {
             holders::MAC => "set Touch ID up again",
@@ -1074,7 +1074,7 @@ impl Service {
             };
             let made = vault
                 .rekey(&key, std::slice::from_ref(&holder.device), &self.me.fp, &self.short(), plan, crate::recovery::COST)
-                .map_err(|e| if recovery_code.is_some() && e.contains("recovery code") { refuse(Code::Denied, e) } else { failed(e) })?;
+                .map_err(wrong_code)?;
             if let Err(e) = vault.settle(&made.key, &self.me.fp) {
                 log::warn!("spatikey: the vault has new keys, and not everything after is done yet: {e}");
             }
@@ -1838,6 +1838,15 @@ fn nothing() -> Result<Value, Refusal> {
 
 fn refuse(code: Code, message: impl Into<String>) -> Refusal {
     Refusal::new(code, message)
+}
+
+/// What went wrong with a recovery code: one that is not this vault's is `no_match`, said as
+/// such -- not `denied`, which is a finger refused or a prompt cancelled.
+fn wrong_code(message: String) -> Refusal {
+    if message == crate::recovery::WRONG_CODE {
+        return Refusal::new(Code::NoMatch, "that is not this vault's recovery code");
+    }
+    failed(message)
 }
 
 fn failed(message: String) -> Refusal {

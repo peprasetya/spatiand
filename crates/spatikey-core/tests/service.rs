@@ -328,7 +328,7 @@ fn setup_gives_a_code_that_recovers_the_key() {
     *guard.key.lock().unwrap() = None;
     assert_eq!(code(ask(&service, conn, Request::Recover { code: "not-a-code".into() })), Code::BadRequest);
     let wrong = spatikey_core::recovery::new_code();
-    assert_eq!(code(ask(&service, conn, Request::Recover { code: wrong })), Code::Denied);
+    assert_eq!(code(ask(&service, conn, Request::Recover { code: wrong })), Code::NoMatch, "a code not this vault's is told so, not a finger refused");
     assert_eq!(guard.enrolls.load(SeqCst), 1, "a wrong code enrols nothing");
     let typed = setup.recovery_code.to_lowercase().replace('-', " ");
     answer::<Value>(ask(&service, conn, Request::Recover { code: typed }));

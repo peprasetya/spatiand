@@ -616,11 +616,18 @@ impl SpatiKey {
                 }
             }
             Asked::Open if refusal.code == Code::FingerprintsChanged => self.fingers_changed = true,
-            // A code that does not open the vault is a code mistyped far more often than a fault.
-            Asked::Recover if matches!(refusal.code, Code::Failed | Code::BadRequest | Code::NoMatch) => {
+            // A code that is not the vault's is said as that, not as a finger refused: the
+            // service answers it `no_match` (one before 2026-11-18 said `denied`, which reads as
+            // a cancelled touch -- it cannot be told from one here).
+            Asked::Recover if refusal.code == Code::NoMatch => {
+                self.said = None;
+                self.trouble = Some("That is not this vault\u{2019}s recovery code. Check it against \u{201C}SpatiKey recovery\u{201D} in Apple Passwords.".into());
+                return;
+            }
+            Asked::Recover if refusal.code == Code::BadRequest => {
                 let why = if refusal.message.trim().is_empty() { String::new() } else { format!(": {}", refusal.message.trim()) };
                 self.said = None;
-                self.trouble = Some(format!("That code does not open the vault{why}. Check it against \u{201C}SpatiKey recovery\u{201D} in Apple Passwords."));
+                self.trouble = Some(format!("That is not a recovery code{why}. Check it against \u{201C}SpatiKey recovery\u{201D} in Apple Passwords."));
                 return;
             }
             _ => {}
