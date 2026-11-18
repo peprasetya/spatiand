@@ -93,6 +93,32 @@ fn is_own(window: &smithay::desktop::Window) -> bool {
     window.toplevel().and_then(|t| t.wl_surface().client()).is_some_and(|c| c.id() == assistant)
 }
 
+/// SpatiKey's application id: its windows show passwords, codes and the recovery code.
+const SPATIKEY_APP_ID: &str = "id.prasetya.spatiand.spatikey";
+
+/// **What the assistant never sees** -- no picture of it goes to the model server, nor its title,
+/// nor its own account of itself, and a picture of the whole view is not taken while it is in
+/// view: SpatiKey's windows (a password revealed, the recovery code), and SpatiMesh's window that
+/// asks for a profile's PIN or password, or sets one (its titles, from Chromium patch 0012:
+/// "<profile> is locked", "What opens <profile>"). By application id, here or from a host
+/// (`remote.<host>.<id>`). (No client can mark a window of its own so yet: `spatiand_xr_v1` has
+/// no such request; one would be the proper way for any other application with secrets.)
+fn secret_by(app: &str, title: &str) -> bool {
+    let is = |id: &str| app == id || app.ends_with(&format!(".{id}"));
+    if is(SPATIKEY_APP_ID) {
+        return true;
+    }
+    is(crate::audio::CHROMIUM_APP_ID) && (title.ends_with(" is locked") || title.starts_with("What opens "))
+}
+
+fn secret(state: &Spatiand, window: &smithay::desktop::Window) -> bool {
+    secret_by(&state.app_id_of(window).unwrap_or_default(), &state.title_of(window).unwrap_or_default())
+}
+
+/// What the assistant is told instead of what it may not see.
+const NOT_SEEN: &str = "that window is SpatiKey's or asks for a profile's PIN or password: it is never shown to the assistant";
+const VIEW_NOT_SEEN: &str = "a password, a PIN or a code is on show in the view (SpatiKey, a locked profile, the Touch ID card or a pairing code): no picture of the view is taken while it is";
+
 /// Tell the assistant something (`happened`): the focus moved, it was asked for.
 pub fn tell(what: Value) {
     let text = what.to_string();
@@ -366,14 +392,27 @@ pub fn serve(
                     asked.refuse("no such window");
                     continue;
                 };
+                if state.space.elements().any(|w| state.layout.id_of(w) == Some(id) && secret(state, w)) {
+                    asked.refuse(NOT_SEEN);
+                    continue;
+                }
                 describe(state, id, asked);
             }
-            "seen" => seen(state, windows, renderer, sight, asked),
+            "seen" => {
+                // The room's own cards that carry a secret: SpatiKey's (the Touch ID card), and
+                // the hosts' page where a pairing code is typed.
+                let card = !crate::spatikey::notice().is_empty() || shell.is_some_and(|s| s.mode() == spatiand_shell::Mode::Hosts);
+                seen(state, windows, renderer, sight, card, asked)
+            }
             "picture" => {
                 let Some(id) = window_of(state, &asked) else {
                     asked.refuse("no such window");
                     continue;
                 };
+                if state.space.elements().any(|w| state.layout.id_of(w) == Some(id) && secret(state, w)) {
+                    asked.refuse(NOT_SEEN);
+                    continue;
+                }
                 let largest = asked.number("largest").unwrap_or(1280.0).clamp(256.0, 2048.0) as u32;
                 match windows.iter().find(|q| state.layout.id_of(&q.window) == Some(id)) {
                     Some(quad) => match picture(renderer, quad, largest, [0.0, 1.0, 0.0, 1.0]) {
@@ -584,10 +623,12 @@ fn window_list(state: &Spatiand, windows: &[crate::scene::WindowQuad]) -> Vec<Va
         .filter_map(|w| {
             let id = state.layout.id_of(w)?;
             let size = windows.iter().find(|q| &q.window == w).map(|q| q.pixels);
+            let private = secret(state, w);
             Some(json!({
                 "window": id,
                 "app": state.app_id_of_id(id).unwrap_or_default(),
-                "title": state.title_of(w).unwrap_or_default(),
+                "title": if private { String::new() } else { state.title_of(w).unwrap_or_default() },
+                "private": private,
                 "focused": focused == Some(id),
                 "hidden": state.layout.is_hidden(w),
                 "pinned": state.layout.is_pinned(w),
@@ -888,9 +929,10 @@ pub fn on_show(quads: &[spatiand_render::Quad], sight: &Sight) -> Vec<OnShow> {
 /// The windows that count for what the wearer sees: those on show, **without the assistant's own**
 /// -- its chat window is looked through, not at: asked "what do I see?" while it is in front of a
 /// page (it opens where the wearer looks), the page is what is meant. Its own window only when
-/// there is no other.
+/// there is no other. Never one it may not see ([`secret_by`]).
 fn seeable(state: &Spatiand, windows: &[crate::scene::WindowQuad]) -> Vec<usize> {
-    let shown: Vec<usize> = (0..windows.len()).filter(|&k| !state.layout.is_hidden(&windows[k].window)).collect();
+    let shown: Vec<usize> =
+        (0..windows.len()).filter(|&k| !state.layout.is_hidden(&windows[k].window) && !secret(state, &windows[k].window)).collect();
     let theirs: Vec<usize> = shown.iter().copied().filter(|&k| !is_own(&windows[k].window)).collect();
     if theirs.is_empty() {
         shown
@@ -925,7 +967,18 @@ fn looked_at(state: &Spatiand, windows: &[crate::scene::WindowQuad], shown: &[On
 /// (`view_png`) -- for a question about more than one window. `"picture": false` for the account
 /// without pictures. The same in every room, for every kind of window: the room's own picture,
 /// not the application's account of itself (that is `describe`).
-fn seen(state: &Spatiand, windows: &[crate::scene::WindowQuad], renderer: &mut smithay::backend::renderer::gles::GlesRenderer, sight: Option<&Sight>, asked: Asked) {
+///
+/// What it may not see ([`secret_by`]) is neither looked at nor among the others; named, it is
+/// said to be private, with no picture and no title. While one is in view, or a card of the
+/// room's that carries a secret is up (`secret_card`), the view is not given.
+fn seen(
+    state: &Spatiand,
+    windows: &[crate::scene::WindowQuad],
+    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    sight: Option<&Sight>,
+    secret_card: bool,
+    asked: Asked,
+) {
     let largest = asked.number("largest").unwrap_or(1280.0).clamp(256.0, 2048.0) as u32;
     let visible = seeable(state, windows);
     let quads: Vec<spatiand_render::Quad> = visible
@@ -955,10 +1008,12 @@ fn seen(state: &Spatiand, windows: &[crate::scene::WindowQuad], renderer: &mut s
     let describe = |k: usize, s: Option<&OnShow>| {
         let w = &windows[k];
         let id = state.layout.id_of(&w.window);
+        let private = secret(state, &w.window);
         json!({
             "window": id,
             "app": id.and_then(|id| state.app_id_of_id(id)).unwrap_or_default(),
-            "title": state.title_of(&w.window).unwrap_or_default(),
+            "title": if private { String::new() } else { state.title_of(&w.window).unwrap_or_default() },
+            "private": private,
             "own": is_own(&w.window),
             "in_view": s.is_some(),
             "part": s.map(|s| s.part),
@@ -971,7 +1026,9 @@ fn seen(state: &Spatiand, windows: &[crate::scene::WindowQuad], renderer: &mut s
         let mut about = describe(k, s);
         let part = s.map_or([0.0, 1.0, 0.0, 1.0], |s| s.part);
         about["whole"] = json!(part == [0.0, 1.0, 0.0, 1.0]);
-        if asked.get("picture").and_then(Value::as_bool) != Some(false) {
+        if secret(state, &windows[k].window) {
+            about["picture_error"] = json!(NOT_SEEN);
+        } else if asked.get("picture").and_then(Value::as_bool) != Some(false) {
             match picture(renderer, &windows[k], largest, part) {
                 Ok((png, w, h)) => {
                     about["png"] = json!(spatiand_voice::speech::encode_base64(&png));
@@ -985,6 +1042,21 @@ fn seen(state: &Spatiand, windows: &[crate::scene::WindowQuad], renderer: &mut s
     }
     answer["others"] = json!(shown.iter().filter(|s| Some(s.quad) != target).map(|s| describe(s.quad, Some(s))).collect::<Vec<_>>());
     if asked.get("view").and_then(Value::as_bool) == Some(true) {
+        // Any window it may not see that is in view, by the same rays as the rest.
+        let hidden_in_view = sight.is_some_and(|sight| {
+            let private: Vec<usize> =
+                (0..windows.len()).filter(|&k| !state.layout.is_hidden(&windows[k].window) && secret(state, &windows[k].window)).collect();
+            let quads: Vec<spatiand_render::Quad> = private
+                .iter()
+                .map(|&k| crate::scene::window_quad(&windows[k].placement, windows[k].pixels.0 as f64 / windows[k].pixels.1.max(1) as f64))
+                .collect();
+            !quads.is_empty() && !on_show(&quads, sight).is_empty()
+        });
+        if hidden_in_view || secret_card {
+            answer["view_error"] = json!(VIEW_NOT_SEEN);
+            asked.answer(answer);
+            return;
+        }
         if sight.is_some() {
             // Answered once the frame being drawn is: what the eye was shown.
             VIEW_OWED.lock().unwrap().push((asked, answer, largest, std::time::Instant::now()));
@@ -1081,7 +1153,20 @@ fn encode(image: image::RgbaImage, largest: u32) -> Result<(Vec<u8>, u32, u32), 
 
 #[cfg(test)]
 mod tests {
-    use super::{keys_of, on_show, Sight};
+    use super::{keys_of, on_show, secret_by, Sight};
+
+    #[test]
+    fn spatikey_and_a_profiles_lock_are_never_seen() {
+        assert!(secret_by("id.prasetya.spatiand.spatikey", "SpatiKey"));
+        assert!(secret_by("id.prasetya.spatiand.spatikey", ""));
+        assert!(secret_by("remote.littleotter.id.prasetya.spatiand.spatikey", "SpatiKey"), "from a host too");
+        assert!(secret_by("spatimesh-chromium", "Work is locked"));
+        assert!(secret_by("spatimesh-chromium", "What opens Work"));
+        assert!(secret_by("remote.deck.spatimesh-chromium", "Work is locked"));
+        assert!(!secret_by("spatimesh-chromium", "Example Domain"), "a page is seen");
+        assert!(!secret_by("org.gnome.TextEditor", "Work is locked"), "only SpatiMesh's lock");
+        assert!(!secret_by("id.prasetya.spatiand.spatikeyboard", "x"));
+    }
     use glam::{DQuat, DVec3};
 
     fn window(yaw_deg: f64, pitch_deg: f64, radius: f64, width: f64, aspect: f64) -> spatiand_render::Quad {
