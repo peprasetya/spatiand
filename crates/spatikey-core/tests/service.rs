@@ -20,17 +20,19 @@ use spatikey_core::service::{next_conn, ConnId, Guard, Me, Mode, Service};
 use spatikey_core::socket::{self, Client};
 use spatikey_core::vault::{TouchDevice, TouchId, Vault, VaultKey};
 use spatikey_core::wire::*;
-use spatikey_core::{b64, Entry, Kind, Passkey, Totp};
+use spatikey_core::{b64, holders, Entry, Kind, Passkey, Totp};
 use zeroize::Zeroizing;
 
 /// What the soft guard's Secure Enclave key "is": checked to be what the service hands back.
 const BLOB: &str = "c29mdC1zZWN1cmUtZW5jbGF2ZQ==";
 
-/// Touch ID as these tests have it: the key it was enrolled with, kept in memory, and a record
-/// of what it was asked.
+/// Touch ID as these tests have it: a P-256 key in software doing the ECDH a Secure Enclave
+/// does, the vault key it last gave, and a record of what it was asked.
 #[derive(Default)]
 struct SoftGuard {
     key: Mutex<Option<VaultKey>>,
+    /// The Secure Enclave key, in software.
+    secret: Mutex<Option<p256::SecretKey>>,
     unlocks: AtomicUsize,
     enrolls: AtomicUsize,
     reasons: Mutex<Vec<String>>,
@@ -81,7 +83,16 @@ impl Guard for SoftGuard {
         if self.refuse.load(SeqCst) {
             return Err(Refusal::new(Code::Denied, "the person said no"));
         }
-        self.key.lock().unwrap().clone().ok_or_else(|| Refusal::new(Code::FingerprintsChanged, "no key enrolled"))
+        // The wrap it is handed, opened with its own key: whichever of the vault's keys that is.
+        let none = || Refusal::new(Code::FingerprintsChanged, "no key enrolled");
+        let secret = self.secret.lock().unwrap().clone().ok_or_else(none)?;
+        let wrapped = b64::decode(&touch.wrapped).map_err(|_| none())?;
+        let public = b64::decode(&touch.public).map_err(|_| none())?;
+        let ephemeral = p256::PublicKey::from_sec1_bytes(wrapped.get(..holders::PUBLIC_LEN).ok_or_else(none)?).map_err(|_| none())?;
+        let shared = p256::ecdh::diffie_hellman(secret.to_nonzero_scalar(), ephemeral.as_affine());
+        let key = holders::open_with_shared(shared.raw_secret_bytes(), &public, &wrapped).map_err(|_| none())?;
+        *self.key.lock().unwrap() = Some(key.clone());
+        Ok(key)
     }
 
     fn enroll(&self, key: &VaultKey) -> Result<TouchId, Refusal> {
@@ -90,11 +101,14 @@ impl Guard for SoftGuard {
             return Err(Refusal::new(Code::Denied, "the person said no"));
         }
         *self.key.lock().unwrap() = Some(key.clone());
+        let secret = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let public = p256::elliptic_curve::sec1::ToEncodedPoint::to_encoded_point(&secret.public_key(), false).as_bytes().to_vec();
+        *self.secret.lock().unwrap() = Some(secret);
         Ok(TouchId {
             vault: String::new(),
-            public: "c29mdC1wdWJsaWM=".into(),
+            public: b64::encode(&public),
             blob: BLOB.into(),
-            wrapped: "c29mdC13cmFwcGVk".into(),
+            wrapped: b64::encode(&holders::wrap(key, &public).unwrap()),
         })
     }
 
@@ -334,7 +348,7 @@ fn a_wrong_key_does_not_open_the_vault() {
     let mut entry = login("GitHub", "github.com", "paulus", "hunter2");
     vault.write(&key, &mut entry, SHORT).unwrap();
     assert!(vault.read(&wrong, &entry.id).is_err());
-    assert!(vault.entries(&wrong).unwrap().is_empty(), "what does not open is left out");
+    assert!(vault.entries(&wrong).is_err(), "a key that is none of the vault's reads nothing");
     assert_eq!(vault.entries(&key).unwrap().len(), 1);
     let again = Vault::open(&place.shared(), &place.local()).unwrap();
     assert_eq!(again.header(), vault.header());
@@ -751,7 +765,7 @@ fn devices_settings_and_a_new_recovery_code_in_a_session() {
     assert_eq!(devices.holders.len(), 2);
     assert!(devices.requests.is_empty());
 
-    let forget = |fp: &str| Request::ForgetDevice { session: session.clone(), fp: fp.into() };
+    let forget = |fp: &str| Request::ForgetDevice { session: session.clone(), fp: fp.into(), recovery_code: None };
     let unlocks = guard.unlocks();
     answer::<Value>(ask(&service, conn, forget(&deck)));
     assert!(service.allowed().is_empty());
@@ -774,7 +788,11 @@ fn devices_settings_and_a_new_recovery_code_in_a_session() {
     assert_eq!(kept, Settings { touch_secs: 300, open_secs: 600 });
 
     let renewed: SetupAnswer = answer(ask(&service, conn, Request::RecoveryNew { session: session.clone() }));
-    assert_eq!(vault.recover(&renewed.recovery_code).unwrap().bytes(), key.bytes());
+    // Removing a holder made the vault a new key: the code made since is for that one.
+    let recovered = vault.recover(&renewed.recovery_code).unwrap();
+    assert_ne!(recovered.bytes(), key.bytes());
+    assert!(vault.generation_of(&recovered).is_some_and(|change| !change.is_empty()));
+    assert_eq!(vault.generation_of(&key).as_deref(), Some(""));
     assert_eq!(code(ask(&service, next_conn(), Request::Devices { session })), Code::BadSession);
 }
 

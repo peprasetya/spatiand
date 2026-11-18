@@ -278,7 +278,7 @@ impl Service for Fake {
                 self.phone_asking = false;
                 ok(json!({}))
             }
-            Request::ForgetDevice { session, fp } => {
+            Request::ForgetDevice { session, fp, .. } => {
                 self.session(&session)?;
                 self.allowed.retain(|d| d.fp != fp);
                 ok(json!({}))

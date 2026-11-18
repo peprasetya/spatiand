@@ -28,7 +28,7 @@ use crate::hooks::{self, Room, Step};
 use crate::remote::Asker;
 use crate::vault::{self, TouchDevice, TouchId, Vault, VaultKey};
 use crate::wire::{
-    Asking, Choice, ChoicesAnswer, Code, Device, DevicesAnswer, Envelope, Field, FillAnswer, FindAnswer, GetAnswer, Holder,
+    Asking, Choice, ChoicesAnswer, Code, Device, DevicesAnswer, Envelope, Field, FillAnswer, FindAnswer, ForgetAnswer, GetAnswer, Holder,
     HolderAnswer, IdAnswer, ListAnswer, Login, OpenAnswer, PasskeyCreate, PasskeyGet, Refusal, Reply, Request, RevealAnswer,
     Settings, SettingsAnswer, SetupAnswer, StatusAnswer, TargetAnswer, TotpAnswer, Who,
 };
@@ -355,7 +355,9 @@ impl Service {
             Request::RecoveryNew { session } => self.recovery_new(conn, &session),
             Request::Recover { code } => self.recover(guard, Zeroizing::new(code)),
             Request::Devices { session } => self.devices(conn, &session),
-            Request::ForgetDevice { session, fp } => self.forget_device(guard, conn, &who, &session, &fp),
+            Request::ForgetDevice { session, fp, recovery_code } => {
+                self.forget_device(guard, conn, &who, &session, &fp, recovery_code.map(Zeroizing::new))
+            }
             Request::Settings { session, set } => self.settings_asked(conn, &session, set),
             Request::Pair { .. } => Err(refuse(Code::BadRequest, "pairing is asked of a Mac over the network, not here")),
             Request::Find | Request::PairWith { .. } | Request::PairConfirm { .. } => {
@@ -407,10 +409,23 @@ impl Service {
     ///   record is written again from the half -- the one change a vault set up with a single Mac
     ///   needs, made in place;
     /// * no half, but a request this device made that a holder has since added: the half is made
-    ///   from the key kept while it waited and the wrap the holder wrote.
+    ///   from the key kept while it waited and the wrap the holder wrote;
+    /// * the vault's keys changed without it (it was not among the holders the new keys were
+    ///   wrapped to, and entries are sealed under them already): the half is let go, as a removed
+    ///   one is, for the device to be added again.
     fn half(&self, guard: &dyn Guard, vault: &Vault) -> Option<TouchId> {
         let record = vault.touch_device(&self.me.fp);
         if let Some(touch) = vault.touch_id() {
+            if !record.as_ref().is_some_and(|r| r.removed) {
+                let at = vault.half().map(|h| h.key).unwrap_or_default();
+                if vault.left_out(&at, &self.me.fp, &touch.public) {
+                    log::warn!("spatikey: vault {}'s keys were changed without this device; letting its half go", vault.id());
+                    if let Err(e) = vault.forget_touch_id() {
+                        log::warn!("spatikey: could not let go of this device's half: {e}");
+                    }
+                    return None;
+                }
+            }
             return match record {
                 Some(record) if record.removed => {
                     log::warn!("spatikey: this device was removed from those that open vault {}; letting its half go", vault.id());
@@ -441,7 +456,9 @@ impl Service {
         let pending = vault.pending()?;
         let record = record.filter(|r| !r.removed && r.public == pending.public && !r.wrapped.is_empty())?;
         let touch = TouchId { vault: vault.id().to_string(), public: pending.public, blob: pending.blob, wrapped: record.wrapped };
-        if let Err(e) = vault.set_touch_id(&touch) {
+        // Which of the vault's keys the holder wrapped: its record says. The proof of it is kept
+        // when the key is first had.
+        if let Err(e) = vault.set_touch_id(&touch).and_then(|()| vault.set_follow(&touch.public, &record.key, &touch.wrapped, "")) {
             log::warn!("spatikey: could not keep the half a holder made for this device: {e}");
             return None;
         }
@@ -520,7 +537,7 @@ impl Service {
         let key = self.unlock_lingering(guard, &vault, who, &format!("add {name} to the devices that open SpatiKey"), 0)?;
         let wrapped = holders::wrap(&key, &public).map_err(failed)?;
         let _writing = lock(&self.writing);
-        let record = TouchDevice {
+        let mut record = TouchDevice {
             device: asking.device.to_ascii_lowercase(),
             name: asking.name.clone(),
             kind: asking.kind.clone(),
@@ -528,8 +545,11 @@ impl Service {
             wrapped: b64::encode(&wrapped),
             added: crate::now_ms(),
             by: self.short(),
-            removed: false,
+            ..TouchDevice::default()
         };
+        // Sealed under the key this holder has just had: a later change of keys wraps the new
+        // key to this device because a holder said it is one.
+        vault.seal_holder(&key, &mut record).map_err(failed)?;
         vault.add_touch_device(&record).map_err(failed)?;
         vault.close_asking(&asking.device).map_err(failed)?;
         log::info!("spatikey: added {name} ({}) to the devices that open vault {}", &record.device[..8], vault.id());
@@ -562,20 +582,23 @@ impl Service {
         let key = VaultKey::random();
         let touch = self.with_card(&ByGuard(guard), "set SpatiKey up", || guard.enroll(&key), |touch| touch.as_ref().err())?;
         let vault = Vault::create_with(&self.shared, &self.local, &self.short(), &key).map_err(failed)?;
-        self.enrolled(&vault, touch, name, guard.kind())?;
+        self.enrolled(&vault, touch, name, guard.kind(), &key)?;
         let recovery_code = vault.set_recovery(&key).map_err(failed)?;
         answer(SetupAnswer { recovery_code })
     }
 
-    /// Keep what the sensor made for `vault`: this device's half in `local`, and its record in
-    /// `devices`, each replacing any before.
-    fn enrolled(&self, vault: &Vault, touch: TouchId, name: &str, kind: &str) -> Result<(), Refusal> {
+    /// Keep what the sensor made for `vault`: this device's half in `local` (with which of the
+    /// vault's keys `key` is, and the proof of it), and its record in `devices` sealed under that
+    /// key, each replacing any before.
+    fn enrolled(&self, vault: &Vault, touch: TouchId, name: &str, kind: &str, key: &VaultKey) -> Result<(), Refusal> {
         vault.set_touch_id(&touch).map_err(failed)?;
+        let generation = vault.generation_of(key).ok_or_else(|| failed("the key does not open this vault".into()))?;
+        vault.set_follow(&touch.public, &generation, &touch.wrapped, &vault.proof(key).unwrap_or_default()).map_err(failed)?;
         let name = match name.trim() {
             "" => self.me.name.clone(),
             name => name.to_string(),
         };
-        let device = TouchDevice {
+        let mut device = TouchDevice {
             device: self.me.fp.clone(),
             name,
             kind: kind.to_string(),
@@ -584,6 +607,7 @@ impl Service {
             added: crate::now_ms(),
             ..TouchDevice::default()
         };
+        vault.seal_holder(key, &mut device).map_err(failed)?;
         vault.add_touch_device(&device).map_err(failed)?;
         // A request this device made while it could not open the vault is answered now.
         if vault.pending().is_some() {
@@ -975,7 +999,12 @@ impl Service {
             _ => "open SpatiKey with your fingerprint",
         };
         let touch = self.with_card(&ByGuard(guard), what, || guard.enroll(&key), |touch| touch.as_ref().err())?;
-        self.enrolled(&vault, touch, "", guard.kind())?;
+        self.enrolled(&vault, touch, "", guard.kind(), &key)?;
+        // With the newest key in hand: whatever a change of keys left to do.
+        let _writing = lock(&self.writing);
+        if let Err(e) = vault.settle(&key, &self.me.fp) {
+            log::warn!("spatikey: could not finish what the vault's change of keys left to do: {e}");
+        }
         log::info!("spatikey: this device opens vault {} again, set up from the recovery code", vault.id());
         nothing()
     }
@@ -1003,7 +1032,17 @@ impl Service {
         answer(DevicesAnswer { allowed: self.allowed(), touch_ids, holders: holders_of(&vault), requests })
     }
 
-    fn forget_device(&self, guard: &dyn Guard, conn: ConnId, who: &Who, token: &str, fp: &str) -> Result<Value, Refusal> {
+    /// Remove a device: from those that may ask, and from the holders. **A holder removed is new
+    /// keys for the vault** (`Vault::rekey`): it once had the old one.
+    fn forget_device(
+        &self,
+        guard: &dyn Guard,
+        conn: ConnId,
+        who: &Who,
+        token: &str,
+        fp: &str,
+        recovery_code: Option<Zeroizing<String>>,
+    ) -> Result<Value, Refusal> {
         let vault = self.vault()?;
         self.session(conn, token, &vault)?;
         if fp.eq_ignore_ascii_case(&self.me.fp) {
@@ -1012,17 +1051,44 @@ impl Service {
                 "this device cannot remove itself: remove it from another that opens SpatiKey",
             ));
         }
+        let mut done = ForgetAnswer::default();
         // A holder goes only with a new touch here, whatever the session covers: it is a device
         // that opens every password.
         if let Some(holder) = vault.touch_devices().into_iter().find(|d| d.device.eq_ignore_ascii_case(fp)) {
+            // Before the touch: a code that is not one is refused without asking anybody.
+            if let Some(code) = &recovery_code {
+                crate::recovery::canonical(code).map(Zeroizing::new).map_err(|e| refuse(Code::BadRequest, e))?;
+            }
             let name = match shown(&holder.name) {
                 name if name.is_empty() => "a device".to_string(),
                 name => name,
             };
-            self.unlock_lingering(guard, &vault, who, &format!("remove {name} from the devices that open SpatiKey"), 0)?;
+            let key = self.unlock_lingering(guard, &vault, who, &format!("remove {name} from the devices that open SpatiKey"), 0)?;
+            let _writing = lock(&self.writing);
+            // The touch gave the vault key; a new one is made, the removed device left out of it.
+            // One file is the change: before it nothing has happened, after it the vault is the
+            // new one, and the rest is finished here or by whoever opens it next.
+            let plan = match &recovery_code {
+                Some(code) => vault::RecoveryPlan::Keep(code),
+                None => vault::RecoveryPlan::New,
+            };
+            let made = vault
+                .rekey(&key, std::slice::from_ref(&holder.device), &self.me.fp, &self.short(), plan, crate::recovery::COST)
+                .map_err(|e| if recovery_code.is_some() && e.contains("recovery code") { refuse(Code::Denied, e) } else { failed(e) })?;
+            if let Err(e) = vault.settle(&made.key, &self.me.fp) {
+                log::warn!("spatikey: the vault has new keys, and not everything after is done yet: {e}");
+            }
+            // What is open on this device goes on, with the new key.
+            for session in lock(&self.sessions).values_mut().filter(|s| s.vault == vault.id()) {
+                session.key = made.key.clone();
+            }
+            log::info!("spatikey: removed {name} ({}) from the devices that open vault {}", &holder.device[..8.min(holder.device.len())], vault.id());
+            done.rekeyed = true;
+            done.recovery_code = made.recovery_code.map(|code| code.to_string()).unwrap_or_default();
+            done.left_out = made.left_out;
         }
         let _writing = lock(&self.writing);
-        let mut forgot = false;
+        let mut forgot = done.rekeyed;
         let mut allowed = self.allowed();
         let before = allowed.len();
         allowed.retain(|d| !d.fp.eq_ignore_ascii_case(fp));
@@ -1037,7 +1103,7 @@ impl Service {
         if !forgot {
             return Err(refuse(Code::NoMatch, "no device has that fingerprint"));
         }
-        nothing()
+        answer(done)
     }
 
     fn settings_asked(&self, conn: ConnId, token: &str, set: Option<Settings>) -> Result<Value, Refusal> {
@@ -1071,23 +1137,75 @@ impl Service {
     }
 
     /// The same, with how long this touch may go on covering others, and be covered by them.
+    ///
+    /// **The key is the vault's newest.** Where its keys were changed since this device last
+    /// had one (a holder removed elsewhere), the wrap the change made for this device is the one
+    /// taken to the sensor -- still one touch -- and the key that comes out is believed only if
+    /// it leads back to the key this device had (`Vault::follows`). What a change of keys left
+    /// to do is then finished (`Vault::settle`).
     fn unlock_lingering(&self, guard: &dyn Guard, vault: &Vault, who: &Who, what: &str, linger: u64) -> Result<VaultKey, Refusal> {
-        let Some(touch) = self.half(guard, vault) else {
-            return Err(refuse(
+        let not_set_up = || {
+            refuse(
                 Code::NotHere,
                 format!(
                     "{} is not set up for this vault on this device: add it from a device that opens SpatiKey, or set it up from the recovery code",
                     holders::sensor(guard.kind())
                 ),
-            ));
+            )
         };
+        if self.half(guard, vault).is_none() {
+            return Err(not_set_up());
+        }
+        let Some(half) = vault.half() else { return Err(not_set_up()) };
         let reason = format!("{what}{}", asking(who));
         let _prompt = lock(&self.prompt);
         // A card in the room, whoever asks: macOS's panel is on the Mac's own screen, which a
         // wearer of the glasses does not see, whether the asking is this Mac's or another device's.
-        let key = self.with_card(&ByGuard(guard), &reason, || guard.unlock(&reason, &touch, linger), |key| key.as_ref().err())?;
-        if !vault.check(&key) {
-            return Err(refuse(Code::Failed, "Touch ID gave a key that does not open this vault"));
+        let ask = |touch: &TouchId| self.with_card(&ByGuard(guard), &reason, || guard.unlock(&reason, touch, linger), |key| key.as_ref().err());
+        // The key this device has itself, checked against what it kept of it.
+        let own = || -> Result<VaultKey, Refusal> {
+            let key = ask(&half.touch)?;
+            if !vault.follows(&key, &half.key, &half.key, &half.proof) {
+                return Err(refuse(Code::Failed, format!("{} gave a key that does not open this vault", holders::sensor(guard.kind()))));
+            }
+            Ok(key)
+        };
+        let after = vault.successors(&half.key, &self.me.fp, &half.touch.public);
+        let key = if after.is_empty() {
+            own()?
+        } else {
+            let mut real: Vec<VaultKey> = Vec::new();
+            for change in &after {
+                match ask(&TouchId { wrapped: change.wrapped.clone(), ..half.touch.clone() }) {
+                    Ok(key) if vault.follows(&key, &change.id, &half.key, &half.proof) => real.push(key),
+                    Ok(_) => log::warn!("spatikey: the change of keys {} does not follow from this device's key; not followed", change.id),
+                    // The finger did not come: nothing is known of the change, and nothing is done.
+                    Err(refusal) if matches!(refusal.code, Code::Denied | Code::Timeout | Code::TouchIdUnavailable) => return Err(refusal),
+                    Err(refusal) => {
+                        log::warn!("spatikey: the change of keys {} has no wrap this device opens ({}); not followed", change.id, refusal.message)
+                    }
+                }
+            }
+            match real.len() {
+                1 => {
+                    log::info!("spatikey: vault {} has new keys; this device follows", vault.id());
+                    real.remove(0)
+                }
+                // Nothing that claims to follow is real: the key this device has is the newest.
+                0 => own()?,
+                _ => {
+                    // Two that are real: this device cannot tell whose to take, and takes neither.
+                    if let Err(e) = vault.forget_touch_id() {
+                        log::warn!("spatikey: could not let go of this device's half: {e}");
+                    }
+                    return Err(refuse(Code::Denied, vault::RIVALS));
+                }
+            }
+        };
+        drop(_prompt);
+        let _writing = lock(&self.writing);
+        if let Err(e) = vault.settle(&key, &self.me.fp) {
+            log::warn!("spatikey: could not finish what the vault's change of keys left to do: {e}");
         }
         Ok(key)
     }
@@ -1723,7 +1841,9 @@ fn refuse(code: Code, message: impl Into<String>) -> Refusal {
 }
 
 fn failed(message: String) -> Refusal {
-    Refusal::new(Code::Failed, message)
+    // The vault's keys changed under an open SpatiKey: it is to be opened again.
+    let code = if message == vault::REKEYED { Code::BadSession } else { Code::Failed };
+    Refusal::new(code, message)
 }
 
 fn no_entry() -> Refusal {

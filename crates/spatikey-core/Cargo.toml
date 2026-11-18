@@ -29,12 +29,16 @@ spatiand-stream = { path = "../spatiand-stream", optional = true }
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "time", "io-util", "sync", "macros"], optional = true }
+# The recovery code's own P-256 key: made from the code again and again, and ring makes and uses
+# only ephemeral ECDH keys. What the vault key is wrapped to, so that a new vault key (a holder
+# removed) is wrapped to the same code without the code. Pure Rust, the same on all three.
+p256 = { version = "0.13", default-features = false, features = ["ecdh", "std"], optional = true }
 
 [features]
 default = ["service"]
 # The service itself (the vault, its keys, the Mac's and the devices' network); without it, only
 # what asking the service needs.
-service = ["dep:argon2", "dep:spatiand-stream", "dep:quinn", "dep:rustls", "dep:tokio"]
+service = ["dep:argon2", "dep:spatiand-stream", "dep:quinn", "dep:rustls", "dep:tokio", "dep:p256"]
 
 [dev-dependencies]
 env_logger.workspace = true

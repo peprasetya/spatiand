@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305, NONCE_LEN};
 use ring::hkdf;
+use ring::hmac;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,10 @@ use zeroize::Zeroizing;
 
 use crate::b64;
 use crate::entry::{Entry, Summary};
+
+mod rekey;
+pub use rekey::{Follow, Half, RecoveryPlan, Rekey, RekeyHolder, Rekeyed, Successor, REKEYED, RIVALS};
+pub(crate) use rekey::Ring;
 
 /// An entry is padded to a multiple of this, so that a file's size says little of what is in it.
 pub const PAD_TO: usize = 256;
@@ -32,6 +37,9 @@ const ENTRY_INFO: &[u8] = b"spatikey entries v1";
 
 /// What `vault.json`'s check seals, to tell a right key from a wrong one.
 const CHECK: &[u8] = b"spatikey";
+
+/// What the key that seals holders' records and changes of keys is derived for (HKDF's info).
+const SEAL_INFO: &[u8] = b"spatikey seals v1";
 
 /// The vault key: 32 random bytes, never written anywhere in the clear.
 #[derive(Clone)]
@@ -101,6 +109,17 @@ pub struct TouchDevice {
     /// mistaken for a record that never arrived.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removed: bool,
+    /// Which of the vault's keys `wrapped` is: empty for its first, else the name of the change
+    /// of keys that made it ([`Rekey`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub key: String,
+    /// The record's device, kind and public key sealed under that vault key
+    /// ([`Vault::seal_holder`]): written by a device that had the key -- the holder that added
+    /// this one, or itself from the recovery code -- and not by whatever can write the synced
+    /// folder. A change of keys wraps the new key only to records sealed so. Empty in records
+    /// from before 2026-11-18.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub seal: String,
 }
 
 /// `local/spatikey/touch-id.json`: this device's own half, never sent.
@@ -124,6 +143,11 @@ struct Sealed {
     id: String,
     n: String,
     c: String,
+    /// Which of the vault's keys it is sealed under: left out for the first, else the name of
+    /// the change of keys that made it. Only a hint of where to look: the seal itself is what
+    /// says under which key.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    k: String,
 }
 
 /// What is sealed: the entry, and spaces enough to make it a multiple of [`PAD_TO`].
@@ -166,7 +190,7 @@ impl Vault {
         make_dir(&shared.join("entries"))?;
         make_dir(&shared.join("devices"))?;
         let id = random_hex(8);
-        let keys = Keys::new(&id, key)?;
+        let keys = Keys::new(&id, "", key)?;
         let check = keys.seal_check()?;
         let header = Header { v: 1, id, created: crate::now_ms(), by: by.to_string(), check };
         let bytes = serde_json::to_vec(&header).map_err(|e| e.to_string())?;
@@ -200,26 +224,25 @@ impl Vault {
         &self.header.id
     }
 
-    /// Does `key` open this vault?
+    /// Is `key` one of this vault's keys: its first, or one a change of keys made since?
     pub fn check(&self, key: &VaultKey) -> bool {
-        let Ok(keys) = Keys::new(self.id(), key) else { return false };
-        let Ok(mut sealed) = b64::decode(&self.header.check) else { return false };
-        if sealed.len() < NONCE_LEN {
-            return false;
-        }
-        let nonce: Vec<u8> = sealed.drain(..NONCE_LEN).collect();
-        keys.open(&check_aad(self.id()), &nonce, &mut sealed).is_ok_and(|plain| plain == CHECK)
+        self.generation_of(key).is_some()
     }
 
     /// Every live entry, decrypted. One that does not open (damaged, altered, another vault's)
-    /// is skipped and logged by its id only.
+    /// is skipped and logged by its id only. One sealed under a key newer than `key` is not
+    /// skipped: the whole asking fails with [`REKEYED`], for the vault to be opened again.
     pub fn entries(&self, key: &VaultKey) -> Result<Vec<Entry>, String> {
-        let keys = Keys::new(self.id(), key)?;
-        let mut found = Vec::new();
+        let keys = self.ring(key)?;
+        let mut found: Vec<Entry> = Vec::new();
         for id in self.entry_ids()? {
             match self.open_file(&keys, &id) {
                 Ok(entry) if entry.deleted => {}
                 Ok(entry) => found.push(entry),
+                Err(e) if e == REKEYED => {
+                    found.iter_mut().for_each(Entry::wipe);
+                    return Err(e);
+                }
                 Err(e) => log::warn!("spatikey: entry {id} does not open ({e}); left out"),
             }
         }
@@ -244,7 +267,7 @@ impl Vault {
         if !is_entry_id(id) {
             return Err("an entry id is 32 hex digits".into());
         }
-        let keys = Keys::new(self.id(), key)?;
+        let keys = self.ring(key)?;
         self.open_file(&keys, id)
     }
 
@@ -257,17 +280,19 @@ impl Vault {
         } else if !is_entry_id(&entry.id) {
             return Err("an entry id is 32 hex digits".into());
         }
-        let keys = Keys::new(self.id(), key)?;
+        let ring = self.ring(key)?;
+        let keys = ring.head();
         let path = self.entry_path(&entry.id);
         // What is there now, for its version and when it was made. One that does not open is
-        // counted as not there: it cannot be told from a forgery.
-        let (on_disk, created) = match std::fs::read(&path).ok().and_then(|bytes| open_entry(&keys, &entry.id, &bytes).ok())
-        {
-            Some(mut old) => {
+        // counted as not there: it cannot be told from a forgery. One sealed under a newer key
+        // than this is there, and is not written over with an older key's seal.
+        let (on_disk, created) = match std::fs::read(&path).ok().map(|bytes| self.open_in_ring(&ring, &entry.id, &bytes)) {
+            Some(Ok(mut old)) => {
                 old.wipe();
                 (old.version, old.created)
             }
-            None => (0, 0),
+            Some(Err(e)) if e == REKEYED => return Err(e),
+            _ => (0, 0),
         };
         let now = crate::now_ms();
         entry.version = on_disk.max(entry.version) + 1;
@@ -278,7 +303,7 @@ impl Vault {
             // A tombstone carries nothing, whoever asked for it.
             entry.bury();
         }
-        let bytes = seal_entry(&keys, entry)?;
+        let bytes = seal_entry(keys, entry)?;
         write_synced(&path, &bytes).map_err(|e| format!("could not write entry {}: {e}", entry.id))
     }
 
@@ -333,7 +358,7 @@ impl Vault {
             device: old.device,
             name: old.name,
             kind: old.kind,
-            added: crate::now_ms(),
+            added: crate::now_ms().max(old.added + 1),
             removed: true,
             ..TouchDevice::default()
         };
@@ -345,14 +370,18 @@ impl Vault {
         read_json::<TouchId>(&self.local.join("touch-id.json")).filter(|touch| touch.vault == self.header.id)
     }
 
-    /// Keep this device's half, as this vault's whatever its `vault` said.
+    /// Keep this device's half, as this vault's whatever its `vault` said. Its wrap is of the
+    /// vault's first key until [`Vault::set_follow`] says otherwise: what was kept of the half
+    /// before it goes.
     pub fn set_touch_id(&self, touch: &TouchId) -> Result<(), String> {
         let touch = TouchId { vault: self.header.id.clone(), ..touch.clone() };
+        self.forget_follow()?;
         write_json(&self.local.join("touch-id.json"), &touch)
     }
 
     /// Let go of this device's half: it was removed as a holder.
     pub fn forget_touch_id(&self) -> Result<(), String> {
+        self.forget_follow()?;
         remove_if_there(&self.local.join("touch-id.json"))
     }
 
@@ -407,7 +436,7 @@ impl Vault {
     }
 
     pub fn has_recovery(&self) -> bool {
-        self.shared.join("recovery.json").is_file()
+        self.any_recovery()
     }
 
     /// A new recovery code, replacing the old: returns the code, to show once.
@@ -418,28 +447,20 @@ impl Vault {
     /// [`Vault::set_recovery`] at another cost (tests: Argon2id at its full cost takes seconds in a
     /// debug build).
     pub fn set_recovery_with(&self, key: &VaultKey, cost: (u32, u32, u32)) -> Result<String, String> {
-        if !self.check(key) {
+        let Some(generation) = self.generation_of(key) else {
             return Err("that key does not open this vault".into());
-        }
+        };
         let code = crate::recovery::new_code();
-        let record = crate::recovery::wrap_with(key, &code, self.id(), cost)?;
+        // Version 2: wrapped to a key of the code's own, so that a new vault key can be wrapped
+        // to the same code by a holder that does not know it.
+        let record = crate::recovery::wrap_to_code(key, &code, self.id(), &generation, cost)?;
         write_json(&self.shared.join("recovery.json"), &record)?;
         Ok(code)
     }
 
-    /// The vault key, from the recovery code.
+    /// The vault key -- the newest, where the keys were changed -- from the recovery code.
     pub fn recover(&self, code: &str) -> Result<VaultKey, String> {
-        let path = self.shared.join("recovery.json");
-        let record: crate::recovery::RecoveryRecord = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("recovery.json cannot be read: {e}"))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("this vault has no recovery code".into()),
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        };
-        let key = crate::recovery::unwrap(&record, code, self.id())?;
-        if !self.check(&key) {
-            return Err("the recovery code gave a key that does not open this vault".into());
-        }
-        Ok(key)
+        self.recover_newest(code)
     }
 
     fn entry_path(&self, id: &str) -> PathBuf {
@@ -465,26 +486,34 @@ impl Vault {
         }
     }
 
-    fn open_file(&self, keys: &Keys, id: &str) -> Result<Entry, String> {
+    fn open_file(&self, keys: &Ring, id: &str) -> Result<Entry, String> {
         let bytes = std::fs::read(self.entry_path(id)).map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => format!("no entry {id}"),
             _ => e.to_string(),
         })?;
-        open_entry(keys, id, &bytes)
+        self.open_in_ring(keys, id, &bytes)
     }
 }
 
-/// The entry key, ready to seal and open with, and the vault it is for.
-struct Keys {
+/// One vault key's entry key, ready to seal and open with, the vault it is for, which of the
+/// vault's keys it is (empty: the first), and the key its seals are made with.
+pub(crate) struct Keys {
     aead: LessSafeKey,
     vault: String,
+    id: String,
+    seals: hmac::Key,
 }
 
 impl Keys {
-    fn new(vault: &str, key: &VaultKey) -> Result<Keys, String> {
+    fn new(vault: &str, id: &str, key: &VaultKey) -> Result<Keys, String> {
         let bytes = entry_key(vault, key)?;
         let unbound = UnboundKey::new(&CHACHA20_POLY1305, &bytes[..]).map_err(|_| "the entry key is not a key")?;
-        Ok(Keys { aead: LessSafeKey::new(unbound), vault: vault.to_string() })
+        let seals = hkdf::Salt::new(hkdf::HKDF_SHA256, vault.as_bytes())
+            .extract(key.bytes())
+            .expand(&[SEAL_INFO], hmac::HMAC_SHA256)
+            .map(hmac::Key::from)
+            .map_err(|_| "could not derive the sealing key".to_string())?;
+        Ok(Keys { aead: LessSafeKey::new(unbound), vault: vault.to_string(), id: id.to_string(), seals })
     }
 
     /// Seal `in_out` in place (the tag is appended) under a fresh random nonce, returned.
@@ -504,10 +533,10 @@ impl Keys {
             .map_err(|_| "it does not open with this key (altered, moved, or another vault's)".to_string())
     }
 
-    /// The header's check: base64 of nonce ‖ ciphertext ‖ tag.
+    /// The header's check, or a change of keys': base64 of nonce ‖ ciphertext ‖ tag.
     fn seal_check(&self) -> Result<String, String> {
         let mut sealed = CHECK.to_vec();
-        let nonce = self.seal(&check_aad(&self.vault), &mut sealed)?;
+        let nonce = self.seal(&self.check_aad(), &mut sealed)?;
         let mut out = nonce.to_vec();
         out.extend_from_slice(&sealed);
         Ok(b64::encode(&out))
@@ -569,7 +598,7 @@ fn seal_entry(keys: &Keys, entry: &Entry) -> Result<Vec<u8>, String> {
         return Err("the entry did not come out at the length it was padded to".into());
     }
     let nonce = keys.seal(&entry_aad(&keys.vault, &entry.id), &mut plain)?;
-    let file = Sealed { v: 1, id: entry.id.clone(), n: b64::encode(&nonce), c: b64::encode(&plain) };
+    let file = Sealed { v: 1, id: entry.id.clone(), n: b64::encode(&nonce), c: b64::encode(&plain), k: keys.id.clone() };
     serde_json::to_vec(&file).map_err(|e| e.to_string())
 }
 
@@ -668,6 +697,12 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), Str
 /// it, fsync, rename; mode 0600; the file's time only moving forward (the old time plus a
 /// millisecond if the clock is behind it). The folder is made (0700) if it is not there.
 pub fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_synced_at(path, bytes, None)
+}
+
+/// [`write_synced`], with the file's time given (milliseconds since 1970) where it is not to be
+/// now: an entry sealed again under a new key is the entry it was, a moment after.
+pub(crate) fn write_synced_at(path: &Path, bytes: &[u8], at: Option<u64>) -> std::io::Result<()> {
     let dir = match path.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
         _ => Path::new("."),
@@ -691,9 +726,10 @@ pub fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         // In whole milliseconds, as the synchroniser compares them: the same millisecond as the
         // old file would not be newer to it.
         let now = millis(SystemTime::now());
-        let at = match std::fs::metadata(path).and_then(|m| m.modified()) {
-            Ok(old) => now.max(millis(old) + 1),
-            Err(_) => now,
+        let at = match (at, std::fs::metadata(path).and_then(|m| m.modified())) {
+            (Some(at), _) => at,
+            (None, Ok(old)) => now.max(millis(old) + 1),
+            (None, Err(_)) => now,
         };
         file.set_modified(UNIX_EPOCH + Duration::from_millis(at))?;
         file.sync_all()?;
@@ -763,7 +799,7 @@ mod tests {
 
     #[test]
     fn padding_stops_at_the_largest_entry() {
-        let keys = Keys::new("0123456789abcdef", &VaultKey::random()).unwrap();
+        let keys = Keys::new("0123456789abcdef", "", &VaultKey::random()).unwrap();
         let mut entry = Entry { id: random_hex(16), notes: "x".repeat(LARGEST_ENTRY), ..Entry::default() };
         assert!(seal_entry(&keys, &entry).unwrap_err().contains("64 KiB"));
         entry.notes = "x".repeat(LARGEST_ENTRY - 1024);

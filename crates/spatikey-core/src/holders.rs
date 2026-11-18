@@ -83,6 +83,12 @@ pub fn known(kind: &str) -> bool {
 
 /// The vault key wrapped to a holder's public key (X9.63, 65 bytes).
 pub fn wrap(key: &VaultKey, public: &[u8]) -> Result<Vec<u8>, String> {
+    wrap_as(key, public, AAD)
+}
+
+/// [`wrap`] under other associated data: the recovery code's key is wrapped to in the same way,
+/// and a wrap made for one is not one for the other.
+pub(crate) fn wrap_as(key: &VaultKey, public: &[u8], aad: &[u8]) -> Result<Vec<u8>, String> {
     if public.len() != PUBLIC_LEN || public[0] != 4 {
         return Err("a holder's key is an uncompressed P-256 point".into());
     }
@@ -99,7 +105,7 @@ pub fn wrap(key: &VaultKey, public: &[u8]) -> Result<Vec<u8>, String> {
     let mut sealed = zeroize::Zeroizing::new(Vec::with_capacity(32 + 16));
     sealed.extend_from_slice(key.bytes());
     sealing
-        .seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::from(AAD), &mut *sealed)
+        .seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::from(aad), &mut *sealed)
         .map_err(|_| "could not seal the vault key".to_string())?;
     let mut out = ephemeral_public;
     out.extend_from_slice(&nonce);
@@ -120,6 +126,10 @@ fn sealing_key(shared: &[u8], ephemeral: &[u8], recipient: &[u8]) -> Result<Less
 /// a platform's half does after its sensor lets the private key be used. Here for the tests'
 /// software holders and for checking the format against the Mac's and Android's.
 pub fn open_with_shared(shared: &[u8], recipient: &[u8], wrapped: &[u8]) -> Result<VaultKey, String> {
+    open_with_shared_as(shared, recipient, wrapped, AAD)
+}
+
+pub(crate) fn open_with_shared_as(shared: &[u8], recipient: &[u8], wrapped: &[u8], aad: &[u8]) -> Result<VaultKey, String> {
     if wrapped.len() != WRAPPED_LEN {
         return Err(format!("a wrap is {WRAPPED_LEN} bytes, not {}", wrapped.len()));
     }
@@ -129,7 +139,7 @@ pub fn open_with_shared(shared: &[u8], recipient: &[u8], wrapped: &[u8]) -> Resu
     let mut sealed = zeroize::Zeroizing::new(sealed.to_vec());
     let nonce = Nonce::try_assume_unique_for_key(nonce).map_err(|_| "a nonce of the wrong length".to_string())?;
     let plain = opening
-        .open_in_place(nonce, Aad::from(AAD), &mut sealed[..])
+        .open_in_place(nonce, Aad::from(aad), &mut sealed[..])
         .map_err(|_| "the wrap does not open with that key".to_string())?;
     VaultKey::from_bytes(plain)
 }

@@ -34,7 +34,7 @@ use spatiand_app::ui::{look, theme, Confirm, Input, Painter};
 use spatiand_app::{App, Description, Event, WindowId};
 use spatikey_core::entry::Summary;
 use spatikey_core::wire::{
-    Code, DevicesAnswer, FindAnswer, GetAnswer, IdAnswer, ListAnswer, OpenAnswer, PairAnswer, Refusal, Request, Settings, SettingsAnswer, SetupAnswer,
+    Code, DevicesAnswer, FindAnswer, ForgetAnswer, GetAnswer, IdAnswer, ListAnswer, OpenAnswer, PairAnswer, Refusal, Request, Settings, SettingsAnswer, SetupAnswer,
     StatusAnswer, TargetAnswer, TotpAnswer,
 };
 use zeroize::Zeroizing;
@@ -391,7 +391,7 @@ impl SpatiKey {
             }
             Want::Forget(fp) => {
                 if let Some(session) = self.session.clone() {
-                    self.ask(Asked::Forget, Request::ForgetDevice { session, fp });
+                    self.ask(Asked::Forget, Request::ForgetDevice { session, fp, recovery_code: None });
                 }
             }
             Want::NewCode => {
@@ -520,9 +520,22 @@ impl SpatiKey {
             }
             Asked::Devices => self.devices = read::<DevicesAnswer>(value),
             Asked::Forget => {
-                self.say("Forgotten.");
+                // A holder removed is new keys for the vault. Where its record of the recovery
+                // code was from before (only the code itself could carry such a one over), a
+                // new code was made: shown now, once, as at setting up.
+                let done = read::<ForgetAnswer>(value).unwrap_or_default();
+                let mut said = if done.rekeyed { "Removed, and the vault has new keys.".to_string() } else { "Forgotten.".to_string() };
+                if !done.left_out.is_empty() {
+                    said.push_str(&format!(" Add again: {}.", done.left_out.join(", ")));
+                }
                 if let Some(session) = self.session.clone() {
                     then.push((Asked::Devices, Request::Devices { session }));
+                }
+                if done.recovery_code.is_empty() {
+                    self.say(said);
+                } else {
+                    self.say(format!("{said} The recovery code before opens it no more: save this new one."));
+                    self.set_screen(Screen::Code(ShowCode::new(Zeroizing::new(done.recovery_code), false)));
                 }
             }
             Asked::Settings => {

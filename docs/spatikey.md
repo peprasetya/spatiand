@@ -82,10 +82,15 @@ apps/spatikey/devices/<fp64>.json      each holder, a device that opens it with 
                                        which holder; a removed one is a tombstone ("removed": true)
 apps/spatikey/requests/<fp64>.json     a device with biometrics asking to be added: name, kind, its
                                        new key's public half; buried ("closed") once answered
-apps/spatikey/recovery.json            the vault key wrapped by the recovery code
+apps/spatikey/recovery.json            the vault key wrapped to the recovery code's own key
+apps/spatikey/chain/<16 hex>.json      one change of keys each (a holder removed): the new vault key
+                                       wrapped to every holder that stays and to the recovery code,
+                                       the key before it sealed under the new one, who was removed
 local/spatikey/touch-id.json           this holder's key (a blob only its own Secure Enclave, or
                                        the Keystore alias only this app, can use) and its wrap of
                                        the vault key
+local/spatikey/follow.json             which of the vault's keys this holder is at: the change's
+                                       name, its wrap of that key, and a proof only that key makes
 local/spatikey/asking.json             while this device waits to be added: its key's blob
 local/spatikey/settings.json           how long a touch lasts; how long an open SpatiKey stays open
 local/spatikey/allowed.json            (a holder) devices allowed to ask it, by fingerprint and name
@@ -126,9 +131,16 @@ only moves forward (the previous time plus a millisecond if the clock says other
   CryptoKit made; a wrap Rust made was opened by CryptoKit and by `KeyWrap` (2026-11-17).
 * **The recovery code** is 25 Crockford base32 characters (125 bits), shown as five groups of
   five. Argon2id (64 MiB, 3 passes, 1 lane, a random 16-byte salt) of the code, without dashes and
-  in capitals, gives a key that wraps VK with ChaCha20-Poly1305 (associated data
-  `spatikey recovery v1/<vault id>`). Reading it accepts small letters, spaces, and O/I/L for
-  0/1/1, as Crockford's alphabet intends.
+  in capitals, gives 32 bytes. Since 2026-11-18 (**version 2**) those make a P-256 key of the
+  code's own (SHA-256 of `spatikey recovery key v2`, a count and the 32 bytes; the first count
+  that gives a valid key), and VK is wrapped *to its public half* with the holders' ECIES
+  (associated data `spatikey recovery v2/<vault id>`): `recovery.json` holds the salt, the
+  public key and the wrap, so a holder that has a new VK wraps it to the same code without
+  knowing the code. Before (**version 1**, still read, never written) the 32 bytes were a
+  ChaCha20-Poly1305 key wrapping VK itself (associated data `spatikey recovery v1/<vault id>`),
+  which only the code can do again for another VK. Reading a code accepts small letters, spaces,
+  and O/I/L for 0/1/1, as Crockford's alphabet intends. `p256` (pure Rust) does the code's ECDH:
+  ring uses only ephemeral ECDH keys.
 
 **An entry**, once decrypted (the padding is a `pad` field beside it):
 
@@ -171,7 +183,7 @@ uid is checked) and names the asking program in the prompt.
 | `type` | type an entry's fields into a window | alone: yes |
 | `target` | the window that had the focus before SpatiKey's own | no |
 | `recovery_new`, `recover` | a new recovery code; set Touch ID up again from the code | session / the code |
-| `devices`, `forget_device`, `pair` | devices that may ask this Mac, the holders and the requests; pairing | session (removing a holder: a new touch) / see below |
+| `devices`, `forget_device`, `pair` | devices that may ask this Mac, the holders and the requests; removing one (a holder removed: new keys for the vault, answered `{rekeyed, recovery_code?, left_out?}`); pairing | session (removing a holder: a new touch) / see below |
 | `holder_request` | (a device with biometrics that does not hold the vault) make its key, ask to be added; the six digits | no |
 | `holder_approve`, `holder_refuse` | (a holder) add a device that asked, if it shows the digits given; or turn it down | session and a new touch / session |
 | `settings` | how long a touch lasts (0, 60 or 300 s); how long SpatiKey stays open (default 300 s) | session |
@@ -226,8 +238,9 @@ could leave one there with a key of their own. A holder refuses `holder_approve`
 when the digits it is given are not the request's now. Or, on the new device, the recovery code
 (`recover`) makes it a holder directly, as it always set a Mac up again.
 
-**Removing a holder** is done from any other holder, with a touch there (`forget_device`): its
-record becomes a tombstone (not a deleted file, so that the removal travels as the newest version
+**Removing a holder** is done from any other holder, with a touch there (`forget_device`): the
+vault is given new keys that the removed device never has (the next section), and its record
+becomes a tombstone (not a deleted file, so that the removal travels as the newest version
 through the synchroniser). The removed device sees the tombstone and lets its half go; it can be
 added again, or given the recovery code. A device cannot remove itself.
 
@@ -256,10 +269,97 @@ needs that holder's finger to open; on Android it is never put in a Java string 
 key, Rust wraps to it; an unlock hands the key back as a byte array that is then overwritten);
 devices without biometrics never see it.
 
-**What removing does not do**: the vault key stays the same, so a removed device that kept a copy
-of its own half and its wrap (it lets them go, but a stolen one would not) could still open what it
-held. The proper cure for a lost holder is a new vault key, every entry sealed again and wrapped to
-the remaining holders and a new recovery code: not built.
+## Removing a holder makes new keys
+
+Built 2026-11-18 (`crates/spatikey-core/src/vault/rekey.rs`). Until then removing a holder took its
+wrap away and left the vault key as it was: a removed device that had kept the key, or its own
+half and its old wrap (it lets them go, but a stolen one would not), still opened any copy of the
+vault it could get.
+
+**What the removing holder does**, after its touch (which gives it VK):
+
+1. Makes a new vault key, and one file, `chain/<id>.json`: the new key wrapped to every holder
+   that stays (to their public keys: none of them is asked for anything) and to the recovery
+   code's public key; the old key sealed under the new one; who was removed; and an HMAC over all
+   of it under a key derived from the new one (HKDF info `spatikey seals v1`). **That one file,
+   written whole (hidden file, fsync, rename), is the change**: before it there is the old vault,
+   after it the new one.
+2. Then, each a step that doing twice changes nothing, and each done again by whichever holder
+   next opens the vault if it was not finished (`Vault::settle`, run after every unlock): its own
+   place (`follow.json`), the removed device's tombstone, the remaining holders' records (their
+   new wraps, sealed under the new key), `recovery.json`, and every entry sealed again under the
+   new key. An entry sealed again is the entry it was (its version, when it changed, by whom) and
+   its file's time moves by one millisecond, not to now.
+
+**A holder that was away** finds, at its next unlock, a change that follows from the key it is
+at, with a wrap for its own key. It takes *that* wrap to its sensor -- one touch, as ever -- and
+believes the key that comes out only if the sealed keys lead from it back to the key it had,
+checked against a proof it kept in `local/` where nothing synced can touch it. An open SpatiKey
+whose key has been overtaken is told `bad_session` ("the vault's keys were changed on another
+device: open SpatiKey again"). Sessions on the removing holder itself go on, with the new key.
+
+**Why nothing is lost, and nothing is unreadable.** The synchroniser keeps the newest file and
+sends a folder's files by name. `chain/` comes before `devices/` and `entries/`, so a device has
+the change of keys before any entry sealed under them. An entry changed on a device that had not
+heard of the new key arrives sealed under the old one and newer than the copy sealed again here
+(which is why sealing again does not move a file's time to now): the new key carries the old one,
+so every holder reads it at once, and the next to open the vault seals it again. Going the other
+way is what must not be possible and is not: nothing sealed under an old key gives a newer one.
+An entry file names the key it is sealed under (`"k"`, left out for the vault's first key), as a
+hint only; the seal itself is what says.
+
+**The recovery code keeps working, without being typed**, because since 2026-11-18 the vault key
+is wrapped to a public key the code makes (see "Keys"). **A vault from before -- the owner's --
+has a version 1 record, which only the code itself can carry over.** So the first removal on such
+a vault either is given the code (`forget_device`'s `recovery_code`: the code stays, and a wrong
+one removes nobody), or makes a **new recovery code**, answered once and shown as at setting up
+(SpatiKey's window does this: "The recovery code before opens it no more: save this new one").
+Either way the record is version 2 from then on, and later removals need neither. A new code
+from SpatiKey's settings (`recovery_new`) also writes version 2, on any vault, at any time: doing
+that once, before ever removing a device, is all an existing vault needs.
+
+**Who the new key is wrapped to** is not read off the synced folder on trust: anything that can
+write it (a host holds a copy; so does a removed device still linked) could leave a record with a
+key of its own. A holder's record is now sealed (`seal`, an HMAC under the vault key it wraps) by
+the device that had that key -- the holder that added it, or itself after the recovery code --
+and a change of keys wraps the new key only to records sealed under the key being left (or named
+by the change that made that key), and to the removing holder itself from its own half. Records
+from before 2026-11-18 have no seal: such a holder (none exists but in test rigs; the owner's one
+Mac is the remover and needs none) is left out and named in the answer (`left_out`), to be added
+again. A holder left out, like a removed one, lets its half go when it sees entries sealed under
+keys it was not given.
+
+**Security.** After the change: the removed device's wrap is in no synced file; its key opens no
+wrap in the folder; the old vault key opens no entry as the vault now is, and gives no newer key;
+the recovery record gives it nothing (a salt and a public key). What it still has is what it had:
+whatever it already copied, sealed under the old key. Three things it could try, and what stands
+against each:
+
+* *Leave a record for a key of its own before it is removed.* It was a holder then, and a holder
+  can add holders: the seal does not stop it. The list of devices that open SpatiKey, in the
+  settings where the removing is done, is what the owner checks.
+* *Pass off a change of keys of its own.* To a holder already at the new key it is nothing: it
+  does not lead back to that key, which the removed device never had. To a holder still at the
+  old key (away since before the removal) it leads back as well as the real one does, since the
+  removed device had that key. Such a holder, seeing two changes that both check out, **follows
+  neither**, lets its half go and says so (`rival`: "add it again from the one you trust"), and is
+  added again with the six digits. One that is shown only the false one -- the real one kept from
+  it -- would follow it. **Unlink a lost device from Spatiand (the roster) as well as removing
+  it**: unlinked, it cannot write the synced folder at all.
+* *Write entries under the old key.* Holders read old-key entries (that is what keeps a real
+  change made elsewhere), so a removed device that can still write the folder can replace or
+  bury entries it already knew. It learns nothing by it, and before this change it could do the
+  same and read everything besides.
+
+The proper alternative for the last two, not built: every holder with a signing key of its own
+that needs no touch, its public half in its sealed record, and entries and changes of keys signed
+by it -- an old-key entry taken only from a holder that stays, a change of keys only from one the
+follower already knew. Two holders each removing somebody while out of touch with each other also
+show as rivals to a third: the same answer, add again from the one that is to be believed.
+
+**Every holder must run a SpatiKey that knows this**: an older one keeps sealing under the
+vault's first key (its entries are read and sealed again, so nothing is lost) and reads nothing
+sealed under a newer one.
 
 ## The Deck and the Beam Pro ask a holder
 
@@ -498,7 +598,45 @@ sockets: asked, added, both opening, removed. `cargo ndk check` of the Beam Pro'
 APK's Java compiled. **Not checked:** a real Touch ID or BiometricPrompt, any Android device with a
 sensor (none here), a second Mac, the window's new screens in the room.
 
-**Workarounds, with the proper alternative.** Before Android 15 a Keystore key agreement cannot be
+**Removing a holder makes new keys (2026-11-18): what was checked.** On deepmagpie: seven unit
+tests (`vault/rekey_tests.rs`) with three software holders, each with its own copy of the synced
+folder, met as the synchroniser meets them (newest file wins): a holder removed -- the old key
+and the removed one's kept wrap open nothing of the vault as it is, no synced file names its key,
+every entry what it was a millisecond later, the holder that was away following with its own
+sensor, the same recovery code giving the new key; the change broken off right after its one file,
+finished by the remover or by another holder; an entry changed and one added elsewhere under the
+old key meanwhile, both kept, both ends byte for byte the same after; a change forged by something
+with no key not followed, and a rival one made by the removed device followed by nobody still at
+the old key and ignored by the holder at the new; planted and copied holder records left out, and
+one sealed under an old key left out of the next change; a version 1 recovery record kept by the
+code typed (a wrong code changing nothing) or replaced; keys changed twice followed in one step.
+Two more recovery tests (a new key wrapped to the same code without it; version 1 as it was). Two
+tests through the service (`tests/holders.rs`): three holders, one removed with a touch, the
+remover's open SpatiKey going on, the others' told to open again, the removed one's shut and its
+half let go, the phone following with exactly one touch, the removed one made a holder again by
+the recovery code and staying one; and a vault with a version 1 record, with and without the code.
+The existing tests, with the service tests' guard now a real software key: 134 in all. The
+soft-service rig as three and then five processes over one folder, driven over their sockets
+(`tools/spatikey-rekey-rig.py`, 25 checks): removal, the removed holder started again from what it
+had kept and opening nothing, a file sealed under the old key arriving late and kept, the recovery
+code, and a holder killed right after writing the change (`SOFT_BREAK_REKEY`) with another
+finishing it. `cargo check` of SpatiKey and the Deck's room, `cargo ndk check` of the Beam Pro's
+room and SpatiKey. **Not checked:** a real Touch ID or BiometricPrompt (the guards are unchanged:
+they are handed a wrap and their own key, as before); anything on a Mac -- **not built there**
+(spatikey-core gained `p256` as a dependency of the service; SpatiKeyGuard.swift, KeyGuard.java
+and the Rust around them are untouched); two real devices and the real synchroniser between them
+(its order of sending, by name, is relied on and was read, not driven); SpatiKey's window showing
+the new code after a removal (type-checked; the screen is the one a new code already uses).
+
+**Seen on the way, not changed:** over the socket, a request with an `id` of its own (`get`,
+`delete`, `totp`, `reveal`, `type`) arrives with the envelope's `id` and its own as one JSON key;
+the service reads the message into a JSON value first, where the later of two same-named keys
+wins, and a Python client sending both was refused ("expected u64"). The rig keeps to `list` and
+`put`. Whether SpatiKey's window is caught by it was not looked into.
+
+**Workarounds, with the proper alternative.** A removed device still linked to Spatiand can write
+old-key entries and offer a rival change of keys to holders that were away (see "Security" above;
+proper: per-holder signing keys). Before Android 15 a Keystore key agreement cannot be
 BiometricPrompt's CryptoObject, so a key made there is usable for 5 s after the finger rather than
 for that one use (the proper one, per-use, is what Android 15+ gets, and it is chosen when the key
 is made). Android's prompt has no "touch lasts" of its own: each unlock asks. The origin of a SpatiMesh request is the isolated

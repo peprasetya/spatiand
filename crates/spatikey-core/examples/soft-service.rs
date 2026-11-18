@@ -10,6 +10,12 @@
 //! Android phone with `android`): it can ask to be added (`holder_request`), the first add it
 //! (`holder_approve`), and both open the same vault. Every prompt's reason is printed, so a test
 //! can see what was asked.
+//!
+//! `SOFT_BREAK_REKEY=<name>` is a holder that dies in the middle of removing the holder of that
+//! name: it makes the vault its new keys -- the one file that is the change -- and stops there,
+//! with no entry sealed again, no tombstone and its own half as it was, as a crash at the worst
+//! moment leaves things. Started again without it, it finishes. `tools/spatikey-rekey-rig.py`
+//! drives three of these over one folder.
 
 use std::sync::Arc;
 
@@ -89,6 +95,16 @@ fn main() {
         None => "ab".repeat(32),
     };
     let name = name.unwrap_or_else(|| "soft".into());
+    if let Ok(removed) = std::env::var("SOFT_BREAK_REKEY") {
+        let removed: String = ring::digest::digest(&ring::digest::SHA256, removed.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
+        let vault = spatikey_core::vault::Vault::open(&shared, &local).expect("a vault");
+        let half = vault.half().expect("this holder's half");
+        let key = Yes { kind }.unlock("remove a holder, and die", &half.touch, 0).expect("the vault key");
+        let plan = spatikey_core::vault::RecoveryPlan::New;
+        let made = vault.rekey(&key, &[removed], &fp, &fp[..8], plan, spatikey_core::recovery::COST).expect("new keys");
+        println!("new keys {} made; stopping before anything else is done", made.id);
+        std::process::exit(9);
+    }
     let me = Me { fp: fp.clone(), name: name.clone() };
     let service = Service::new(Mode::Approver(Arc::new(Yes { kind })), me, shared, local);
     let setup = service.handle(1, Envelope { id: 1, who: Who::default(), request: Request::Setup { name: name.clone() } });

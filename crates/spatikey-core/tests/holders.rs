@@ -378,7 +378,7 @@ fn a_holder_removed_lets_go_and_the_recovery_code_brings_it_back() {
     let conn = next_conn();
     let session = open(&mac.service, conn).session;
     let unlocks = mac.guard.unlocks();
-    let forget = |fp: &str| Request::ForgetDevice { session: session.clone(), fp: fp.into() };
+    let forget = |fp: &str| Request::ForgetDevice { session: session.clone(), fp: fp.into(), recovery_code: None };
     assert_eq!(code(ask(&mac.service, conn, forget(&mac.identity.fingerprint().to_string()))), Code::BadRequest);
     mac.guard.refuse.store(true, SeqCst);
     assert_eq!(code(ask(&mac.service, conn, forget(&phone_fp))), Code::Denied);
@@ -576,4 +576,126 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+#[test]
+fn removing_a_holder_gives_the_vault_new_keys_that_the_others_follow() {
+    let _turn = one_at_a_time();
+    let place = Place::new("rekeyed");
+    let mac = first(&place, "darkPhoenix");
+    let phone = next(&place, "Pixel", holders::ANDROID);
+    let tablet = next(&place, "Tablet", holders::ANDROID);
+    let (phone_fp, tablet_fp) = (phone.identity.fingerprint().to_string(), tablet.identity.fingerprint().to_string());
+    add(&mac, &phone);
+    add(&mac, &tablet);
+    let vault = Vault::open(&place.shared(), &place.local("darkPhoenix")).unwrap();
+
+    // SpatiKey open on all three, with something in it.
+    let (mac_conn, phone_conn, tablet_conn) = (next_conn(), next_conn(), next_conn());
+    let session = open(&mac.service, mac_conn).session;
+    let put = |service: &Service, conn, session: &str, title: &str| {
+        answer::<IdAnswer>(ask(service, conn, Request::Put { session: session.into(), entry: login(title, &format!("{title}-secret")) })).id
+    };
+    put(&mac.service, mac_conn, &session, "GitHub");
+    let phone_session = open(&phone.service, phone_conn).session;
+    put(&phone.service, phone_conn, &phone_session, "Bank");
+    let tablet_session = open(&tablet.service, tablet_conn).session;
+    // What the tablet could keep for later: its half, and through it the vault key.
+    let kept: TouchId = serde_json::from_slice(&std::fs::read(place.local("Tablet").join("touch-id.json")).unwrap()).unwrap();
+    let old = soft_open(&kept).unwrap();
+    assert_eq!(old.bytes(), mac.key.bytes());
+
+    // The Mac removes the tablet, with a touch.
+    let forget = |fp: &str, recovery_code: Option<String>| Request::ForgetDevice { session: session.clone(), fp: fp.into(), recovery_code };
+    let done: ForgetAnswer = answer(ask(&mac.service, mac_conn, forget(&tablet_fp, None)));
+    assert!(done.rekeyed && done.recovery_code.is_empty() && done.left_out.is_empty(), "{done:?}");
+    // The Mac's open SpatiKey goes on, with the new key; and writes with it.
+    assert_eq!(answer::<ListAnswer>(ask(&mac.service, mac_conn, Request::List { session: session.clone() })).entries.len(), 2);
+    put(&mac.service, mac_conn, &session, "Steam");
+    // The key the tablet had opens nothing of the vault as it now is.
+    assert_eq!(vault.entries(&old).unwrap_err(), spatikey_core::vault::REKEYED);
+    let new = vault.recover(&mac.recovery).expect("the same recovery code");
+    assert_ne!(new.bytes(), old.bytes());
+    assert_eq!(vault.entries(&new).unwrap().len(), 3);
+    // The tablet: its open SpatiKey is shut, it lets its half go, and what it kept gives the
+    // old key and no more.
+    assert_eq!(code(ask(&tablet.service, tablet_conn, Request::List { session: tablet_session })), Code::BadSession);
+    assert!(!status(&tablet.service).opens_here);
+    assert!(!place.local("Tablet").join("touch-id.json").exists() && !place.local("Tablet").join("follow.json").exists());
+    assert_eq!(soft_open(&kept).unwrap().bytes(), old.bytes());
+    for file in walk(&place.shared()) {
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(!text.contains(&kept.public) && !text.contains(&kept.wrapped), "{} still has something of the tablet's", file.display());
+    }
+
+    // The phone's open SpatiKey is told to open again; opened again, with one touch, it has
+    // everything, and what it writes the Mac reads.
+    assert_eq!(code(ask(&phone.service, phone_conn, Request::List { session: phone_session })), Code::BadSession);
+    let unlocks = phone.guard.unlocks();
+    let opened = open(&phone.service, phone_conn);
+    assert_eq!(phone.guard.unlocks(), unlocks + 1, "following the new keys is the one touch it always was");
+    assert_eq!(opened.entries.len(), 3);
+    put(&phone.service, phone_conn, &opened.session, "Forum");
+    assert_eq!(answer::<ListAnswer>(ask(&mac.service, mac_conn, Request::List { session: session.clone() })).entries.len(), 4);
+    let unlocks = phone.guard.unlocks();
+    assert_eq!(open(&phone.service, next_conn()).entries.len(), 4);
+    assert_eq!(phone.guard.unlocks(), unlocks + 1);
+
+    // The recovery code, typed on the tablet, makes it a holder again, and it stays one when
+    // the others next open the vault.
+    answer::<Value>(ask(&tablet.service, next_conn(), Request::Recover { code: mac.recovery.clone() }));
+    assert_eq!(open(&tablet.service, next_conn()).entries.len(), 4);
+    open(&mac.service, next_conn());
+    open(&phone.service, next_conn());
+    assert!(status(&tablet.service).opens_here);
+    assert_eq!(vault.touch_devices().len(), 3);
+
+    // A recovery code typed with a removal is to be the vault's: a wrong one removes nobody.
+    let now = vault.recover(&mac.recovery).unwrap();
+    assert_eq!(code(ask(&mac.service, mac_conn, forget(&tablet_fp, Some("not a code".into())))), Code::BadRequest);
+    assert_eq!(code(ask(&mac.service, mac_conn, forget(&tablet_fp, Some(spatikey_core::recovery::new_code())))), Code::Denied);
+    assert_eq!(vault.touch_devices().len(), 3, "a wrong code removes nobody");
+    let done: ForgetAnswer = answer(ask(&mac.service, mac_conn, forget(&tablet_fp, Some(mac.recovery.to_lowercase()))));
+    assert!(done.rekeyed && done.recovery_code.is_empty());
+    let third = vault.recover(&mac.recovery).unwrap();
+    assert_ne!(third.bytes(), now.bytes());
+    assert_eq!(vault.entries(&third).unwrap().len(), 4);
+    let _ = phone_fp;
+}
+
+#[test]
+fn a_vault_from_before_keeps_its_recovery_code_if_typed_and_is_given_a_new_one_if_not() {
+    let _turn = one_at_a_time();
+    for typed in [true, false] {
+        let place = Place::new(if typed { "code-typed" } else { "code-new" });
+        let mac = first(&place, "darkPhoenix");
+        let phone = next(&place, "Pixel", holders::ANDROID);
+        add(&mac, &phone);
+        let vault = Vault::open(&place.shared(), &place.local("darkPhoenix")).unwrap();
+        // The record of the code as SpatiKey wrote it before 2026-11-18: only the code itself
+        // can wrap another vault key to it.
+        let before = spatikey_core::recovery::wrap_with(&mac.key, &mac.recovery, vault.id(), TINY).unwrap();
+        std::fs::write(place.shared().join("recovery.json"), serde_json::to_vec(&before).unwrap()).unwrap();
+        let conn = next_conn();
+        let session = open(&mac.service, conn).session;
+        answer::<IdAnswer>(ask(&mac.service, conn, Request::Put { session: session.clone(), entry: login("GitHub", "hunter2") }));
+        let recovery_code = typed.then(|| mac.recovery.clone());
+        let forget = Request::ForgetDevice { session: session.clone(), fp: phone.identity.fingerprint().to_string(), recovery_code };
+        let done: ForgetAnswer = answer(ask(&mac.service, conn, forget));
+        assert!(done.rekeyed);
+        let code_now = if typed {
+            assert!(done.recovery_code.is_empty(), "the code typed is the code kept");
+            mac.recovery.clone()
+        } else {
+            assert!(!done.recovery_code.is_empty(), "a new code, to be shown once");
+            assert!(vault.recover(&mac.recovery).is_err(), "the code before opens the vault no more");
+            done.recovery_code.clone()
+        };
+        let key = vault.recover(&code_now).unwrap();
+        assert_ne!(key.bytes(), mac.key.bytes());
+        assert_eq!(vault.entries(&key).unwrap().len(), 1);
+        assert_eq!(vault.touch_devices().len(), 1);
+        assert!(!status(&phone.service).opens_here);
+        assert_eq!(open(&mac.service, next_conn()).entries.len(), 1);
+    }
 }

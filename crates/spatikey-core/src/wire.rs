@@ -140,9 +140,15 @@ pub enum Request {
     Devices {
         session: String,
     },
+    /// Answers [`ForgetAnswer`]. Removing a holder makes the vault new keys (docs/spatikey.md,
+    /// "Removing a holder makes new keys"). `recovery_code` is the vault's recovery code, for a
+    /// vault whose record of it is from before 2026-11-18: given, the code goes on opening the
+    /// vault; not given, a new one is made and answered. A newer vault needs neither.
     ForgetDevice {
         session: String,
         fp: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovery_code: Option<String>,
     },
     /// Answers [`SettingsAnswer`]; with `set`, changes them first.
     Settings {
@@ -302,6 +308,22 @@ pub struct Approver {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SetupAnswer {
     pub recovery_code: String,
+}
+
+/// What removing a device did.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForgetAnswer {
+    /// The device was a holder, and the vault has new keys.
+    #[serde(default)]
+    pub rekeyed: bool,
+    /// A new recovery code, to be shown once and kept: the one before opens the vault no more.
+    /// Empty where the code stayed the same.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub recovery_code: String,
+    /// Holders the new keys were not given to, by name, because nothing a holder sealed says
+    /// they are holders: each is to be added again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_out: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
