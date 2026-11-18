@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use spatiand_app::glow::{self, HasContext};
-use spatiand_app::ui::{draw_icon, look, theme, AutoHide, Button, Color, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
+use spatiand_app::ui::{draw_icon, look, theme, AutoHide, Button, Color, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed, DOUBLE_CLICK, TILE_TINT};
 use spatiand_app::{Gl, Key};
 
 use crate::folder::{Entry, Kind};
@@ -29,6 +29,9 @@ use crate::swipe::{Carousel, Glide, Reach, Scrolled};
 /// The gap between the file looked at and the one beside it on the carousel, beyond the window's
 /// own width: with the room a fitted picture leaves around itself, about what a phone leaves
 /// between its photographs.
+/// How long what went wrong stays on show.
+const TROUBLE_SHOWN: Duration = Duration::from_secs(8);
+
 const BESIDE_GAP: f32 = 24.0;
 
 /// How long a picture takes to come in over the tile that stood in for it while it was read: a
@@ -551,6 +554,8 @@ pub struct View {
     foot: Rect,
     side: Rect,
     trouble: Option<String>,
+    /// When `trouble` was set: it goes 8 seconds after.
+    trouble_at: Option<Instant>,
     /// A press on the controls while they were faded out, which only brought them back: its
     /// release is not a click either.
     swallowing: bool,
@@ -592,6 +597,7 @@ impl View {
             foot: Rect::default(),
             side: Rect::default(),
             trouble: None,
+            trouble_at: None,
             swallowing: false,
         }
     }
@@ -697,10 +703,8 @@ impl View {
             _ => None,
         };
         let carousel = self.carousel.deadline().map(|at| at.saturating_duration_since(Instant::now()));
-        match (doc, carousel) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        let trouble = self.trouble_at.map(|at| TROUBLE_SHOWN.saturating_sub(at.elapsed()));
+        [doc, carousel, trouble].into_iter().flatten().min()
     }
 
     /// What has come back from the PDF's thread.
@@ -767,7 +771,12 @@ impl View {
     /// Move the carousel on, and a frame of a moving picture, or turn an object, if it is time.
     pub fn tick(&mut self) -> bool {
         let slid = self.slide_on();
-        self.frame_on() || slid
+        let gone = self.trouble_at.is_some_and(|at| at.elapsed() >= TROUBLE_SHOWN);
+        if gone {
+            self.trouble = None;
+            self.trouble_at = None;
+        }
+        self.frame_on() || slid || gone
     }
 
     /// Move the carousel on to now, and say where it is for the frame about to be drawn.
@@ -889,7 +898,10 @@ impl View {
                 });
                 match texture {
                     Ok(texture) => drawn_object = Some(Texture::from_raw(texture, canvas.0, canvas.1)),
-                    Err(e) => self.trouble = Some(e),
+                    Err(e) => {
+                        self.trouble = Some(e);
+                        self.trouble_at = Some(Instant::now());
+                    }
                 }
                 unsafe { gl.api().viewport(0, 0, size.0 as i32, size.1 as i32) };
             }
@@ -1109,8 +1121,9 @@ impl View {
             }
         }
         if let Some(trouble) = &self.trouble {
-            let line = Rect::new(all.x + 40.0, all.bottom() - 60.0, all.w - 80.0, 40.0);
-            p.label(gl, trouble, line, theme::FOOTER_EM, look::trouble(), 0.5);
+            // Left, wrapped, as every foot line is: over the picture's foot, where it floats.
+            let mut line = Rect::new(all.x + 40.0, all.bottom() - 100.0, all.w - 80.0, 80.0);
+            look::foot(p, gl, &mut line, "", Some(trouble));
         }
     }
 
@@ -1361,7 +1374,7 @@ impl View {
                 // A picture on its way somewhere is not zoomed by a click on it.
                 if was.is_some() && !dragged && self.carousel.resting() {
                     // Twice quickly: nearer, or back to fitted.
-                    let double = self.last_click.is_some_and(|t| t.elapsed() < Duration::from_millis(400));
+                    let double = self.last_click.is_some_and(|t| t.elapsed() < DOUBLE_CLICK);
                     self.last_click = Some(Instant::now());
                     if double {
                         self.last_click = None;
@@ -1701,7 +1714,7 @@ fn draw_stand_in(p: &mut Painter, gl: &Gl, page: Rect, stand_in: &StandIn) {
             let area = stage(page);
             let side = area.w.min(area.h) * 0.4;
             let at = Rect::new(area.x + (area.w - side) * 0.5, area.y + (area.h - side) * 0.5, side, side);
-            let (top, foot) = stand_in.tint.unwrap_or(([0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]));
+            let (top, foot) = stand_in.tint.unwrap_or(TILE_TINT);
             p.gradient(gl, at, 22.0, top, foot);
             if let Some(icon) = stand_in.icon {
                 draw_icon(p, gl, icon, at.inset(side * 0.32), [1.0, 1.0, 1.0, 0.82]);
@@ -1785,7 +1798,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
             let current = n == paper.found_at;
             for r in &found.rects {
                 let at = Rect::new(rect.x + r[0] * rect.w - 2.0, rect.y + r[1] * rect.h - 2.0, (r[2] - r[0]) * rect.w + 4.0, (r[3] - r[1]) * rect.h + 4.0);
-                let colour = if current { [0.086, 0.902, 0.753, 0.45] } else { [0.216, 0.651, 0.969, 0.25] };
+                let colour = if current { [look::TEAL[0], look::TEAL[1], look::TEAL[2], 0.45] } else { [look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.25] };
                 p.fill(gl, at, 3.0, colour);
             }
         }

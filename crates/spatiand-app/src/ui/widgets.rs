@@ -354,7 +354,7 @@ fn draw_tile(p: &mut Painter, gl: &Gl, cell: Rect, picture: f32, tile: &Tile, se
             // Its name, large, where its picture will be: a tile that is still loading, or
             // has no picture, says what it is rather than being a grey box among grey boxes.
             p.fill(gl, frame, theme::ROW_RADIUS, theme::ground());
-            let (top, foot) = tile.tint.unwrap_or(([0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]));
+            let (top, foot) = tile.tint.unwrap_or(TILE_TINT);
             p.gradient(gl, frame, theme::ROW_RADIUS, top, foot);
             let initial: String = match tile.glyph.as_deref() {
                 Some(glyph) => glyph.to_string(),
@@ -984,6 +984,8 @@ pub const DOUBLE_CLICK_SLOP: f32 = 6.0;
 /// How far, in logical pixels, a press goes before it is a drag rather than a press: a band,
 /// a file carried, a picture swiped.
 pub const DRAG_AFTER: f32 = 8.0;
+/// The colours of a tile's stand-in, top and foot, when it has no tint of its own: the room's dim blue.
+pub const TILE_TINT: ([f32; 4], [f32; 4]) = ([0.36, 0.48, 0.78, 0.26], [0.16, 0.20, 0.36, 0.14]);
 
 /// Which kind of character a word is made of: a double click chooses a run of one kind.
 fn word_class(c: char) -> u8 {

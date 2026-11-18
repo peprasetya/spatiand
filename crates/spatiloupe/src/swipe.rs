@@ -19,11 +19,6 @@
 
 use std::time::{Duration, Instant};
 
-/// How far a scroll goes, either way, before it is decided whether it slides or zooms. A wheel's
-/// notch is past it at once; a trackpad's first wobbles are not, and count for whichever way the
-/// scroll then goes.
-const DECIDE_AFTER: f32 = 8.0;
-
 /// How fast is brisk, logical pixels a millisecond: a hand going at least this fast and then not
 /// heard from has most likely lifted; one going slower may be resting.
 const BRISK: f32 = 0.3;
@@ -416,10 +411,11 @@ impl Carousel {
         }
     }
 
-    /// Whether a scroll has gone far enough to say which way it goes, and if so, it does.
+    /// Whether a scroll has gone far enough (`ui::DRAG_AFTER`: the distance at which any press becomes a
+    /// drag; a wheel's notch is past it at once) to say which way it goes, and if so, it does.
     fn decide(&mut self, now: Instant, page: f32) -> Scrolled {
         let Hand::Deciding { dx, dy, .. } = self.hand else { return Scrolled::Taken };
-        if dx.abs().max(dy.abs()) < DECIDE_AFTER {
+        if dx.abs().max(dy.abs()) < spatiand_app::ui::DRAG_AFTER {
             return Scrolled::Taken;
         }
         if dx.abs() > dy.abs() {
