@@ -216,7 +216,7 @@ pub fn run() -> io::Result<()> {
     let mut input = io::stdin();
     let output = Arc::new(std::sync::Mutex::new(io::stdout()));
     // The first thing a window says is how big the tab is.
-    let (cols, rows, cell_w, cell_h) = loop {
+    let (cols, rows, mut cell_w, mut cell_h) = loop {
         match wire::read_to_tab(&mut input)? {
             Some(ToTab::Resize { cols, rows, cell_w, cell_h }) => break (cols.max(2), rows.max(1), cell_w, cell_h),
             Some(_) => continue,
@@ -311,8 +311,10 @@ pub fn run() -> io::Result<()> {
                     drop(term);
                     notifier.notify(crate::keys::paste_bytes(&text, bracketed));
                 }
-                ToTab::Resize { cols, rows, cell_w, cell_h } => {
-                    let size = WindowSize { num_lines: rows.max(1), num_cols: cols.max(2), cell_width: cell_w, cell_height: cell_h };
+                ToTab::Resize { cols, rows, cell_w: w, cell_h: h } => {
+                    // The cell's size kept for a program asking the text area's size in pixels.
+                    (cell_w, cell_h) = (w, h);
+                    let size = WindowSize { num_lines: rows.max(1), num_cols: cols.max(2), cell_width: w, cell_height: h };
                     reading_term.lock().resize(Size { cols: size.num_cols as usize, rows: size.num_lines as usize });
                     let _ = loop_tx.send(Msg::Resize(size));
                 }
