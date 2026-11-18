@@ -39,6 +39,8 @@ final class MacHost {
         var encoder: HostEncoder?
         var lastPixels: CVPixelBuffer?
         var wantsKey = true
+        /// This Mac is locked: no picture of it is encoded or sent (under `lock`).
+        var paused = false
         init(id: UInt16, info: MacWindowInfo) {
             self.id = id
             self.info = info
@@ -421,7 +423,18 @@ final class MacHost {
         didSet {
             guard macLocked != oldValue else { return }
             toldLocked = false
+            // **Locked, nothing more of this Mac is sent**: no picture of a window already
+            // shown (each paused, a key picture asked for at the unlock) and no sound (taken
+            // again by `reconcile` once it is unlocked).
+            for s in shared.values {
+                let paused = macLocked
+                // (Off the main thread, which must never wait for a window's lock; on one queue,
+                // so that a lock and an unlock close together are taken in their order.)
+                pauseQueue.async { s.lock.lock(); s.paused = paused; s.wantsKey = true; s.lock.unlock() }
+            }
             if macLocked {
+                for a in sounds.values { a.invalidate() }
+                sounds = [:]
                 sayHeld()
             } else {
                 // **Said, and at once**: whoever unlocked it did so with a finger on this Mac's
@@ -433,6 +446,7 @@ final class MacHost {
         }
     }
     private var toldLocked = false
+    private let pauseQueue = DispatchQueue(label: "host-pause")
 
     /// How this Mac is unlocked, for the session to say: with a finger where it has a sensor a
     /// finger is enrolled on. Asked once, before it is ever locked (locked, the answer is no).
@@ -469,7 +483,8 @@ final class MacHost {
     }
 
     private func apply(_ windows: [MacWindowInfo]) {
-        guard attached, let link else { return }
+        // (A listing asked for just before this Mac was locked shares nothing new.)
+        guard attached, !macLocked, let link else { return }
         // This Mac's screens with its windows: each a thing that can be shown, and none of
         // them shown until it is asked for.
         let screens = MacScreens.list(excluding: nil)
@@ -620,6 +635,7 @@ final class MacHost {
         guard let link else { return }
         s.lock.lock()
         defer { s.lock.unlock() }
+        guard !s.paused else { return }
         s.lastPixels = pixels
         let w = CVPixelBufferGetWidth(pixels), h = CVPixelBufferGetHeight(pixels)
         if s.encoder == nil || s.encoder?.width != w || s.encoder?.height != h {
@@ -649,7 +665,7 @@ final class MacHost {
             s.lock.lock()
             defer { s.lock.unlock() }
             s.wantsKey = true
-            if let pixels = s.lastPixels, let encoder = s.encoder {
+            if !s.paused, let pixels = s.lastPixels, let encoder = s.encoder {
                 encoder.encode(pixels, microseconds: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000), key: true)
                 s.wantsKey = false
             }
@@ -681,6 +697,14 @@ final class MacHost {
         guard let (name, body) = message.first else { return }
         let fields = body as? [String: Any] ?? [:]
         if ProcessInfo.processInfo.environment["SPATIAND_DEBUG"] != nil, name != "InputAt" { print("host: session said \(name) \(fields)") }
+        // **A locked Mac is used from nowhere**: no key, pointer, menu, launch, close, resize or
+        // bringing forward from the session, only told that it waits (`Held`) -- as no one at
+        // its own keyboard could do any of that before unlocking it.
+        if macLocked, ["Input", "InputAt", "Menu", "Launch", "Close", "Configure", "Focus", "NoticePress"].contains(name) {
+            if name == "Menu" { link?.say(["Menu": "Done"]) }
+            if !name.hasPrefix("Input") || !toldLocked { sayHeld() }
+            return
+        }
         switch name {
         case "ConfigSync":
             // Spatiand's applications' settings: handed to the shared logic, and its answers
