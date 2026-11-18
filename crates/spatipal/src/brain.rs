@@ -330,6 +330,13 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         });
         voice.set_generating(false);
         let answer = answer?;
+        // Stopped -- spoken over, told to be quiet, Stop --: nothing more of it is said, not the
+        // end of the sentence that was cut, nor what was held back or thought.
+        if stopped() {
+            said.text.push_str(&answer.text);
+            said.thinking.push_str(&answer.thinking);
+            break;
+        }
         if decided.is_none() {
             // Answered before the decision came: it comes in a moment.
             decided = Some(decision.as_ref().and_then(|rx| rx.recv_timeout(Duration::from_secs(3)).ok()).unwrap_or(false));
