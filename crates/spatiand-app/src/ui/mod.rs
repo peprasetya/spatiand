@@ -182,7 +182,14 @@ impl Input {
             Event::Scroll { dx, dy, .. } => Some(Input::Scroll { dx: dx / scale, dy: dy / scale }),
             Event::Pinch { scale, .. } => Some(Input::Pinch { scale: *scale }),
             // Escape held is one Escape: repeated, it closed what was under what it closed.
-            Event::Key { key: Key::Escape, repeat: true, .. } => None,
+            // Enter and Space held are one press too: repeated, they answered a question that
+            // came up under them, or pressed the button the first press moved to. A held Space
+            // still types spaces into a field: it comes on as the character only, which no
+            // button, list or question answers to.
+            Event::Key { key: Key::Escape | Key::Enter, repeat: true, .. } => None,
+            Event::Key { key: Key::Space, repeat: true, pressed: true, text, modifiers, .. } => {
+                Some(Input::Key { key: Key::Char(' '), text: text.clone(), modifiers: *modifiers, letter: None })
+            }
             // A chord's letter is read by the key's place where the layout's is not Latin
             // (`chord_char`): Control-C copies on a Russian keyboard too. What it types is
             // still the layout's, in `text`.
@@ -223,5 +230,21 @@ mod letter_tests {
         assert_eq!(letter(pressed(Key::Char('a'), 16, "a")).0, Some('a'));
         assert_eq!(letter(pressed(Key::Char('1'), 2, "1")).0, None);
         assert_eq!(letter(pressed(Key::Char(','), 50, ",")).0, None);
+    }
+
+    #[test]
+    fn a_held_enter_escape_or_space_presses_once_and_a_held_space_still_types() {
+        let held = |key: Key, text: &str| {
+            let event = Event::Key { window: crate::WindowId(1), key, code: 0, pressed: true, repeat: true, text: Some(text.into()), modifiers: Modifiers::default() };
+            Input::of(&event, 1.0)
+        };
+        assert_eq!(held(Key::Enter, "\r"), None);
+        assert_eq!(held(Key::Escape, "\u{1b}"), None);
+        assert!(matches!(held(Key::Space, " "), Some(Input::Key { key: Key::Char(' '), text: Some(t), .. }) if t == " "));
+        assert!(matches!(held(Key::Down, ""), Some(Input::Key { key: Key::Down, .. })));
+        // A focused button is not pressed again by the held Space.
+        let mut b = Button::default();
+        b.focused = true;
+        assert!(!b.input(&held(Key::Space, " ").unwrap()));
     }
 }
