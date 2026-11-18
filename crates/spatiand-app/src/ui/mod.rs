@@ -179,8 +179,15 @@ impl Input {
             Event::Pinch { scale, .. } => Some(Input::Pinch { scale: *scale }),
             // Escape held is one Escape: repeated, it closed what was under what it closed.
             Event::Key { key: Key::Escape, repeat: true, .. } => None,
-            Event::Key { key, pressed: true, text, modifiers, .. } => {
-                Some(Input::Key { key: *key, text: text.clone(), modifiers: *modifiers })
+            // A chord's letter is read by the key's place where the layout's is not Latin
+            // (`chord_char`): Control-C copies on a Russian keyboard too. What it types is
+            // still the layout's, in `text`.
+            Event::Key { key, code, pressed: true, text, modifiers, .. } => {
+                let key = match *key {
+                    Key::Char(c) if modifiers.control || modifiers.logo => Key::Char(crate::keys::chord_char(c, *code)),
+                    other => other,
+                };
+                Some(Input::Key { key, text: text.clone(), modifiers: *modifiers })
             }
             _ => None,
         }

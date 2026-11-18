@@ -1164,8 +1164,9 @@ impl Field {
                 self.text.replace_range(from..to, "");
                 return Some(Typed::Changed);
             }
-            // Control-U, as in a terminal: start again.
-            Key::Char('u') if modifiers.control => {
+            // Control-U, as in a terminal: start again. Not Command-U on a Mac (Command comes
+            // as Control with `command`), which is not "clear" there.
+            Key::Char('u') if modifiers.control && !modifiers.command => {
                 self.text.clear();
                 self.caret = 0;
                 return Some(Typed::Changed);
@@ -1470,6 +1471,30 @@ mod field_tests {
         assert_eq!((f.caret, f.selection()), (3, None));
         f.input(&Input::Key { key: Key::Char('x'), text: Some("X".into()), modifiers: Modifiers::default() });
         assert_eq!(f.text, "holXiday.jpeg", "typed where it was put");
+    }
+
+    #[test]
+    fn a_field_s_chords_on_any_layout_and_command_u_is_not_clear() {
+        let chord = |c: char, code: u32, modifiers: Modifiers| {
+            let event = crate::Event::Key { window: crate::WindowId(1), key: Key::Char(c), code, pressed: true, repeat: false, text: Some(c.to_string()), modifiers };
+            Input::of(&event, 1.0).unwrap()
+        };
+        let control = Modifiers { control: true, ..Default::default() };
+        let command = Modifiers { control: true, command: true, ..Default::default() };
+        // Russian: Control-Ф (on A's key, 30) chooses everything, as Control-A does.
+        let mut f = field("holiday.jpeg");
+        f.input(&chord('\u{444}', 30, control));
+        assert_eq!(f.selection(), Some((0, 12)));
+        // Command-U on a Mac leaves the text; Control-U clears it.
+        let mut f = field("holiday.jpeg");
+        f.input(&chord('u', 22, command));
+        assert_eq!(f.text, "holiday.jpeg");
+        f.input(&chord('u', 22, control));
+        assert_eq!(f.text, "");
+        // Typed without a chord, the layout's letter goes as it is.
+        let mut f = field("");
+        f.input(&chord('\u{444}', 30, Modifiers::default()));
+        assert_eq!(f.text, "\u{444}");
     }
 
     #[test]
