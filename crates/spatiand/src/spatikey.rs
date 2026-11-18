@@ -128,6 +128,12 @@ pub fn finger_wanted_recently() -> bool {
     finger_wanted(card, ended)
 }
 
+/// Whether a finger is being asked for now: SpatiKey's card is up asking for it (not its brief
+/// last word). Each new asking takes the aim new windows open at afresh.
+pub fn finger_asked() -> bool {
+    NOTICE.lock().unwrap().as_ref().is_some_and(|card| !card.brief)
+}
+
 /// [`finger_wanted_recently`] of a card (whether it is the brief last word) and how long since a
 /// finger was last no longer wanted.
 fn finger_wanted(card_is_brief: Option<bool>, ended_ago: Option<Duration>) -> bool {

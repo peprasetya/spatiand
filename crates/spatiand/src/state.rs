@@ -1581,7 +1581,8 @@ impl Spatiand {
     /// locked SpatiMesh profile opened at yaw -127, at the Mac). And a window that opens out of
     /// view, whatever the reason, is said on a card: "<title> opened to your left".
     pub fn aim_new_windows(&mut self, yaw: f64, pitch: f64, fov_deg: (f64, f64)) {
-        let (spawn_yaw, spawn_pitch) = self.new_windows.aim(crate::spatikey::finger_wanted_recently(), yaw, pitch);
+        let hold = crate::spatikey::finger_wanted_recently();
+        let (spawn_yaw, spawn_pitch) = self.new_windows.aim(hold, crate::spatikey::finger_asked(), yaw, pitch);
         self.spawn_yaw = spawn_yaw;
         self.layout.view_pitch = spawn_pitch;
         for id in self.new_windows.waiting() {

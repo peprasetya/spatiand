@@ -773,8 +773,13 @@ const SAID_FOR: std::time::Duration = std::time::Duration::from_secs(5);
 /// Where new windows open, and the new windows still to be looked for once they draw.
 #[derive(Debug)]
 pub struct NewWindows {
-    /// The head's yaw and pitch held while a finger is wanted, from when it was first wanted.
+    /// The head's yaw and pitch held while a finger is wanted, from when it was last asked for.
     held: Option<(f64, f64)>,
+    /// Whether the finger was being asked for at the last look: a new asking is its rising edge.
+    asking: bool,
+    /// A window has been placed where it was held, since the asking ended: that was what the
+    /// touch opened, and what opens after it opens where the head is.
+    spent: bool,
     /// Windows placed, by id, and when: looked for in view once they have something to show.
     waiting: Vec<(usize, std::time::Instant)>,
     began: std::time::Instant,
@@ -782,26 +787,44 @@ pub struct NewWindows {
 
 impl Default for NewWindows {
     fn default() -> Self {
-        Self { held: None, waiting: Vec::new(), began: std::time::Instant::now() }
+        Self { held: None, asking: false, spent: false, waiting: Vec::new(), began: std::time::Instant::now() }
     }
 }
 
 impl NewWindows {
-    /// Where a new window opens this frame, given the head's yaw and pitch (radians) and whether
-    /// a finger is wanted or was a moment ago: the head, or while it is, the head as it was when
-    /// it first was -- he turns to the Mac's sensor, and what the touch opens is to open where
-    /// he asked for it, not where the Mac is.
-    pub fn aim(&mut self, hold: bool, yaw: f64, pitch: f64) -> (f64, f64) {
-        if hold {
-            *self.held.get_or_insert((yaw, pitch))
-        } else {
+    /// Where a new window opens this frame, given the head's yaw and pitch (radians), whether a
+    /// finger is wanted or was a moment ago (`hold`) and whether it is being asked for now
+    /// (`asking`): the head, or while it is held, the head as it was when the finger was asked
+    /// for -- he turns to the Mac's sensor, and what the touch opens is to open where he asked
+    /// for it, not where the Mac is.
+    ///
+    /// **Each asking takes the aim afresh** (a second one, turned 90 degrees away, opened where
+    /// the first was asked), and **once one window has been placed after the asking, the hold
+    /// is let go**: an unrelated launch in the seconds after a touch opened at the old spot.
+    pub fn aim(&mut self, hold: bool, asking: bool, yaw: f64, pitch: f64) -> (f64, f64) {
+        if !hold {
             self.held = None;
-            (yaw, pitch)
+            self.asking = false;
+            self.spent = false;
+            return (yaw, pitch);
         }
+        if asking && !self.asking {
+            self.held = Some((yaw, pitch));
+            self.spent = false;
+        }
+        self.asking = asking;
+        if self.spent {
+            return (yaw, pitch);
+        }
+        *self.held.get_or_insert((yaw, pitch))
     }
 
     /// A window was placed: to be looked for once it draws. Not in the room's first seconds.
+    /// Placed where the aim was held, after the asking, it spends the hold.
     pub fn placed(&mut self, id: usize) {
+        if self.held.is_some() && !self.asking {
+            self.spent = true;
+        }
         if self.began.elapsed() >= SETTLING {
             self.waiting.push((id, std::time::Instant::now()));
         }
@@ -903,15 +926,35 @@ mod new_window_tests {
     #[test]
     fn a_window_opens_where_he_looked_while_a_finger_is_wanted() {
         let mut n = NewWindows::default();
-        assert_eq!(n.aim(false, 0.1, 0.0), (0.1, 0.0));
+        assert_eq!(n.aim(false, false, 0.1, 0.0), (0.1, 0.0));
         // Asked: held at where he was then, however he turns to the Mac.
-        assert_eq!(n.aim(true, 0.2, 0.05), (0.2, 0.05));
-        assert_eq!(n.aim(true, -2.2, -0.3), (0.2, 0.05));
-        assert_eq!(n.aim(true, -2.3, -0.3), (0.2, 0.05));
+        assert_eq!(n.aim(true, true, 0.2, 0.05), (0.2, 0.05));
+        assert_eq!(n.aim(true, true, -2.2, -0.3), (0.2, 0.05));
+        // Touched: still held, for the window the touch opens.
+        assert_eq!(n.aim(true, false, -2.3, -0.3), (0.2, 0.05));
         // Over: the head again; asked again, held from then.
-        assert_eq!(n.aim(false, -2.3, -0.3), (-2.3, -0.3));
-        assert_eq!(n.aim(true, 1.0, 0.0), (1.0, 0.0));
-        assert_eq!(n.aim(true, 0.0, 0.0), (1.0, 0.0));
+        assert_eq!(n.aim(false, false, -2.3, -0.3), (-2.3, -0.3));
+        assert_eq!(n.aim(true, true, 1.0, 0.0), (1.0, 0.0));
+        assert_eq!(n.aim(true, true, 0.0, 0.0), (1.0, 0.0));
+    }
+
+    #[test]
+    fn each_asking_takes_the_aim_afresh_and_one_window_spends_it() {
+        let mut n = NewWindows::default();
+        assert_eq!(n.aim(true, true, 0.2, 0.0), (0.2, 0.0));
+        assert_eq!(n.aim(true, false, -1.5, 0.0), (0.2, 0.0), "touched; the seconds after it");
+        // A second asking within those seconds, turned away: held where he is now.
+        assert_eq!(n.aim(true, true, 1.6, 0.1), (1.6, 0.1));
+        assert_eq!(n.aim(true, false, -1.5, 0.0), (1.6, 0.1));
+        // What the touch opened is placed there; what opens after it opens at the head.
+        n.placed(7);
+        assert_eq!(n.aim(true, false, -1.4, 0.0), (-1.4, 0.0));
+        assert_eq!(n.aim(true, false, -1.3, 0.0), (-1.3, 0.0));
+        // A new asking holds again.
+        assert_eq!(n.aim(true, true, 0.5, 0.0), (0.5, 0.0));
+        // A window placed while it is still asked for does not spend it.
+        n.placed(8);
+        assert_eq!(n.aim(true, true, 0.0, 0.0), (0.5, 0.0));
     }
 
     #[test]
