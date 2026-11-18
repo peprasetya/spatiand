@@ -210,13 +210,11 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     let about = if turn.look { About::Window } else { about_the_view(&turn.text) };
     let seen = room.ask(json!({"do": "seen", "picture": about != About::Nothing, "view": about == About::Room, "largest": 1024}));
     let mut messages = vec![json!({"role": "system", "content": system(s, false)})];
-    for said in remembered(&turn.history) {
-        let mut text = said.text.clone();
-        if !said.did.is_empty() {
-            text.push_str(&format!("\n(Done in the room: {}.)", said.did.join("; ")));
-        }
-        messages.push(json!({"role": said.role, "content": text}));
-    }
+    let mut past = conversation(remembered(&turn.history));
+    // A question left unanswered (an error, a stop): it goes with this one, not as a second
+    // message from the wearer in a row.
+    let unanswered = if past.last().is_some_and(|m| m["role"] == "user") { past.pop().and_then(|m| m["content"].as_str().map(str::to_string)) } else { None };
+    messages.extend(past);
     // The room as it is, with the wearer's words: the picture of what they see first, when the
     // request is about it; then the window's own text, when the request reaches past the screen.
     let mut words = format!("{}\n{}", room_note(&windows, &seen), turn.text);
@@ -232,6 +230,9 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
             );
             log::info!("brain: given window {window}'s own text too ({} characters): the request reaches past the screen", text.chars().count());
         }
+    }
+    if let Some(before) = unanswered {
+        words = format!("{before}\n\n{words}");
     }
     let mut content = Vec::new();
     if let Some(png) = seen.get("view_png").and_then(Value::as_str) {
@@ -627,6 +628,30 @@ fn remembered(history: &[Said]) -> &[Said] {
     &history[start..]
 }
 
+/// The chat as the model is given it: what was done in the room said with each answer, and
+/// neighbours of one role made one message -- a question whose answer failed or was stopped
+/// before a word, then the next, must not be two messages from the wearer in a row.
+fn conversation(history: &[Said]) -> Vec<Value> {
+    let mut messages: Vec<Value> = Vec::new();
+    for said in history {
+        let mut text = said.text.clone();
+        if !said.did.is_empty() {
+            text.push_str(&format!("\n(Done in the room: {}.)", said.did.join("; ")));
+        }
+        if text.trim().is_empty() {
+            continue;
+        }
+        match messages.last_mut() {
+            Some(last) if last["role"] == said.role.as_str() => {
+                let joined = format!("{}\n\n{text}", last["content"].as_str().unwrap_or_default());
+                last["content"] = json!(joined);
+            }
+            _ => messages.push(json!({"role": said.role, "content": text})),
+        }
+    }
+    messages
+}
+
 /// Whether what the wearer said is a yes (`Some(true)`), a no (`Some(false)`), or neither: in
 /// either language, as briefly as people say it.
 ///
@@ -742,6 +767,16 @@ mod tests {
         assert_eq!(agreement("buka browser dan cari cuaca hari ini di Jakarta"), None);
         assert_eq!(agreement("Go ahead."), Some(true));
         assert_eq!(agreement("Okay, do it"), Some(true));
+    }
+
+    #[test]
+    fn the_chat_given_has_no_two_messages_of_one_role_in_a_row() {
+        let said = |role: &str, text: &str| Said { role: role.into(), text: text.into(), ..Default::default() };
+        let chat = [said("user", "what time is it"), said("user", "hello?"), said("assistant", ""), said("assistant", "It is eight."), said("user", "thanks")];
+        let messages = conversation(&chat);
+        let roles: Vec<&str> = messages.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "user"]);
+        assert_eq!(messages[0]["content"], "what time is it\n\nhello?");
     }
 
     #[test]

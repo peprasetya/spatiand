@@ -328,6 +328,10 @@ impl Pal {
     /// An answer, into the chat it was asked in -- by its id, whichever chat is open now. A chat
     /// forgotten meanwhile is not made again.
     fn keep_answer(&mut self, chat: &str, said: Said) {
+        // Stopped before a word: nothing was answered, and nothing is kept.
+        if said.text.trim().is_empty() && said.did.is_empty() {
+            return;
+        }
         match self.chats.iter_mut().find(|c| c.id == chat) {
             Some(chat) => {
                 chat.said.push(said);
