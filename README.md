@@ -152,8 +152,9 @@ not.
 **The applications.** SpatiShelf, SpatiQuill, SpatiReel, SpatiLoupe, SpatiPal and
 SpatiKey are built and were driven on the files and media they were written for,
 with FFmpeg and each system's own hardware decoder (VA-API, MediaCodec,
-VideoToolbox). SpatiMesh on Chromium runs on the Deck and in the room's test rig
-on the Mac. Their settings are kept the same on every paired machine, and each
+VideoToolbox). SpatiMesh on Chromium runs on the Deck, on the Mac (inside the app,
+video decoded by the hardware: [docs/spatimesh-mac-port.md](docs/spatimesh-mac-port.md))
+and on the Beam Pro (carried in the APK, a window of the room). Their settings are kept the same on every paired machine, and each
 reaches remote storage through the one storage service. SpatiPal and dictation
 use models served by hemera, a model router on the owner's server. What was seen
 and what was only tested is in [docs/spatiand-apps.md](docs/spatiand-apps.md),
@@ -231,10 +232,9 @@ Listed because finding out by hitting them is worse.
   * **Not run on hardware.** Of the last two days' work: SpatiKey's holders on a
     real Touch ID or BiometricPrompt (no device with a sensor but the Mac exists
     here), a locked Mac used from nowhere, the pose channel in the glasses,
-    MediaCodec and VideoToolbox with raw streams, the Beam Pro's hardware-buffer
-    frames in the glasses. The Beam Pro was off the network when the last
-    changes were built, and the Mac needs a build for the commits after its last
-    install.
+    MediaCodec and VideoToolbox with raw streams. The Beam Pro's hardware-buffer
+    frames were run and measured on the phone on a stand-in display
+    ([docs/beam-pro.md](docs/beam-pro.md)), not in the glasses.
   * **Not packaged for distribution.** The Mac app is ad hoc signed and not
     notarised, so it is for the Mac it was built on.
   * **A secret window is not protected from the assistant.** SpatiPal is kept from
@@ -246,8 +246,7 @@ Listed because finding out by hitting them is worse.
   * **Deinterlacing of hardware frames is a shader blend** (MediaCodec on the
     Beam Pro, VideoToolbox on the Mac), a workaround; VA-API and software use
     FFmpeg's filters. Raw AV1 (`.obu`) cannot be seeked.
-  * **SpatiMesh lacks some media**: H.264 and HEVC in MPEG transport streams, VOB,
-    MP2 sound and a film's own subtitle tracks. The Mac's start-up race with
+  * **SpatiMesh does not show a film's own subtitle tracks.** The Mac's start-up race with
     ANGLE is worked round, not cured. What waits for the next Chromium build is
     listed in `third_party/chromium/patches/README.md`.
   * **Other glasses.** The device table lists the XREAL Air, Air 2, Air 2 Pro and
@@ -282,8 +281,9 @@ Snapdragon, with XREAL Air glasses (`3318:0424`), checked 2026-09-26. Later work
 was run on the phone with a stand-in display ([docs/beam-pro.md](docs/beam-pro.md)).
 
 **Mac**: built and run on an Apple silicon Mac mini (littleotter, macOS 27.2.1,
-[docs/spatimesh-mac-port.md](docs/spatimesh-mac-port.md)); use in the glasses was
-checked on an Intel MacBook Pro with XREAL Air ([docs/mac.md](docs/mac.md)).
+[docs/spatimesh-mac-port.md](docs/spatimesh-mac-port.md)); it is the owner's
+daily machine in the glasses since November 2026. The room was first checked in the
+glasses on an Intel MacBook Pro with XREAL Air ([docs/mac.md](docs/mac.md)).
 
 The glasses need a USB-C cable that carries video. Many do not, and one that
 charges perfectly well will leave the display black.
