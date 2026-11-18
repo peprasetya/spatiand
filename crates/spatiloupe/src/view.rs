@@ -300,6 +300,9 @@ pub struct Paper {
     /// The page the wearer last asked to see, which the column is moved to once it is laid out.
     go_to: Option<usize>,
     stale: Vec<Texture>,
+    /// The words on each page asked for, once they have come: what the room's speech is told
+    /// is being read. `None` while asked for.
+    words: HashMap<usize, Option<String>>,
     /// Pages drawn by the PDF's thread, waiting for the GL thread to put them on the GPU: this
     /// document's own.
     pending: Vec<(usize, u32, u32, Vec<u8>)>,
@@ -328,8 +331,18 @@ impl Paper {
             finding: false,
             go_to: None,
             stale: Vec::new(),
+            words: HashMap::new(),
             pending: Vec::new(),
         }
+    }
+
+    /// The words on `page`, if they have come; asked for, if they have not been.
+    fn words_on(&mut self, page: usize) -> Option<&str> {
+        if !self.words.contains_key(&page) {
+            self.words.insert(page, None);
+            self.pdf.ask(Ask::Text { page });
+        }
+        self.words.get(&page).and_then(|w| w.as_deref())
     }
 
     fn width(&self, area: Rect) -> f32 {
@@ -646,6 +659,13 @@ impl View {
                 }
                 // Left as asked, so that it is not asked for again and again: it stays paper.
                 pdf::Answer::Undrawn { page } => log::warn!("page {} of {} would not draw", page + 1, self.entry.path.display()),
+                pdf::Answer::Text { page, text } => {
+                    // A few pages' worth kept: they are asked for as they are read.
+                    if paper.words.len() > 64 {
+                        paper.words.retain(|p, _| p.abs_diff(page) <= 8);
+                    }
+                    paper.words.insert(page, Some(text));
+                }
                 pdf::Answer::Found { found, ticket } => {
                     if ticket != paper.finds {
                         continue;
@@ -997,6 +1017,32 @@ impl View {
             let line = Rect::new(all.x + 40.0, all.bottom() - 60.0, all.w - 80.0, 40.0);
             p.label(gl, trouble, line, theme::FOOTER_EM, look::trouble(), 0.5);
         }
+    }
+
+    /// What this shows, for the room's speech (`Event::Describe`): the words being typed into
+    /// the find field or the page number if one is open, the current page's words of a PDF --
+    /// as far as they have come, never waited for -- and what is known of a picture or an object.
+    pub fn describe(&mut self) -> (String, String) {
+        let title = self.title_words().0;
+        let all = self.bounds;
+        let text = match &mut self.doc {
+            Doc::Pdf(paper) => {
+                if let Some(field) = paper.find.as_ref().or(paper.page_field.as_ref()) {
+                    field.text.clone()
+                } else if paper.pages.is_empty() {
+                    String::new()
+                } else {
+                    let page = paper.current(all);
+                    // The next page asked for too: it is the one read next.
+                    if page + 1 < paper.pages.len() {
+                        paper.words_on(page + 1);
+                    }
+                    paper.words_on(page).unwrap_or_default().to_string()
+                }
+            }
+            _ => self.about().into_iter().map(|(what, value)| format!("{what}: {value}")).collect::<Vec<_>>().join("\n"),
+        };
+        (title, text)
     }
 
     fn about(&self) -> Vec<(String, String)> {
@@ -1593,6 +1639,9 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
     if let Some(page) = paper.go_to.take() {
         paper.show_page(page, all);
     }
+    // The page in view's words, at hand for the room's speech when it asks.
+    let page = paper.current(all);
+    paper.words_on(page);
     let width = paper.width(all);
     // Zoomed out again, or the window wider: the column kept within its room.
     paper.pan_by(0.0, all);
@@ -2140,6 +2189,26 @@ mod tests {
         }
         let room = paper(&mut view).across_room(all);
         assert_eq!(paper(&mut view).across, room);
+    }
+
+    #[test]
+    fn the_words_on_the_page_are_told_once_they_have_come() {
+        let (mut view, tell, asked) = reading();
+        // Asked for, not waited for: nothing yet.
+        assert_eq!(view.describe(), ("a.pdf".to_string(), String::new()));
+        let mut words = Vec::new();
+        while let Ok(Ask::Text { page }) = asked.try_recv() {
+            words.push(page);
+        }
+        assert_eq!(words, [1, 0]);
+        tell.send(pdf::Answer::Text { page: 0, text: "Dear reader".into() }).unwrap();
+        view.answers();
+        assert_eq!(view.describe().1, "Dear reader");
+        assert!(asked.try_recv().is_err(), "asked for once");
+        // The find field's words, while it is open.
+        view.input(&key(Key::Char('/'), "/"));
+        view.input(&key(Key::Char('q'), "q"));
+        assert_eq!(view.describe().1, "q");
     }
 
     #[test]

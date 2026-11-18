@@ -37,6 +37,8 @@ pub enum Ask {
     /// Draw page `page`, `width` pixels across and no more than `most_height` down.
     Draw { page: usize, width: u32, most_height: u32 },
     Find { text: String, ticket: u64 },
+    /// The words on page `page`, for the room's speech to know what is being read.
+    Text { page: usize },
 }
 
 pub enum Answer {
@@ -46,6 +48,7 @@ pub enum Answer {
     /// The page could not be drawn: not there, or PDFium would not.
     Undrawn { page: usize },
     Found { found: Vec<Found>, ticket: u64 },
+    Text { page: usize, text: String },
 }
 
 pub struct Pdf {
@@ -177,6 +180,10 @@ impl Pdf {
                                 }
                                 Err(_) => Answer::Undrawn { page },
                             }
+                        }
+                        Ask::Text { page } => {
+                            let text = document.pages().get(page as PdfPageIndex).ok().and_then(|at| at.text().ok().map(|t| t.all())).unwrap_or_default();
+                            Answer::Text { page, text }
                         }
                         Ask::Find { text, ticket } => {
                             let mut found = Vec::new();

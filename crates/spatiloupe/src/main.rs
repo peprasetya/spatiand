@@ -350,6 +350,11 @@ impl Loupe {
                 self.dirty = true;
                 return true;
             }
+            Event::Describe { window } => {
+                let description = self.description();
+                self.app.describe(*window, &description);
+                return true;
+            }
             Event::Mode(mode) => log::info!("the wearer now sees {mode:?}"),
             // Dark or light: drawn again in the theme's new colours.
             Event::Look { .. } => self.dirty = true,
@@ -382,6 +387,25 @@ impl Loupe {
             },
         }
         true
+    }
+
+    /// What the window shows, for the room's speech: the file looked at and what is read on it,
+    /// or the folder; the folder's names either way, as the words likely to be said.
+    fn description(&mut self) -> spatiand_app::Description {
+        let names: Vec<String> = self.folder.entries.iter().map(|e| e.name.clone()).take(150).collect();
+        let (title, text) = match self.view.as_mut() {
+            Some(view) => view.describe(),
+            None => (place::name(&self.folder.path), names.iter().take(200).cloned().collect::<Vec<_>>().join("\n")),
+        };
+        spatiand_app::Description {
+            kind: "viewer".into(),
+            app: "SpatiLoupe".into(),
+            title,
+            text,
+            vocabulary: names,
+            directory: self.folder.path.display().to_string(),
+            commands: Vec::new(),
+        }
     }
 
     /// Whether the window is to be two eyes' pictures, and if that has changed, make it so.
