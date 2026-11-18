@@ -362,11 +362,13 @@ impl EntryPage {
                     detail(p, gl, &mut left, "Username", &entry.username);
                 }
                 if !entry.password.is_empty() {
-                    // Dots of one length whatever the password's, which is not to be read off.
-                    let shown = if self.shown { entry.password.clone() } else { "\u{2022}".repeat(12) };
+                    // Dots of one length whatever the password's, which is not to be read off;
+                    // the password itself lent, not copied, each time it is drawn.
+                    let dots = "\u{2022}".repeat(12);
+                    let shown: &str = if self.shown { &entry.password } else { &dots };
                     let mut line = detail(p, gl, &mut left, "Password", "");
                     let eye = line.take_right(theme::ROW_HEIGHT * 0.84);
-                    p.label(gl, &shown, Rect { w: (line.w - 12.0).max(0.0), ..line }, VALUE_EM, theme::ink(), 0.0);
+                    p.label(gl, shown, Rect { w: (line.w - 12.0).max(0.0), ..line }, VALUE_EM, theme::ink(), 0.0);
                     self.eye.draw_icon(p, gl, Rect { y: eye.y + (eye.h - eye.w) * 0.5, h: eye.w, ..eye }, Icon::Eye, "");
                 }
                 if entry.totp.is_some() {
@@ -430,8 +432,10 @@ impl EntryPage {
         }
         self.lit(&actions);
         let Some(entry) = self.entry.as_ref() else { return Want::Nothing };
+        // The editor opens on the entry as it is now, asked again: not on this page's copy, which
+        // another device may have changed since.
         if self.edit.input(input) {
-            return Want::Edit(Box::new(entry.clone()));
+            return if view.busy() { Want::Nothing } else { Want::Edit(self.id.clone()) };
         }
         if self.delete.input(input) {
             let title = if entry.title.is_empty() { "this entry".to_string() } else { entry.title.clone() };
@@ -500,6 +504,13 @@ fn draw_typing(p: &mut Painter, gl: &Gl, right: &mut Rect, view: &View, actions:
             &format!("{name} is the window you were in before SpatiKey. Nothing is typed unless it still has the keys when SpatiKey begins."),
             theme::ink_hint(),
         ),
+    }
+}
+
+impl EntryPage {
+    /// The window lost the keys: a password shown goes back to dots.
+    pub fn hide(&mut self) {
+        self.shown = false;
     }
 }
 
@@ -576,9 +587,13 @@ pub struct Edit {
     focus: usize,
     /// What the 2FA field holds, checked: what its codes will be, or why it is not a secret.
     checked: Option<Result<String, String>>,
-    /// A field the entry cannot be kept with.
+    /// A field the entry cannot be kept with, or what happened to the entry elsewhere.
     trouble: Option<String>,
     pointer: (f32, f32),
+    /// Leaving with changes not saved: asked first.
+    leaving: Option<Confirm>,
+    /// Saved over a change another device made meanwhile, and refused: load that one?
+    stale: Option<Confirm>,
 }
 
 impl Edit {
@@ -611,27 +626,71 @@ impl Edit {
             checked: None,
             trouble: None,
             pointer: (0.0, 0.0),
+            leaving: None,
+            stale: None,
         }
     }
 
     pub fn of(entry: Entry) -> Edit {
         let mut edit = Edit::new();
-        let texts = [
-            entry.title.clone(),
-            entry.sites.join(", "),
-            entry.username.clone(),
-            entry.password.clone(),
-            entry.totp.as_ref().map(totp_text).unwrap_or_default(),
-            entry.apps.join(", "),
-            entry.notes.replace('\n', NEWLINE),
-        ];
-        for (index, text) in texts.into_iter().enumerate() {
+        for (index, text) in texts_of(&entry).into_iter().enumerate() {
             edit.fields[index].set(text.as_str());
             edit.first[index] = text;
         }
         edit.checked = entry.totp.as_ref().map(|t| Ok(described(t)));
         edit.original = Some(entry);
         edit
+    }
+
+    /// The entry being changed, by its id; None for a new one.
+    pub fn id(&self) -> Option<&str> {
+        self.original.as_ref().map(|e| e.id.as_str()).filter(|id| !id.is_empty())
+    }
+
+    /// What the change was begun from, for the service to refuse it if another device has
+    /// changed the entry since.
+    pub fn based_on(&self) -> Option<u64> {
+        self.id().and(self.original.as_ref()).map(|e| e.changed)
+    }
+
+    /// The save was refused: another device changed or deleted the entry since this began.
+    pub fn stale(&mut self) {
+        self.stale = Some(Confirm::new(
+            "This entry was changed on another device since you began. Load that version? What you changed here stays as you typed it; the rest becomes the newer one's. Nothing is saved until you press Save.",
+            "Load it",
+            "Not now",
+        ));
+    }
+
+    /// The newer entry, from the service, under what was typed: a field changed here keeps
+    /// what was typed, one left alone takes the newer value, and the next save is based on it.
+    pub fn rebase(&mut self, newer: Entry) {
+        for (index, text) in texts_of(&newer).into_iter().enumerate() {
+            if self.fields[index].text == self.first[index] {
+                self.fields[index].text.zeroize();
+                self.fields[index].set(text.as_str());
+            }
+            self.first[index].zeroize();
+            self.first[index] = text;
+        }
+        if let Some(mut old) = self.original.replace(newer) {
+            old.wipe();
+        }
+        self.check_totp();
+        self.trouble = Some("The newer version is loaded, with what you changed here kept. Save puts it over the newer one.".into());
+    }
+
+    /// The entry was deleted on another device: saved, what is here is kept as a new entry.
+    pub fn orphan(&mut self) {
+        if let Some(entry) = self.original.as_mut() {
+            entry.id.clear();
+        }
+        self.trouble = Some("This entry was deleted on another device. Save keeps what is here as a new entry; Cancel lets it go.".into());
+    }
+
+    /// The window lost the keys: a password shown goes back to dots.
+    pub fn hide(&mut self) {
+        self.shown = false;
     }
 
     fn passkey(&self) -> bool {
@@ -723,6 +782,17 @@ impl Edit {
                 }
             }
         }
+        if let Some(confirm) = self.leaving.as_mut().or(self.stale.as_mut()) {
+            confirm.draw(p, gl);
+        }
+    }
+
+    /// Where Cancel leads: the entry's page, or the list for a new one.
+    fn back(&self) -> Want {
+        match self.id() {
+            Some(id) => Want::Show(id.to_string()),
+            None => Want::List,
+        }
     }
 
     /// The field after `index` among the spots, if there is one: where Enter goes.
@@ -731,14 +801,41 @@ impl Edit {
     }
 
     pub fn input(&mut self, input: &Input, view: &View) -> Want {
+        if let Some(confirm) = self.leaving.as_mut() {
+            match confirm.input(input) {
+                Some(true) => {
+                    self.leaving = None;
+                    return self.back();
+                }
+                Some(false) => self.leaving = None,
+                None => {}
+            }
+            return Want::Nothing;
+        }
+        if let Some(confirm) = self.stale.as_mut() {
+            match confirm.input(input) {
+                Some(true) => {
+                    self.stale = None;
+                    return match self.id() {
+                        Some(id) => Want::Reload(id.to_string()),
+                        None => Want::Nothing,
+                    };
+                }
+                Some(false) => self.stale = None,
+                None => {}
+            }
+            return Want::Nothing;
+        }
         if view.busy() {
             return Want::Nothing;
         }
         if self.cancel.input(input) || matches!(input, Input::Key { key: Key::Escape, .. }) {
-            return match &self.original {
-                Some(entry) => Want::Show(entry.id.clone()),
-                None => Want::List,
-            };
+            // Changes are not let go of without asking, as quitting does not.
+            if self.changed() {
+                self.leaving = Some(Confirm::new("Leave without saving? The changes to this entry are lost.", "Leave", "Keep editing"));
+                return Want::Nothing;
+            }
+            return self.back();
         }
         let spots = self.spots(view);
         if let Input::Pointer { x, y } = input {
@@ -808,7 +905,7 @@ impl Edit {
 
     fn save(&mut self) -> Want {
         match self.entry() {
-            Ok(entry) => Want::Save(Box::new(entry)),
+            Ok(entry) => Want::Save { entry: Box::new(entry), based_on: self.based_on() },
             Err(why) => {
                 self.trouble = Some(why);
                 Want::Nothing
@@ -847,6 +944,17 @@ impl Edit {
     /// The entry as the fields have it, or why it cannot be kept.
     fn entry(&self) -> Result<Entry, String> {
         let mut entry = self.original.clone().unwrap_or_default();
+        match self.fill(&mut entry) {
+            Ok(()) => Ok(entry),
+            // The copy goes as every other copy of an entry does: overwritten.
+            Err(why) => {
+                entry.wipe();
+                Err(why)
+            }
+        }
+    }
+
+    fn fill(&self, entry: &mut Entry) -> Result<(), String> {
         let changed = |index: usize| self.fields[index].text != self.first[index];
         let text = |index: usize| self.fields[index].text.trim().to_string();
         entry.title = text(TITLE);
@@ -857,7 +965,7 @@ impl Edit {
             if entry.title.is_empty() {
                 entry.title = entry.passkey.as_ref().map(|p| p.rp_id.clone()).unwrap_or_default();
             }
-            return Ok(entry);
+            return Ok(());
         }
         if changed(SITES) {
             let mut sites: Vec<String> = Vec::new();
@@ -897,7 +1005,7 @@ impl Edit {
             let bare = entry.username.is_empty() && entry.password.is_empty() && entry.sites.is_empty() && entry.apps.is_empty() && entry.totp.is_none();
             entry.kind = if bare { Kind::Note } else { Kind::Login };
         }
-        Ok(entry)
+        Ok(())
     }
 }
 
@@ -959,6 +1067,19 @@ fn read_totp(text: &str) -> Result<Totp, String> {
     } else {
         spatikey_core::totp::from_secret(text)
     }
+}
+
+/// What each field shows of an entry, in the fields' order.
+fn texts_of(entry: &Entry) -> [String; 7] {
+    [
+        entry.title.clone(),
+        entry.sites.join(", "),
+        entry.username.clone(),
+        entry.password.clone(),
+        entry.totp.as_ref().map(totp_text).unwrap_or_default(),
+        entry.apps.join(", "),
+        entry.notes.replace('\n', NEWLINE),
+    ]
 }
 
 /// A kept secret as the field shows it: the secret alone when it makes the usual codes (six
@@ -1170,6 +1291,63 @@ fn next(choices: &[u64], now: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn escape() -> Input {
+        Input::Key { key: Key::Escape, text: None, modifiers: Default::default() }
+    }
+
+    fn enter() -> Input {
+        Input::Key { key: Key::Enter, text: None, modifiers: Default::default() }
+    }
+
+    #[test]
+    fn leaving_the_editor_with_changes_asks_first() {
+        let status = wire::StatusAnswer::default();
+        let view = View {
+            status: &status,
+            mac: "",
+            entries: &[],
+            settings: wire::Settings::default(),
+            waiting: None,
+            trouble: None,
+            said: None,
+            target: None,
+            devices: None,
+            fingers_changed: false,
+        };
+        let entry = Entry { id: "e1".into(), title: "GitHub".into(), changed: 7, ..Entry::default() };
+        let mut edit = Edit::of(entry.clone());
+        assert!(matches!(edit.input(&escape(), &view), Want::Show(id) if id == "e1"), "nothing changed: back at once");
+        let mut edit = Edit::of(entry);
+        edit.fields[TITLE].set("GitHub!");
+        assert!(matches!(edit.input(&escape(), &view), Want::Nothing));
+        assert!(edit.leaving.is_some());
+        // Escape on the question keeps editing, with what was typed.
+        assert!(matches!(edit.input(&escape(), &view), Want::Nothing));
+        assert!(edit.leaving.is_none() && edit.fields[TITLE].text == "GitHub!");
+        edit.input(&escape(), &view);
+        edit.input(&Input::Key { key: Key::Right, text: None, modifiers: Default::default() }, &view);
+        assert!(matches!(edit.input(&enter(), &view), Want::Show(id) if id == "e1"), "said yes, it leaves");
+    }
+
+    #[test]
+    fn a_newer_version_comes_in_under_what_was_typed() {
+        let entry = Entry { id: "e1".into(), title: "GitHub".into(), username: "me".into(), password: "one".into(), changed: 7, ..Entry::default() };
+        let mut edit = Edit::of(entry.clone());
+        assert_eq!(edit.based_on(), Some(7));
+        assert_eq!(Edit::new().based_on(), None, "a new entry is begun from nothing");
+        edit.fields[PASSWORD].set("mine");
+        let newer = Entry { title: "GitHub (work)".into(), password: "theirs".into(), changed: 9, ..entry };
+        edit.rebase(newer);
+        assert_eq!(edit.fields[TITLE].text, "GitHub (work)", "left alone: the newer one's");
+        assert_eq!(edit.fields[PASSWORD].text, "mine", "typed: kept");
+        assert_eq!(edit.based_on(), Some(9));
+        let saved = edit.entry().unwrap();
+        assert_eq!((saved.title.as_str(), saved.password.as_str(), saved.username.as_str()), ("GitHub (work)", "mine", "me"));
+        // Deleted elsewhere: saved, it is a new entry.
+        edit.orphan();
+        assert_eq!((edit.id(), edit.based_on()), (None, None));
+    }
 
     #[test]
     fn an_edit_is_unsaved_once_a_field_says_otherwise() {

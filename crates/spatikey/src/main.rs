@@ -119,6 +119,10 @@ struct SpatiKey {
     /// Quitting (Command-Q, Control-Q, the window closed) with an entry's changes not saved:
     /// asked first, over the editor.
     asking: Option<Confirm>,
+    /// An entry being changed when its session ended under it (the service's clock, the service
+    /// starting again): kept, and brought back once SpatiKey is opened again, rather than lost
+    /// with the screen that held it. Only that: locking, and shutting unused, let it go.
+    kept_edit: Option<Edit>,
     /// A new recovery code may be on its way (a new code asked for, a holder being removed): the
     /// window does not close before it has come, and been shown.
     code_coming: bool,
@@ -234,6 +238,17 @@ impl SpatiKey {
         if let Screen::List(list) = std::mem::replace(&mut self.screen, screen) {
             self.kept_list = Some(list);
         }
+    }
+
+    /// An editor with changes on show is put aside, to come back when SpatiKey is opened again;
+    /// whether there was one.
+    fn keep_editor(&mut self) -> bool {
+        if !matches!(&self.screen, Screen::Edit(edit) if edit.changed()) {
+            return false;
+        }
+        let Screen::Edit(edit) = std::mem::replace(&mut self.screen, Screen::Waiting(Instant::now())) else { return false };
+        self.kept_edit = Some(edit);
+        true
     }
 
     /// Show a recovery code, over whatever is up -- the settings it was asked from, as a rule.
@@ -385,19 +400,26 @@ impl SpatiKey {
             Want::List => {
                 if self.session.is_some() {
                     self.show_list();
+                    self.ask_list();
                 }
             }
             Want::Add => {
                 self.set_screen(Screen::Edit(Edit::new()));
                 self.ask_target();
             }
-            Want::Edit(entry) => {
-                self.set_screen(Screen::Edit(Edit::of(*entry)));
-                self.ask_target();
-            }
-            Want::Save(entry) => {
+            Want::Edit(id) => {
                 if let Some(session) = self.session.clone() {
-                    self.ask_waiting(Asked::Put, Request::Put { session, entry: *entry, based_on: None }, "Saving");
+                    self.ask_waiting(Asked::Fresh(id.clone()), Request::Get { session, id }, "Opening");
+                }
+            }
+            Want::Reload(id) => {
+                if let Some(session) = self.session.clone() {
+                    self.ask_waiting(Asked::Fresh(id.clone()), Request::Get { session, id }, "Loading the newer version");
+                }
+            }
+            Want::Save { entry, based_on } => {
+                if let Some(session) = self.session.clone() {
+                    self.ask_waiting(Asked::Put, Request::Put { session, entry: *entry, based_on }, "Saving");
                 }
             }
             Want::Delete(id) => {
@@ -444,6 +466,7 @@ impl SpatiKey {
         let value = match result {
             Ok(value) => value,
             Err(Trouble::Away(why)) => {
+                self.keep_editor();
                 self.forget_open();
                 self.waiting = None;
                 if matches!(asked, Asked::Forget | Asked::RecoveryNew) {
@@ -503,6 +526,11 @@ impl SpatiKey {
                 self.screen = Screen::List(ListPage::new());
                 then.push((Asked::Settings, Request::Settings { session: answer.session.clone(), set: None }));
                 self.session = Some(answer.session);
+                // What was being changed when SpatiKey shut under it, back as it was left.
+                if let Some(edit) = self.kept_edit.take() {
+                    self.screen = Screen::Edit(edit);
+                    self.ask_target();
+                }
                 if !answer.recovery_code.is_empty() {
                     // A code made here whose showing was not seen through (the window went): its
                     // one showing, now.
@@ -522,6 +550,20 @@ impl SpatiKey {
                 match &mut self.screen {
                     Screen::Entry(page) if page.id == id => page.entry = Some(entry),
                     // Left before it came: not kept.
+                    _ => entry.wipe(),
+                }
+            }
+            Asked::Fresh(id) => {
+                let Some(answer) = read::<GetAnswer>(value) else { return };
+                let mut entry = answer.entry;
+                match &mut self.screen {
+                    // The editor, on the entry as it is now.
+                    Screen::Entry(page) if page.id == id => {
+                        self.set_screen(Screen::Edit(Edit::of(entry)));
+                        self.ask_target();
+                    }
+                    // The newer version, under what was typed.
+                    Screen::Edit(edit) if edit.id() == Some(id.as_str()) => edit.rebase(entry),
                     _ => entry.wipe(),
                 }
             }
@@ -647,10 +689,15 @@ impl SpatiKey {
             return;
         }
         // A session that has ended -- unused too long, or the service started again -- ends
-        // here too.
+        // here too; an entry being changed is kept for when it is opened again.
         if refusal.code == Code::BadSession && self.session.is_some() {
+            let kept = self.keep_editor();
             self.lock();
-            self.trouble = Some(ui::meaning(&refusal, &self.mac, self.on_mac()));
+            let mut said = ui::meaning(&refusal, &self.mac, self.on_mac());
+            if kept {
+                said.push_str(" The entry you were changing is kept: it is back when SpatiKey opens.");
+            }
+            self.trouble = Some(said);
             return;
         }
         match &asked {
@@ -667,6 +714,35 @@ impl SpatiKey {
                 return;
             }
             Asked::Status { route: false } | Asked::Close => return,
+            // Changed or deleted elsewhere since the editor opened: asked whether to load it.
+            Asked::Put if refusal.code == Code::Stale => {
+                if let Screen::Edit(edit) = &mut self.screen {
+                    edit.stale();
+                    return;
+                }
+            }
+            // An entry deleted on another device: back to the list, as it is now.
+            Asked::Get(id) | Asked::Fresh(id) if refusal.code == Code::NoMatch => {
+                match &mut self.screen {
+                    Screen::Edit(edit) if edit.id() == Some(id.as_str()) => {
+                        edit.orphan();
+                        return;
+                    }
+                    Screen::Entry(page) if page.id == *id => {
+                        self.show_list();
+                        self.ask_list();
+                        self.said = None;
+                        self.trouble = Some("That entry is no longer in SpatiKey: it was deleted on another device.".into());
+                        return;
+                    }
+                    _ => return,
+                }
+            }
+            // Any other refusal of an entry's page: not left waiting on it.
+            Asked::Get(id) if matches!(&self.screen, Screen::Entry(page) if page.id == *id) => {
+                self.show_list();
+                self.ask_list();
+            }
             Asked::Status { route: true } if matches!(self.screen, Screen::Waiting(_)) => {
                 self.screen = Screen::Away(Away::new(ui::meaning(&refusal, &self.mac, self.on_mac())));
                 return;
@@ -719,6 +795,14 @@ impl SpatiKey {
         // when it was made), and nothing is asked in the session while it is up -- the service
         // closes the session by its own clock, and an answer that it has would take the screen.
         let code_shown = matches!(self.screen, Screen::Code(_));
+        let unused = self.used.elapsed() >= Duration::from_secs(self.settings.open_secs.max(30));
+        // An entry kept from a session that ended is kept no longer than an open SpatiKey would
+        // be: unused as long, it goes (overwritten as it drops).
+        if unused && self.session.is_none() && self.kept_edit.take().is_some() {
+            log::info!("an entry kept from a closed SpatiKey sat unused: let go");
+            self.trouble = None;
+            self.dirty = true;
+        }
         if let Some(session) = self.session.clone().filter(|_| !code_shown) {
             if self.used.elapsed() >= Duration::from_secs(self.settings.open_secs.max(30)) {
                 let unused = ui::span(self.settings.open_secs).to_lowercase();
@@ -825,6 +909,8 @@ impl SpatiKey {
                 return self.quit();
             }
             Event::Ready { window, .. } if *window == self.window => self.ready = true,
+            // Another window has the keys: a password shown here goes back to dots.
+            Event::Focus { window, focused: false } if *window == self.window => self.screen.hide(),
             Event::Resized { window, width, height } if *window == self.window => {
                 self.app.resize(self.window, ((*width).max(960), (*height).max(680)));
             }
@@ -941,6 +1027,7 @@ fn main() {
             looked: Instant::now(),
             asking: None,
             code_coming: false,
+            kept_edit: None,
         };
         key.run()
     };

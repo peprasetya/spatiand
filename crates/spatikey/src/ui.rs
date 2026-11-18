@@ -97,8 +97,12 @@ pub enum Want {
     Show(String),
     List,
     Add,
-    Edit(Box<Entry>),
-    Save(Box<Entry>),
+    /// Change an entry, by its id: asked for again first, as it is now.
+    Edit(String),
+    /// Keep an entry; `based_on` is the `changed` of the one the change was begun from.
+    Save { entry: Box<Entry>, based_on: Option<u64> },
+    /// The editor's entry was changed elsewhere: load the newer one under what was typed.
+    Reload(String),
     Delete(String),
     Type { id: String, fields: Vec<Field> },
     Settings,
@@ -168,6 +172,15 @@ impl Screen {
             Screen::Entry(screen) => screen.input(input, view),
             Screen::Edit(screen) => screen.input(input, view),
             Screen::Settings(screen) => screen.input(input, view),
+        }
+    }
+
+    /// The window lost the keys: whatever secret is shown goes back to dots.
+    pub fn hide(&mut self) {
+        match self {
+            Screen::Entry(page) => page.hide(),
+            Screen::Edit(edit) => edit.hide(),
+            _ => {}
         }
     }
 

@@ -27,6 +27,8 @@ pub enum Asked {
     List,
     /// One entry, by its id.
     Get(String),
+    /// One entry again, by its id, as it is now: for the editor.
+    Fresh(String),
     Put,
     Delete,
     /// An entry's current code, by its id.
