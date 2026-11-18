@@ -128,6 +128,10 @@ struct Win {
     /// Selecting text with the pointer: where it started and where it is, in cells.
     selecting: Option<((u16, u16), (u16, u16))>,
     pressed_in_text: bool,
+    /// The cell of the last mouse report to a program that asked for the mouse: a drag is
+    /// reported only when it reaches another cell, and a button let go of off the terminal is
+    /// let go of there.
+    mouse_cell: Option<(u16, u16)>,
     /// Where each tab is on the bar, and its close mark, as last drawn.
     placed: Vec<(u64, Rect, Rect)>,
     /// The first tab shown on the bar: more than fit are scrolled along it, the active one
@@ -263,6 +267,7 @@ impl Quill {
             drag: None,
             selecting: None,
             pressed_in_text: false,
+            mouse_cell: None,
             placed: Vec::new(),
             first: 0,
             plus: Rect::default(),
@@ -684,8 +689,11 @@ impl Quill {
             let mouse = tab.and_then(|t| self.tabs.get(&t)).is_some_and(|t| t.screen.mouse);
             if let (Some(tab), Some(cell)) = (tab, cell) {
                 if mouse {
-                    if let Some(t) = self.tabs.get_mut(&tab) {
-                        t.tell(&ToTab::Mouse { button: 0, pressed: true, motion: true, col: cell.0, row: cell.1 });
+                    if self.wins[w].mouse_cell != Some(cell) {
+                        self.wins[w].mouse_cell = Some(cell);
+                        if let Some(t) = self.tabs.get_mut(&tab) {
+                            t.tell(&ToTab::Mouse { button: 0, pressed: true, motion: true, col: cell.0, row: cell.1 });
+                        }
                     }
                 } else if let Some((start, _)) = self.wins[w].selecting {
                     self.wins[w].selecting = Some((start, cell));
@@ -703,14 +711,23 @@ impl Quill {
         // under a pointer that has not moved (a tab closed by its mark, the next one in its
         // place), and the hover of the last move would close a tab that is gone.
         let hover = hover_at(&self.wins[w], x, y);
+        if let PointerButton::Other(_) = button {
+            // A pointer's side buttons: no terminal has a report for them (they were sent as
+            // the right button).
+            return;
+        }
         if button != PointerButton::Left {
             // The other buttons, to a program that asked for the mouse; the right opens the
             // terminal's menu over one that did not (it no longer pastes: Control-V does).
             let Some(tab) = self.active_tab(w) else { return };
-            let cell = self.cell_at(w, x, y);
+            let mut cell = self.cell_at(w, x, y);
+            if !pressed {
+                cell = cell.or(self.wins[w].mouse_cell);
+            }
             let mouse = self.tabs.get(&tab).is_some_and(|t| t.screen.mouse);
             if let (true, Some(cell)) = (mouse, cell) {
                 let b = if button == PointerButton::Middle { 1 } else { 2 };
+                self.wins[w].mouse_cell = Some(cell);
                 if let Some(t) = self.tabs.get_mut(&tab) {
                     t.tell(&ToTab::Mouse { button: b, pressed, motion: false, col: cell.0, row: cell.1 });
                 }
@@ -750,6 +767,7 @@ impl Quill {
                     let t = self.tabs.get_mut(&tab).unwrap();
                     if mouse {
                         t.tell(&ToTab::Mouse { button: 0, pressed: true, motion: false, col: cell.0, row: cell.1 });
+                        self.wins[w].mouse_cell = Some(cell);
                     } else {
                         self.wins[w].selecting = Some((cell, cell));
                         t.tell(&ToTab::Select(None));
@@ -775,7 +793,8 @@ impl Quill {
         }
         if std::mem::take(&mut self.wins[w].pressed_in_text) {
             let Some(tab) = self.active_tab(w) else { return };
-            let cell = self.cell_at(w, x, y).unwrap_or((0, 0));
+            // Let go of off the terminal: where the drag last was, not its top left corner.
+            let cell = self.cell_at(w, x, y).or(self.wins[w].mouse_cell).unwrap_or((0, 0));
             let mouse = self.tabs.get(&tab).is_some_and(|t| t.screen.mouse);
             let t = self.tabs.get_mut(&tab).unwrap();
             if mouse {
