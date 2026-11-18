@@ -87,9 +87,17 @@ struct Reel {
     dirty: bool,
     /// The size the window is when no film is in it: the wearer's, once they have resized it.
     home_size: (u32, u32),
+    /// Pictures of a screen that has been replaced, to be let go of at the next drawing.
+    stale: Vec<spatiand_app::ui::Texture>,
 }
 
 impl Reel {
+    /// Put `screen` on show, the one it replaces giving its pictures up.
+    fn show(&mut self, screen: Screen) {
+        let old = std::mem::replace(&mut self.screen, screen);
+        self.stale.extend(old.textures());
+    }
+
     fn ticket(&mut self) -> u64 {
         self.ticket += 1;
         self.ticket
@@ -130,7 +138,7 @@ impl Reel {
             self.looked_for_servers = Some(Instant::now());
             self.work.slow(|| Some(Done::Found(dlna::discover(Duration::from_millis(2200)))));
         }
-        self.screen = Screen::Home(home);
+        self.show(Screen::Home(home));
         self.app.set_title(self.window, "SpatiReel");
         self.dirty = true;
     }
@@ -192,7 +200,7 @@ impl Reel {
             browse.enter(folder, 0);
         }
         self.list(&mut browse);
-        self.screen = Screen::Browse(browse);
+        self.show(Screen::Browse(browse));
         self.dirty = true;
     }
 
@@ -240,7 +248,10 @@ impl Reel {
                 self.list(&mut browse);
                 self.screen = Screen::Browse(browse);
             }
-            _ => self.go_home(),
+            other => {
+                self.stale.extend(other.textures());
+                self.go_home();
+            }
         }
         self.dirty = true;
     }
@@ -273,11 +284,14 @@ impl Reel {
                 let Some(entry) = self.sources.get(source) else { return };
                 self.open(entry.source.clone(), item);
             }
-            Act::Add => self.screen = Screen::Add(Add::new(self.store.lock().unwrap().vibrefy_last.clone())),
+            Act::Add => {
+                let add = Add::new(self.store.lock().unwrap().vibrefy_last.clone());
+                self.show(Screen::Add(add));
+            }
             Act::Reconnect(address) => {
                 let mut add = Add::new(Some(address));
                 let act = add.pair_again();
-                self.screen = Screen::Add(add);
+                self.show(Screen::Add(add));
                 self.act(act);
             }
             Act::Dismiss => {
@@ -496,6 +510,11 @@ impl Reel {
         if !self.ready {
             return Ok(());
         }
+        if let (false, Ok(gl), Some(p)) = (self.stale.is_empty(), self.app.gl(), self.painter.as_mut()) {
+            for old in self.stale.drain(..) {
+                p.forget(gl, old);
+            }
+        }
         if self.playing.is_some() {
             self.keep_place();
             let (playing, _) = self.playing.as_mut().unwrap();
@@ -585,6 +604,7 @@ fn main() {
             ready: false,
             dirty: true,
             home_size: WINDOW,
+            stale: Vec::new(),
         };
         reel.gather();
         reel.go_home();
@@ -593,12 +613,12 @@ fn main() {
         if let Ok(add) = std::env::var("SPATIREEL_ADD") {
             let parts: Vec<&str> = add.splitn(4, ',').collect();
             if let ["vibrefy", address] = parts[..] {
-                reel.screen = Screen::Add(Add::new(None));
+                reel.show(Screen::Add(Add::new(None)));
                 reel.act(Act::Pair { address: address.into(), cancelled: Arc::default() });
             }
             if let [kind, address, user, password] = parts[..] {
                 let flavour = if kind == "emby" { jellyfin::Flavour::Emby } else { jellyfin::Flavour::Jellyfin };
-                reel.screen = Screen::Add(Add::new(None));
+                reel.show(Screen::Add(Add::new(None)));
                 reel.act(Act::SignIn { flavour, address: address.into(), user: user.into(), password: password.into() });
             }
         }

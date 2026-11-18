@@ -114,6 +114,17 @@ impl Screen {
         }
     }
 
+    /// Its tiles' pictures, for a screen being replaced by another: let go of on the GPU at the
+    /// next drawing (`Painter::forget`). A texture has no drop of its own, and a screen dropped
+    /// with its pictures left them on the GPU for as long as SpatiReel ran.
+    pub fn textures(self) -> Vec<Texture> {
+        match self {
+            Screen::Home(home) => home.left.into_iter().chain(home.films.into_iter().filter_map(|film| film.tile.picture)).collect(),
+            Screen::Browse(browse) => browse.left.into_iter().chain(browse.tiles.into_iter().filter_map(|tile| tile.picture)).collect(),
+            Screen::Empty | Screen::Add(_) => Vec::new(),
+        }
+    }
+
     /// Whether the screen moves by itself, and so wants drawing though nothing happened.
     pub fn animating(&self) -> bool {
         match self {
@@ -152,6 +163,8 @@ pub struct Home {
     /// Which shelf the keys are going to: the films', or the sources'.
     on_films: bool,
     arrived: Vec<(usize, Still)>,
+    /// Pictures of films no longer on the shelf, to be let go of at the next drawing.
+    left: Vec<Texture>,
     pub trouble: Option<String>,
     /// Delete pressed once on this source, and when: pressed again soon, it is removed.
     removing: Option<(usize, Instant)>,
@@ -200,6 +213,7 @@ impl Home {
             sources: Strip::default(),
             on_films: false,
             arrived: Vec::new(),
+            left: Vec::new(),
             trouble: None,
             removing: None,
         };
@@ -213,7 +227,9 @@ impl Home {
     /// sources before it.
     pub fn unfinished(&mut self, source: usize, label: &str, items: Vec<Item>) {
         let first = self.films.is_empty();
-        self.films.retain(|film| film.source != source);
+        let (gone, kept): (Vec<Unfinished>, Vec<Unfinished>) = std::mem::take(&mut self.films).into_iter().partition(|film| film.source == source);
+        self.left.extend(gone.into_iter().filter_map(|film| film.tile.picture));
+        self.films = kept;
         let at = self.films.iter().position(|film| film.source > source).unwrap_or(self.films.len());
         let fresh: Vec<Unfinished> = items
             .into_iter()
@@ -265,8 +281,14 @@ impl Home {
     }
 
     fn draw(&mut self, p: &mut Painter, gl: &Gl) {
+        for old in self.left.drain(..) {
+            p.forget(gl, old);
+        }
         for (id, still) in self.arrived.drain(..) {
             if let Some(film) = self.films.iter_mut().find(|film| film.id == id) {
+                if let Some(old) = film.tile.picture.take() {
+                    p.forget(gl, old);
+                }
                 film.tile.picture = p.texture(gl, &still.rgba, still.width, still.height).ok();
             }
         }
@@ -572,6 +594,9 @@ impl Browse {
         }
         for (origin, still) in self.arrived.drain(..) {
             if let Some(tile) = self.origin.iter().position(|o| *o == origin).and_then(|at| self.tiles.get_mut(at)) {
+                if let Some(old) = tile.picture.take() {
+                    p.forget(gl, old);
+                }
                 tile.picture = p.texture(gl, &still.rgba, still.width, still.height).ok();
             }
         }
