@@ -142,7 +142,8 @@ struct Win {
     menu: Option<Menu>,
     /// A question over the window, and what a yes to it does: closing what has programs
     /// running in it asks first, as Terminal on a Mac does.
-    asking: Option<(Confirm, Closing)>,
+    /// With the programs it named, which a yes closes and no others.
+    asking: Option<(Confirm, Closing, Vec<String>)>,
     /// The tab last told it has the keys (`ToTab::Focus`), so that it is told when it has not.
     focus_told: Option<u64>,
 }
@@ -349,6 +350,14 @@ impl Quill {
     /// Close a tab, a window or everything -- asking first, in `window`, when a program is
     /// running in what would close, as Terminal on a Mac does. `false` when SpatiQuill is to end.
     fn ask_close(&mut self, window: WindowId, closing: Closing) -> bool {
+        self.ask_close_after(window, closing, &[])
+    }
+
+    /// The same, once a question named the programs `asked`: closed now if nothing runs in
+    /// what would close that it did not name -- what is there is worked out again, since a
+    /// program can have started, or a tab come into the window, while it was asked -- and
+    /// asked again if something does.
+    fn ask_close_after(&mut self, window: WindowId, closing: Closing, asked: &[String]) -> bool {
         let Some(w) = self.win_index(window) else { return true };
         let tabs: Vec<u64> = match closing {
             Closing::Tab(tab) => vec![tab],
@@ -356,7 +365,7 @@ impl Quill {
             Closing::Quit => self.wins.iter().flat_map(|w| w.tabs.clone()).collect(),
         };
         let running = self.running_in(&tabs);
-        if running.is_empty() {
+        if !more_than_asked(&running, asked) {
             return self.close(window, closing);
         }
         let names = proc::listed(&running);
@@ -367,7 +376,7 @@ impl Quill {
         };
         log::info!("asking before {closing:?}: {names} running");
         self.wins[w].menu = None;
-        self.wins[w].asking = Some((Confirm::new(text, yes, "Cancel"), closing));
+        self.wins[w].asking = Some((Confirm::new(text, yes, "Cancel"), closing, running));
         true
     }
 
@@ -408,6 +417,11 @@ impl Quill {
 
     /// Move a tab from wherever it is to `to`, at `place` on its bar.
     fn move_tab(&mut self, tab: u64, to: WindowId, place: Option<usize>) {
+        // Not into a window asking whether to close: a yes would end what runs in a tab it
+        // never named. The tab stays where it is.
+        if self.win(to).is_some_and(|w| w.asking.is_some()) {
+            return;
+        }
         for win in &mut self.wins {
             if let Some(at) = win.tabs.iter().position(|&t| t == tab) {
                 win.tabs.remove(at);
@@ -496,7 +510,7 @@ impl Quill {
         for id in ended {
             self.close_tab(id);
             for win in &mut self.wins {
-                if matches!(win.asking, Some((_, Closing::Tab(t))) if t == id) {
+                if matches!(win.asking, Some((_, Closing::Tab(t), _)) if t == id) {
                     win.asking = None;
                 }
             }
@@ -578,11 +592,11 @@ impl Quill {
                 if let Event::PointerMoved { x, y, .. } = event {
                     self.wins[w].pointer = (x, y);
                 }
-                let answer = Input::of(&event, 1.0).and_then(|input| self.wins[w].asking.as_mut().and_then(|(c, _)| c.input(&input)));
+                let answer = Input::of(&event, 1.0).and_then(|input| self.wins[w].asking.as_mut().and_then(|(c, _, _)| c.input(&input)));
                 if let Some(yes) = answer {
-                    let (_, closing) = self.wins[w].asking.take().unwrap();
+                    let (_, closing, asked) = self.wins[w].asking.take().unwrap();
                     if yes {
-                        return self.close(id, closing);
+                        return self.ask_close_after(id, closing, &asked);
                     }
                 }
                 return true;
@@ -1191,7 +1205,7 @@ impl Quill {
                     look::glass(p, gl, pill, 20.0, 1.0);
                     p.label(gl, &note, pill.inset(12.0), theme::FOOTER_EM * 0.85, look::trouble(), 0.5);
                 }
-                if let Some((confirm, _)) = win.asking.as_mut() {
+                if let Some((confirm, _, _)) = win.asking.as_mut() {
                     confirm.draw(p, gl, all);
                 }
                 p.end(gl);
@@ -1479,6 +1493,30 @@ fn main() {
     if let Err(e) = ended {
         log::error!("{e}");
         std::process::exit(1);
+    }
+}
+
+/// Whether `running` has a program that `asked` (what a question named) did not: one by
+/// another name, or more of one than it named.
+fn more_than_asked(running: &[String], asked: &[String]) -> bool {
+    running.iter().any(|n| running.iter().filter(|r| *r == n).count() > asked.iter().filter(|a| *a == n).count())
+}
+
+#[cfg(test)]
+mod closing_tests {
+    use super::more_than_asked;
+
+    #[test]
+    fn a_yes_closes_only_what_it_named() {
+        let v = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(!more_than_asked(&v(&[]), &v(&[])));
+        assert!(more_than_asked(&v(&["sleep"]), &v(&[])));
+        assert!(!more_than_asked(&v(&["vim", "sleep"]), &v(&["sleep", "vim"])));
+        // Something ended meanwhile: still nothing new.
+        assert!(!more_than_asked(&v(&["vim"]), &v(&["sleep", "vim"])));
+        // Another program, or another of the same, started meanwhile.
+        assert!(more_than_asked(&v(&["vim", "top"]), &v(&["vim"])));
+        assert!(more_than_asked(&v(&["vim", "vim"]), &v(&["vim"])));
     }
 }
 
