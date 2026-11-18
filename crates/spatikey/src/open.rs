@@ -485,7 +485,9 @@ fn draw_typing(p: &mut Painter, gl: &Gl, right: &mut Rect, view: &View, actions:
     right.take_top(6.0);
     for action in actions {
         let (button, label, icon) = match action {
-            Action::TypeBoth => (&mut *type_both, format!("Type username and password into {name}"), Icon::Forward),
+            // The window is named once, in the head over these ("Type into Steam"): a button that
+            // named it again was cut at its end beside a long name.
+            Action::TypeBoth => (&mut *type_both, "Type username and password".to_string(), Icon::Forward),
             Action::TypePassword => (&mut *type_password, "Type password".to_string(), Icon::Lock),
             Action::TypeCode => (&mut *type_code, "Type code".to_string(), Icon::SortRecent),
             _ => continue,
