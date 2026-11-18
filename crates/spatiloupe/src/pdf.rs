@@ -34,8 +34,9 @@ pub struct Found {
 }
 
 pub enum Ask {
-    /// Draw page `page`, `width` pixels across. `ticket` comes back with it.
-    Draw { page: usize, width: u32, ticket: u64 },
+    /// Draw page `page`, `width` pixels across and no more than `most_height` down. `ticket`
+    /// comes back with it.
+    Draw { page: usize, width: u32, most_height: u32, ticket: u64 },
     Find { text: String, ticket: u64 },
 }
 
@@ -43,6 +44,8 @@ pub enum Answer {
     Opened { pages: Vec<Page>, outline: Vec<Heading>, title: Option<String> },
     Failed(String),
     Drawn { page: usize, width: u32, height: u32, rgba: Vec<u8>, ticket: u64 },
+    /// The page could not be drawn: not there, or PDFium would not.
+    Undrawn { page: usize },
     Found { found: Vec<Found>, ticket: u64 },
 }
 
@@ -152,9 +155,13 @@ impl Pdf {
                 }
                 while let Some(ask) = queue.pop() {
                     let answer = match ask {
-                        Ask::Draw { page, width, ticket } => {
-                            let Ok(at) = document.pages().get(page as PdfPageIndex) else { continue };
-                            let config = PdfRenderConfig::new().set_target_width(width.max(16) as Pixels).render_form_data(true).render_annotations(true);
+                        Ask::Draw { page, width, most_height, ticket } => {
+                            let Ok(at) = document.pages().get(page as PdfPageIndex) else {
+                                // Answered all the same: whoever asked may be waiting for it.
+                                let _ = tell.send(Answer::Undrawn { page });
+                                continue;
+                            };
+                            let config = PdfRenderConfig::new().set_target_width(width.max(1) as Pixels).set_maximum_height(most_height.max(1) as Pixels).render_form_data(true).render_annotations(true);
                             let rendered = at.render_with_config(&config).map(|bitmap| (bitmap.width() as u32, bitmap.height() as u32, bitmap.as_rgba_bytes()));
                             match rendered {
                                 Ok((w, h, mut rgba)) => {
@@ -169,7 +176,7 @@ impl Pdf {
                                     }
                                     Answer::Drawn { page, width: w, height: h, rgba, ticket }
                                 }
-                                Err(_) => continue,
+                                Err(_) => Answer::Undrawn { page },
                             }
                         }
                         Ask::Find { text, ticket } => {
@@ -214,17 +221,101 @@ impl Pdf {
     }
 }
 
-/// The first page of a PDF, `width` across, for a tile: on the thread that asks, since a
-/// tile's picture is made on a thread already.
-pub fn first_page(path: &Path, width: u32) -> Option<(u32, u32, Vec<u8>)> {
+/// How wide a page `width` by `height` is drawn to fit within a square `side` across: a long
+/// strip of a page is as tall as the square, not `side` wide and a hundred times as tall.
+pub fn width_within(width: f32, height: f32, side: u32) -> u32 {
+    let (w, h) = (width.max(1.0), height.max(1.0));
+    ((side as f32 * (w / h).min(1.0)).round() as u32).clamp(1, side.max(1))
+}
+
+/// The first page of a PDF, fitted within a square `side` across, for a tile: on the thread that
+/// asks, since a tile's picture is made on a thread already.
+pub fn first_page(path: &Path, side: u32) -> Option<(u32, u32, Vec<u8>)> {
     let pdf = Pdf::open(path);
-    match pdf.answers.recv().ok()? {
-        Answer::Opened { .. } => {}
+    let width = match pdf.answers.recv().ok()? {
+        Answer::Opened { pages, .. } => {
+            let first = pages.first()?;
+            width_within(first.width, first.height, side)
+        }
         _ => return None,
-    }
-    pdf.ask(Ask::Draw { page: 0, width, ticket: 0 });
+    };
+    pdf.ask(Ask::Draw { page: 0, width, most_height: side, ticket: 0 });
     match pdf.answers.recv().ok()? {
         Answer::Drawn { width, height, rgba, .. } => Some((width, height, rgba)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_page_is_drawn_within_its_tile() {
+        // A4, a long strip, a wide one, and nothing at all.
+        assert_eq!(width_within(595.0, 842.0, 300), 212);
+        assert_eq!(width_within(10.0, 14400.0, 300), 1);
+        assert_eq!(width_within(14400.0, 10.0, 300), 300);
+        assert_eq!(width_within(0.0, 0.0, 300), 300);
+    }
+
+    /// A PDF of these pages -- each its size in points and what is printed on it -- written to a
+    /// file of its own.
+    pub fn made(name: &str, pages: &[(f32, f32, &str)]) -> PathBuf {
+        let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string(), String::new(), "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string()];
+        let mut kids = Vec::new();
+        for (w, h, words) in pages {
+            let content = format!("BT /F1 12 Tf 10 10 Td ({words}) Tj ET");
+            objects.push(format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()));
+            let contents = objects.len();
+            objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents {contents} 0 R /Resources << /Font << /F1 3 0 R >> >> >>"));
+            kids.push(format!("{} 0 R", objects.len()));
+        }
+        objects[1] = format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), kids.len());
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut at = Vec::new();
+        for (i, object) in objects.iter().enumerate() {
+            at.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+        for offset in at {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+        let dir = std::env::temp_dir().join(format!("spatiloupe-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, out).unwrap();
+        path
+    }
+
+    /// `first_page`, given at most ten seconds.
+    fn first_page_soon(path: &Path, side: u32) -> Option<Option<(u32, u32, Vec<u8>)>> {
+        let (tell, told) = channel();
+        let path = path.to_path_buf();
+        std::thread::spawn(move || {
+            let _ = tell.send(first_page(&path, side));
+        });
+        told.recv_timeout(std::time::Duration::from_secs(10)).ok()
+    }
+
+    #[test]
+    fn a_tile_of_a_pdf_with_no_pages_is_none_and_comes() {
+        if library().is_none() {
+            eprintln!("PDFium is not here (tools/fetch-pdfium.sh): not tried");
+            return;
+        }
+        let path = made("empty.pdf", &[]);
+        assert_eq!(first_page_soon(&path, 300), Some(None));
+        // And a page: drawn, within the tile, however long the page is.
+        let path = made("strip.pdf", &[(100.0, 14400.0, "x")]);
+        let (w, h, rgba) = first_page_soon(&path, 300).expect("an answer").expect("a page");
+        assert!(w <= 300 && h <= 300, "{w}x{h}");
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        // A page too thin to be a pixel wide in its tile: answered, whatever the answer is.
+        let path = made("thread.pdf", &[(10.0, 14400.0, "x")]);
+        assert!(first_page_soon(&path, 300).is_some());
     }
 }

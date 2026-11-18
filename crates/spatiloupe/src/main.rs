@@ -91,18 +91,28 @@ fn tile_picture(path: &Path, kind: Kind, index: usize) -> Option<Arrived> {
         }
         // A page whole, on a square of the window's ground: a tile shows a square's middle,
         // and a page's middle is not what it looks like.
-        Kind::Pdf => pdf::first_page(path, 300).map(|(w, h, rgba)| {
-            let side = w.max(h);
-            let mut square = [11u8, 13, 18, 255].repeat((side * side) as usize);
-            let (x0, y0) = ((side - w) / 2, (side - h) / 2);
-            for y in 0..h {
-                let to = (((y0 + y) * side + x0) * 4) as usize;
-                square[to..to + (w * 4) as usize].copy_from_slice(&rgba[(y * w * 4) as usize..((y + 1) * w * 4) as usize]);
-            }
-            Arrived { index, width: side, height: side, rgba: square, word: None, seen: Some(Seen { aspect: 1.0, stereo: false }) }
+        Kind::Pdf => pdf::first_page(path, 300).and_then(|(w, h, rgba)| {
+            let (side, rgba) = squared(w as usize, h as usize, &rgba)?;
+            Some(Arrived { index, width: side as u32, height: side as u32, rgba, word: None, seen: Some(Seen { aspect: 1.0, stereo: false }) })
         }),
         _ => None,
     }
+}
+
+/// A page `w` by `h` in the middle of a square of the window's ground, as wide as its longer side:
+/// `None` if that is more than a tile could ever want, or the page is not what it says.
+fn squared(w: usize, h: usize, rgba: &[u8]) -> Option<(usize, Vec<u8>)> {
+    let side = w.max(h);
+    if side == 0 || side > 2048 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    let mut square = [11u8, 13, 18, 255].repeat(side * side);
+    let (x0, y0) = ((side - w) / 2, (side - h) / 2);
+    for y in 0..h {
+        let to = ((y0 + y) * side + x0) * 4;
+        square[to..to + w * 4].copy_from_slice(&rgba[y * w * 4..(y + 1) * w * 4]);
+    }
+    Some((side, square))
 }
 
 struct Loupe {
@@ -500,5 +510,20 @@ fn main() {
     if let Err(e) = run() {
         log::error!("{e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_page_is_put_on_its_square_and_a_huge_one_is_not() {
+        let (side, square) = squared(2, 4, &[255u8; 2 * 4 * 4]).unwrap();
+        assert_eq!(side, 4);
+        // A column of ground either side of the page.
+        assert_eq!(&square[..4], &[11, 13, 18, 255]);
+        assert_eq!(&square[4..8], &[255, 255, 255, 255]);
+        assert_eq!(squared(10, 432_000, &[]), None);
     }
 }

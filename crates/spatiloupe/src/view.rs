@@ -605,6 +605,8 @@ impl View {
                     paper.asked.remove(&page);
                     paper.drawn_pending(page, width, height, rgba);
                 }
+                // Left as asked, so that it is not asked for again and again: it stays paper.
+                pdf::Answer::Undrawn { page } => log::warn!("page {} of {} would not draw", page + 1, self.entry.path.display()),
                 pdf::Answer::Found { found, ticket } => {
                     if ticket != paper.ticket {
                         continue;
@@ -1571,7 +1573,7 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
         let good = |w: u32| (w as f32) >= pixels as f32 * 0.9 && (w as f32) <= pixels as f32 * 1.6;
         if !have.is_some_and(good) && !asked.is_some_and(good) && (near || have.is_none()) {
             paper.asked.insert(index, pixels);
-            paper.pdf.ask(Ask::Draw { page: index, width: pixels.min(6000), ticket: paper.ticket });
+            paper.pdf.ask(Ask::Draw { page: index, width: pixels.min(6000), most_height: crate::picture::LARGEST, ticket: paper.ticket });
         }
     }
     // Pages far from view let go of: a thousand-page book is not a thousand textures.
