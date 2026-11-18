@@ -456,6 +456,9 @@ impl Quill {
                     Err(e) => format!("The tab's process is gone: {e}"),
                 };
                 log::warn!("tab {id}: {why}");
+                // Its output is at its end, which polls as ready for ever: watched still, the
+                // wait would return at once and the loop spin a core until the tab is closed.
+                self.app.unwatch(tab.stdout.as_raw_fd());
                 tab.state = TabState::Crashed(why);
             }
         }
