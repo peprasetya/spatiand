@@ -47,6 +47,9 @@ const STILL_READING: Duration = Duration::from_millis(600);
 pub struct Seen {
     /// The width over the height of what one eye sees.
     pub aspect: f32,
+    /// How tall what one eye sees is at the picture's own size, in its own pixels: a picture
+    /// smaller than the window is shown at that, not stretched to fill it.
+    pub height: f32,
     /// Two eyes' worth.
     pub stereo: bool,
 }
@@ -70,16 +73,34 @@ pub fn eye_aspect(width: f32, height: f32, eyes: Eyes) -> f32 {
     }
 }
 
-/// How wide a picture of this shape is when it is fitted to `area`: as large as it goes with a
+/// How tall what one eye sees is at a picture's own size, in its pixels: a squeezed pair's eye
+/// at the height it is unsqueezed to.
+pub fn eye_height(width: f32, height: f32, eyes: Eyes) -> f32 {
+    let (w, h) = match eyes {
+        Eyes::Mono | Eyes::Pair => (width, height),
+        Eyes::SideBySide | Eyes::Crossed => (width * 0.5, height),
+        Eyes::TopBottom => (width, height * 0.5),
+    };
+    h.max(w / eye_aspect(width, height, eyes).max(1e-3))
+}
+
+/// How wide a picture of this shape is when it is filling `area`: as large as it goes with a
 /// little room left around it.
 fn fit_width(area: Rect, aspect: f32) -> f32 {
     (area.w * 0.94).min(area.h * 0.92 * aspect)
 }
 
-/// Where a picture of this shape is drawn fitted to the window `all`: in the middle of the stage.
-fn fitted(all: Rect, aspect: f32) -> Rect {
+/// How wide it is shown fitted: filling `area`, or at its own size -- `own_height` tall -- if
+/// that is smaller. A small picture is shown as it is, crisp, not blown up to the window.
+fn shown_width(area: Rect, aspect: f32, own_height: f32) -> f32 {
+    fit_width(area, aspect).min(own_height.max(1.0) * aspect)
+}
+
+/// Where a picture of this shape, `own_height` tall at its own size, is drawn fitted to the
+/// window `all`: in the middle of the stage.
+fn fitted(all: Rect, aspect: f32, own_height: f32) -> Rect {
     let area = stage(all);
-    let w = fit_width(area, aspect);
+    let w = shown_width(area, aspect, own_height);
     let h = w / aspect.max(1e-3);
     Rect::new(area.x + (area.w - w) * 0.5, area.y + (area.h - h) * 0.5, w, h)
 }
@@ -139,6 +160,9 @@ pub struct Shown {
     centre: (f32, f32),
     /// When it was first drawn, for it to come in over the tile that stood in for it.
     drawn_at: Option<Instant>,
+    /// Whether the GPU's copies are drawn a pixel at a time, as a picture magnified more than
+    /// twice is: its pixels crisp, not a blur.
+    nearest: bool,
 }
 
 impl Shown {
@@ -156,7 +180,22 @@ impl Shown {
             zoom: None,
             centre: (0.5, 0.5),
             drawn_at: None,
+            nearest: false,
         }
+    }
+
+    /// How tall one eye's view is at the picture's own size, in logical pixels: the file's pixels
+    /// one to one, not the GPU's copy's.
+    fn own_height(&self) -> f32 {
+        let ratio = self.picture.original.0.max(1) as f32 / self.picture.width.max(1) as f32;
+        let (w, h) = (self.picture.width as f32, self.picture.height as f32);
+        let (w, h) = if self.turns % 2 == 1 { (h, w) } else { (w, h) };
+        eye_height(w, h, self.eyes()) * ratio
+    }
+
+    /// How wide it is fitted to `area`: filling it, or at its own size if that is smaller.
+    fn fitted_width(&self, area: Rect) -> f32 {
+        shown_width(area, self.eye_aspect(), self.own_height())
     }
 
     fn eyes(&self) -> Eyes {
@@ -192,7 +231,7 @@ impl Shown {
         let area = stage(area);
         let aspect = self.eye_aspect();
         let (pw, _) = self.eye_pixels();
-        let fit_w = fit_width(area, aspect);
+        let fit_w = self.fitted_width(area);
         let w = match self.zoom {
             None => fit_w,
             Some(z) => pw / z,
@@ -202,7 +241,14 @@ impl Shown {
         Rect::new(cx - self.centre.0 * w, cy - self.centre.1 * h, w, h)
     }
 
+    /// So many of the GPU copy's pixels to a logical one, fitted.
     fn fit_scale(&self, area: Rect) -> f32 {
+        self.eye_pixels().0 / self.fitted_width(stage(area))
+    }
+
+    /// The same, filling the window: what a small picture is zoomed to, at most, beside eight
+    /// times its own size.
+    fn fill_scale(&self, area: Rect) -> f32 {
         self.eye_pixels().0 / fit_width(stage(area), self.eye_aspect())
     }
 
@@ -212,8 +258,9 @@ impl Shown {
         let before = self.placed(area);
         let fit = self.fit_scale(area);
         let now = self.zoom.unwrap_or(fit);
-        // From a twentieth of the fitted size to eight times the picture's own.
-        let next = (now / by).clamp(1.0 / 8.0, fit.max(1.0) * 1.0);
+        // From the fitted size to eight times the picture's own, or the window filled if that is
+        // nearer still.
+        let next = (now / by).clamp((1.0f32 / 8.0).min(self.fill_scale(area)), fit.max(1.0 / 8.0));
         if next >= fit * 0.999 {
             self.zoom = None;
             self.centre = (0.5, 0.5);
@@ -872,6 +919,18 @@ impl View {
                     let at = Rect { x: at.x + self.slid, ..at };
                     let uv = turned(shown.uv(eye), shown.turns);
                     let fitted = shown.zoom.is_none();
+                    // Magnified more than twice, a pixel at a time: the picture's pixels, not a blur.
+                    let nearest = at.w * p.scale() > shown.eye_pixels().0 * 2.0;
+                    if nearest != shown.nearest {
+                        shown.nearest = nearest;
+                        let filter = if nearest { glow::NEAREST } else { glow::LINEAR } as i32;
+                        for texture in [shown.texture, shown.right].into_iter().flatten() {
+                            unsafe {
+                                gl.api().bind_texture(glow::TEXTURE_2D, Some(texture.raw()));
+                                gl.api().tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, filter);
+                            }
+                        }
+                    }
                     // Come in over the tile that stood in for it, rather than sharpening at once.
                     let fade = if fitted { shown.faded_in() } else { 1.0 };
                     if fade < 1.0 {
@@ -1375,9 +1434,11 @@ impl View {
                     shown.zoom = None;
                     shown.centre = (0.5, 0.5);
                 } else {
-                    // The picture's own pixels, one to one -- or as near as the GPU's copy has.
+                    // The picture's own pixels, one to one -- or as near as the GPU's copy has; a
+                    // picture already shown at its own size, the window filled.
                     let fit = shown.fit_scale(all);
-                    shown.zoom_by(fit.max(1.0001), all, x, y);
+                    let to = if fit <= 1.0001 { shown.fill_scale(all) } else { 1.0 };
+                    shown.zoom_by((fit / to).max(1.0001), all, x, y);
                 }
             }
             Doc::Model(object) => object.orbit = Orbit::default(),
@@ -1597,7 +1658,8 @@ fn draw_stand_in(p: &mut Painter, gl: &Gl, page: Rect, stand_in: &StandIn) {
     match stand_in.picture {
         Some(texture) => {
             let aspect = stand_in.seen.map_or(texture.width as f32 / texture.height.max(1) as f32, |seen| seen.aspect);
-            p.image(gl, texture, fitted(page, aspect), [0.0, 0.0, 1.0, 1.0], 6.0, [1.0, 1.0, 1.0, 1.0], false);
+            let own = stand_in.seen.map_or(f32::MAX, |seen| seen.height);
+            p.image(gl, texture, fitted(page, aspect, own), [0.0, 0.0, 1.0, 1.0], 6.0, [1.0, 1.0, 1.0, 1.0], false);
         }
         None => {
             let area = stage(page);
@@ -2002,6 +2064,7 @@ mod tests {
             zoom: None,
             centre: (0.5, 0.5),
             drawn_at: None,
+            nearest: false,
         };
         assert!((shown.eye_aspect() - 16.0 / 9.0).abs() < 0.01);
         shown.picture = picture(3840, 1080);
@@ -2026,6 +2089,7 @@ mod tests {
             zoom: None,
             centre: (0.5, 0.5),
             drawn_at: None,
+            nearest: false,
         };
         let area = Rect::new(0.0, 0.0, 1440.0, 900.0);
         let before = shown.placed(area);
@@ -2042,16 +2106,47 @@ mod tests {
         let all = Rect::new(0.0, 0.0, 1440.0, 900.0);
         for (w, h, eyes) in [(4032, 3024, Eyes::Mono), (3024, 4032, Eyes::Mono), (1920, 1080, Eyes::SideBySide), (3840, 1080, Eyes::Crossed), (1920, 2160, Eyes::TopBottom)] {
             let mut picture = picture(w / 8, h / 8);
-            (picture.width, picture.height, picture.eyes) = (w, h, eyes);
-            let shown = Shown { picture, texture: None, right: None, turns: 0, frame: 0, frame_since: Instant::now(), eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None };
+            (picture.width, picture.height, picture.eyes, picture.original) = (w, h, eyes, (w, h));
+            let shown = Shown { picture, texture: None, right: None, turns: 0, frame: 0, frame_since: Instant::now(), eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None, nearest: false };
             // What the tile's thread works out from the picture's own size, and where the view
             // puts the picture once it has it.
-            let tile = fitted(all, eye_aspect(w as f32, h as f32, eyes));
+            let tile = fitted(all, eye_aspect(w as f32, h as f32, eyes), eye_height(w as f32, h as f32, eyes));
             let picture = shown.placed(all);
             for (a, b) in [(tile.x, picture.x), (tile.y, picture.y), (tile.w, picture.w), (tile.h, picture.h)] {
                 assert!((a - b).abs() < 0.01, "{w}x{h} {eyes:?}: {tile:?} {picture:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_small_picture_is_shown_at_its_own_size_and_can_be_zoomed_to_the_window() {
+        let all = Rect::new(0.0, 0.0, 1440.0, 900.0);
+        let mut shown = Shown::new(picture(64, 32));
+        assert_eq!(shown.placed(all).w, 64.0, "its own pixels, one to one");
+        // Its tile stands in at the same size.
+        let tile = fitted(all, eye_aspect(64.0, 32.0, Eyes::Mono), eye_height(64.0, 32.0, Eyes::Mono));
+        assert_eq!((tile.w, tile.h), (64.0, 32.0));
+        // Nearer, as far as the window filled or eight times its size, whichever is more.
+        for _ in 0..100 {
+            shown.zoom_by(2.0, all, 720.0, 450.0);
+        }
+        let filled = fit_width(stage(all), 2.0);
+        assert!((shown.placed(all).w - filled).abs() < 0.5, "{} {filled}", shown.placed(all).w);
+        // And back: never smaller than its own size.
+        for _ in 0..100 {
+            shown.zoom_by(0.5, all, 720.0, 450.0);
+        }
+        assert_eq!(shown.zoom, None);
+        assert_eq!(shown.placed(all).w, 64.0);
+        // Two clicks: the window filled.
+        let mut view = viewing(3, 1);
+        view.doc = Doc::Picture(Box::new(Shown::new(picture(64, 32))));
+        view.toggle_zoom();
+        let Doc::Picture(shown) = &view.doc else { unreachable!() };
+        assert!((shown.placed(view.bounds).w - filled).abs() < 0.5);
+        // A large picture is still fitted to the window as it was.
+        let large = Shown::new(picture(4000, 3000));
+        assert!((large.placed(all).w - fit_width(stage(all), 4.0 / 3.0)).abs() < 0.01);
     }
 
     #[test]
@@ -2066,7 +2161,7 @@ mod tests {
     fn viewing(files: usize, at: usize) -> View {
         let entry = Entry { name: "b.jpg".into(), path: PathBuf::from("/nowhere/b.jpg"), kind: Kind::Picture, size: 1 };
         let mut view = View::new(entry, at, 1, (0..files).collect());
-        view.pictured(Ok(picture(400, 300)));
+        view.pictured(Ok(picture(2000, 1500)));
         view
     }
 

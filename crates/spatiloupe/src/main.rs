@@ -109,7 +109,7 @@ fn tile_picture(path: &Path, kind: Kind, index: usize) -> Option<Arrived> {
             // What one eye of the whole picture sees, from its own size rather than the tile's
             // rounded one: the tile stands in for the picture as the carousel brings it in.
             let (w, h) = picture.original;
-            let seen = Seen { aspect: view::eye_aspect(w as f32, h as f32, picture.eyes), stereo: picture.eyes.is_stereo() };
+            let seen = Seen { aspect: view::eye_aspect(w as f32, h as f32, picture.eyes), height: view::eye_height(w as f32, h as f32, picture.eyes), stereo: picture.eyes.is_stereo() };
             // A stereo pair's tile is one eye's view, not two pictures squeezed side by side.
             let (left, _) = picture.eyes.halves();
             let (x0, y0) = ((left[0] * picture.width as f32) as u32, (left[1] * picture.height as f32) as u32);
@@ -126,7 +126,7 @@ fn tile_picture(path: &Path, kind: Kind, index: usize) -> Option<Arrived> {
         // and a page's middle is not what it looks like.
         Kind::Pdf => pdf::first_page(path, 300).and_then(|(w, h, rgba)| {
             let (side, rgba) = squared(w as usize, h as usize, &rgba)?;
-            Some(Arrived { index, width: side as u32, height: side as u32, rgba, word: None, seen: Some(Seen { aspect: 1.0, stereo: false }) })
+            Some(Arrived { index, width: side as u32, height: side as u32, rgba, word: None, seen: Some(Seen { aspect: 1.0, height: f32::MAX, stereo: false }) })
         }),
         _ => None,
     }
