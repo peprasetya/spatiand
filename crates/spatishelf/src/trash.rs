@@ -568,12 +568,20 @@ pub fn can_holding(file: &Path) -> Option<Can> {
     }
     #[cfg(not(target_os = "macos"))]
     {
+        can_holding_in(file, &cans())
+    }
+}
+
+/// The same, among trashes already found: the mounts are not read again.
+#[cfg(not(target_os = "macos"))]
+fn can_holding_in(file: &Path, cans: &[Can]) -> Option<Can> {
+    {
         let files = file.parent()?;
         if files.file_name()? != "files" {
             return None;
         }
         let root = files.parent()?;
-        let can = cans().into_iter().find(|c| c.root == root);
+        let can = cans.iter().find(|c| c.root == root).cloned();
         can.or_else(|| {
             // One not on the list (a disk's trash looked at directly): known by its shape.
             let name = root.file_name()?.to_string_lossy().into_owned();
@@ -586,20 +594,42 @@ pub fn can_holding(file: &Path) -> Option<Can> {
 /// Whether `path` is in a trash, anywhere down: what is there is deleted for good, not put in
 /// the trash again.
 pub fn is_within(path: &Path) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        return mac::is_within(path);
+    trashes().hold(path)
+}
+
+/// The trashes there are, found once (on Linux from `/proc/self/mounts`), for asking of many
+/// paths -- a selection -- whether each is in one.
+pub struct Trashes {
+    #[cfg(not(target_os = "macos"))]
+    cans: Vec<Can>,
+}
+
+pub fn trashes() -> Trashes {
+    Trashes {
+        #[cfg(not(target_os = "macos"))]
+        cans: cans(),
     }
-    #[allow(unreachable_code)]
-    {
-        let mut at = Some(path);
-        while let Some(p) = at {
-            if can_holding(p).is_some() {
-                return true;
-            }
-            at = p.parent();
+}
+
+impl Trashes {
+    /// Whether `path` is in one of them, anywhere down.
+    pub fn hold(&self, path: &Path) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            return mac::is_within(path);
         }
-        false
+        #[allow(unreachable_code)]
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut at = Some(path);
+            while let Some(p) = at {
+                if can_holding_in(p, &self.cans).is_some() {
+                    return true;
+                }
+                at = p.parent();
+            }
+            false
+        }
     }
 }
 

@@ -603,7 +603,8 @@ impl Shelf {
         // Sent to the trash: put in it. A remote has no trash here, and its things are deleted
         // from their menu, after asking -- never by a drop.
         if to == Place::Trash {
-            let local: Vec<Place> = items.into_iter().filter(|p| matches!(p, Place::Local(path) if !crate::trash::is_within(std::path::Path::new(path)))).collect();
+            let trashes = crate::trash::trashes();
+            let local: Vec<Place> = items.into_iter().filter(|p| matches!(p, Place::Local(path) if !trashes.hold(std::path::Path::new(path)))).collect();
             if local.is_empty() {
                 self.say("Only this machine's things go into its Trash: delete a remote's from its menu.");
                 return;

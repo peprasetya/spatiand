@@ -401,6 +401,8 @@ enum Done {
     Imported(Result<Vec<String>, String>),
     /// An application's picture, for "Open with", by its id.
     AppPicture(String, Option<(u32, u32, Vec<u8>)>),
+    /// How many things are in every trash, and their size: for "Empty the Trash?".
+    TrashCounted(usize, u64),
 }
 
 enum Overlay {
@@ -898,6 +900,9 @@ impl Shelf {
                 }
                 Done::Imported(Err(e)) => self.fail(e),
                 Done::AppPicture(id, pixels) => self.opening.arrived.push((id, pixels)),
+                // Only if nothing else has come up meanwhile.
+                Done::TrashCounted(count, size) if matches!(self.overlay, Overlay::None) => self.ask_empty(count, size),
+                Done::TrashCounted(..) => {}
             }
         }
     }
@@ -961,7 +966,8 @@ impl Shelf {
                 }
                 // A remote has no trash here, and what is in the trash already can only go for
                 // good: those are asked about.
-                let local = chosen.iter().all(|p| matches!(p, Place::Local(path) if !trash::is_within(std::path::Path::new(path))));
+                let trashes = trash::trashes();
+                let local = chosen.iter().all(|p| matches!(p, Place::Local(path) if !trashes.hold(std::path::Path::new(path))));
                 if local && !self.tab().in_trash() {
                     let id = self.next_op;
                     self.next_op += 1;
@@ -1003,24 +1009,23 @@ impl Shelf {
                 self.tab().tell(&ToTab::Do { id, op: Op::Restore(chosen) });
             }
             Action::EmptyTrash => {
-                // Counted from the trash as listed when it is on show, else asked of the disk.
-                let (count, size) = match &self.tabs[self.active].place {
+                // Counted from the trash as listed when it is on show, else asked of the disk --
+                // off this thread: every trash's folders are read, sizes and all.
+                match &self.tabs[self.active].place {
                     Place::Trash => {
                         let tab = &self.tabs[self.active];
-                        (tab.top.len(), tab.top.iter().map(|i| i.size).sum::<u64>())
+                        let (count, size) = (tab.top.len(), tab.top.iter().map(|i| i.size).sum::<u64>());
+                        self.ask_empty(count, size);
                     }
                     _ => {
-                        let all = trash::list().unwrap_or_default();
-                        (all.len(), all.iter().map(|e| e.size).sum())
+                        self.jobs
+                            .send(Box::new(|| {
+                                let all = trash::list().unwrap_or_default();
+                                Done::TrashCounted(all.len(), all.iter().map(|e| e.size).sum())
+                            }))
+                            .ok();
                     }
-                };
-                if count == 0 {
-                    self.say("The Trash is empty.");
-                    return;
                 }
-                let items = if count == 1 { "the 1 item".to_string() } else { format!("all {count} items") };
-                let text = format!("Empty the Trash? {} in it ({}) will be deleted for good. This cannot be undone.", capitalised(&items), look::size(size));
-                self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::EmptyTrash };
             }
             Action::CopyPath => {
                 let text = self.tab().chosen().iter().map(|p| p.text()).collect::<Vec<_>>().join("\n");
@@ -1103,6 +1108,17 @@ impl Shelf {
                 self.overlay = Overlay::Confirm { confirm: Confirm::new(format!("Forget the remote {name}? Its files are not touched; only SpatiShelf's way to them goes."), "Yes", "No"), action: Action::Forget(name) };
             }
         }
+    }
+
+    /// "Empty the Trash?", with how much is in it.
+    fn ask_empty(&mut self, count: usize, size: u64) {
+        if count == 0 {
+            self.say("The Trash is empty.");
+            return;
+        }
+        let items = if count == 1 { "the 1 item".to_string() } else { format!("all {count} items") };
+        let text = format!("Empty the Trash? {} in it ({}) will be deleted for good. This cannot be undone.", capitalised(&items), look::size(size));
+        self.overlay = Overlay::Confirm { confirm: Confirm::new(text, "Yes", "No"), action: Action::EmptyTrash };
     }
 
     /// Something confirmed.
