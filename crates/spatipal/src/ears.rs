@@ -47,9 +47,10 @@ const PAUSE_MS: u32 = 800;
 pub enum Heard {
     /// What they are doing now, for the figure and the window.
     Ear(Ear),
-    /// Something asked: the words after the name, or all of a follow-up; and when the wearer
-    /// stopped speaking, to know how long the answer took.
-    Asked { text: String, ended: Instant },
+    /// Something asked: the words after the name, or all of a follow-up; when the wearer
+    /// stopped speaking, to know how long the answer took; and whether it was begun in the
+    /// conversation (a follow-up goes on in its chat, however long ago that chat began).
+    Asked { text: String, ended: Instant, follow_up: bool },
     /// Only the name: the wearer wants its attention.
     Called,
     /// The wearer began speaking over it: it has stopped speaking, and stops answering.
@@ -499,7 +500,7 @@ impl Judge {
         self.conversation.touch();
         log::info!("ears: heard {meant:?}{}", if in_conversation { " (in the conversation)" } else { "" });
         let meant = match meant {
-            Heard::Asked { text, .. } => Heard::Asked { text, ended },
+            Heard::Asked { text, .. } => Heard::Asked { text, ended, follow_up: in_conversation },
             other => other,
         };
         // The ears first: the figure goes from hearing straight to what the asking makes it.
@@ -555,8 +556,8 @@ fn made_up(text: &str, seconds: f32, sure: f32) -> Option<&'static str> {
 fn meant(text: &str, name: &str, in_conversation: bool) -> Option<Heard> {
     match addressed(text, name) {
         Some(rest) if rest.is_empty() => Some(Heard::Called),
-        Some(rest) => Some(Heard::Asked { text: rest, ended: Instant::now() }),
-        None if in_conversation => Some(Heard::Asked { text: text.to_string(), ended: Instant::now() }),
+        Some(rest) => Some(Heard::Asked { text: rest, ended: Instant::now(), follow_up: in_conversation }),
+        None if in_conversation => Some(Heard::Asked { text: text.to_string(), ended: Instant::now(), follow_up: true }),
         None => None,
     }
 }

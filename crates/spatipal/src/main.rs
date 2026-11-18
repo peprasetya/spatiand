@@ -257,17 +257,21 @@ impl Pal {
         self.dirty = true;
     }
 
-    /// The chat a new turn goes in: the last one if it was recent enough, else a new one.
-    fn chat_for_turn(&mut self) -> usize {
-        if let Some(i) = self.current_index() {
-            return i;
-        }
-        let recent = self.chats.first().is_some_and(|c| store::now().saturating_sub(c.updated) <= self.settings.continue_hours as u64 * 3600);
-        if !recent {
-            self.chats.insert(0, Chat::new());
-        }
-        self.current = Some(self.chats[0].id.clone());
-        0
+    /// The chat a new turn goes in. Typed, the one open (the wearer chose it). Spoken (`Some`,
+    /// with whether it follows on in the conversation): a follow-up goes on in the chat open; a
+    /// conversation begun anew goes on in it only if that was "Go on in the last chat"'s hours
+    /// ago or less -- never, with Never -- and else in a new chat. With none open, the latest by
+    /// when it was changed, if it is recent enough.
+    fn chat_for_turn(&mut self, spoken: Option<bool>) -> usize {
+        let i = match chat_to_go_on(&self.chats, self.current_index(), spoken, self.settings.continue_hours, store::now()) {
+            Some(i) => i,
+            None => {
+                self.chats.insert(0, Chat::new());
+                0
+            }
+        };
+        self.current = Some(self.chats[i].id.clone());
+        i
     }
 
     /// Where the chat open is in the list.
@@ -332,12 +336,15 @@ impl Pal {
         }
     }
 
-    fn ask(&mut self, text: String, ended: Option<Instant>) {
+    /// Ask the brain. `spoken`: when the wearer stopped speaking, and whether it followed on in
+    /// the conversation; `None` when typed.
+    fn ask(&mut self, text: String, spoken: Option<(Instant, bool)>) {
+        let ended = spoken.map(|(ended, _)| ended);
         if self.answering.is_some() {
             self.cut_answer();
             self.voice.hush();
         }
-        let i = self.chat_for_turn();
+        let i = self.chat_for_turn(spoken.map(|(_, follow_up)| follow_up));
         let chat_id = self.chats[i].id.clone();
         // Gone on with on another machine meanwhile (the folder is synchronised): that is the
         // chat, not what this one remembers of it, which would be saved over it.
@@ -425,14 +432,14 @@ impl Pal {
                 log::info!("interrupted: listening to the wearer");
             }
             // Heard over its voice: what was its own voice is not asked.
-            Heard::Asked { text, ended } if self.interrupted.as_ref().is_some_and(|(at, _)| at.elapsed() < Duration::from_secs(15)) => {
+            Heard::Asked { text, ended, .. } if self.interrupted.as_ref().is_some_and(|(at, _)| at.elapsed() < Duration::from_secs(15)) => {
                 let (_, said) = self.interrupted.take().unwrap();
                 match ears::not_its_own(&text, &said) {
                     Some(rest) if rest != text => {
                         log::debug!("heard over it {} characters: its own words left out, {} are the wearer's", text.chars().count(), rest.chars().count());
-                        self.heard(Heard::Asked { text: rest, ended });
+                        self.heard(Heard::Asked { text: rest, ended, follow_up: true });
                     }
-                    Some(_) => self.heard(Heard::Asked { text, ended }),
+                    Some(_) => self.heard(Heard::Asked { text, ended, follow_up: true }),
                     None => log::debug!("heard over it {} characters: its own voice, not the wearer's -- nothing asked", text.chars().count()),
                 }
             }
@@ -445,7 +452,7 @@ impl Pal {
                 self.brain.let_go();
                 self.finished_at = None;
             }
-            Heard::Asked { text, ended } => self.ask(text, Some(ended)),
+            Heard::Asked { text, ended, follow_up } => self.ask(text, Some((ended, follow_up))),
         }
     }
 
@@ -742,6 +749,40 @@ impl Pal {
             self.tend_mood();
             self.draw()?;
         }
+    }
+}
+
+/// Which of `chats` a turn goes on in (`Pal::chat_for_turn`), if any: `None` for a new one.
+fn chat_to_go_on(chats: &[Chat], open: Option<usize>, spoken: Option<bool>, continue_hours: u32, now: u64) -> Option<usize> {
+    let hours = continue_hours as u64 * 3600;
+    let recent = |c: &Chat| hours > 0 && now.saturating_sub(c.updated) <= hours;
+    match (open, spoken) {
+        (Some(i), None | Some(true)) => Some(i),
+        (Some(i), Some(false)) => Some(i).filter(|i| recent(&chats[*i])),
+        (None, _) => chats.iter().enumerate().max_by_key(|(_, c)| c.updated).filter(|(_, c)| recent(c)).map(|(i, _)| i),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_conversation_goes_on_in_the_last_chat_only_while_it_is_recent() {
+        let now = 1_000_000;
+        let chat = |hours_ago: u64| Chat { updated: now - hours_ago * 3600, ..Default::default() };
+        let chats = [chat(30), chat(2)];
+        // Spoken anew, days after the chat open: a new chat; hours after, within 4: that one.
+        assert_eq!(chat_to_go_on(&chats, Some(0), Some(false), 4, now), None);
+        assert_eq!(chat_to_go_on(&chats, Some(1), Some(false), 4, now), Some(1));
+        // Never: a new chat for every conversation -- but a follow-up goes on in its own.
+        assert_eq!(chat_to_go_on(&chats, Some(1), Some(false), 0, now), None);
+        assert_eq!(chat_to_go_on(&chats, Some(1), Some(true), 0, now), Some(1));
+        // Typed: the chat the wearer has open, however old.
+        assert_eq!(chat_to_go_on(&chats, Some(0), None, 4, now), Some(0));
+        // None open: the latest by when it changed, not the first in the list.
+        assert_eq!(chat_to_go_on(&chats, None, Some(false), 4, now), Some(1));
+        assert_eq!(chat_to_go_on(&chats, None, Some(false), 1, now), None);
     }
 }
 
