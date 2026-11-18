@@ -326,15 +326,15 @@ impl Editor {
             _ => built.detail.clone(),
         };
         let keys = match focused.map(|(_, op, _)| op) {
-            Some(Op::Cycle(..)) | Some(Op::Slider(..)) => "Left / right change    A select    B back",
-            _ => "A select    B back",
+            Some(Op::Cycle(..)) | Some(Op::Slider(..)) => "[Left] [Right] Change  [A] Select  [B] Back",
+            _ => "[A] Select  [B] Back",
         };
         // Where you are in the list, on any page long enough to have somewhere to be. The card
         // shows six rows at a time and the Deck has twenty-four buttons, so without this the
         // four back buttons sit below the fold on a page that looks complete -- which reads as
         // "the back buttons cannot be mapped" rather than as "scroll down".
         let footer = if built.rows.len() > VISIBLE_ROWS {
-            format!("{} of {}    {keys}", cursor + 1, built.rows.len())
+            format!("{} of {}  {keys}", cursor + 1, built.rows.len())
         } else {
             keys.to_string()
         };

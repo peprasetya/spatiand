@@ -296,7 +296,9 @@ struct MenuTextures {
     /// How tall the explanation's own picture is, which is less than the room kept for it when
     /// it is one line.
     detail_drawn: f32,
-    footer: Option<Texture>,
+    /// The footer's pieces, `(group, is a key, its words)`: the pad's buttons as keycaps, each
+    /// with its verb, as the apps' foot hints are (`crate::menu::footer_parts`).
+    footer: Vec<(usize, bool, Texture)>,
     /// Device pixels per logical panel pixel when this was built. A different headset, or a
     /// different eye resolution, means rasterising again rather than magnifying.
     scale: f32,
@@ -314,7 +316,10 @@ impl MenuTextures {
                 delete(t);
             }
         }
-        for t in [&self.detail, &self.footer].into_iter().flatten() {
+        for t in [&self.detail].into_iter().flatten() {
+            delete(t);
+        }
+        for (_, _, t) in &self.footer {
             delete(t);
         }
     }
@@ -341,6 +346,14 @@ const INK_HINT: [f32; 4] = [0.50, 0.55, 0.66, 1.0];
 const SEPARATOR: [f32; 4] = [1.0, 1.0, 1.0, 0.10];
 const SCROLL_TRACK: [f32; 4] = [1.0, 1.0, 1.0, 0.08];
 const SCROLL_THUMB: [f32; 4] = [0.42, 0.68, 1.0, 0.70];
+/// A keycap in a card's footer: the apps' (`look::keys` in the dark look), a lighter rim, a face
+/// a little off the card's ground, and a shade along its foot.
+const KEY_RIM: [f32; 4] = [1.0, 1.0, 1.0, 0.16];
+const KEY_FACE: [f32; 4] = [1.0, 1.0, 1.0, 0.06];
+const KEY_SHADE: [f32; 4] = [0.0, 0.0, 0.0, 0.35];
+/// A footer's words, and a keycap's letters, in logical panel pixels: `look::keys`'s sizes.
+const FOOT_WORDS_EM: f32 = 23.0 * 0.92;
+const FOOT_KEY_EM: f32 = FOOT_WORDS_EM * 0.86;
 
 /// Em size of a row's trailing status, in logical panel pixels. Smaller than the label it sits
 /// beside: it qualifies the row rather than naming it.
@@ -2011,8 +2024,10 @@ impl Scene {
                     spatiand_render::TextAlign::Left,
                 )
             });
-            let footer =
-                (!model.footer.is_empty()).then(|| line(text, &model.footer, panel::FOOTER_EM));
+            let footer: Vec<(usize, bool, TextImage)> = crate::menu::footer_parts(&model.footer)
+                .into_iter()
+                .map(|(group, key, words)| (group, key, line(text, words, if key { FOOT_KEY_EM } else { FOOT_WORDS_EM })))
+                .collect();
 
             let old = self.menu.take();
             let built = renderer
@@ -2044,7 +2059,7 @@ impl Scene {
                             .unwrap_or(0.0),
                         detail_drawn: detail.as_ref().map(|i| i.height as f32 / scale).unwrap_or(0.0),
                         detail: detail.as_ref().map(&upload),
-                        footer: footer.as_ref().map(&upload),
+                        footer: footer.iter().map(|(group, key, image)| (*group, *key, upload(image))).collect(),
                         scale,
                     }
                 })
@@ -2063,7 +2078,7 @@ impl Scene {
                 rows: model.rows.len(),
                 cursor: model.cursor,
                 detail_height: self.menu.as_ref().map(|m| m.detail_height).unwrap_or(0.0),
-                footer: self.menu.as_ref().is_some_and(|m| m.footer.is_some()),
+                footer: self.menu.as_ref().is_some_and(|m| !m.footer.is_empty()),
                 budget_height: budget,
             },
             self.menu_first,
@@ -2890,8 +2905,49 @@ impl Scene {
             };
 
         text_in(layout.title, &menu.title, panel::TITLE_EM, INK, false);
-        if let (Some(band), Some(tex)) = (layout.footer, menu.footer.as_ref()) {
-            text_in(band, tex, panel::FOOTER_EM, INK_HINT, true);
+        if let Some(band) = layout.footer.filter(|_| !menu.footer.is_empty()) {
+            // Keycaps and their verbs, set right, as `look::keys` sets an app's foot hint: a
+            // key's cap as wide as its letters and 16 more, never narrower than it is tall; 5
+            // between keys, 9 before a verb, 30 between groups. Narrowed as a whole to fit.
+            let cap_h = FOOT_WORDS_EM * 1.55;
+            let width = |key: bool, tex: &Texture| {
+                let em = if key { FOOT_KEY_EM } else { FOOT_WORDS_EM };
+                let w = em * 1.4 * tex.aspect.max(0.01);
+                if key { (w + 16.0).max(cap_h) } else { w }
+            };
+            let gap = |i: usize| -> f32 {
+                match (i, menu.footer.get(i.wrapping_sub(1)), menu.footer.get(i)) {
+                    (0, ..) => 0.0,
+                    (_, Some((a, _, _)), Some((b, _, _))) if a != b => 30.0,
+                    (_, _, Some((_, true, _))) => 5.0,
+                    _ => 9.0,
+                }
+            };
+            let total: f32 = menu.footer.iter().enumerate().map(|(i, (_, key, tex))| gap(i) + width(*key, tex)).sum();
+            let k = (band.w / total.max(1.0)).min(1.0);
+            let middle = band.y + band.h * 0.5;
+            let mut x = band.x + band.w - total * k;
+            for (i, (_, key, tex)) in menu.footer.iter().enumerate() {
+                x += gap(i) * k;
+                let w = width(*key, tex) * k;
+                let em = if *key { FOOT_KEY_EM } else { FOOT_WORDS_EM };
+                let th = em * 1.4 * k;
+                let tw = th * tex.aspect.max(0.01);
+                if *key {
+                    let cap = panel::Rect { x, y: middle - cap_h * k * 0.5, w, h: cap_h * k };
+                    panel_rect(cap, KEY_RIM, 7.0 * k);
+                    let face = panel::Rect { x: cap.x + k, y: cap.y + k, w: cap.w - 2.0 * k, h: cap.h - 2.0 * k };
+                    panel_rect(face, CARD_GROUND, 6.0 * k);
+                    panel_rect(face, KEY_FACE, 6.0 * k);
+                    panel_rect(panel::Rect { x: cap.x + 3.0 * k, y: cap.y + cap.h - 3.0 * k, w: cap.w - 6.0 * k, h: 2.0 * k }, KEY_SHADE, k);
+                    let r = panel::Rect { x: cap.x + (cap.w - tw) * 0.5, y: middle - th * 0.5 - k, w: tw, h: th };
+                    self.quads.draw(gl, tex.id, &(vp * place(r)), fade(INK_DETAIL), (0.0, 1.0));
+                } else {
+                    let r = panel::Rect { x, y: middle - th * 0.5, w: tw, h: th };
+                    self.quads.draw(gl, tex.id, &(vp * place(r)), fade(INK_HINT), (0.0, 1.0));
+                }
+                x += w;
+            }
         }
 
         for (offset, rect) in layout.rows.iter().enumerate() {

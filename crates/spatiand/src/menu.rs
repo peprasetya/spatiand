@@ -131,7 +131,7 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                 rows: list.items().iter().map(|i| MenuRow::plain(i.label)).collect(),
                 cursor: list.cursor(),
                 detail: list.focused().detail.into(),
-                footer: "A choose    B back".into(),
+                footer: "[A] Choose  [B] Back".into(),
             })
         }
         Mode::Audio => {
@@ -141,7 +141,7 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                 rows: list.items().iter().map(|i| MenuRow::plain(i.label)).collect(),
                 cursor: list.cursor(),
                 detail: list.focused().detail.into(),
-                footer: "A use    B back".into(),
+                footer: "[A] Use  [B] Back".into(),
             })
         }
         Mode::Pinned => {
@@ -151,7 +151,7 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                 rows: list.items().iter().map(|i| MenuRow::plain(i.label)).collect(),
                 cursor: list.cursor(),
                 detail: list.focused().detail.into(),
-                footer: "A change    B back".into(),
+                footer: "[A] Change  [B] Back".into(),
             })
         }
         Mode::Environment => {
@@ -208,7 +208,7 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                 } else {
                     files.directory().into()
                 },
-                footer: "A open    B back".into(),
+                footer: "[A] Open  [B] Back".into(),
             })
         }
         Mode::Launcher if shell.launcher().is_empty() => {
@@ -229,7 +229,7 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                          come back here when it does.",
                         h.label
                     ),
-                    footer: "B back".into(),
+                    footer: "[B] Back".into(),
                 },
                 Some(h) => MenuModel {
                     title: h.label.clone(),
@@ -239,21 +239,21 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                         "{} offers no applications yet. Add some in its catalogue.",
                         h.label
                     ),
-                    footer: "B back".into(),
+                    footer: "[B] Back".into(),
                 },
                 None if !launcher.query().is_empty() => MenuModel {
                     title: format!("Search: {}", launcher.query()),
                     rows: Vec::new(),
                     cursor: 0,
                     detail: "Nothing here is called that.".into(),
-                    footer: "B clears what was typed".into(),
+                    footer: "[B] Clear what was typed".into(),
                 },
                 None => MenuModel {
                     title: "No applications".into(),
                     rows: Vec::new(),
                     cursor: 0,
                     detail: "Nothing was found in the system's application folders.".into(),
-                    footer: "B back".into(),
+                    footer: "[B] Back".into(),
                 },
             })
         }
@@ -291,7 +291,7 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                          view and right lets it go; Y closes one, and holding Y forces an \
                          application that will not close to quit."
                     .into(),
-                footer: "A select   X hide   Y close   Left pin   B back".into(),
+                footer: "[A] Select  [X] Hide  [Y] Close  [Left] Pin  [B] Back".into(),
             })
         }
         Mode::Launcher => None,
@@ -351,7 +351,7 @@ fn hosts(hosts: &spatiand_shell::Hosts) -> MenuModel {
                      type its name or address here — its hostname, or something like \
                      192.168.1.20 — and press Enter."
                 .into(),
-            footer: "Enter next    B back".into(),
+            footer: "[Enter] Next  [B] Back".into(),
         },
         Page::Code => MenuModel {
             title: format!("Pairing with {}", hosts.typed()),
@@ -362,14 +362,14 @@ fn hosts(hosts: &spatiand_shell::Hosts) -> MenuModel {
             detail: "Type the six-digit code the computer shows. Only a device that has it is \
                      paired, and it is never sent: the two prove to each other that they know it."
                 .into(),
-            footer: "Enter pair    B back".into(),
+            footer: "[Enter] Pair  [B] Back".into(),
         },
         Page::Pairing => {
             let pairing = hosts.pairing();
             let footer = match (pairing.finished, pairing.succeeded) {
-                (true, true) => "A done",
-                (true, false) => "A try again    B back",
-                (false, _) => "B cancel",
+                (true, true) => "[A] Done",
+                (true, false) => "[A] Try again  [B] Back",
+                (false, _) => "[B] Cancel",
             };
             MenuModel {
                 title: format!("Pairing with {}", pairing.address),
@@ -465,7 +465,7 @@ fn bluetooth(bt: &spatiand_shell::Bluetooth) -> MenuModel {
         format!("{}\n\n{explain}", view.note)
     };
     let footer = match bt.row(cursor) {
-        Row::Device(_) => "A connect/disconnect    Y forget    B back",
+        Row::Device(_) => "[A] Connect or disconnect  [Y] Forget  [B] Back",
         _ => FOOTER_SELECT,
     };
     MenuModel {
@@ -496,7 +496,36 @@ pub fn from_editor(view: &spatiand_mapper::editor::View) -> MenuModel {
     }
 }
 
-const FOOTER_SELECT: &str = "A select    B back";
+/// The pad's buttons a card answers, as keycaps and a verb each: `"[A] Select  [B] Back"`, the
+/// form of the apps' foot hints (`look::keys`), drawn as keycaps by the scene. Groups are two
+/// spaces apart; a group with no brackets is words only (the editor's "3 of 24").
+const FOOTER_SELECT: &str = "[A] Select  [B] Back";
+
+/// A footer split into its groups -- two spaces or more apart -- and each group into its keys
+/// (in brackets) and its words: `(group, is a key, text)`, in order.
+pub fn footer_parts(footer: &str) -> Vec<(usize, bool, &str)> {
+    let mut parts = Vec::new();
+    for (g, group) in footer.split("  ").map(str::trim).filter(|g| !g.is_empty()).enumerate() {
+        let mut rest = group;
+        while !rest.is_empty() {
+            match (rest.find('['), rest.find(']')) {
+                (Some(0), Some(end)) => {
+                    parts.push((g, true, &rest[1..end]));
+                    rest = rest[end + 1..].trim_start();
+                }
+                (Some(at), _) if at > 0 => {
+                    parts.push((g, false, rest[..at].trim()));
+                    rest = &rest[at..];
+                }
+                _ => {
+                    parts.push((g, false, rest.trim()));
+                    rest = "";
+                }
+            }
+        }
+    }
+    parts
+}
 
 #[cfg(test)]
 mod tests {
@@ -505,6 +534,16 @@ mod tests {
     use spatiand_shell::hud::HudAction;
     use spatiand_shell::DesktopPanels;
     use spatiand_shell::Intent;
+
+    #[test]
+    fn a_footer_is_keys_and_their_verbs_in_groups() {
+        assert_eq!(footer_parts(FOOTER_SELECT), vec![(0, true, "A"), (0, false, "Select"), (1, true, "B"), (1, false, "Back")]);
+        assert_eq!(
+            footer_parts("3 of 24  [Left] [Right] Change  [B] Back"),
+            vec![(0, false, "3 of 24"), (1, true, "Left"), (1, true, "Right"), (1, false, "Change"), (2, true, "B"), (2, false, "Back")]
+        );
+        assert_eq!(footer_parts("[B] Clear what was typed"), vec![(0, true, "B"), (0, false, "Clear what was typed")]);
+    }
 
     /// Walk the settings list to the environment row and press A.
     ///
