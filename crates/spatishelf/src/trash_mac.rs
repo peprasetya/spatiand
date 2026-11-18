@@ -128,6 +128,9 @@ pub fn list() -> Result<Vec<Entry>, String> {
     let before = memory.clone();
     let mut out = Vec::new();
     let mut here = std::collections::HashSet::new();
+    // The trashes read this time: what is remembered of another (a disk not plugged in now,
+    // one that could not be read) is kept for when it is back.
+    let mut read_bins: Vec<PathBuf> = Vec::new();
     for (i, bin) in bins().into_iter().enumerate() {
         let read = match std::fs::read_dir(&bin) {
             Ok(read) => read,
@@ -137,6 +140,7 @@ pub fn list() -> Result<Vec<Entry>, String> {
             }
             Err(_) => continue,
         };
+        read_bins.push(bin.clone());
         let finders = finders(&bin);
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -163,7 +167,7 @@ pub fn list() -> Result<Vec<Entry>, String> {
     }
     // What has gone from the trash some other way (Finder's Put Back, emptied), or is not the
     // thing remembered any more, is forgotten.
-    memory.retain(|k, _| here.contains(k));
+    memory.retain(|k, _| here.contains(k) || !read_bins.iter().any(|b| Path::new(k).parent() == Some(b.as_path())));
     if memory != before {
         remember(&memory);
     }
