@@ -949,8 +949,9 @@ impl Playing {
             }
         }
         // Buttons that are not on show are not pressed: the press that brings the controls
-        // back is only that.
-        if was_shown {
+        // back is only that. Where the pointer is they are always told, or one passed over while
+        // they were hidden came back lit.
+        if was_shown || matches!(input, Input::Pointer { .. } | Input::PointerLeft) {
             if self.toggle.input(input) {
                 let paused = self.player.paused();
                 self.player.set_paused(!paused);
@@ -999,14 +1000,18 @@ impl Playing {
                 self.seeking = false;
                 self.turning = None;
             }
-            Input::Key { key, letter, .. } => {
+            Input::Key { key, letter, modifiers, .. } => {
                 let now = self.player.position();
+                // Held with Control or Command, a key is a shortcut of something else's:
+                // Command-M is the Mac's own (minimise), not the menu.
+                let plain = !modifiers.control && !modifiers.logo;
                 // M for the menu, the key where M is whatever the layout writes on it.
-                if *letter == Some('m') {
+                if *letter == Some('m') && plain {
                     self.open_menu();
                     return Outcome::Nothing;
                 }
                 match key {
+                    Key::Space | Key::Enter if !plain => {}
                     Key::Space | Key::Enter => {
                         let paused = self.player.paused();
                         self.player.set_paused(!paused);

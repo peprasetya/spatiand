@@ -494,6 +494,12 @@ impl Reel {
         if event.window().is_some_and(|window| window != self.window) && !matches!(event, Event::Key { .. }) {
             return true;
         }
+        // Held down, a key repeats: pausing, playing and the menu are pressed once, or a key held
+        // a moment too long paused and played the film again and again, or opened the menu
+        // over and over. The arrows still move on as they repeat.
+        if let (Some(_), Event::Key { key: spatiand_app::Key::Space | spatiand_app::Key::Enter | spatiand_app::Key::Char(_), repeat: true, .. }) = (self.playing.as_ref(), &event) {
+            return true;
+        }
         let Some(input) = Input::of(&event, 1.0) else { return true };
         match self.playing.as_mut() {
             Some((playing, _)) => {

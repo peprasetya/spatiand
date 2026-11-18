@@ -51,7 +51,9 @@ pub fn pointed_to(path: &Path) -> Option<String> {
     if !is_pointer {
         return None;
     }
-    std::fs::read_to_string(path).ok().and_then(|text| text.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
+    // A file saved by Windows' Notepad begins with a byte-order mark, which is no part of the
+    // address: kept, the film would not open.
+    std::fs::read_to_string(path).ok().and_then(|text| text.trim_start_matches('\u{feff}').lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
 }
 
 /// Where films are kept on this kind of machine, if such a place exists; the home folder if
@@ -153,6 +155,19 @@ mod tests {
         assert!(!is_package("Season 1"));
         assert_eq!(is_package("TV Library.tvlibrary"), cfg!(target_os = "macos"));
         assert_eq!(is_package("v1.app"), cfg!(target_os = "macos"));
+    }
+
+    #[test]
+    fn a_pointer_file_says_where_the_film_is_whatever_saved_it() {
+        let dir = std::env::temp_dir().join(format!("spatireel-strm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.strm"), "\u{feff}http://example.com/a.mkv\r\n").unwrap();
+        std::fs::write(dir.join("b.STRM"), "\n  http://example.com/b.mkv  \n").unwrap();
+        assert_eq!(pointed_to(&dir.join("a.strm")).as_deref(), Some("http://example.com/a.mkv"));
+        assert_eq!(pointed_to(&dir.join("b.STRM")).as_deref(), Some("http://example.com/b.mkv"));
+        assert_eq!(pointed_to(&dir.join("c.mkv")), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
