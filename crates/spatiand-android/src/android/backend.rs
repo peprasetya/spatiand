@@ -1413,7 +1413,7 @@ pub fn run(
                 pad.touched
                     .then(|| pointer::aim(ray_from_pad(pad.x, pad.y, orientation, origin, &pointer_config), &windows))
             };
-            let right_aim = pads.as_ref().and_then(|p| aim_of(&p.right_pad));
+            let mut right_aim = pads.as_ref().and_then(|p| aim_of(&p.right_pad));
             // On the Mac the pointer is the mouse's or the trackpad's unless a pad's touchpad is
             // moving it: a pointer held where its button went down is then let go by the hand's
             // own movement far sooner than by the head's. See `pointer::press_hold`.
@@ -1424,12 +1424,19 @@ pub fn run(
             // it says nothing about where in the room it means.
             let _left_aim: Option<Aim> = None;
 
+            // A press chooses the row the pointer rested on before pressing moved it, as a press
+            // on a window does (`press_hold`), as on the Deck.
+            let menu_pressing = deck_input.is_some_and(|p| p.right_pad.clicked) && !menu_click_was;
             let menu_aim = (shell.menu_is_open() && !shell.wants_text())
                 .then_some(deck_input.as_ref())
                 .flatten()
                 .filter(|p| p.right_pad.touched)
                 .map(|p| {
-                    let ray = ray_from_pad(p.right_pad.x, p.right_pad.y, orientation, origin, &pointer_config);
+                    let ray = pointers.menu_ray(
+                        ray_from_pad(p.right_pad.x, p.right_pad.y, orientation, origin, &pointer_config),
+                        menu_pressing,
+                        time_ms,
+                    );
                     let target = scene.menu_target(&shell, &ray, (stereo.h_fov_deg, stereo.v_fov_deg()));
                     // **Only a pointer that has moved chooses the row it is on.** One at rest
                     // over the list chose its row again every frame, so a wheel or a swipe
@@ -1746,6 +1753,13 @@ pub fn run(
                     }
                     if left_click && !left_was_down {
                         controller.pulse(spatiand_input::HapticPad::Left, spatiand_input::Feel::Click);
+                    }
+                    // A press is on what the pointer rested on before pressing moved it, for the
+                    // room's own targets -- a key, a title-bar button, a card -- as for an
+                    // application's (`press_hold`), as on the Deck: every decision below on this
+                    // frame's aim.
+                    if right_click && !right_was_down {
+                        right_aim = right_aim.take().map(|a| pointers.pressed_aim(a, &windows, time_ms));
                     }
 
                     let keyboard_quad = keyboard.open.then(|| {

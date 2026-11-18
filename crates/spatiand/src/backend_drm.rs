@@ -2593,17 +2593,21 @@ pub fn run(
             //
             // Also while the shell wants text: the pointer is the keyboard's *and* the card's, and
             // whichever the ray is over gets the click (see `right_aim` below).
+            // A press chooses the row the pointer rested on before pressing moved it, as a press
+            // on a window does (`press_hold`).
+            let menu_pressing = (deck_input.is_some_and(|p| p.right_pad.clicked) && !menu_click_was)
+                || controller.as_ref().is_some_and(|c| {
+                    c.just_pressed(spatiand_input::Control::RPadClick) || c.just_pressed(spatiand_input::Control::R2)
+                });
             let menu_aim = shell.menu_is_open()
                 .then_some(deck_input.as_ref())
                 .flatten()
                 .filter(|p| p.right_pad.touched)
                 .map(|p| {
-                    let ray = ray_from_pad(
-                        p.right_pad.x,
-                        p.right_pad.y,
-                        orientation,
-                        origin,
-                        &pointer_config,
+                    let ray = pointers.menu_ray(
+                        ray_from_pad(p.right_pad.x, p.right_pad.y, orientation, origin, &pointer_config),
+                        menu_pressing,
+                        time_ms,
                     );
                     let target =
                         scene.menu_target(&shell, &ray, (stereo.h_fov_deg, stereo.v_fov_deg()));
@@ -2639,7 +2643,7 @@ pub fn run(
             let menu_aim = menu_aim.map(|(aim, _)| aim);
             // A ray that is on the card is not also on the keyboard behind it: the card has it, so
             // a click chooses the row and does not type a key through it.
-            let right_aim = if menu_pointed.is_some() { None } else { right_aim };
+            let mut right_aim = if menu_pointed.is_some() { None } else { right_aim };
             // Another pad's touchpad clicks as a whole, and is only seen as a state, so its
             // press is the edge of that state.
             let pad_clicked = deck_input.is_some_and(|p| p.right_pad.clicked);
@@ -3168,6 +3172,12 @@ pub fn run(
                         }
                     });
 
+                    // A press is on what the pointer rested on before pressing moved it, for the
+                    // room's own targets -- a key, a title-bar button, a card -- as for an
+                    // application's (`press_hold`): every decision below on this frame's aim.
+                    if right_click && !right_was_down {
+                        right_aim = right_aim.take().map(|a| pointers.pressed_aim(a, &windows, time_ms));
+                    }
                     // What each pointer is over. Both pads, because both can type, and a key
                     // that lights up under one thumb but not the other would make the left one
                     // feel broken right up until you pressed it.

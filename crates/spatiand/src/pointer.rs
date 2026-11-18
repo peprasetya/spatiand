@@ -719,6 +719,9 @@ pub struct PointerState {
     steadied: Option<(Ray, Ray)>,
     /// The ray last given to [`Self::motion`].
     given: Option<Ray>,
+    /// The pointer on an open menu (the settings, the launcher), which goes nowhere near
+    /// [`Self::motion`]: only for where a press on it looks back to ([`Self::menu_ray`]).
+    menu_hold: press_hold::PressHold,
     /// The wearer's steadiness; see [`Self::set_steadiness`].
     steadiness: spatiand_track::Steadiness,
     /// What applications were told of where the pointer is, a frame at a time over the last few
@@ -1000,6 +1003,19 @@ impl PointerState {
     pub fn set_steadiness(&mut self, level: spatiand_track::Steadiness) {
         self.steadiness = level;
         self.hold.set_steadiness(level);
+        self.menu_hold.set_steadiness(level);
+    }
+
+    /// The pointer on an open menu this frame, aimed along `ray`, and the ray to choose by: on a
+    /// press (`pressed`, the frame the button went down), where it rested before pressing moved
+    /// it, as a press on a window does (`press_hold`); else `ray` itself. It is never held: the
+    /// highlight follows the thumb as it did.
+    pub fn menu_ray(&mut self, ray: Ray, pressed: bool, time_ms: u32) -> Ray {
+        self.menu_hold.aim(ray.direction, None, time_ms);
+        match self.menu_hold.put_back(time_ms).filter(|_| pressed) {
+            Some(direction) => Ray { origin: ray.origin, direction },
+            None => ray,
+        }
     }
 
     /// Whether what aims the pointer this frame is a mouse or a trackpad, and if so the head it
@@ -1007,6 +1023,26 @@ impl PointerState {
     /// after much less of the mouse's own travel than of the head's; see [`press_hold`].
     pub fn aimed_by_mouse(&mut self, head: Option<glam::DQuat>) {
         self.mouse_head = head;
+    }
+
+    /// What a press at `time_ms` is on, for the room's own targets (a settings row, a title-bar
+    /// button, a key, a card) as for an application's: `aim` aimed again along the ray the
+    /// pointer rested on before pressing moved it, or held on, if either -- see [`press_hold`].
+    /// Called after this frame's [`Self::motion`] with the same aim; else `aim` as it is.
+    pub fn pressed_aim(&self, aim: Aim, windows: &[WindowQuad], time_ms: u32) -> Aim {
+        if self.given != Some(aim.ray) {
+            // Not what the pointer was aimed with this frame: nothing to look back on.
+            return aim;
+        }
+        let ray = match self.hold.put_back(time_ms) {
+            Some(direction) => Ray { origin: aim.ray.origin, direction },
+            None => self.shown(&aim.ray),
+        };
+        if ray == aim.ray {
+            aim
+        } else {
+            self::aim(ray, windows)
+        }
     }
 
     /// Where the room is to draw the pointer aimed along `ray`: on the ray the pointer was held
@@ -1530,6 +1566,33 @@ mod tests {
     const FOV: [f32; 4] = [-0.349_066, 0.349_066, 0.218_166, -0.218_166];
     const LEFT_HALF: [f32; 4] = [0.0, 0.5, 0.0, 1.0];
     const SBS: (f64, f64) = (3840.0, 1080.0);
+
+    #[test]
+    fn a_press_on_a_menu_chooses_where_the_pointer_rested() {
+        let mut pointers = PointerState::default();
+        let at = |degrees: f64| Ray {
+            origin: glam::DVec3::ZERO,
+            direction: glam::DQuat::from_rotation_z(degrees.to_radians()) * glam::DVec3::X,
+        };
+        // At rest, then the press rolls the thumb half a degree over two frames.
+        for i in 0..10 {
+            assert_eq!(pointers.menu_ray(at(0.0), false, i * 16), at(0.0));
+        }
+        assert_eq!(pointers.menu_ray(at(0.25), false, 160), at(0.25), "hovering follows the thumb");
+        let pressed = pointers.menu_ray(at(0.5), true, 176);
+        assert!(pressed.direction.angle_between(at(0.0).direction) < 1e-9, "{pressed:?}");
+        // Moved there on purpose and pressed after a rest: where it is.
+        for i in 12..30 {
+            pointers.menu_ray(at(5.0), false, i * 16);
+        }
+        assert_eq!(pointers.menu_ray(at(5.0), true, 30 * 16), at(5.0));
+        // Off: where it is.
+        pointers.set_steadiness(spatiand_track::Steadiness::Off);
+        for i in 31..40 {
+            pointers.menu_ray(at(9.0), false, i * 16);
+        }
+        assert_eq!(pointers.menu_ray(at(9.5), true, 40 * 16), at(9.5));
+    }
 
     #[test]
     fn a_window_far_taller_than_wide_can_be_resized() {
