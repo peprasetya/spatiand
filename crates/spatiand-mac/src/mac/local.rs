@@ -226,6 +226,8 @@ pub fn close(id: u32) {
     if let Some(windows) = WINDOWS.get() {
         windows.entries.lock().unwrap().remove(&id);
     }
+    // Its menu, if it is open in the room, goes with it.
+    crate::remote::menu::local_window_gone(id);
     send(Command::Close { id });
 }
 

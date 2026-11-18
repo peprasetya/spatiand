@@ -601,11 +601,15 @@ pub fn has_app_menu(state: &crate::Spatiand, window: &smithay::desktop::Window) 
     state.app_id_of(window).is_some_and(|a| a.starts_with(&format!("remote.{}.", local::HOST)))
 }
 
-/// The menu button on a window's bar was pressed: ask for its application's menus.
-pub fn app_menu_wanted(window: &smithay::desktop::Window) {
+/// The app's number for one of this Mac's own windows in the room.
+pub fn app_menu_window(window: &smithay::desktop::Window) -> Option<u32> {
     use smithay::reexports::wayland_server::Resource;
     use smithay::wayland::seat::WaylandFocus;
-    let Some(id) = window.wl_surface().and_then(|s| local::id_of(s.id().protocol_id())) else { return };
+    window.wl_surface().and_then(|s| local::id_of(s.id().protocol_id()))
+}
+
+/// The menu button on that window's bar was pressed: ask for its application's menus.
+pub fn app_menu_wanted(id: u32) {
     ffi::tell_window(ffi::Asked::MenuOpen, id, 0.0, 0.0, 0.0);
 }
 

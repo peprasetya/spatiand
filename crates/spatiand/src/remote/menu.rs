@@ -33,14 +33,21 @@ pub enum Said {
     Done,
 }
 
-/// Whose menu is open, so a choice goes back to it.
+/// Whose menu is open, so a choice goes back to it, and the window it was opened from, so that
+/// it goes when that window does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Owner {
-    /// A host's, by the name it is known by.
-    Host(String),
-    /// One of this Mac's own applications in the Mac's room.
+    /// A host's, by the name it is known by, and the window's number there.
+    Host(String, u32),
+    /// One of this Mac's own applications in the Mac's room, by its window's number in the app.
     #[allow(dead_code)]
-    Local,
+    Local(u32),
+}
+
+impl Owner {
+    fn is_host(&self, name: &str) -> bool {
+        matches!(self, Owner::Host(h, _) if h == name)
+    }
 }
 
 #[derive(Default)]
@@ -104,9 +111,23 @@ pub(crate) fn offered(host: &str, app_id: &str, surface: u32, window: u32) {
     menus().offered.insert((app_id.to_string(), surface), (host.to_string(), window));
 }
 
-/// That window has closed.
+/// That window has closed: and **a menu open from it is closed with it**, rather than left
+/// in front of the wearer for an application that may have gone.
 pub(crate) fn window_gone(host: &str, window: u32) {
-    menus().offered.retain(|_, (h, w)| !(h == host && *w == window));
+    let mut m = menus();
+    m.offered.retain(|_, (h, w)| !(h == host && *w == window));
+    if m.open_on == Some(Owner::Host(host.to_string(), window)) {
+        m.heard(Said::Done, None);
+    }
+}
+
+/// One of this Mac's own windows has closed (`crate::mac`): a menu open from it is closed.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn local_window_gone(window: u32) {
+    let mut m = menus();
+    if m.open_on == Some(Owner::Local(window)) {
+        m.heard(Said::Done, None);
+    }
 }
 
 /// Everything a host offered goes -- its link is down, or starting afresh -- and a menu of its
@@ -114,8 +135,8 @@ pub(crate) fn window_gone(host: &str, window: u32) {
 pub(crate) fn forget_host(host: &str) {
     let mut m = menus();
     m.offered.retain(|_, (h, _)| h != host);
-    if m.open_on == Some(Owner::Host(host.to_string())) {
-        m.said = Some(Said::Done);
+    if m.open_on.as_ref().is_some_and(|o| o.is_host(host)) {
+        m.heard(Said::Done, None);
     }
 }
 
@@ -131,7 +152,7 @@ pub(crate) fn host_said(host: &str, said: MenuSaid) {
     let mut m = menus();
     // Only the host whose menu is open speaks for it: a late word from one closed since is not
     // put in front of the wearer.
-    if m.open_on == Some(Owner::Host(host.to_string())) {
+    if m.open_on.as_ref().is_some_and(|o| o.is_host(host)) {
         m.heard(said, level);
     }
 }
@@ -140,7 +161,7 @@ pub(crate) fn host_said(host: &str, said: MenuSaid) {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn local_said(said: Said) {
     let mut m = menus();
-    if m.open_on == Some(Owner::Local) {
+    if matches!(m.open_on, Some(Owner::Local(_))) {
         m.heard(said, None);
     }
 }
@@ -168,20 +189,21 @@ pub fn window_has_menu(state: &crate::Spatiand, window: &smithay::desktop::Windo
 pub fn open(state: &crate::Spatiand, window: &smithay::desktop::Window) -> bool {
     #[cfg(target_os = "macos")]
     if crate::mac::has_app_menu(state, window) {
+        let Some(id) = crate::mac::app_menu_window(window) else { return false };
         let mut m = menus();
-        m.open_on = Some(Owner::Local);
+        m.open_on = Some(Owner::Local(id));
         m.said = None;
         m.level = None;
         m.asked = None;
         drop(m);
-        crate::mac::app_menu_wanted(window);
+        crate::mac::app_menu_wanted(id);
         return true;
     }
     let (Some(app_id), Some(surface)) = (state.app_id_of(window), window.wl_surface()) else { return false };
     let Some((host, number)) = hosted(&app_id, surface.id().protocol_id()) else { return false };
     let mut m = menus();
     let Some(commands) = m.hosts.get(&host).cloned() else { return false };
-    m.open_on = Some(Owner::Host(host.clone()));
+    m.open_on = Some(Owner::Host(host.clone(), number));
     m.said = None;
     m.level = None;
     m.asked = None;
@@ -220,7 +242,7 @@ fn waited_for() -> Option<Option<u32>> {
 fn tell(ask: MenuAsk) {
     let m = menus();
     match m.open_on.clone() {
-        Some(Owner::Host(host)) => {
+        Some(Owner::Host(host, _)) => {
             let sent = m.hosts.get(&host).is_some_and(|c| c.send(Command::Menu(ask)).is_ok());
             drop(m);
             if !sent {
@@ -229,7 +251,7 @@ fn tell(ask: MenuAsk) {
             }
         }
         #[cfg(target_os = "macos")]
-        Some(Owner::Local) => {
+        Some(Owner::Local(_)) => {
             drop(m);
             match ask {
                 MenuAsk::Choose { row, .. } => crate::mac::app_menu_chosen(row as usize),
@@ -274,7 +296,7 @@ mod tests {
         // As `open` does, once it has found the window.
         {
             let mut m = menus();
-            m.open_on = Some(Owner::Host("testhost".into()));
+            m.open_on = Some(Owner::Host("testhost".into(), 4));
         }
         chosen(2);
         assert!(matches!(inbox.try_recv(), Ok(Command::Menu(MenuAsk::Choose { row: 2, level: None }))));
@@ -329,5 +351,22 @@ mod tests {
         offered("testhost", "remote.testhost.x", 3, 9);
         window_gone("testhost", 9);
         assert_eq!(hosted("remote.testhost.x", 3), None);
+
+        // A menu open from a window closes when that window does, and only that one's.
+        let reopen = |owner| {
+            let mut m = menus();
+            m.open_on = Some(owner);
+            m.said = None;
+        };
+        reopen(Owner::Host("testhost".into(), 9));
+        window_gone("testhost", 8);
+        assert_eq!(said(), None, "another window's going leaves it");
+        window_gone("testhost", 9);
+        assert_eq!(said(), Some(Said::Done));
+        reopen(Owner::Local(5));
+        local_window_gone(6);
+        assert_eq!(said(), None);
+        local_window_gone(5);
+        assert_eq!(said(), Some(Said::Done));
     }
 }
