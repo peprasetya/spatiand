@@ -1302,6 +1302,10 @@ impl Shelf {
                     if name.is_empty() {
                         return;
                     }
+                    if name.contains('/') {
+                        self.fail("A name may not have a / in it.");
+                        return;
+                    }
                     let id = self.next_op;
                     self.next_op += 1;
                     let op = match what {

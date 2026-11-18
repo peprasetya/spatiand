@@ -488,6 +488,8 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
                 }
             }
         }
+        // As a rename's: "a/b" would be made inside a folder "a", or fail without saying why.
+        Op::Mkdir { name, .. } if name.contains('/') || name.trim().is_empty() => Err("A name may not be empty or have a / in it.".into()),
         Op::Mkdir { inside, name } => match &inside {
             Place::Trash => Err("No folder is made in the Trash.".into()),
             Place::Local(p) => std::fs::create_dir(Path::new(p).join(&name)).map_err(|e| e.to_string()),
@@ -716,6 +718,8 @@ mod tests {
         assert!(dir.join("dst/f.txt").exists() && !dir.join("dst/copy/inner/f.txt").exists());
         run_op(Op::Mkdir { inside: place("dst"), name: "new".into() }, &kept, &mut quiet).unwrap();
         assert!(dir.join("dst/new").is_dir());
+        assert!(run_op(Op::Mkdir { inside: place("dst"), name: "new/inner".into() }, &kept, &mut quiet).is_err(), "a / is refused, as in a rename");
+        assert!(!dir.join("dst/new/inner").exists());
         assert!(run_op(Op::Copy { from: vec![place("src")], to: place("src/inner") }, &kept, &mut quiet).is_err());
         // One of three that cannot go does not keep the others: they go, and the error says so.
         std::fs::write(dir.join("x"), b"x").unwrap();
