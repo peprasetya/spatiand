@@ -291,10 +291,12 @@ impl Loupe {
                         match self.folder.entries.iter().position(|e| e.path == path) {
                             Some(index) => self.open(index),
                             None => {
-                                // Not in the list -- a kind it does not know by name: shown anyway.
+                                // Not in the list -- a hidden file, or a kind it does not know by
+                                // name (then tried as a picture): shown anyway, as what it is.
                                 let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                                let index = self.folder.add(folder::Entry { name, path, kind: Kind::Picture, size });
+                                let kind = folder::kind_of(&path).unwrap_or(Kind::Picture);
+                                let index = self.folder.add(folder::Entry { name, path, kind, size });
                                 self.open(index);
                             }
                         }
@@ -501,9 +503,43 @@ impl Folder {
     }
 }
 
+/// What SpatiLoupe was started on.
+#[derive(Debug, PartialEq)]
+enum Asked {
+    Folder(PathBuf),
+    File(PathBuf),
+}
+
+/// What a place named on the command line is. A place on this machine wins over a name that
+/// reads as a remote's (`a:b.jpg` here), and is made whole -- from the working folder, `..` taken
+/// away, but a link left a link, so that a linked file opens among its link's neighbours -- so
+/// that its folder has a name and an Up. A remote's `remote:folder/` is its folder, without the
+/// trailing `/` that left it with no name and an Up to itself.
+fn asked_place(raw: PathBuf) -> Asked {
+    let remote = place::remote(&raw);
+    if raw.exists() || remote.is_none() {
+        let whole = std::path::absolute(&raw).unwrap_or(raw);
+        let mut path = PathBuf::new();
+        for part in whole.components() {
+            match part {
+                std::path::Component::ParentDir => {
+                    path.pop();
+                }
+                std::path::Component::CurDir => {}
+                part => path.push(part),
+            }
+        }
+        return if path.is_dir() { Asked::Folder(path) } else { Asked::File(path) };
+    }
+    let (r, p) = remote.unwrap_or_default();
+    let folderish = p.is_empty() || p.ends_with('/') || folder::kind_of(&raw).is_none();
+    let path = PathBuf::from(format!("{r}:{}", p.trim_end_matches('/')));
+    if folderish { Asked::Folder(path) } else { Asked::File(path) }
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let asked = std::env::args_os().nth(1).map(PathBuf::from);
+    let asked = std::env::args_os().nth(1).map(PathBuf::from).map(asked_place);
     let run = || -> Result<(), String> {
         let mut app = App::connect("id.prasetya.spatiand.spatiloupe")?;
         let window = app.open("SpatiLoupe", WINDOW);
@@ -531,11 +567,8 @@ fn main() {
             left: Vec::new(),
         };
         match asked {
-            Some(path) if path.is_dir() => loupe.list(path, None),
-            // A remote's folder: `remote:` or `remote:folder/`.
-            Some(path) if place::remote(&path).is_some_and(|(_, p)| p.is_empty() || p.ends_with('/') || folder::kind_of(&path).is_none()) => loupe.list(path, None),
-            Some(path) => {
-                let path = if place::remote(&path).is_some() { path } else { std::fs::canonicalize(&path).unwrap_or(path) };
+            Some(Asked::Folder(path)) => loupe.list(path, None),
+            Some(Asked::File(path)) => {
                 let folder = place::parent(&path).unwrap_or_else(folder::home);
                 loupe.opening = Some(path.clone());
                 loupe.list(folder, Some(path));
@@ -568,6 +601,35 @@ mod tests {
         assert_eq!(ticket, 1);
         assert!(result.is_err_and(|e| e.contains("a decoder's bug")));
         assert_eq!(answer(&answers), (2, Ok(0)));
+    }
+
+    #[test]
+    fn a_place_named_on_the_command_line_is_what_it_is() {
+        // A remote's folder, with and without its trailing slash, its top, and a file in it.
+        assert_eq!(asked_place("Drive:Photos/".into()), Asked::Folder("Drive:Photos".into()));
+        assert_eq!(asked_place("Drive:Photos".into()), Asked::Folder("Drive:Photos".into()));
+        assert_eq!(asked_place("Drive:".into()), Asked::Folder("Drive:".into()));
+        assert_eq!(asked_place("Drive:Photos/a.jpg".into()), Asked::File("Drive:Photos/a.jpg".into()));
+        let dir = std::env::temp_dir().join(format!("spatiloupe-asked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("trip/real")).unwrap();
+        std::fs::write(dir.join("trip/real/a.jpg"), b"x").unwrap();
+        // A link to a picture in another folder opens among the link's neighbours.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.join("trip/real/a.jpg"), dir.join("trip/b.jpg")).unwrap();
+            assert_eq!(asked_place(dir.join("trip/b.jpg")), Asked::File(dir.join("trip/b.jpg")));
+        }
+        assert_eq!(asked_place(dir.join("trip/real/../real")), Asked::Folder(dir.join("trip/real")));
+        // Relative names, and one with a colon that is a file here, from the working folder (no
+        // other test reads a relative path).
+        std::fs::write(dir.join("trip/x:y.jpg"), b"x").unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir.join("trip")).unwrap();
+        let relative = (asked_place("x:y.jpg".into()), asked_place("real".into()), asked_place(".".into()));
+        std::env::set_current_dir(cwd).unwrap();
+        assert_eq!(relative, (Asked::File(dir.join("trip/x:y.jpg")), Asked::Folder(dir.join("trip/real")), Asked::Folder(dir.join("trip"))));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

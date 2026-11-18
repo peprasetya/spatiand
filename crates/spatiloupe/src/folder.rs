@@ -131,6 +131,17 @@ pub fn size_words(bytes: u64) -> String {
     }
 }
 
+/// An entry's tile before its picture has come: its name, what it is, and how big.
+fn tile_of(e: &Entry) -> Tile {
+    let (icon, tint, detail) = match e.kind {
+        Kind::Folder => (Some(Icon::Folder), Some(([0.20, 0.55, 0.62, 0.40], [0.10, 0.22, 0.32, 0.25])), None),
+        Kind::Model => (Some(Icon::Cube), Some(([0.45, 0.36, 0.85, 0.45], [0.18, 0.14, 0.40, 0.25])), Some(format!("3D object  \u{b7}  {}", size_words(e.size)))),
+        Kind::Pdf => (Some(Icon::Document), None, Some(format!("PDF  \u{b7}  {}", size_words(e.size)))),
+        Kind::Picture => (Some(Icon::Picture), None, Some(size_words(e.size))),
+    };
+    Tile { title: e.name.clone(), detail, icon, tint, ..Tile::default() }
+}
+
 pub enum State {
     Loading(Instant),
     Failed(String),
@@ -203,18 +214,7 @@ impl Folder {
             Err(e) => self.state = State::Failed(e),
             Ok(entries) => {
                 self.left.extend(self.tiles.drain(..).filter_map(|t| t.picture));
-                self.tiles = entries
-                    .iter()
-                    .map(|e| {
-                        let (icon, tint, detail) = match e.kind {
-                            Kind::Folder => (Some(Icon::Folder), Some(([0.20, 0.55, 0.62, 0.40], [0.10, 0.22, 0.32, 0.25])), None),
-                            Kind::Model => (Some(Icon::Cube), Some(([0.45, 0.36, 0.85, 0.45], [0.18, 0.14, 0.40, 0.25])), Some(format!("3D object  \u{b7}  {}", size_words(e.size)))),
-                            Kind::Pdf => (Some(Icon::Document), None, Some(format!("PDF  \u{b7}  {}", size_words(e.size)))),
-                            Kind::Picture => (Some(Icon::Picture), None, Some(size_words(e.size))),
-                        };
-                        Tile { title: e.name.clone(), detail, icon, tint, ..Tile::default() }
-                    })
-                    .collect();
+                self.tiles = entries.iter().map(tile_of).collect();
                 self.seen = vec![None; entries.len()];
                 self.asked = vec![false; entries.len()];
                 let at = self.cursor_on.take().and_then(|p| entries.iter().position(|e| e.path == p));
@@ -229,7 +229,7 @@ impl Folder {
     /// where it is. Its tile and its having been asked for are kept beside it, as the listing's
     /// are, or every list indexed by entry runs one short.
     pub fn add(&mut self, entry: Entry) -> usize {
-        self.tiles.push(Tile { title: entry.name.clone(), detail: Some(size_words(entry.size)), icon: Some(Icon::Picture), ..Tile::default() });
+        self.tiles.push(tile_of(&entry));
         self.seen.push(None);
         self.asked.push(false);
         self.entries.push(entry);
