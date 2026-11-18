@@ -1183,7 +1183,9 @@ impl Quill {
 fn word_at(screen: &Screen, at: (u16, u16)) -> ((u16, u16), (u16, u16)) {
     let cols = screen.cols as usize;
     let row = at.1 as usize;
-    let line = &screen.cells[row * cols..(row + 1) * cols];
+    // A cell the screen does not have (none come yet, or a screen smaller than the window's
+    // cells, not yet resized): no word.
+    let Some(line) = screen.cells.get(row * cols..(row + 1) * cols).filter(|_| (at.0 as usize) < cols) else { return (at, at) };
     let is_word = |c: char| !c.is_whitespace() && !"()[]{}<>'\"`|;,".contains(c);
     let (mut a, mut b) = (at.0 as usize, at.0 as usize);
     if !is_word(line[a].c) {
@@ -1371,6 +1373,31 @@ fn quoted(path: &str) -> String {
         return path.to_string();
     }
     format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod word_tests {
+    use super::*;
+
+    fn screen(text: &str, cols: u16) -> Screen {
+        let cells = text.chars().map(|c| wire::Cell { c, fg: [0; 3], bg: [0; 3], flags: 0 }).collect();
+        Screen { cols, rows: (text.chars().count() / cols as usize) as u16, cells, ..Screen::default() }
+    }
+
+    #[test]
+    fn a_double_click_selects_the_word_there() {
+        let s = screen("ls  foo.txt ", 12);
+        assert_eq!(word_at(&s, (5, 0)), ((4, 0), (10, 0)));
+        assert_eq!(word_at(&s, (2, 0)), ((2, 0), (2, 0)));
+    }
+
+    #[test]
+    fn a_cell_off_the_screen_is_no_word() {
+        assert_eq!(word_at(&Screen::default(), (3, 2)), ((3, 2), (3, 2)));
+        let s = screen("abcd", 4);
+        assert_eq!(word_at(&s, (6, 0)), ((6, 0), (6, 0)));
+        assert_eq!(word_at(&s, (1, 3)), ((1, 3), (1, 3)));
+    }
 }
 
 #[cfg(test)]
