@@ -44,6 +44,8 @@ use voice::Voice;
 
 const APP_ID: &str = "id.prasetya.spatiand.spatipal";
 const WINDOW: (u32, u32) = (1500, 1000);
+/// The trouble line when the brain's thread has gone.
+const BRAIN_GONE: &str = "Its answering stopped with a fault: quit SpatiPal and start it again.";
 
 /// Something to wake the window's thread with, from any other: a byte down a pipe it watches.
 #[derive(Clone)]
@@ -355,6 +357,9 @@ impl Pal {
         }
         let turn = Turn { number: 0, text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), ended };
         self.answering = self.brain.ask(turn).map(|turn| Answering { turn, chat: chat_id, ..Default::default() });
+        if self.answering.is_none() {
+            self.say_trouble(BRAIN_GONE);
+        }
         self.dirty = true;
     }
 
@@ -697,8 +702,19 @@ impl Pal {
             for (json, reply) in self.room_asks.try_iter().collect::<Vec<_>>() {
                 self.app.room_ask(&json, reply);
             }
-            for (turn, told) in self.told.try_iter().collect::<Vec<_>>() {
-                self.told(turn, told);
+            loop {
+                match self.told.try_recv() {
+                    Ok((turn, told)) => self.told(turn, told),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    // The brain's thread has ended (only a fault ends it): no answer is coming,
+                    // and the window does not wait for one.
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        if self.answering.take().is_some() {
+                            self.say_trouble(BRAIN_GONE);
+                        }
+                        break;
+                    }
+                }
             }
             for heard in self.heard.try_iter().collect::<Vec<_>>() {
                 self.heard(heard);

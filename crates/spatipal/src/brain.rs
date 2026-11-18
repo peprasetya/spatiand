@@ -738,6 +738,20 @@ mod tests {
     }
 
     #[test]
+    fn code_ending_in_a_character_of_several_bytes_is_kept_whole() {
+        let voice = Voice::silent();
+        for code in ["```\u{65e5}", "```let s = \"\u{e9}", "```\u{1f600}", "```x\u{e9}"] {
+            let (mut pending, mut in_code) = (code.to_string(), false);
+            speak_out(&mut pending, &mut in_code, &voice, false);
+            assert!(in_code);
+            // And the fence closing after it is still found.
+            pending.push_str("```");
+            speak_out(&mut pending, &mut in_code, &voice, false);
+            assert!(!in_code, "{code:?}");
+        }
+    }
+
+    #[test]
     fn a_yes_is_only_a_yes() {
         // Begun with a yes-word, but asking something else: neither, and what was held goes.
         assert_eq!(agreement("Please scroll down instead"), None);
@@ -824,8 +838,12 @@ fn speak_out(pending: &mut String, in_code: &mut bool, voice: &Voice, all: bool)
                     }
                 }
                 None => {
-                    // Kept until the fence closes; a partial fence ("``") must not be lost.
-                    let keep = pending.len().saturating_sub(2);
+                    // Kept until the fence closes; a partial fence ("``") must not be lost. On a
+                    // character's start: code ending in "é" or "日" is not cut inside it.
+                    let mut keep = pending.len().saturating_sub(2);
+                    while !pending.is_char_boundary(keep) {
+                        keep -= 1;
+                    }
                     pending.drain(..keep);
                     return;
                 }
