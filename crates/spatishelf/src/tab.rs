@@ -395,12 +395,31 @@ fn delete(place: &Place, storage: &Mutex<Option<Storage>>) -> Result<(), String>
     }
 }
 
+/// `act` done to each of `items`, all of them, whatever fails on the way: one that cannot be
+/// done does not keep the rest from being done. What failed said: one's own error, or how many
+/// and the first's.
+fn each(items: &[Place], mut act: impl FnMut(&Place) -> Result<(), String>) -> Result<(), String> {
+    let mut failed = 0;
+    let mut first = None;
+    for item in items {
+        if let Err(e) = act(item) {
+            failed += 1;
+            first.get_or_insert(e);
+        }
+    }
+    match first {
+        None => Ok(()),
+        Some(e) if items.len() == 1 => Err(e),
+        Some(e) => Err(format!("{failed} of {} could not be done; the first: {e}", items.len())),
+    }
+}
+
 fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, u64, &str)) -> Result<(), String> {
     match op {
-        Op::Copy { from, to } => from.iter().try_for_each(|item| transfer(item, &to, false, storage, report)),
+        Op::Copy { from, to } => each(&from, |item| transfer(item, &to, false, storage, report)),
         // Moved onto the trash: put in it.
         Op::Move { from, to: Place::Trash } => run_op(Op::Trash(from), storage, report),
-        Op::Move { from, to } => from.iter().try_for_each(|item| {
+        Op::Move { from, to } => each(&from, |item| {
             if item.parent().as_ref() == Some(&to) {
                 return Ok(());
             }
@@ -411,13 +430,13 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
             }
             Ok(())
         }),
-        Op::Trash(items) => items.iter().try_for_each(|item| match item {
+        Op::Trash(items) => each(&items, |item| match item {
             Place::Local(p) => crate::trash::put(Path::new(p)),
             Place::Remote(..) => Err("A remote has no trash here: delete it instead.".into()),
             Place::Trash => Ok(()),
         }),
-        Op::Delete(items) => items.iter().try_for_each(|item| delete(item, storage)),
-        Op::Restore(items) => items.iter().try_for_each(|item| match item {
+        Op::Delete(items) => each(&items, |item| delete(item, storage)),
+        Op::Restore(items) => each(&items, |item| match item {
             Place::Local(p) => crate::trash::restore(Path::new(p)).map(|_| ()),
             _ => Err("That is not in the Trash.".into()),
         }),
@@ -698,6 +717,12 @@ mod tests {
         run_op(Op::Mkdir { inside: place("dst"), name: "new".into() }, &kept, &mut quiet).unwrap();
         assert!(dir.join("dst/new").is_dir());
         assert!(run_op(Op::Copy { from: vec![place("src")], to: place("src/inner") }, &kept, &mut quiet).is_err());
+        // One of three that cannot go does not keep the others: they go, and the error says so.
+        std::fs::write(dir.join("x"), b"x").unwrap();
+        std::fs::write(dir.join("y"), b"y").unwrap();
+        let error = run_op(Op::Move { from: vec![place("x"), place("gone"), place("y")], to: place("dst/new") }, &kept, &mut quiet).unwrap_err();
+        assert!(error.starts_with("1 of 3 could not be done; the first: "), "{error}");
+        assert!(dir.join("dst/new/x").exists() && dir.join("dst/new/y").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
