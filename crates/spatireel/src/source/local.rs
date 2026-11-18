@@ -14,14 +14,7 @@ pub struct Local {
 
 impl Local {
     pub fn new(top: PathBuf) -> Local {
-        let label = if cfg!(target_os = "macos") {
-            "This Mac"
-        } else if cfg!(target_os = "android") {
-            "This device"
-        } else {
-            "This computer"
-        };
-        Local { top, label: label.to_string() }
+        Local { top, label: spatiand_app::ui::look::this_device().to_string() }
     }
 
     pub fn item(path: &Path) -> Item {

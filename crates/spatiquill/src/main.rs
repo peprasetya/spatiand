@@ -1060,9 +1060,9 @@ impl Quill {
         let selected = self.active_tab(w).and_then(|t| self.tabs.get(&t)).is_some_and(|t| t.screen.cells.iter().any(|c| c.flags & wire::flags::SELECTED != 0));
         let mut items = Vec::new();
         if selected {
-            items.push((Row::with("Copy", "Ctrl+C"), MenuItem::Copy));
+            items.push((Row::with("Copy", look::chord("C")), MenuItem::Copy));
         }
-        items.push((Row::with("Paste", "Ctrl+V"), MenuItem::Paste));
+        items.push((Row::with("Paste", look::chord("V")), MenuItem::Paste));
         items.push((Row::new("Select all"), MenuItem::SelectAll));
         let mut list = List::default();
         list.focused = true;

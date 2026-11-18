@@ -202,11 +202,6 @@ fn stem_chars(name: &str, folder: bool) -> usize {
     }
 }
 
-/// A shortcut as this machine writes it.
-pub fn keys(letter: &str) -> String {
-    if cfg!(target_os = "macos") { format!("\u{2318}{letter}") } else { format!("Ctrl+{letter}") }
-}
-
 impl Shelf {
     /// Where the thing at `at` (among those shown) is drawn: its whole cell, its face, its name.
     pub(crate) fn cell(&self, at: usize) -> (Rect, Rect, Rect) {
@@ -837,7 +832,7 @@ impl Shelf {
                 entries.push((Row::new(if several { format!("Put back {} items", tab.selected.len()) } else { "Put back".into() }).icon(Icon::Back), Action::Restore));
             }
             entries.push((Row::new("Open with\u{2026}").icon(Icon::Forward), Action::OpenWithMenu));
-            entries.push((Row::with("Copy", keys("C")).icon(Icon::Copy), Action::Copy));
+            entries.push((Row::with("Copy", room::chord("C")).icon(Icon::Copy), Action::Copy));
             entries.push((Row::new("Move to\u{2026}").icon(Icon::Forward), Action::MoveToMenu));
             entries.push((Row::new("Copy to\u{2026}").icon(Icon::Copy), Action::CopyToMenu));
             entries.push((Row::with("Delete for good\u{2026}", "Delete").icon(Icon::Trash), Action::Delete));
@@ -854,15 +849,15 @@ impl Shelf {
         // Finder's Open With: this machine's applications for it, Spatiand's own among them.
         entries.push((Row::new("Open with\u{2026}").icon(Icon::Forward), Action::OpenWithMenu));
         let count = if several { format!(" {} items", tab.selected.len()) } else { String::new() };
-        entries.push((Row::with(format!("Copy{count}"), keys("C")).icon(Icon::Copy), Action::Copy));
-        entries.push((Row::with(format!("Cut{count}"), keys("X")).icon(Icon::Cut), Action::Cut));
+        entries.push((Row::with(format!("Copy{count}"), room::chord("C")).icon(Icon::Copy), Action::Copy));
+        entries.push((Row::with(format!("Cut{count}"), room::chord("X")).icon(Icon::Cut), Action::Cut));
         if item.kind == Kind::Folder && self.clipboard.is_some() {
             entries.push((Row::new("Paste into this folder").icon(Icon::Paste), Action::PasteInto(place.clone())));
         }
         entries.push((Row::new("Move to\u{2026}").icon(Icon::Forward), Action::MoveToMenu));
         entries.push((Row::new("Copy to\u{2026}").icon(Icon::Copy), Action::CopyToMenu));
         if local {
-            entries.push((Row::with("Duplicate", keys("D")).icon(Icon::Copy), Action::Duplicate));
+            entries.push((Row::with("Duplicate", room::chord("D")).icon(Icon::Copy), Action::Duplicate));
         }
         if !several {
             entries.push((Row::with("Rename", "F2").icon(Icon::Pencil), Action::Rename));
@@ -886,7 +881,7 @@ impl Shelf {
             vec![(Row::with("New folder", if cfg!(target_os = "macos") { "\u{21e7}\u{2318}N" } else { "Ctrl+Shift+N" }).icon(Icon::Folder), Action::NewFolder)]
         };
         if self.clipboard.is_some() && !in_trash {
-            entries.push((Row::with("Paste here", keys("V")).icon(Icon::Paste), Action::Paste));
+            entries.push((Row::with("Paste here", room::chord("V")).icon(Icon::Paste), Action::Paste));
         }
         let (view, icon) = if self.view == View::Grid { ("Show as a list", Icon::List) } else { ("Show as tiles", Icon::Grid) };
         entries.push((Row::new(view).icon(icon), Action::SetView(if self.view == View::Grid { View::List } else { View::Grid })));
@@ -896,7 +891,7 @@ impl Shelf {
             entries.push((Row::new("Open SpatiQuill here").icon(Icon::Terminal), Action::TerminalHere));
         }
         entries.push((Row::new("Open in a new tab").icon(Icon::Plus), Action::OpenInTab(self.tabs[self.active].place.clone())));
-        entries.push((Row::with("Refresh", keys("R")).icon(Icon::Refresh), Action::Refresh));
+        entries.push((Row::with("Refresh", room::chord("R")).icon(Icon::Refresh), Action::Refresh));
         entries.push((Row::new("Copy the path").icon(Icon::Link), Action::CopyPath));
         entries.push((Row::new("About SpatiShelf").icon(Icon::Info), Action::About));
         self.open_menu(at, entries);

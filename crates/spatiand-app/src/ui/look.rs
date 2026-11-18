@@ -218,6 +218,24 @@ pub fn glass(p: &mut Painter, gl: &Gl, rect: Rect, radius: f32, strength: f32) {
     }
 }
 
+/// A shortcut held with Command (on the Mac) or Control (elsewhere), as this machine writes it
+/// in a menu or a hint: "\u{2318}C" on the Mac, "Ctrl+C" elsewhere.
+pub fn chord(keys: &str) -> String {
+    if cfg!(target_os = "macos") { format!("\u{2318}{keys}") } else { format!("Ctrl+{keys}") }
+}
+
+/// What this machine is called among other places things are on: "This Mac", "This device"
+/// (Android), "This computer".
+pub fn this_device() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "This Mac"
+    } else if cfg!(target_os = "android") {
+        "This device"
+    } else {
+        "This computer"
+    }
+}
+
 /// The window dimmed behind a pane, a question or a menu over it.
 pub fn scrim(p: &mut Painter, gl: &Gl, all: Rect) {
     p.fill(gl, all, 0.0, [0.0, 0.0, 0.0, 0.35]);
