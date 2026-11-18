@@ -771,9 +771,13 @@ struct Grab {
     clicks: u8,
 }
 
-/// How near in time and place two presses are to be one double click.
-const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(450);
-const DOUBLE_CLICK_SLOP: f32 = 6.0;
+/// How near in time and place two presses are to be one double click: in every app, a list's,
+/// a field's, a file's or a picture's.
+pub const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(450);
+pub const DOUBLE_CLICK_SLOP: f32 = 6.0;
+/// How far, in logical pixels, a press goes before it is a drag rather than a press: a band,
+/// a file carried, a picture swiped.
+pub const DRAG_AFTER: f32 = 8.0;
 
 /// Which kind of character a word is made of: a double click chooses a run of one kind.
 fn word_class(c: char) -> u8 {
