@@ -294,10 +294,24 @@ pub enum MenuAsk {
     /// from the top (the menu bar's own items).
     Open { window: WindowId },
     /// Row `row` of the level last said was chosen: say the level it opens, or press it and say
-    /// [`MenuSaid::Done`].
-    Choose { row: u32 },
+    /// [`MenuSaid::Done`]. `level` is the number of the level it was chosen in
+    /// ([`MenuSaid::Level`]'s), for the host to pass over a choice made in a level it has since
+    /// left (a second press before the next level arrived). At the end, and absent from an
+    /// older session: then the choice is taken as before.
+    Choose {
+        row: u32,
+        #[serde(default, deserialize_with = "absent_at_end")]
+        level: Option<u32>,
+    },
     /// Up a level: say that one, or `Done` if this was the top.
     Back,
+}
+
+/// A number added at the end of a message, read as none from an older peer's, which ends before
+/// it: postcard, which is not self-describing, says so as an error (`#[serde(default)]` alone is
+/// only for formats that can say a field is missing, as JSON can).
+fn absent_at_end<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u32>, D::Error> {
+    Ok(Option::<u32>::deserialize(d).unwrap_or(None))
 }
 
 /// What the host says of a window's application menus.
@@ -306,8 +320,15 @@ pub enum MenuSaid {
     /// This window's application has menus the session can open ([`MenuAsk::Open`]): its title
     /// bar gets a menu button. Said after the window's `Opened`.
     Offered { window: WindowId },
-    /// The level of the menu that is open: what it is called, and its rows.
-    Level { title: String, rows: Vec<MenuRow> },
+    /// The level of the menu that is open: what it is called, and its rows; and its number,
+    /// new for each level said, to be given back with what is chosen in it. At the end, and
+    /// absent from an older host.
+    Level {
+        title: String,
+        rows: Vec<MenuRow>,
+        #[serde(default, deserialize_with = "absent_at_end")]
+        level: Option<u32>,
+    },
     /// The menu is done with: something was chosen and pressed, it was backed out of, or the
     /// application would not say.
     Done,
@@ -664,7 +685,8 @@ mod tests {
             ClientMessage::PairStart { spake: vec![0x41; 33] },
             ClientMessage::PairConfirm { confirm: vec![7; 32] },
             ClientMessage::Menu(MenuAsk::Open { window: WindowId(4) }),
-            ClientMessage::Menu(MenuAsk::Choose { row: 2 }),
+            ClientMessage::Menu(MenuAsk::Choose { row: 2, level: None }),
+            ClientMessage::Menu(MenuAsk::Choose { row: 2, level: Some(7) }),
             ClientMessage::Menu(MenuAsk::Back),
             ClientMessage::NoticePress {},
         ];
@@ -724,6 +746,7 @@ mod tests {
             HostMessage::Menu(MenuSaid::Level {
                 title: "TextEdit".into(),
                 rows: vec![MenuRow { label: "File  \u{203A}".into(), detail: "Opens more".into() }],
+                level: Some(3),
             }),
             HostMessage::Menu(MenuSaid::Done),
             HostMessage::Held(Held::Locked { unlock: "Touch ID or its password".into() }),
@@ -743,7 +766,8 @@ mod tests {
         let json = r#"{"Menu":{"Level":{"title":"TextEdit \u2014 File","rows":[{"label":"New    \u2318N","detail":"Also \u2318N on the keyboard"},{"label":"Open Recent  \u203a","detail":"Opens more"}]}}}"#;
         let said: HostMessage = serde_json::from_str(json).unwrap();
         match said {
-            HostMessage::Menu(MenuSaid::Level { title, rows }) => {
+            HostMessage::Menu(MenuSaid::Level { title, rows, level }) => {
+                assert_eq!(level, None, "an older host's level has no number");
                 assert_eq!(title, "TextEdit \u{2014} File");
                 assert_eq!(rows.len(), 2);
                 assert_eq!(rows[1].detail, "Opens more");
@@ -755,7 +779,13 @@ mod tests {
         assert_eq!(serde_json::from_str::<HostMessage>(r#"{"Menu":"Done"}"#).unwrap(), HostMessage::Menu(MenuSaid::Done));
         // What the app is handed of what a session says.
         assert_eq!(serde_json::to_string(&ClientMessage::Menu(MenuAsk::Open { window: WindowId(3) })).unwrap(), r#"{"Menu":{"Open":{"window":3}}}"#);
-        assert_eq!(serde_json::to_string(&ClientMessage::Menu(MenuAsk::Choose { row: 1 })).unwrap(), r#"{"Menu":{"Choose":{"row":1}}}"#);
+        assert_eq!(serde_json::to_string(&ClientMessage::Menu(MenuAsk::Choose { row: 1, level: None })).unwrap(), r#"{"Menu":{"Choose":{"row":1,"level":null}}}"#);
+        assert_eq!(
+            serde_json::to_string(&ClientMessage::Menu(MenuAsk::Choose { row: 1, level: Some(4) })).unwrap(),
+            r#"{"Menu":{"Choose":{"row":1,"level":4}}}"#
+        );
+        let numbered: HostMessage = serde_json::from_str(r#"{"Menu":{"Level":{"title":"TextEdit","rows":[],"level":4}}}"#).unwrap();
+        assert_eq!(numbered, HostMessage::Menu(MenuSaid::Level { title: "TextEdit".into(), rows: vec![], level: Some(4) }));
         assert_eq!(serde_json::to_string(&ClientMessage::Menu(MenuAsk::Back)).unwrap(), r#"{"Menu":"Back"}"#);
     }
 
@@ -769,6 +799,31 @@ mod tests {
         let bytes = crate::to_bytes(&HostMessage::Menu(MenuSaid::Done)).unwrap();
         let reply = crate::to_bytes(&HostMessage::PairReply { spake: vec![], confirm: vec![] }).unwrap();
         assert_eq!(bytes[0], reply[0] + 1);
+    }
+
+    #[test]
+    fn a_menu_levels_number_crosses_to_and_from_an_older_peer() {
+        // What an older build wrote, and reads: the same messages without the number at the end.
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        enum OldAsk {
+            Open { window: WindowId },
+            Choose { row: u32 },
+        }
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        enum OldSaid {
+            Offered { window: WindowId },
+            Level { title: String, rows: Vec<MenuRow> },
+        }
+        // Older to newer: no number.
+        let old = crate::to_bytes(&OldAsk::Choose { row: 5 }).unwrap();
+        assert_eq!(crate::from_bytes::<MenuAsk>(&old).unwrap(), MenuAsk::Choose { row: 5, level: None });
+        let old = crate::to_bytes(&OldSaid::Level { title: "Edit".into(), rows: vec![] }).unwrap();
+        assert_eq!(crate::from_bytes::<MenuSaid>(&old).unwrap(), MenuSaid::Level { title: "Edit".into(), rows: vec![], level: None });
+        // Newer to older: the number is passed over.
+        let new = crate::to_bytes(&MenuAsk::Choose { row: 5, level: Some(9) }).unwrap();
+        assert_eq!(crate::from_bytes::<OldAsk>(&new).unwrap(), OldAsk::Choose { row: 5 });
+        let new = crate::to_bytes(&MenuSaid::Level { title: "Edit".into(), rows: vec![], level: Some(9) }).unwrap();
+        assert_eq!(crate::from_bytes::<OldSaid>(&new).unwrap(), OldSaid::Level { title: "Edit".into(), rows: vec![] });
     }
 
     #[test]

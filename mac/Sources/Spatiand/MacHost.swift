@@ -796,8 +796,8 @@ final class MacHost {
     /// (`RoomMenus`), each level said over the link. On a queue of their own: an application
     /// answers Accessibility when it likes.
     private let menuQueue = DispatchQueue(label: "host-menus")
-    private lazy var menus = RoomMenus(say: { [weak self] title, rows in
-        self?.link?.say(["Menu": ["Level": ["title": title, "rows": rows.map { ["label": $0.label, "detail": $0.detail] }]]])
+    private lazy var menus = RoomMenus(say: { [weak self] title, rows, level in
+        self?.link?.say(["Menu": ["Level": ["title": title, "rows": rows.map { ["label": $0.label, "detail": $0.detail] }, "level": Int(level)]]])
     }, done: { [weak self] in
         self?.link?.say(["Menu": "Done"])
     })
@@ -826,7 +826,9 @@ final class MacHost {
                 }
             case "Choose":
                 let row = (fields["row"] as? NSNumber)?.intValue ?? -1
-                menuQueue.async { menus.choose(row) }
+                // (None from an older session: taken as before.)
+                let level = (fields["level"] as? NSNumber).map { UInt32(truncatingIfNeeded: $0.intValue) }
+                menuQueue.async { menus.choose(row, in: level) }
             default:
                 break
             }

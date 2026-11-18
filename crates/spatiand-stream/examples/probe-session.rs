@@ -129,7 +129,7 @@ async fn main() {
                                 (HostMessage::Welcome { .. }, 0) => value("--menu-window")
                                     .and_then(|n| n.parse().ok())
                                     .map(|n| MenuAsk::Open { window: spatiand_stream::WindowId(n) }),
-                                (HostMessage::Menu(MenuSaid::Level { .. }), 1) => Some(MenuAsk::Choose { row: 0 }),
+                                (HostMessage::Menu(MenuSaid::Level { .. }), 1) => Some(MenuAsk::Choose { row: 0, level: None }),
                                 (HostMessage::Menu(MenuSaid::Level { .. }), 2 | 3) => Some(MenuAsk::Back),
                                 (HostMessage::Menu(MenuSaid::Done), step) => {
                                     println!("menu: done after {step} step(s)");

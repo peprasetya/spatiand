@@ -53,6 +53,24 @@ struct Menus {
     hosts: HashMap<String, tokio::sync::mpsc::UnboundedSender<Command>>,
     open_on: Option<Owner>,
     said: Option<Said>,
+    /// The number of the level on show, as its host said it (an older host says none).
+    level: Option<u32>,
+    /// **A row was chosen and what it leads to is not here yet**: a second press meanwhile was
+    /// applied to the level that came next, a row the wearer never saw. Passed over until the
+    /// next word, or for a moment if none comes.
+    asked: Option<std::time::Instant>,
+}
+
+/// How long a choice still waiting for its answer holds the list still.
+const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+impl Menus {
+    /// A new word of the open menu: what was waited for has come.
+    fn heard(&mut self, said: Said, level: Option<u32>) {
+        self.asked = None;
+        self.level = level;
+        self.said = Some(said);
+    }
 }
 
 fn menus() -> std::sync::MutexGuard<'static, Menus> {
@@ -103,18 +121,18 @@ pub(crate) fn forget_host(host: &str) {
 
 /// What a host said of the menu that is open.
 pub(crate) fn host_said(host: &str, said: MenuSaid) {
-    let said = match said {
+    let (said, level) = match said {
         MenuSaid::Offered { .. } => return,
-        MenuSaid::Level { title, rows } => {
-            Said::Level { title, rows: rows.into_iter().map(|r| (r.label, r.detail)).collect() }
+        MenuSaid::Level { title, rows, level } => {
+            (Said::Level { title, rows: rows.into_iter().map(|r| (r.label, r.detail)).collect() }, level)
         }
-        MenuSaid::Done => Said::Done,
+        MenuSaid::Done => (Said::Done, None),
     };
     let mut m = menus();
     // Only the host whose menu is open speaks for it: a late word from one closed since is not
     // put in front of the wearer.
     if m.open_on == Some(Owner::Host(host.to_string())) {
-        m.said = Some(said);
+        m.heard(said, level);
     }
 }
 
@@ -123,7 +141,7 @@ pub(crate) fn host_said(host: &str, said: MenuSaid) {
 pub fn local_said(said: Said) {
     let mut m = menus();
     if m.open_on == Some(Owner::Local) {
-        m.said = Some(said);
+        m.heard(said, None);
     }
 }
 
@@ -153,6 +171,8 @@ pub fn open(state: &crate::Spatiand, window: &smithay::desktop::Window) -> bool 
         let mut m = menus();
         m.open_on = Some(Owner::Local);
         m.said = None;
+        m.level = None;
+        m.asked = None;
         drop(m);
         crate::mac::app_menu_wanted(window);
         return true;
@@ -163,19 +183,38 @@ pub fn open(state: &crate::Spatiand, window: &smithay::desktop::Window) -> bool 
     let Some(commands) = m.hosts.get(&host).cloned() else { return false };
     m.open_on = Some(Owner::Host(host.clone()));
     m.said = None;
+    m.level = None;
+    m.asked = None;
     drop(m);
     log::info!("menus: asking {host} for the menus of its window {number}");
     commands.send(Command::Menu(MenuAsk::Open { window: spatiand_stream::WindowId(number) })).is_ok()
 }
 
-/// Row `row` of the level on show was chosen.
+/// Row `row` of the level on show was chosen; given with that level's number, for the host to
+/// pass over a choice made in a level it has left.
 pub fn chosen(row: usize) {
-    tell(MenuAsk::Choose { row: row as u32 });
+    let Some(level) = waited_for() else { return };
+    tell(MenuAsk::Choose { row: row as u32, level });
 }
 
 /// Up a level, or out of the menu from the top.
 pub fn back() {
+    if waited_for().is_none() {
+        return;
+    }
     tell(MenuAsk::Back);
+}
+
+/// Whether a press may be taken now (with the level on show's number), or is passed over
+/// because the last one's answer is still awaited; one taken is then waited for.
+fn waited_for() -> Option<Option<u32>> {
+    let mut m = menus();
+    if m.asked.is_some_and(|at| at.elapsed() < ANSWER_WAIT) {
+        log::info!("menus: a press before the last one was answered, passed over");
+        return None;
+    }
+    m.asked = Some(std::time::Instant::now());
+    Some(m.level)
 }
 
 fn tell(ask: MenuAsk) {
@@ -193,7 +232,7 @@ fn tell(ask: MenuAsk) {
         Some(Owner::Local) => {
             drop(m);
             match ask {
-                MenuAsk::Choose { row } => crate::mac::app_menu_chosen(row as usize),
+                MenuAsk::Choose { row, .. } => crate::mac::app_menu_chosen(row as usize),
                 MenuAsk::Back => crate::mac::app_menu_back(),
                 MenuAsk::Open { .. } => {}
             }
@@ -206,7 +245,7 @@ fn tell(ask: MenuAsk) {
 }
 
 fn local_done() {
-    menus().said = Some(Said::Done);
+    menus().heard(Said::Done, None);
 }
 
 /// What was said of the open menu since the last look: a level to show, or that it is done.
@@ -238,9 +277,27 @@ mod tests {
             m.open_on = Some(Owner::Host("testhost".into()));
         }
         chosen(2);
-        assert!(matches!(inbox.try_recv(), Ok(Command::Menu(MenuAsk::Choose { row: 2 }))));
+        assert!(matches!(inbox.try_recv(), Ok(Command::Menu(MenuAsk::Choose { row: 2, level: None }))));
+        // A second press before the host has answered the first is passed over.
+        chosen(1);
+        back();
+        assert!(inbox.try_recv().is_err(), "nothing more asked before the answer");
+        let level = |n| MenuSaid::Level { title: "TextEdit — File".into(), rows: vec![], level: Some(n) };
+        host_said("testhost", level(8));
+        assert!(matches!(said(), Some(Said::Level { .. })));
+        // The answer came: the next press is taken, with that level's number.
+        chosen(0);
+        assert!(matches!(inbox.try_recv(), Ok(Command::Menu(MenuAsk::Choose { row: 0, level: Some(8) }))));
+        host_said("testhost", level(9));
+        assert!(matches!(said(), Some(Said::Level { .. })));
         back();
         assert!(matches!(inbox.try_recv(), Ok(Command::Menu(MenuAsk::Back))));
+        // A host that never answers holds the list only for a moment.
+        menus().asked = Some(std::time::Instant::now() - ANSWER_WAIT);
+        back();
+        assert!(matches!(inbox.try_recv(), Ok(Command::Menu(MenuAsk::Back))));
+        host_said("testhost", level(10));
+        assert!(said().is_some());
 
         // A level from another host is not shown; this one's is.
         host_said("otherhost", MenuSaid::Done);
@@ -250,6 +307,7 @@ mod tests {
             MenuSaid::Level {
                 title: "TextEdit".into(),
                 rows: vec![spatiand_stream::MenuRow { label: "File".into(), detail: "Opens more".into() }],
+                level: None,
             },
         );
         assert_eq!(said(), Some(Said::Level { title: "TextEdit".into(), rows: vec![("File".into(), "Opens more".into())] }));

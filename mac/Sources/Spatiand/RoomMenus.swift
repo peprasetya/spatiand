@@ -19,14 +19,14 @@ import CSpatiand
 
 final class RoomMenus {
     /// The Mac's own room's: what it reads is said to the compositor here.
-    static let shared = RoomMenus(say: { title, rows in
+    static let shared = RoomMenus(say: { title, rows, _ in
         sp_menu_begin(title)
         for row in rows { sp_menu_row(row.label, row.detail) }
         sp_menu_end()
     }, done: { sp_menu_close() })
 
     /// A level read, said: its title and each row's words and what is said under them.
-    typealias Say = (_ title: String, _ rows: [(label: String, detail: String)]) -> Void
+    typealias Say = (_ title: String, _ rows: [(label: String, detail: String)], _ level: UInt32) -> Void
     private let sayLevel: Say
     /// The menu is done with.
     private let sayDone: () -> Void
@@ -43,6 +43,9 @@ final class RoomMenus {
     }
 
     private var application = ""
+    /// The number of the level last said: new for each, so that a choice made in a level since
+    /// left (a session's second press before the next level reached it) is known and passed over.
+    private var level: UInt32 = 0
     /// The levels gone down through: what each is called, and its rows.
     private var levels: [(title: String, rows: [Row])] = []
     /// Said when something was chosen that may have opened a window.
@@ -88,7 +91,8 @@ final class RoomMenus {
             let label = (mark.isEmpty ? "" : "\u{2713} ") + title + (row.opens ? "  \u{203A}" : "") + (keys.isEmpty ? "" : "    " + keys)
             said.append((label, !enabled ? "Not available now" : row.opens ? "Opens more" : keys.isEmpty ? "" : "Also \(keys) on the keyboard"))
         }
-        sayLevel(level.title, said)
+        self.level &+= 1
+        sayLevel(level.title, said, self.level)
     }
 
     private func rows(_ items: [AXUIElement]) -> [Row] {
@@ -121,7 +125,13 @@ final class RoomMenus {
         say()
     }
 
-    func choose(_ index: Int) {
+    /// Row `index` of the level on show; `in` the number of the level it was chosen in, where the
+    /// one who chose says it (a session; an older one does not).
+    func choose(_ index: Int, in chosenIn: UInt32? = nil) {
+        if let chosenIn, chosenIn != self.level {
+            print("menus: a choice made in a level since left, passed over")
+            return
+        }
         guard let level = levels.last, index >= 0, index < level.rows.count else { sayDone(); return }
         let row = level.rows[index]
         if row.opens {
