@@ -1269,6 +1269,8 @@ fn main() {
     // Already running in this room: that SpatiQuill opens the window.
     let path = socket_path();
     let folder = std::env::args_os().nth(1).or_else(|| std::env::var_os("SPATIQUILL_FOLDER")).filter(|f| !f.is_empty()).map(PathBuf::from);
+    // `spatiquill .`: here, not wherever the SpatiQuill already running was started.
+    let folder = folder.map(|f| std::path::absolute(&f).unwrap_or(f));
     if let Ok(mut stream) = UnixStream::connect(&path) {
         if stream.write_all(&window_asking(folder.as_deref())).is_ok() {
             log::info!("SpatiQuill is already running; it opens the window");
