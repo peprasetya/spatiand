@@ -115,6 +115,30 @@ pub fn paste_bytes(text: &[u8], bracketed: bool) -> Vec<u8> {
     out
 }
 
+/// The Latin letter on the key at evdev `code`, by its place on a US keyboard: the letter a
+/// chord is read by when the layout's own is not Latin (Cyrillic, Greek, Hebrew, Arabic...),
+/// as every terminal reads Control-C there.
+fn letter_at(code: u32) -> Option<char> {
+    const ROWS: [(u32, &str); 3] = [(16, "qwertyuiop"), (30, "asdfghjkl"), (44, "zxcvbnm")];
+    ROWS.iter().find_map(|&(first, letters)| letters.chars().nth(code.checked_sub(first)? as usize))
+}
+
+/// The character a chord is read by: the key's own, in lower case; and where that is a letter
+/// outside Latin's, the Latin letter in its place (`letter_at`). A layout's own Latin letters
+/// (AZERTY's A where QWERTY's Q is) stay theirs.
+pub fn chord_char(c: char, code: u32) -> char {
+    let c = c.to_lowercase().next().unwrap_or(c);
+    if c.is_ascii() || !c.is_alphabetic() {
+        return c;
+    }
+    letter_at(code).filter(|_| !is_latin(c)).unwrap_or(c)
+}
+
+/// A letter of the Latin alphabet's own, with whatever marks: ü, é, ß, ø.
+fn is_latin(c: char) -> bool {
+    matches!(c as u32, 0x00C0..=0x024F | 0x1E00..=0x1EFF)
+}
+
 /// A key as a number, to cross from the window to the tab.
 pub fn number(key: Key) -> u8 {
     match key {
@@ -201,7 +225,7 @@ pub fn bytes(key: u8, code: u32, text: &str, shift: bool, control: bool, alt: bo
             if control {
                 // Control and a letter is that letter's control character, whatever the
                 // keyboard's own layout made of it.
-                let c = text.chars().next().map(|c| c.to_ascii_lowercase());
+                let c = text.chars().next().map(|c| chord_char(c, code));
                 let control_char = match c {
                     Some(c @ 'a'..='z') => Some(c as u8 - b'a' + 1),
                     Some('@') | Some('2') | Some(' ') => Some(0),
@@ -299,6 +323,27 @@ mod tests {
         assert_eq!(tab_chord(Some('w'), Modifiers { alt: true, ..command() }, false), None);
         assert_eq!(tab_chord(Some('q'), command(), false), None);
         assert_eq!(tab_chord(None, command(), false), None);
+    }
+
+    #[test]
+    fn chords_on_a_layout_that_is_not_latin_go_by_the_keys_place() {
+        // Russian: С is on C's key (46), В on V's (47), Т on T's (20).
+        assert_eq!(chord_char('\u{441}', 46), 'c');
+        assert_eq!(chord_char('\u{421}', 46), 'c');
+        assert_eq!(chord_char('\u{432}', 47), 'v');
+        assert_eq!(chord_char('\u{3c4}', 20), 't');
+        // Control-С is the interrupt; Control-Ш (on I's key) is a Tab, as Control-I is.
+        assert_eq!(bytes(15, 46, "\u{441}", false, true, false, false), [3]);
+        assert_eq!(bytes(15, 23, "\u{448}", false, true, false, false), [9]);
+        let ctrl = held(false, true, false, false);
+        assert_eq!(clip(Some(chord_char('\u{441}', 46)), ctrl, false, false), Clip::CopyElseKey);
+        assert_eq!(tab_chord(Some(chord_char('\u{435}', 20)), held(true, true, false, false), false), Some(TabChord::New));
+        // A layout's own Latin letters are theirs: AZERTY's A on Q's key, a German ü.
+        assert_eq!(chord_char('a', 16), 'a');
+        assert_eq!(chord_char('\u{fc}', 26), '\u{fc}');
+        assert_eq!(chord_char('\u{e9}', 18), '\u{e9}');
+        // Typed without Control, the layout's letter goes as it is.
+        assert_eq!(bytes(15, 46, "\u{441}", false, false, false, false), "\u{441}".as_bytes());
     }
 
     #[test]

@@ -898,8 +898,10 @@ impl Quill {
     fn key(&mut self, w: usize, key: Key, code: u32, text: String, m: Modifiers) {
         // SpatiQuill's own keys: the Command key on a Mac, Control and Shift together elsewhere.
         let command = keys::own_chord(m);
+        // On a layout that is not Latin, the Latin letter in the key's place: Control-C, -V,
+        // Command-T and the rest work there too.
         let letter = match key {
-            Key::Char(c) => Some(c.to_ascii_lowercase()),
+            Key::Char(c) => Some(keys::chord_char(c, code)),
             _ => None,
         };
         let id = self.wins[w].id;
