@@ -1109,8 +1109,13 @@ pub fn run(
                 }
             }
 
-            runtime.state.spawn_yaw = tracker.euler_degrees().yaw.to_radians();
-            runtime.state.layout.view_pitch = crate::window::facing(tracker.recentred_orientation()).1;
+            // Where new windows open (held while a finger is wanted on the Mac), and one that
+            // opened out of view said on a card, as on the Deck.
+            runtime.state.aim_new_windows(
+                tracker.euler_degrees().yaw.to_radians(),
+                crate::window::facing(tracker.recentred_orientation()).1,
+                (stereo.h_fov_deg, stereo.v_fov_deg()),
+            );
 
             // Two frames ahead: this one through Android's compositor on its next tick, then
             // scanout -- the Beam Pro's latency, measured as smoothest.
@@ -1208,6 +1213,8 @@ pub fn run(
             let said = crate::spatikey::notice();
             let said = if said.is_empty() { dictation.notice() } else { said };
             let said = if said.is_empty() { crate::assist::notice() } else { said };
+            // Where a window opened out of view, as on the Deck.
+            let said = if said.is_empty() { crate::window::opened_notice() } else { said };
             // An application dropped into the room, offered for installing, as on the Deck
             // (`crate::install`).
             let said = if said.is_empty() { crate::install::notice() } else { said };
@@ -1826,7 +1833,7 @@ pub fn run(
                                 if let Some(said) = dictation.take_review() {
                                     type_text(&mut runtime.state, &mut shell, &said, time_ms);
                                 }
-                            } else if !crate::assist::notice_pressed() {
+                            } else if !crate::assist::notice_pressed() && !crate::window::opened_pressed() {
                                 if crate::install::asking() {
                                     // The card asking whether to install what was dropped into
                                     // the room: pressing it is "yes", as on the Deck.

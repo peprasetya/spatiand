@@ -84,12 +84,54 @@ impl Room for TheRoom {
         if text.is_empty() && notice.as_ref().is_some_and(|card| card.brief) {
             return;
         }
-        *notice = (!text.is_empty()).then(|| Card { text: text.to_string(), since: Instant::now(), brief: false });
+        // A card still asking, given new words (another asking still waiting, once the newest is
+        // over): asked since it was first put up, so it is not hidden again for the moment a
+        // new card waits before it shows.
+        let since = notice.as_ref().filter(|card| !card.brief).map_or_else(Instant::now, |card| card.since);
+        finger_no_longer_wanted(&notice, text.is_empty());
+        *notice = (!text.is_empty()).then(|| Card { text: text.to_string(), since, brief: false });
     }
 
     fn notice_briefly(&self, text: &str) {
-        *NOTICE.lock().unwrap() = (!text.is_empty()).then(|| Card { text: text.to_string(), since: Instant::now(), brief: true });
+        let mut notice = NOTICE.lock().unwrap();
+        finger_no_longer_wanted(&notice, true);
+        *notice = (!text.is_empty()).then(|| Card { text: text.to_string(), since: Instant::now(), brief: true });
     }
+}
+
+/// When a finger was last wanted, once it no longer is: see [`finger_wanted_recently`].
+static FINGER_ENDED: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// The card in `notice` is about to go (`going`): if it was asking for a finger, it no longer is.
+fn finger_no_longer_wanted(notice: &Option<Card>, going: bool) {
+    if going && notice.as_ref().is_some_and(|card| !card.brief) {
+        *FINGER_ENDED.lock().unwrap() = Some(Instant::now());
+    }
+}
+
+/// Whether a finger is wanted on the Mac now -- SpatiKey's card up, from the moment it was asked
+/// for, the moment before it shows included -- or was until [`crate::window::HELD_AFTER_FINGER`]
+/// ago. New windows open meanwhile where the wearer looked when it was asked for
+/// ([`crate::state::Spatiand::aim_new_windows`]).
+pub fn finger_wanted_recently() -> bool {
+    let card = {
+        let mut notice = NOTICE.lock().unwrap();
+        let shown = notice.as_ref().map(|card| card.since.elapsed());
+        if notice.as_ref().zip(shown).is_some_and(|(card, shown)| !card.brief && card.over(shown)) {
+            // Asked for so long it is over: no longer wanted, from now.
+            finger_no_longer_wanted(&notice, true);
+            *notice = None;
+        }
+        notice.as_ref().map(|card| card.brief)
+    };
+    let ended = FINGER_ENDED.lock().unwrap().map(|at| at.elapsed());
+    finger_wanted(card, ended)
+}
+
+/// [`finger_wanted_recently`] of a card (whether it is the brief last word) and how long since a
+/// finger was last no longer wanted.
+fn finger_wanted(card_is_brief: Option<bool>, ended_ago: Option<Duration>) -> bool {
+    card_is_brief == Some(false) || ended_ago.is_some_and(|ago| ago < crate::window::HELD_AFTER_FINGER)
 }
 
 /// The room set up for SpatiKey, and on a machine with no Touch ID of its own, the service that
@@ -229,6 +271,7 @@ pub fn notice() -> String {
     let Some(card) = notice.as_ref() else { return String::new() };
     let shown = card.since.elapsed();
     if card.over(shown) {
+        finger_no_longer_wanted(&notice, true);
         *notice = None;
         return String::new();
     }
@@ -428,6 +471,41 @@ mod tests {
         back(CARD);
         assert_eq!(in_view(), under());
         assert!(NOTICE.lock().unwrap().is_none());
+        // Two askings: the newest over, the card goes back to the other at once, not after
+        // the moment a new card waits.
+        room.notice("Touch ID on your Mac to open SpatiKey");
+        back(SHOW_AFTER);
+        room.notice("Touch ID on your Mac to get a code");
+        assert_eq!(in_view(), "SpatiKey\nTouch ID on your Mac to get a code");
+        room.notice("Touch ID on your Mac to open SpatiKey");
+        assert_eq!(in_view(), "SpatiKey\nTouch ID on your Mac to open SpatiKey");
+        // A finger wanted from the moment it is asked for, the moment before the card shows
+        // included, and for a while after.
+        room.notice("");
+        *FINGER_ENDED.lock().unwrap() = None;
+        assert!(!finger_wanted_recently());
+        room.notice("Touch ID on your Mac to open a profile");
+        assert!(finger_wanted_recently());
+        room.notice("");
+        assert!(finger_wanted_recently());
+        *FINGER_ENDED.lock().unwrap() = Some(Instant::now() - crate::window::HELD_AFTER_FINGER);
+        assert!(!finger_wanted_recently());
+        // Refused with a last word: no longer wanted from then.
+        room.notice("Touch ID on your Mac to open a profile");
+        room.notice_briefly("Did not open a profile: Touch ID was cancelled");
+        assert!(FINGER_ENDED.lock().unwrap().unwrap().elapsed() < Duration::from_secs(1));
+        back(BRIEF);
+        notice();
+    }
+
+    #[test]
+    fn new_windows_are_held_while_a_finger_is_wanted_and_a_while_after() {
+        assert!(!finger_wanted(None, None));
+        assert!(finger_wanted(Some(false), None), "asked, shown yet or not");
+        assert!(!finger_wanted(Some(true), None), "the last word is not an asking");
+        assert!(finger_wanted(None, Some(Duration::from_secs(3))));
+        assert!(finger_wanted(Some(true), Some(Duration::from_secs(3))));
+        assert!(!finger_wanted(None, Some(crate::window::HELD_AFTER_FINGER)));
     }
 
     /// What the room starts typing, it starts before the service stops waiting for it.

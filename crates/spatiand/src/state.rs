@@ -238,6 +238,9 @@ pub struct Spatiand {
     /// Lives here because `new_toplevel` needs it and has no access to the tracker: a window
     /// has to be placed the moment it is mapped, which is deep inside a protocol callback.
     pub spawn_yaw: f64,
+    /// Where new windows open while a finger is wanted, and those still to be announced if they
+    /// open out of view. Set through [`Self::aim_new_windows`].
+    pub new_windows: crate::window::NewWindows,
     /// Where pinned windows go and how big, from the preferences. See [`crate::pip`].
     pub pip: crate::pip::Settings,
     /// Which way the head points this frame and how the glasses see, set by the backend before
@@ -410,6 +413,7 @@ impl Spatiand {
             attention: crate::attention::Attention::default(),
             screen,
             spawn_yaw: 0.0,
+            new_windows: Default::default(),
             pip: Default::default(),
             pip_head: None,
             pip_looked: None,
@@ -1347,6 +1351,7 @@ impl XdgShellHandler for Spatiand {
         if let Some(id) = self.layout.id_of(&window) {
             let app_id = self.instance_of(&window);
             self.arrived_windows.push((id, pid, app_id));
+            self.new_windows.placed(id);
         }
         log::info!(
             "new toplevel at yaw {:.0} deg ({} windows), offered {}x{}",
@@ -1557,11 +1562,50 @@ impl Spatiand {
                 .flatten();
             let app_id = self.instance_of(window);
             self.arrived_windows.push((id, pid, app_id));
+            self.new_windows.placed(id);
             log::info!(
                 "X11 window placed at yaw {:.0} deg ({} windows)",
                 self.spawn_yaw.to_degrees(),
                 self.space.elements().count()
             );
+        }
+    }
+
+    /// Once a frame, from each frame loop: the head's yaw and pitch (radians, as
+    /// [`crate::window::facing`] gives them) and the glasses' field (degrees across, up).
+    ///
+    /// New windows open where the head points -- except while a finger is wanted on the Mac
+    /// (SpatiKey's card) and for [`crate::window::HELD_AFTER_FINGER`] after, when they open where
+    /// it pointed when the finger was first asked for: he turns to the Mac's sensor, and the
+    /// profile the touch unlocks is to open where he asked for it (the owner, 2026-11-17, a
+    /// locked SpatiMesh profile opened at yaw -127, at the Mac). And a window that opens out of
+    /// view, whatever the reason, is said on a card: "<title> opened to your left".
+    pub fn aim_new_windows(&mut self, yaw: f64, pitch: f64, fov_deg: (f64, f64)) {
+        let (spawn_yaw, spawn_pitch) = self.new_windows.aim(crate::spatikey::finger_wanted_recently(), yaw, pitch);
+        self.spawn_yaw = spawn_yaw;
+        self.layout.view_pitch = spawn_pitch;
+        for id in self.new_windows.waiting() {
+            let Some(window) = self.space.elements().find(|w| self.layout.id_of(w) == Some(id)).cloned() else {
+                self.new_windows.done(id);
+                continue;
+            };
+            let size = match window.x11_surface() {
+                Some(x11) => x11.geometry().size,
+                None => window.geometry().size,
+            };
+            if size.w <= 0 || size.h <= 0 {
+                // Nothing drawn yet: where it is matters once there is something to see.
+                continue;
+            }
+            self.new_windows.done(id);
+            if self.layout.is_hidden(&window) || self.layout.is_pinned(&window) {
+                continue;
+            }
+            let Some(placement) = self.layout.get(&window).filter(|p| !p.pip) else { continue };
+            let title = self.title_of(&window).filter(|t| !t.trim().is_empty()).or_else(|| self.app_id_of(&window)).unwrap_or_default();
+            if let Some(words) = crate::window::opened_words(&title, crate::window::seen_from(yaw, pitch, &placement, fov_deg)) {
+                crate::window::say_opened(words);
+            }
         }
     }
 

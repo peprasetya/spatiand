@@ -2023,9 +2023,13 @@ pub fn run(
             }
 
             // Where new windows will open. Refreshed every frame so an app launched after a
-            // head turn appears in front of the wearer rather than at world zero.
-            runtime.state.spawn_yaw = tracker.euler_degrees().yaw.to_radians();
-            runtime.state.layout.view_pitch = crate::window::facing(tracker.recentred_orientation()).1;
+            // head turn appears in front of the wearer rather than at world zero -- held while a
+            // finger is wanted on the Mac -- and a window that opened out of view said on a card.
+            runtime.state.aim_new_windows(
+                tracker.euler_degrees().yaw.to_radians(),
+                crate::window::facing(tracker.recentred_orientation()).1,
+                (stereo.h_fov_deg, stereo.v_fov_deg()),
+            );
 
             let orientation = tracker.predicted_orientation(
                 spatiand_track::DEFAULT_PREDICTION_SECONDS,
@@ -2201,6 +2205,7 @@ pub fn run(
             let notice = crate::spatikey::notice();
             let notice = if notice.is_empty() { dictation.notice() } else { notice };
             let notice = if notice.is_empty() { crate::assist::notice() } else { notice };
+            let notice = if notice.is_empty() { crate::window::opened_notice() } else { notice };
             let notice = if notice.is_empty() { crate::install::notice() } else { notice };
             let notice = if notice.is_empty() { crate::notifications::notice() } else { notice };
             let notice = if notice.is_empty() { crate::remote::host_notice() } else { notice };
@@ -3366,6 +3371,13 @@ pub fn run(
                                     && scene.notice_hit(&a.ray, orientation) =>
                             {
                                 crate::assist::notice_pressed();
+                            }
+                            // The card saying where a window opened out of view: pressed, it goes.
+                            Some(a)
+                                if !crate::window::opened_notice().is_empty()
+                                    && scene.notice_hit(&a.ray, orientation) =>
+                            {
+                                crate::window::opened_pressed();
                             }
                             // The card asking whether to install what was dropped into the room:
                             // pressing it is "yes". It floats in front of everything.

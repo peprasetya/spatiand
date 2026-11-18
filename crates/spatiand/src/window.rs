@@ -754,6 +754,215 @@ pub fn apply_resize_anchors(state: &mut crate::state::Spatiand) {
     }
 }
 
+// --- where a new window opens, and saying so when that is out of view ---
+//
+// The same on every platform: each frame loop hands the head to
+// [`crate::state::Spatiand::aim_new_windows`], which does both.
+
+/// How long after a finger was last wanted (SpatiKey's card) new windows still open where the
+/// wearer was looking when it was asked for: the window the asking opens (a locked profile
+/// unlocked with Touch ID on the Mac) comes a few seconds after the finger.
+pub const HELD_AFTER_FINGER: std::time::Duration = std::time::Duration::from_secs(10);
+/// No window is announced in the room's first seconds, while those it had come back.
+const SETTLING: std::time::Duration = std::time::Duration::from_secs(20);
+/// A window that has not drawn anything this long after it was made is not waited for.
+const WAITED: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long the card saying where one opened stays.
+const SAID_FOR: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Where new windows open, and the new windows still to be looked for once they draw.
+#[derive(Debug)]
+pub struct NewWindows {
+    /// The head's yaw and pitch held while a finger is wanted, from when it was first wanted.
+    held: Option<(f64, f64)>,
+    /// Windows placed, by id, and when: looked for in view once they have something to show.
+    waiting: Vec<(usize, std::time::Instant)>,
+    began: std::time::Instant,
+}
+
+impl Default for NewWindows {
+    fn default() -> Self {
+        Self { held: None, waiting: Vec::new(), began: std::time::Instant::now() }
+    }
+}
+
+impl NewWindows {
+    /// Where a new window opens this frame, given the head's yaw and pitch (radians) and whether
+    /// a finger is wanted or was a moment ago: the head, or while it is, the head as it was when
+    /// it first was -- he turns to the Mac's sensor, and what the touch opens is to open where
+    /// he asked for it, not where the Mac is.
+    pub fn aim(&mut self, hold: bool, yaw: f64, pitch: f64) -> (f64, f64) {
+        if hold {
+            *self.held.get_or_insert((yaw, pitch))
+        } else {
+            self.held = None;
+            (yaw, pitch)
+        }
+    }
+
+    /// A window was placed: to be looked for once it draws. Not in the room's first seconds.
+    pub fn placed(&mut self, id: usize) {
+        if self.began.elapsed() >= SETTLING {
+            self.waiting.push((id, std::time::Instant::now()));
+        }
+    }
+
+    /// The windows still waited for, ids; those waited for too long are let go.
+    pub fn waiting(&mut self) -> Vec<usize> {
+        self.waiting.retain(|(_, at)| at.elapsed() < WAITED);
+        self.waiting.iter().map(|(id, _)| *id).collect()
+    }
+
+    /// The window has been looked for (it drew, or it went).
+    pub fn done(&mut self, id: usize) {
+        self.waiting.retain(|(w, _)| *w != id);
+    }
+}
+
+/// Where a window is, seen from the head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seen {
+    InView,
+    Left,
+    Right,
+    Behind,
+}
+
+/// Where a window at `placement` is from a head facing `yaw`, `pitch` (radians) with a field of
+/// `fov_deg` (across, up): in view when its middle, or a quarter of its width past it, is in the
+/// field; else to the left, the right, or behind (more than 120 degrees round).
+pub fn seen_from(yaw: f64, pitch: f64, placement: &Placement, fov_deg: (f64, f64)) -> Seen {
+    let turn = std::f64::consts::TAU;
+    let dyaw = (placement.yaw - yaw + std::f64::consts::PI).rem_euclid(turn) - std::f64::consts::PI;
+    let dpitch = placement.pitch - pitch;
+    let half_width = (placement.width * 0.5).atan2(placement.radius.max(0.1));
+    let across = fov_deg.0.to_radians() * 0.5 + half_width * 0.5;
+    let up = fov_deg.1.to_radians() * 0.5 + half_width * 0.25;
+    if dyaw.abs() <= across && dpitch.abs() <= up {
+        Seen::InView
+    } else if dyaw.abs() > 120f64.to_radians() {
+        Seen::Behind
+    } else if dyaw > 0.0 {
+        // Positive yaw is to the left.
+        Seen::Left
+    } else {
+        Seen::Right
+    }
+}
+
+/// The card's words for a window named `title` that opened where it is `seen`; None in view.
+pub fn opened_words(title: &str, seen: Seen) -> Option<String> {
+    let place = match seen {
+        Seen::InView => return None,
+        Seen::Left => "to your left",
+        Seen::Right => "to your right",
+        Seen::Behind => "behind you",
+    };
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title = if title.is_empty() {
+        "A window".to_string()
+    } else if title.chars().count() > 60 {
+        format!("{}\u{2026}", title.chars().take(59).collect::<String>().trim_end())
+    } else {
+        title
+    };
+    Some(format!("{title} opened {place}"))
+}
+
+static OPENED: std::sync::Mutex<Option<(String, std::time::Instant)>> = std::sync::Mutex::new(None);
+
+/// Put up the card saying where a window opened, in place of one before it.
+pub fn say_opened(words: String) {
+    log::info!("{words}");
+    *OPENED.lock().unwrap() = Some((words, std::time::Instant::now()));
+}
+
+/// The card saying a window opened out of view, for a few seconds; empty otherwise. Each frame
+/// loop shows it with the room's other cards, after the assistant's.
+pub fn opened_notice() -> String {
+    let mut said = OPENED.lock().unwrap();
+    match said.as_ref() {
+        Some((words, at)) if at.elapsed() < SAID_FOR => words.clone(),
+        Some(_) => {
+            *said = None;
+            String::new()
+        }
+        None => String::new(),
+    }
+}
+
+/// The card was pressed: it goes.
+pub fn opened_pressed() -> bool {
+    OPENED.lock().unwrap().take().is_some()
+}
+
+#[cfg(test)]
+mod new_window_tests {
+    use super::*;
+
+    #[test]
+    fn a_window_opens_where_he_looked_while_a_finger_is_wanted() {
+        let mut n = NewWindows::default();
+        assert_eq!(n.aim(false, 0.1, 0.0), (0.1, 0.0));
+        // Asked: held at where he was then, however he turns to the Mac.
+        assert_eq!(n.aim(true, 0.2, 0.05), (0.2, 0.05));
+        assert_eq!(n.aim(true, -2.2, -0.3), (0.2, 0.05));
+        assert_eq!(n.aim(true, -2.3, -0.3), (0.2, 0.05));
+        // Over: the head again; asked again, held from then.
+        assert_eq!(n.aim(false, -2.3, -0.3), (-2.3, -0.3));
+        assert_eq!(n.aim(true, 1.0, 0.0), (1.0, 0.0));
+        assert_eq!(n.aim(true, 0.0, 0.0), (1.0, 0.0));
+    }
+
+    #[test]
+    fn the_side_a_window_is_on_is_seen_from_the_head() {
+        let fov = (46.0, 26.0);
+        let at = |deg: f64| Placement { yaw: deg.to_radians(), ..Placement::default() };
+        assert_eq!(seen_from(0.0, 0.0, &at(0.0), fov), Seen::InView);
+        assert_eq!(seen_from(0.0, 0.0, &at(25.0), fov), Seen::InView, "partly in view");
+        assert_eq!(seen_from(0.0, 0.0, &at(-25.0), fov), Seen::InView);
+        assert_eq!(seen_from(0.0, 0.0, &at(50.0), fov), Seen::Left);
+        assert_eq!(seen_from(0.0, 0.0, &at(-50.0), fov), Seen::Right);
+        assert_eq!(seen_from(0.0, 0.0, &at(170.0), fov), Seen::Behind);
+        assert_eq!(seen_from(0.0, 0.0, &at(-127.0), fov), Seen::Behind);
+        // Across the seam: facing 170, a window at -170 is 20 degrees to the left.
+        assert_eq!(seen_from(170f64.to_radians(), 0.0, &at(-170.0), fov), Seen::InView);
+        assert_eq!(seen_from(150f64.to_radians(), 0.0, &at(-160.0), fov), Seen::Left);
+        // The owner's case: turned to the Mac at -127, a window placed at 0 is to his left.
+        assert_eq!(seen_from(-127f64.to_radians(), 0.0, &at(0.0), fov), Seen::Behind);
+        assert_eq!(seen_from(-90f64.to_radians(), 0.0, &at(0.0), fov), Seen::Left);
+        // Above or below the field.
+        let high = Placement { pitch: 40f64.to_radians(), ..Placement::default() };
+        assert_ne!(seen_from(0.0, 0.0, &high, fov), Seen::InView);
+        assert_eq!(seen_from(0.0, 35f64.to_radians(), &high, fov), Seen::InView);
+    }
+
+    #[test]
+    fn the_card_names_the_window_and_the_side() {
+        assert_eq!(opened_words("Work \u{2014} SpatiMesh", Seen::Left).unwrap(), "Work \u{2014} SpatiMesh opened to your left");
+        assert_eq!(opened_words("Files", Seen::Right).unwrap(), "Files opened to your right");
+        assert_eq!(opened_words("  ", Seen::Behind).unwrap(), "A window opened behind you");
+        assert_eq!(opened_words("Files", Seen::InView), None);
+        let long = opened_words(&"x".repeat(100), Seen::Left).unwrap();
+        assert!(long.starts_with(&format!("{}\u{2026} opened", "x".repeat(59))));
+    }
+
+    #[test]
+    fn windows_are_looked_for_after_the_room_has_settled() {
+        let mut n = NewWindows::default();
+        n.placed(1);
+        assert!(n.waiting().is_empty(), "the room's own coming back is not announced");
+        n.began -= SETTLING;
+        n.placed(2);
+        n.placed(3);
+        assert_eq!(n.waiting(), vec![2, 3]);
+        n.done(2);
+        assert_eq!(n.waiting(), vec![3]);
+        n.waiting[0].1 -= WAITED;
+        assert!(n.waiting().is_empty());
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
