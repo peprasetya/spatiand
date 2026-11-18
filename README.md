@@ -1,33 +1,52 @@
 # Spatiand
 
-A 3D spatial desktop for the Steam Deck and XREAL Air glasses — a third mode
-alongside Desktop and Game.
+A 3D spatial desktop: windows hung on a sphere around you, seen through XREAL
+glasses. It runs on three systems: the Steam Deck (a third mode alongside
+Desktop and Game), the XREAL Beam Pro (Android) and a Mac.
 
-Windows hang on a sphere around you and stay where you left them when you turn
-your head. Each one's sound comes from where the window is. The Deck's own
-screen becomes a control panel for the session you are wearing. Applications
-running on another Linux computer arrive as windows of their own, beside the
-Deck's.
+Windows stay where you left them when you turn your head. Each one's sound
+comes from where the window is. The Deck's own screen becomes a control panel
+for the session you are wearing. Applications running on another computer
+arrive as windows of their own, beside the local ones.
 
 **This is early.** It runs, it is used, and it is not finished. What follows is
-an honest account of which parts do what.
+an honest account of which parts do what. Most of the work of 2026-11-17 and
+11-18 was checked by tests and in headless rooms, not in the glasses;
+[docs/state.md](docs/state.md) says which.
 
 **Three systems, one core.** The room began on the Steam Deck and is the same
-code on an XREAL Beam Pro (Android) and on a Mac: a port adds only what the
-system itself needs (its windowing, its GPU buffers, its sound), never another
-core. Most of this page still speaks of the Deck, where it is most worn-in;
-[docs/beam-pro.md](docs/beam-pro.md) and [docs/mac.md](docs/mac.md) say where
-the other two stand.
+code on the Beam Pro and on the Mac (and on other Linux): a port adds only what
+the system itself needs (its libc, its windowing, its GPU buffers, its sound),
+never another core. Most of this page still speaks of the Deck, where it is
+most worn-in; [docs/beam-pro.md](docs/beam-pro.md) and [docs/mac.md](docs/mac.md)
+say where the other two stand.
 
-**Its own applications**, each a Wayland client of the room on every system:
-SpatiShelf (files, and remotes through a storage service built on rclone),
-SpatiReel (films), SpatiLoupe (pictures and PDFs), SpatiQuill (text), SpatiPal
-(the assistant), SpatiKey (passwords and passkeys), and **SpatiMesh, the
-browser**: Chromium's Linux browser with Spatiand's patches, the same on the
-Deck, the Beam Pro (built for Android's libc) and the Mac (Chromium's Linux
-user interface on macOS), on the newest stable Chromium, moved forward every
-month. [docs/spatimesh.md](docs/spatimesh.md) has the whole of it;
-`third_party/chromium` is how it is built.
+**Its own applications**, each a Wayland client of the room on every system,
+speaking `spatiand_xr_v1` (the room's extensions to Wayland) and sharing one SDK
+and one set of rules for look and words
+([docs/spatiand-apps.md](docs/spatiand-apps.md),
+[docs/look-and-feel.md](docs/look-and-feel.md)):
+
+  * **SpatiMesh**, the browser: Chromium's Linux browser with Spatiand's
+    patches, the same on the Deck, the Beam Pro (built for Android's libc) and
+    the Mac (Chromium's Linux user interface on macOS), moved forward to the
+    newest stable Chromium every month. [docs/spatimesh.md](docs/spatimesh.md);
+    `third_party/chromium` is how it is built.
+  * **SpatiShelf** (files, and remote storage through a service built on
+    rclone), **SpatiQuill** (a terminal), **SpatiReel** (films), **SpatiLoupe**
+    (pictures, stereo photographs, PDFs, 3D objects).
+  * **SpatiPal**, the assistant, with a figure in the room, a voice and hands on
+    its windows; and **dictation** into the focused text field.
+    [docs/ai-integrations.md](docs/ai-integrations.md).
+  * **SpatiKey**, passwords, passkeys and two-factor codes, and the browsers'
+    way to them. [docs/spatikey.md](docs/spatikey.md).
+
+**Applications from another computer.** `spatiand-host` runs on a Linux machine
+or a Mac and hands each application to the glasses as a window of its own, not
+as a remote desktop. [docs/remote.md](docs/remote.md).
+
+**An OpenXR runtime of its own**, so that OpenXR games and viewers run in the
+room, here or from a host. [docs/openxr.md](docs/openxr.md).
 
 ---
 
@@ -130,6 +149,25 @@ window like a local one's. A session also says whether glasses are on, so a
 virtual-reality application can be asked to be an ordinary window when they are
 not.
 
+**The applications.** SpatiShelf, SpatiQuill, SpatiReel, SpatiLoupe, SpatiPal and
+SpatiKey are built and were driven on the files and media they were written for,
+with FFmpeg and each system's own hardware decoder (VA-API, MediaCodec,
+VideoToolbox). SpatiMesh on Chromium runs on the Deck and in the room's test rig
+on the Mac. Their settings are kept the same on every paired machine, and each
+reaches remote storage through the one storage service. SpatiPal and dictation
+use models served by hemera, a model router on the owner's server. What was seen
+and what was only tested is in [docs/spatiand-apps.md](docs/spatiand-apps.md),
+[docs/spatimesh.md](docs/spatimesh.md), [docs/spatikey.md](docs/spatikey.md) and
+[docs/ai-integrations.md](docs/ai-integrations.md); the assistant has not been
+tried with a real voice in the glasses.
+
+**On the XREAL Beam Pro** (Android 14, no root; in [android/](android/); see
+[docs/beam-pro.md](docs/beam-pro.md)). The Deck's compositor runs as an ordinary
+app on the glasses' display at 3840×1080, measured at 59-60 fps, with the phone
+as its controller. A host's windows arrive with the Deck's title bars and come
+back on reconnect. The phone's own Android apps open as windows in the room,
+through a shell helper run over Spatiand's own adb client.
+
 **On a Mac** (in [mac/](mac/); see [docs/mac.md](docs/mac.md)).
 A menu-bar app that needs no glasses: a paired host's applications open as
 ordinary Mac windows, with the mouse, keyboard, clipboard (text and images) and
@@ -185,12 +223,37 @@ Listed because finding out by hitting them is worse.
     what arrives is channels. Real object audio needs a protocol an application
     would have to speak; it does not exist yet.
   * **The Mac and the Beam Pro are newer, and less worn-in than the Deck.** The
-    room runs on an Apple silicon Mac mini and on the Beam Pro, the glasses at
-    60 Hz on the Mac rather than 72; [docs/mac.md](docs/mac.md) and
+    glasses run at 60 Hz on the Mac rather than 72 (macOS does not offer the
+    two-eye mode at 72); [docs/mac.md](docs/mac.md) and
     [docs/beam-pro.md](docs/beam-pro.md) list what has only been checked
-    without glasses on.
-  * **Anything but this hardware.** The traits and a null backend exist so that
-    other headsets are a table entry rather than a rewrite. Nobody has tried one.
+    without glasses. The Beam Pro has no `CAPTURE_SECURE_VIDEO_OUTPUT`, so
+    protected apps draw black in the room.
+  * **Not run on hardware.** Of the last two days' work: SpatiKey's holders on a
+    real Touch ID or BiometricPrompt (no device with a sensor but the Mac exists
+    here), a locked Mac used from nowhere, the pose channel in the glasses,
+    MediaCodec and VideoToolbox with raw streams, the Beam Pro's hardware-buffer
+    frames in the glasses. The Beam Pro was off the network when the last
+    changes were built, and the Mac needs a build for the commits after its last
+    install.
+  * **Not packaged for distribution.** The Mac app is ad hoc signed and not
+    notarised, so it is for the Mac it was built on.
+  * **A secret window is not protected from the assistant.** SpatiPal is kept from
+    SpatiKey's and the profile locks' windows by their ids and titles, and can
+    still click and type into a secret window; a protocol flag is wanted. A locked
+    Mac still takes clipboard sync.
+  * **SpatiKey's holders are not signed**: a removed device that is still linked
+    for sync can bury entries ([docs/spatikey.md](docs/spatikey.md)).
+  * **Deinterlacing of hardware frames is a shader blend** (MediaCodec on the
+    Beam Pro, VideoToolbox on the Mac), a workaround; VA-API and software use
+    FFmpeg's filters. Raw AV1 (`.obu`) cannot be seeked.
+  * **SpatiMesh lacks some media**: H.264 and HEVC in MPEG transport streams, VOB,
+    MP2 sound and a film's own subtitle tracks. The Mac's start-up race with
+    ANGLE is worked round, not cured. What waits for the next Chromium build is
+    listed in `third_party/chromium/patches/README.md`.
+  * **Other glasses.** The device table lists the XREAL Air, Air 2, Air 2 Pro and
+    Air 2 Ultra; only the first-generation Air has been seen working. The traits
+    and a null backend exist so that other headsets are a table entry rather
+    than a rewrite. Nobody has tried one.
 
 ## Getting it
 
@@ -200,9 +263,9 @@ something is wrong.
 
 ## Tested on
 
-Exactly one machine. Everything below is what it was, not what is required —
-but it is the only combination anyone has seen work. The versions are as of
-SteamOS build 20260716.1 (July 2026) and have not been read off the machine since.
+The Deck, below, is the machine worn in longest. Everything in its table is what
+it was, not what is required. The versions are as of SteamOS build 20260716.1
+(July 2026) and have not been read off the machine since.
 
 | | |
 |---|---|
@@ -214,18 +277,40 @@ SteamOS build 20260716.1 (July 2026) and have not been read off the machine sinc
 | Audio | PipeWire 1.6.4, libmysofa 1.3.3 |
 | X11 | Xwayland 24.1.10 |
 
+**XREAL Beam Pro**: model X4000, build `X4000_X502_260518_ROW`, Android 14,
+Snapdragon, with XREAL Air glasses (`3318:0424`), checked 2026-09-26. Later work
+was run on the phone with a stand-in display ([docs/beam-pro.md](docs/beam-pro.md)).
+
+**Mac**: built and run on an Apple silicon Mac mini (littleotter, macOS 27.2.1,
+[docs/spatimesh-mac-port.md](docs/spatimesh-mac-port.md)); use in the glasses was
+checked on an Intel MacBook Pro with XREAL Air ([docs/mac.md](docs/mac.md)).
+
 The glasses need a USB-C cable that carries video. Many do not, and one that
 charges perfectly well will leave the display black.
 
 ## Building it
 
-Source is developed on another machine and built on the Deck itself, in an Arch
-container, because SteamOS has no toolchain and an atomic `/usr` is no place to
-put one.
+**Deck and other Linux.** Built in an Arch container, because SteamOS has no
+toolchain and an atomic `/usr` is no place to put one.
 
     tools/setup-buildbox.sh          # once: an Arch distrobox with the deps
     cargo build --release            # inside it
     tools/make-release.sh            # a folder somebody can click
+
+**Beam Pro** (SDK build-tools and cargo-ndk, no Gradle; [docs/beam-pro.md](docs/beam-pro.md)):
+
+    android/build.sh                 # android/spatiand.apk
+    android/build.sh install         # ...and onto the phone adb talks to
+
+**Mac** (on a Mac; ad hoc signed, [docs/mac.md](docs/mac.md)):
+
+    mac/make-app.sh                  # Spatiand.app
+
+**SpatiMesh's Chromium** (a Linux machine with about 60 GB free per tree):
+
+    [CHROMIUM_TARGET=android|mac] third_party/chromium/build.sh <work> [fetch|patch|build|package|all]
+
+[docs/install.md](docs/install.md) is for installing a built release.
 
 There is a headless renderer for looking at layout without hardware:
 
@@ -251,10 +336,10 @@ nothing.
 
 ## How it is put together
 
-Sixteen crates. The three that touch hardware — `spatiand-hmd`, `spatiand-input`,
-`spatiand-platform` — are the only ones whose *logic* knows what a Steam Deck or
-a pair of XREAL glasses is. Everything else sees traits, so a second headset
-should be a table entry rather than a rewrite.
+Thirty-six crates. The three that touch the Deck's hardware — `spatiand-hmd`,
+`spatiand-input`, `spatiand-platform` — are the only ones whose *logic* knows what
+a Steam Deck or a pair of XREAL glasses is. Everything else sees traits, so a
+second headset should be a table entry rather than a rewrite.
 
     grep -ril 'steamos\|steamdeck\|xreal\|gamescope' crates/
 
@@ -264,9 +349,12 @@ hiding that would make the code less honest rather than more portable. The
 exception is the prompt that asks you to plug the glasses in, which names them
 on purpose — it is shown precisely when there is no headset to ask.
 
+The room:
+
 | crate | what it is |
 |---|---|
-| `spatiand-hmd` | headset: IMU, display modes, buttons |
+| `spatiand` | the compositor itself |
+| `spatiand-hmd` | headset: IMU, display modes, buttons, the table of devices |
 | `spatiand-track` | head tracking: filter, bias, magnetic anchor, prediction |
 | `spatiand-input` | controller, touchscreen, gestures, scroll |
 | `spatiand-pad` | the one virtual gamepad a game sees, here or on a host |
@@ -275,13 +363,42 @@ on purpose — it is shown precisely when there is no headset to ask.
 | `spatiand-shell` | scene graph, launcher, HUD, keyboard |
 | `spatiand-audio` | spatial audio: geometry, HRTF, PipeWire |
 | `spatiand-platform` | session install, launching, desktop settings |
-| `spatiand-proto` | private Wayland protocols |
+| `spatiand-proto` | private Wayland protocols, `spatiand_xr_v1` among them |
+| `spatiand-openxr` | an OpenXR runtime: the loader finds it, its frames become a stereo window |
+| `spatiand-voice` | dictation and the assistant's ears and voice, through hemera |
+
+Other systems (each compiles the Deck's modules and adds only the platform):
+
+| crate | what it is |
+|---|---|
+| `spatiand-android` | the Deck's compositor on the glasses, with the phone as its controller |
+| `spatiand-adb` | Spatiand's own adb client: pairing with a phone's Wireless debugging, running a command as its shell user |
+| `spatiand-mac` | the Deck's compositor on the glasses, drawn through ANGLE |
+| `spatiand-mac-core` | the link to a Spatiand host, behind a small C interface, for the Mac app |
+| `spatiand-surfaces` | pictures on the GPU (IOSurfaces) handed from a process to its parent, on macOS |
+
+Remote applications:
+
+| crate | what it is |
+|---|---|
 | `spatiand-stream` | the wire to a remote host: messages, pairing, video packets, the clipboard |
-| `spatiand-video` | decoding a host's pictures on the Deck, and encoding recordings |
+| `spatiand-video` | decoding a host's pictures, and encoding recordings |
 | `spatiand-host` | the remote application host, a small compositor of its own |
 | `spatiand-host-catalog` | what a host keeps on disk: its applications and settings |
 | `spatiand-host-config` | the host's settings, as an application the headset opens |
-| `spatiand` | the compositor itself |
+
+The SDK and the applications:
+
+| crate | what it is |
+|---|---|
+| `spatiand-app` | what an application is written against: a window in the room, its input, GL, the room's own widgets |
+| `spatiand-media` | what a film is and how it is played: FFmpeg, each platform's decoder, the layouts of two eyes |
+| `spatiand-storage` | how an application reaches the storage service: rclone's remotes as virtual places |
+| `spatiand-sync` | the applications' settings, kept the same on every paired machine |
+| `spatiand-choose` | the file chooser: a window of the room that a program asks for files, a folder or a name |
+| `spatishelf`, `spatireel`, `spatiloupe`, `spatiquill`, `spatipal` | the five applications: files, video, viewer, terminal, assistant |
+| `spatikey`, `spatikey-core` | SpatiKey: the application and the browsers' way to it; its vault, crypto, request protocol and service, shared by the Mac app, the room and the apps |
+| `vibrefy-api` | talks to one Vibrefy deployment (a media server SpatiReel plays from) |
 
 ## Documentation
 
@@ -296,6 +413,7 @@ on purpose — it is shown precisely when there is no headset to ask.
 | [docs/remote.md](docs/remote.md) | Applications on another computer: what was measured, and what each measurement decided |
 | [docs/install.md](docs/install.md) | Installing a release, and what to check when it goes wrong |
 | [docs/xreal-air.md](docs/xreal-air.md) | The glasses' protocol, verified against hardware. Probably the most reusable thing here |
+| [docs/remove-a-device.md](docs/remove-a-device.md) | Removing a device from the shared list of paired devices |
 | [docs/steam-deck-controller.md](docs/steam-deck-controller.md) | The controller's HID reports |
 | [docs/state.md](docs/state.md) | Where the project stands: what works, what has not run on hardware, what is open |
 | [docs/spatimesh.md](docs/spatimesh.md) | SpatiMesh, the browser: Chromium with Spatiand's patches on all three systems, and the monthly update to the newest Chromium |
