@@ -314,8 +314,14 @@ impl ShelfTab {
         }
         let lines: HashMap<Place, usize> = self.shown.iter().enumerate().filter_map(|(at, &i)| place(self, i).map(|p| (p, at))).collect();
         self.selected = chosen.iter().filter_map(|p| lines.get(p)).map(|&at| self.shown[at]).collect();
-        // The cursor stays on what it was on.
-        self.cursor = at_cursor.and_then(|p| lines.get(&p).copied()).unwrap_or(self.cursor);
+        // The cursor stays on what it was on -- and, if it was on show, is not brought on show
+        // again because lines above it came or went: the scroll stays where it was.
+        let was = self.cursor;
+        let same = at_cursor.and_then(|p| lines.get(&p).copied());
+        self.cursor = same.unwrap_or(self.cursor);
+        if let Some(now) = same.filter(|_| self.revealed == Some(was)) {
+            self.revealed = Some(now);
+        }
         self.cursor = self.cursor.min(self.shown.len().saturating_sub(1));
         self.anchor = at_anchor.and_then(|p| lines.get(&p).copied()).unwrap_or(self.cursor);
     }
