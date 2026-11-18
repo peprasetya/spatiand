@@ -97,23 +97,9 @@ fn uri_paths(list: &str) -> Vec<String> {
         // A host before the path (file://host/path) is this machine's, or no use here.
         .map(|rest| if rest.starts_with('/') { rest } else { rest.find('/').map_or("", |i| &rest[i..]) })
         .filter(|p| !p.is_empty())
-        .map(|p| {
-            let bytes = p.as_bytes();
-            let mut out = Vec::with_capacity(bytes.len());
-            let mut i = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'%' && i + 2 < bytes.len() {
-                    if let Ok(b) = u8::from_str_radix(&p[i + 1..i + 3], 16) {
-                        out.push(b);
-                        i += 3;
-                        continue;
-                    }
-                }
-                out.push(bytes[i]);
-                i += 1;
-            }
-            String::from_utf8_lossy(&out).into_owned()
-        })
+        // Unescaped from the bytes (a `%` before a letter of two bytes, "50%é", is not cut
+        // through).
+        .map(|p| String::from_utf8_lossy(&crate::trash::unescape(p)).into_owned())
         .collect()
 }
 
@@ -1094,6 +1080,9 @@ mod uri_tests {
         let uri = file_uri(path);
         assert_eq!(uri, "file:///home/a%20b/caf%C3%A9%20%231.txt");
         assert_eq!(uri_paths(&format!("# a comment\r\n{uri}\r\nfile://localhost/etc/hosts\r\nhttps://example.org/\r\n")), vec![path.to_string(), "/etc/hosts".into()]);
+        // A % not escaping anything, its two after it cutting a letter of two bytes: kept, not a
+        // panic.
+        assert_eq!(uri_paths("file:///tmp/50%1é.txt\nfile:///tmp/%é\nfile:///tmp/a%"), vec!["/tmp/50%1é.txt".to_string(), "/tmp/%é".into(), "/tmp/a%".into()]);
     }
 
     #[test]
