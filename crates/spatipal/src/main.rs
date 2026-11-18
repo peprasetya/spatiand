@@ -144,7 +144,7 @@ macro_rules! view {
             listening: $pal.ears.is_some(),
             look: $pal.look,
             status: status($pal.state, &$pal.settings),
-            trouble: $pal.trouble.as_ref().filter(|(_, at)| at.elapsed() < Duration::from_secs(12)).map(|(t, _)| t.as_str()),
+            trouble: $pal.trouble.as_ref().filter(|(_, at)| at.elapsed() < Duration::from_secs(8)).map(|(t, _)| t.as_str()),
             models: &$pal.models,
             voices: &$pal.voices,
             characters: &$pal.characters,
@@ -235,7 +235,7 @@ impl Pal {
         match (self.settings.listening, self.ears.is_some()) {
             (true, false) => {
                 let Some(microphone) = self.app.room_listen() else {
-                    self.say_trouble("the room would not give its microphone");
+                    self.say_trouble("The room would not give its microphone.");
                     self.settings.listening = false;
                     return;
                 };
@@ -263,7 +263,15 @@ impl Pal {
 
     fn say_trouble(&mut self, why: &str) {
         log::warn!("{why}");
-        self.trouble = Some((why.to_string(), Instant::now()));
+        // A whole sentence: its first letter capital, a full stop at its end.
+        let mut said = why.trim().to_string();
+        if let Some(first) = said.chars().next() {
+            said.replace_range(..first.len_utf8(), &first.to_uppercase().to_string());
+        }
+        if !said.is_empty() && !said.ends_with(['.', '!', '?']) {
+            said.push('.');
+        }
+        self.trouble = Some((said, Instant::now()));
         self.dirty = true;
     }
 

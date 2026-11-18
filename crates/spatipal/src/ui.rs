@@ -3,12 +3,9 @@
 //!
 //! Drawn with the room's own widgets (`spatiand_app::ui`), so it looks like the rest of Spatiand.
 
-use spatiand_app::ui::{look, theme, Button, Field, Icon, Input, List, Painter, Rect, Row, Typed};
+use spatiand_app::ui::{look, theme, Button, Confirm, Field, Icon, Input, List, Painter, Rect, Row, Typed};
 use spatiand_app::Gl;
 use spatiand_voice::VoiceSettings;
-
-/// How long a chat's bin waits for its second press.
-const ARMED_FOR: std::time::Duration = std::time::Duration::from_secs(4);
 
 use crate::store::{Chat, Said, Settings};
 
@@ -121,12 +118,11 @@ pub struct Window {
     editing: Option<Line>,
     edit: Field,
     pointer: (f32, f32),
-    /// The bin on the chat under the pointer: pressed once it shows "Delete", pressed again
-    /// within a few seconds the chat is forgotten.
+    /// The bin on the chat under the pointer: pressing it asks whether to delete the chat.
     forget: Button,
     forget_row: Option<usize>,
-    /// The chat whose bin was pressed once, by its id, and when.
-    armed: Option<(String, std::time::Instant)>,
+    /// The question being asked, and the id of the chat it is about.
+    asking: Option<(String, Confirm)>,
 }
 
 impl Window {
@@ -157,17 +153,20 @@ impl Window {
             pointer: (0.0, 0.0),
             forget: Button::default(),
             forget_row: None,
-            armed: None,
+            asking: None,
         }
     }
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, view: &View) {
-        let mut all = p.bounds().inset(theme::PAD * 0.6);
+        let mut all = p.bounds().inset(theme::PAD);
         let beside = view.status.to_string();
         look::header(p, gl, &mut all, &view.settings.name, &beside);
         match self.page {
             Page::Chat => self.draw_chat(p, gl, all, view),
             Page::Settings => self.draw_settings(p, gl, all, view),
+        }
+        if let Some((_, question)) = &mut self.asking {
+            question.draw(p, gl, p.bounds());
         }
     }
 
@@ -225,10 +224,9 @@ impl Window {
             .map(|c| Row::with(if c.title.is_empty() { "New chat".to_string() } else { c.title.clone() }, crate::time::short(c.updated)))
             .collect();
         let hovered = self.chats.hovered();
-        let armed = self.armed.as_ref().filter(|(_, at)| at.elapsed() < ARMED_FOR).and_then(|(id, _)| view.chats.iter().position(|c| &c.id == id));
         let mut rows = rows;
-        // The chat under the pointer shows its bin where its time was; one armed shows it asking.
-        if let Some(row) = armed.or(hovered).and_then(|i| rows.get_mut(i)) {
+        // The chat under the pointer shows its bin where its time was.
+        if let Some(row) = hovered.and_then(|i| rows.get_mut(i)) {
             row.trailing = None;
         }
         self.chats.draw(p, gl, side, &rows);
@@ -238,12 +236,11 @@ impl Window {
             }
         }
         self.forget_row = None;
-        if let Some(i) = armed.or(hovered) {
+        if let Some(i) = hovered {
             if let Some(r) = self.chats.row_rect(i) {
-                let asking = armed == Some(i);
-                let w = if asking { 210.0 } else { 44.0 };
+                let w = 44.0;
                 let at = Rect { x: r.x + r.w - w - 6.0, y: r.y + (r.h - 44.0).max(0.0) / 2.0, w, h: 44.0_f32.min(r.h) };
-                self.forget.draw_icon(p, gl, at, Icon::Trash, if asking { "Delete" } else { "" });
+                self.forget.draw_icon(p, gl, at, Icon::Trash, "");
                 self.forget_row = Some(i);
             }
         }
@@ -280,19 +277,21 @@ impl Window {
             y += h + 18.0;
         }
         p.unclip(gl);
+        if tall > all.h {
+            look::scrollbar(p, gl, Rect { x: all.right() - theme::SCROLL_WIDTH, w: theme::SCROLL_WIDTH, ..all }, all.h, tall, tall - all.h - self.scroll);
+        }
     }
 
     fn draw_settings(&mut self, p: &mut Painter, gl: &Gl, mut all: Rect, view: &View) {
+        look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Settings", "");
         let mut foot = all.take_bottom(Button::HEIGHT);
         all.take_bottom(16.0);
-        let back_w = Button::width(p, gl, "Done");
-        let back = foot.take_right(back_w);
-        foot.take_right(10.0);
-        self.back.draw(p, gl, back, "Done");
         if let Some(line) = self.editing {
-            self.edit.hint = format!("{} \u{2014} Enter or a click elsewhere keeps it, Escape drops it", label(line));
+            self.edit.hint = label(line).to_string();
             self.edit.focused = true;
             self.edit.draw(p, gl, foot);
+            let keys = all.take_bottom(theme::FOOTER_EM * 1.8);
+            look::keys(p, gl, keys, "[Enter] Keep  [Esc] Drop", 0.0, 1.0);
         } else {
             p.label(gl, "Choose a line to change it.", foot, theme::FOOTER_EM, theme::ink_hint(), 0.0);
         }
@@ -323,6 +322,17 @@ impl Window {
         if let Input::Pointer { x, y } = input {
             self.pointer = (x, y);
         }
+        // A question being asked has every input until it is answered.
+        if let Some((id, question)) = &mut self.asking {
+            match question.input(&input) {
+                Some(yes) => {
+                    let id = id.clone();
+                    self.asking = None;
+                    return yes.then_some(Want::ForgetChat(id));
+                }
+                None => return None,
+            }
+        }
         match self.page {
             Page::Chat => self.chat_input(input, view),
             Page::Settings => self.settings_input(input, view),
@@ -349,7 +359,7 @@ impl Window {
                     // By the chat's id: the list may have moved under the pointer between the
                     // two presses.
                     let Some(id) = view.chats.get(i).map(|c| c.id.clone()) else { return None };
-                    return self.arm_or_forget(id);
+                    return self.ask_to_forget(id);
                 }
                 Input::Pointer { .. } | Input::PointerLeft => {
                     self.forget.input(&input);
@@ -383,13 +393,19 @@ impl Window {
         } else if self.send.input(&input) {
             return self.take_field();
         }
-        // A chat is forgotten with its bin (pressed twice), or Control/Super-Delete on the one open
-        // -- pressed twice too, as the bin is, and only with nothing typed: in the field it is
-        // the field's (Control-Delete deletes the word ahead).
+        // A chat is deleted with its bin, or Control/Super-Delete on the one open -- asked about
+        // first, as the bin does, and only with nothing typed: in the field it is the field's
+        // (Control-Delete deletes the word ahead). Control/Super-N starts a new chat.
+        if let Input::Key { key: spatiand_app::Key::Char('n'), modifiers, .. } = &input {
+            if modifiers.logo || modifiers.control {
+                self.scroll = 0.0;
+                return Some(Want::NewChat);
+            }
+        }
         if let Input::Key { key: spatiand_app::Key::Delete, modifiers, .. } = &input {
             if (modifiers.logo || modifiers.control) && self.field.text.is_empty() {
                 if let Some(id) = view.current.and_then(|i| view.chats.get(i)).map(|c| c.id.clone()) {
-                    return self.arm_or_forget(id);
+                    return self.ask_to_forget(id);
                 }
             }
         }
@@ -399,13 +415,9 @@ impl Window {
         None
     }
 
-    /// The first press on a chat's bin arms it; a second within a few seconds forgets it.
-    fn arm_or_forget(&mut self, id: String) -> Option<Want> {
-        if self.armed.as_ref().is_some_and(|(at, when)| *at == id && when.elapsed() < ARMED_FOR) {
-            self.armed = None;
-            return Some(Want::ForgetChat(id));
-        }
-        self.armed = Some((id, std::time::Instant::now()));
+    /// Asks whether to delete the chat `id`: the bin and Control/Super-Delete come here.
+    fn ask_to_forget(&mut self, id: String) -> Option<Want> {
+        self.asking = Some((id, Confirm::careful("Delete this chat? It cannot be had back.", "Delete", "Cancel")));
         None
     }
 
@@ -455,6 +467,8 @@ impl Window {
                 self.editing = None;
                 return None;
             }
+        } else if let Input::Key { key: spatiand_app::Key::Escape, .. } = input {
+            return Some(Want::Chat);
         }
         let row = self.lines.input(&input)?;
         let line = Self::line_at(row)?;
@@ -725,6 +739,10 @@ mod tests {
     use super::*;
     use spatiand_app::{Key, Modifiers};
 
+    fn key(key: Key) -> Input {
+        Input::Key { key, text: None, modifiers: Modifiers::default(), letter: None }
+    }
+
     #[test]
     fn control_delete_forgets_the_open_chat_only_pressed_twice_and_with_nothing_typed() {
         let chats: Vec<Chat> = ["a", "b"].iter().map(|id| Chat { id: id.to_string(), ..Default::default() }).collect();
@@ -749,19 +767,26 @@ mod tests {
         // Something typed: the key is the field's.
         w.field.set("hello world");
         assert!(w.input(delete(), &view).is_none());
-        assert!(w.input(delete(), &view).is_none());
-        // Nothing typed: the first press asks, the second forgets the chat open, by its id.
+        assert!(w.asking.is_none());
+        // Nothing typed: it asks, about the chat open; Return is Cancel and nothing is lost.
         w.field.set("");
         assert!(w.input(delete(), &view).is_none());
-        assert!(matches!(w.input(delete(), &view), Some(Want::ForgetChat(id)) if id == "b"));
+        assert!(w.asking.is_some());
+        assert!(w.input(key(Key::Enter), &view).is_none());
+        assert!(w.asking.is_none());
+        // Asked again, the yes chosen: the chat is deleted, by its id.
+        assert!(w.input(delete(), &view).is_none());
+        assert!(w.input(key(Key::Right), &view).is_none());
+        assert!(matches!(w.input(key(Key::Enter), &view), Some(Want::ForgetChat(id)) if id == "b"));
     }
 
     #[test]
-    fn the_bin_forgets_the_chat_it_was_pressed_on() {
+    fn the_bin_asks_first_and_escape_is_cancel() {
         let mut w = Window::new();
-        assert!(w.arm_or_forget("a".into()).is_none());
-        // Another chat on that row by the second press: it is asked about first.
-        assert!(w.arm_or_forget("b".into()).is_none());
-        assert!(matches!(w.arm_or_forget("b".into()), Some(Want::ForgetChat(id)) if id == "b"));
+        assert!(w.ask_to_forget("a".into()).is_none());
+        let (settings, speech) = (Settings::default(), VoiceSettings::default());
+        let view = View { chats: &[], current: None, answering: None, speaking: false, settings: &settings, speech: &speech, listening: false, look: false, status: "", trouble: None, models: &[], voices: &[], characters: &[] };
+        assert!(w.input(key(Key::Escape), &view).is_none());
+        assert!(w.asking.is_none());
     }
 }
