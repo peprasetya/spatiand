@@ -56,6 +56,52 @@ void main() {
 }
 "#;
 
+/// Glyph images, each at its top left from a common origin, made one: drawn each over the
+/// ones before it. In colour if any of them is.
+fn composed(parts: Vec<(i32, i32, i32, i32, Vec<u8>, bool)>) -> (i32, i32, i32, i32, Vec<u8>, bool) {
+    let left = parts.iter().map(|p| p.0).min().unwrap_or(0);
+    let top = parts.iter().map(|p| p.1).min().unwrap_or(0);
+    let right = parts.iter().map(|p| p.0 + p.2).max().unwrap_or(0);
+    let bottom = parts.iter().map(|p| p.1 + p.3).max().unwrap_or(0);
+    let (w, h) = (right - left, bottom - top);
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    for (x, y, pw, ph, rgba, _) in &parts {
+        for row in 0..*ph {
+            for col in 0..*pw {
+                let s = ((row * pw + col) * 4) as usize;
+                let d = (((y - top + row) * w + (x - left + col)) * 4) as usize;
+                let (sa, da) = (rgba[s + 3] as f32 / 255.0, out[d + 3] as f32 / 255.0);
+                let a = sa + da * (1.0 - sa);
+                if a <= 0.0 {
+                    continue;
+                }
+                for k in 0..3 {
+                    out[d + k] = ((rgba[s + k] as f32 * sa + out[d + k] as f32 * da * (1.0 - sa)) / a).round() as u8;
+                }
+                out[d + 3] = (a * 255.0).round() as u8;
+            }
+        }
+    }
+    let colour = parts.iter().any(|p| p.5);
+    (left, top, w, h, out, colour)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::composed;
+
+    #[test]
+    fn a_letter_and_its_mark_make_one_image() {
+        // A 2x2 letter at (0, 0) and a 1x1 mark above it at (1, -1).
+        let letter = (0, 0, 2, 2, [255, 255, 255, 255].repeat(4), false);
+        let mark = (1, -1, 1, 1, vec![255, 255, 255, 128], false);
+        let (left, top, w, h, rgba, colour) = composed(vec![letter, mark]);
+        assert_eq!((left, top, w, h, colour), (0, -1, 2, 3, false));
+        let alpha: Vec<u8> = rgba.chunks(4).map(|p| p[3]).collect();
+        assert_eq!(alpha, [0, 128, 255, 255, 255, 255]);
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Glyph {
     /// Where it is in the atlas, in its pixels.
@@ -75,6 +121,8 @@ pub struct Grid {
     swash: SwashCache,
     family: String,
     glyphs: HashMap<(char, u8), Option<Glyph>>,
+    /// The same for a character with marks of no width (an accent, a selector): by all of it.
+    clusters: HashMap<(String, u8), Option<Glyph>>,
     /// Where the next glyph goes in the atlas: a row at a time.
     pen: (i32, i32, i32),
     pub px: f32,
@@ -143,6 +191,7 @@ impl Grid {
                 swash: SwashCache::new(),
                 family,
                 glyphs: HashMap::new(),
+                clusters: HashMap::new(),
                 pen: (1, 1, 0),
                 px,
                 cell: (px * 0.6, px * 1.3),
@@ -191,6 +240,7 @@ fn attrs(family: &str, style: u8) -> Attrs<'_> {
 
     fn forget_glyphs(&mut self, gl: &Gl) {
         self.glyphs.clear();
+        self.clusters.clear();
         self.pen = (1, 1, 0);
         unsafe {
             let g = gl.api();
@@ -202,23 +252,38 @@ fn attrs(family: &str, style: u8) -> Attrs<'_> {
         }
     }
 
-    fn glyph(&mut self, gl: &Gl, c: char, style: u8) -> Option<Glyph> {
-        if let Some(glyph) = self.glyphs.get(&(c, style)) {
+    /// The glyph for a cell: its character, or with `marks` the character and its marks, set
+    /// together so that an accent sits on its letter and a selector picks the emoji.
+    fn glyph(&mut self, gl: &Gl, c: char, marks: Option<&str>, style: u8) -> Option<Glyph> {
+        let cluster = marks.map(|m| {
+            let mut text = String::with_capacity(4 + m.len());
+            text.push(c);
+            text.push_str(m);
+            text
+        });
+        let known = match &cluster {
+            None => self.glyphs.get(&(c, style)),
+            Some(text) => self.clusters.get(&(text.clone(), style)),
+        };
+        if let Some(glyph) = known {
             return *glyph;
         }
-        let made = self.make(gl, c, style);
+        let mut buffer = [0u8; 4];
+        let text = cluster.as_deref().unwrap_or_else(|| c.encode_utf8(&mut buffer));
+        let mut made = self.make(gl, text, style);
         // The atlas is full: start it again, and set this one first.
         if made.is_none() && self.pen.1 >= ATLAS - 4 {
             self.forget_glyphs(gl);
-            let again = self.make(gl, c, style);
-            self.glyphs.insert((c, style), again);
-            return again;
+            made = self.make(gl, text, style);
         }
-        self.glyphs.insert((c, style), made);
+        match cluster {
+            None => self.glyphs.insert((c, style), made),
+            Some(text) => self.clusters.insert((text, style), made),
+        };
         made
     }
 
-    fn make(&mut self, gl: &Gl, c: char, style: u8) -> Option<Glyph> {
+    fn make(&mut self, gl: &Gl, text: &str, style: u8) -> Option<Glyph> {
         let metrics = Metrics::new(self.px, self.cell.1);
         let family = self.family.clone();
         let attrs = Self::attrs(&family, style);
@@ -226,23 +291,34 @@ fn attrs(family: &str, style: u8) -> Attrs<'_> {
         {
             let mut b = buffer.borrow_with(&mut self.fonts);
             b.set_size(Some(self.cell.0 * 4.0), Some(self.cell.1 * 2.0));
-            let mut text = [0u8; 4];
-            b.set_text(c.encode_utf8(&mut text), &attrs, Shaping::Advanced, None);
+            b.set_text(text, &attrs, Shaping::Advanced, None);
             b.shape_until_scroll(false);
         }
+        // Every glyph the text is set as: one for a character; for a character with marks, one
+        // if the face has them made up together, the letter and each mark if not, each where
+        // the face puts it.
         let run = buffer.layout_runs().next()?;
-        let glyph = run.glyphs.first()?;
-        let physical = glyph.physical((0.0, 0.0), 1.0);
-        let image = self.swash.get_image_uncached(&mut self.fonts, physical.cache_key)?;
-        let (w, h) = (image.placement.width as i32, image.placement.height as i32);
-        if w == 0 || h == 0 {
-            return None;
+        let mut parts = Vec::new();
+        for glyph in run.glyphs.iter() {
+            let physical = glyph.physical((0.0, 0.0), 1.0);
+            let Some(image) = self.swash.get_image_uncached(&mut self.fonts, physical.cache_key) else { continue };
+            let (w, h) = (image.placement.width as i32, image.placement.height as i32);
+            if w == 0 || h == 0 {
+                continue;
+            }
+            let colour = matches!(image.content, SwashContent::Color);
+            let rgba: Vec<u8> = match image.content {
+                SwashContent::Mask => image.data.iter().flat_map(|&a| [255, 255, 255, a]).collect(),
+                SwashContent::Color => image.data.clone(),
+                SwashContent::SubpixelMask => image.data.chunks_exact(4).flat_map(|p| [255, 255, 255, p[0].max(p[1]).max(p[2])]).collect(),
+            };
+            // Its top left from the pen at the baseline.
+            parts.push((physical.x + image.placement.left, physical.y - image.placement.top, w, h, rgba, colour));
         }
-        let colour = matches!(image.content, SwashContent::Color);
-        let rgba: Vec<u8> = match image.content {
-            SwashContent::Mask => image.data.iter().flat_map(|&a| [255, 255, 255, a]).collect(),
-            SwashContent::Color => image.data.clone(),
-            SwashContent::SubpixelMask => image.data.chunks_exact(4).flat_map(|p| [255, 255, 255, p[0].max(p[1]).max(p[2])]).collect(),
+        let (left, top, w, h, rgba, colour) = match parts.len() {
+            0 => return None,
+            1 => parts.pop()?,
+            _ => composed(parts),
         };
         if self.pen.0 + w + 1 > ATLAS {
             self.pen = (1, self.pen.1 + self.pen.2 + 1, 0);
@@ -263,7 +339,7 @@ fn attrs(family: &str, style: u8) -> Attrs<'_> {
         let a = ATLAS as f32;
         Some(Glyph {
             uv: [x as f32 / a, y as f32 / a, (x + w) as f32 / a, (y + h) as f32 / a],
-            at: (physical.x as f32 + image.placement.left as f32, self.baseline - image.placement.top as f32 + physical.y as f32),
+            at: (left as f32, self.baseline + top as f32),
             size: (w as f32, h as f32),
             colour,
         })
@@ -316,11 +392,12 @@ fn attrs(family: &str, style: u8) -> Attrs<'_> {
         for row in 0..screen.rows as usize {
             for col in 0..cols {
                 let cell = screen.cells[row * cols + col];
-                if cell.c == ' ' || cell.c == '\0' || cell.flags & (flags::SPACER | flags::HIDDEN) != 0 {
+                let marks = if screen.marks.is_empty() { None } else { screen.marks_at(row * cols + col) };
+                if (cell.c == ' ' || cell.c == '\0') && marks.is_none() || cell.flags & (flags::SPACER | flags::HIDDEN) != 0 {
                     continue;
                 }
                 let style = (cell.flags & flags::BOLD != 0) as u8 | ((cell.flags & flags::ITALIC != 0) as u8) << 1;
-                let Some(glyph) = self.glyph(gl, cell.c, style) else { continue };
+                let Some(glyph) = self.glyph(gl, cell.c, marks, style) else { continue };
                 let on_cursor = cursor_here && focused && screen.cursor_shape == Cursor::Block && row == crow && col == ccol;
                 let mut colour = if on_cursor { rgb(crate::tab::BACKGROUND, 1.0) } else { rgb(cell.fg, 1.0) };
                 if cell.flags & flags::DIM != 0 {

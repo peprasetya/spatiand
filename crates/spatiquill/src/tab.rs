@@ -123,6 +123,7 @@ fn snapshot(term: &Term<Listener>) -> Screen {
     let mut cells = vec![Cell { c: ' ', fg: FOREGROUND, bg: BACKGROUND, flags: flags::PLAIN_BG }; cols * rows];
     let offset = content.display_offset as i32;
     let selection = content.selection;
+    let mut marks: Vec<(u32, String)> = Vec::new();
     for indexed in content.display_iter {
         let point = indexed.point;
         let row = point.line.0 + offset;
@@ -158,8 +159,16 @@ fn snapshot(term: &Term<Listener>) -> Screen {
         if selection.is_some_and(|s| s.contains(point)) {
             out |= flags::SELECTED;
         }
-        cells[row as usize * cols + point.column.0] = Cell { c: cell.c, fg, bg, flags: out };
+        let index = row as usize * cols + point.column.0;
+        cells[index] = Cell { c: cell.c, fg, bg, flags: out };
+        // Combining accents, a variation selector, a joiner: drawn with the cell's character.
+        // At most sixteen, which is more than any writing needs (a program piling on more
+        // cannot swell every screen sent).
+        if let Some(zerowidth) = cell.zerowidth().filter(|z| !z.is_empty()) {
+            marks.push((index as u32, zerowidth.iter().take(16).collect()));
+        }
     }
+    marks.sort_by_key(|(index, _)| *index);
     let cursor_row = content.cursor.point.line.0 + offset;
     let shape = if !content.mode.contains(TermMode::SHOW_CURSOR) || cursor_row < 0 || cursor_row as usize >= rows {
         Cursor::Hidden
@@ -181,6 +190,7 @@ fn snapshot(term: &Term<Listener>) -> Screen {
         mouse: content.mode.intersects(TermMode::MOUSE_MODE),
         alternate: content.mode.contains(TermMode::ALT_SCREEN),
         cells,
+        marks,
     }
 }
 
@@ -516,6 +526,21 @@ mod tests {
         assert_eq!(indexed(231, &colours), [255, 255, 255]);
         assert_eq!(indexed(196, &colours), [255, 0, 0]);
         assert_eq!(indexed(232, &colours), [8, 8, 8]);
+    }
+
+    #[test]
+    fn marks_of_no_width_go_with_their_cells_character() {
+        let (events, _heard) = channel();
+        let mut term = Term::new(Config::default(), &Size { cols: 6, rows: 2 }, Listener(events));
+        let mut parser = alacritty_terminal::vte::ansi::Processor::<alacritty_terminal::vte::ansi::StdSyncHandler>::new();
+        // e and a combining acute; a heart and the selector that makes it an emoji.
+        parser.advance(&mut term, "e\u{301}x\u{2764}\u{fe0f}".as_bytes());
+        let screen = snapshot(&term);
+        assert_eq!(screen.cells[0].c, 'e');
+        assert_eq!(screen.marks_at(0), Some("\u{301}"));
+        assert_eq!(screen.marks_at(1), None);
+        assert_eq!(screen.marks_at(2), Some("\u{fe0f}"));
+        assert_eq!(screen.marks.len(), 2);
     }
 
     #[test]

@@ -54,6 +54,19 @@ pub struct Screen {
     pub mouse: bool,
     pub alternate: bool,
     pub cells: Vec<Cell>,
+    /// The characters of no width of their own drawn with a cell's (combining accents, a
+    /// variation selector, a joiner), by the cell's index, in its order. Kept apart from the
+    /// cells, which they are seldom in, so that a cell stays a character and the wire stays as
+    /// small as it was for a screen without them.
+    pub marks: Vec<(u32, String)>,
+}
+
+impl Screen {
+    /// What is drawn in the cell at `index`: its character and whatever marks go with it.
+    pub fn marks_at(&self, index: usize) -> Option<&str> {
+        let at = self.marks.binary_search_by_key(&(index as u32), |(i, _)| *i).ok()?;
+        Some(self.marks[at].1.as_str())
+    }
 }
 
 /// From a window to a tab.
@@ -269,6 +282,12 @@ impl FromTab {
                     b.extend_from_slice(&c.fg);
                     b.extend_from_slice(&c.bg);
                 }
+                // After the cells, so that a screen without marks costs four bytes more.
+                put_u32(&mut b, s.marks.len() as u32);
+                for (index, marks) in &s.marks {
+                    put_u32(&mut b, *index);
+                    put_str(&mut b, marks);
+                }
                 b'F'
             }
             FromTab::Title(t) => {
@@ -316,7 +335,16 @@ impl FromTab {
                     let bg = [bg[0], bg[1], bg[2]];
                     cells.push(Cell { c, fg, bg, flags });
                 }
-                FromTab::Screen(Screen { cols, rows, cursor: (cx, cy), cursor_shape, scrolled, history, mouse: m & 1 != 0, alternate: m & 2 != 0, cells })
+                let mut marks = Vec::new();
+                for _ in 0..b.u32()? {
+                    let index = b.u32()?;
+                    let text = b.str()?;
+                    // In order, and of a cell there is: `Screen::marks_at` looks them up so.
+                    if (index as usize) < n && marks.last().is_none_or(|(last, _)| *last < index) {
+                        marks.push((index, text));
+                    }
+                }
+                FromTab::Screen(Screen { cols, rows, cursor: (cx, cy), cursor_shape, scrolled, history, mouse: m & 1 != 0, alternate: m & 2 != 0, cells, marks })
             }
             b'T' => FromTab::Title(b.str()?),
             b'D' => FromTab::Folder(b.str()?),
@@ -398,7 +426,10 @@ mod tests {
             mouse: true,
             alternate: false,
             cells: vec![Cell { c: '\u{1f600}', fg: [1, 2, 3], bg: [4, 5, 6], flags: flags::WIDE }, Cell { c: ' ', fg: [0; 3], bg: [0; 3], flags: flags::SPACER }],
+            marks: vec![(0, "\u{fe0f}".into())],
         };
+        assert_eq!(screen.marks_at(0), Some("\u{fe0f}"));
+        assert_eq!(screen.marks_at(1), None);
         let mut gather = Gather::default();
         let bytes = [FromTab::Screen(screen.clone()).encode(), FromTab::Title("vim".into()).encode()].concat();
         // Arriving in pieces, as a pipe gives them.

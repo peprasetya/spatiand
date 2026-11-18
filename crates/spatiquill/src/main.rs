@@ -1724,13 +1724,18 @@ fn screen_lines(screen: &Screen) -> Vec<String> {
     let mut lines: Vec<String> = screen
         .cells
         .chunks(cols)
-        .map(|row| {
-            row.iter()
-                .filter(|c| c.flags & wire::flags::SPACER == 0)
-                .map(|c| if c.c == '\0' { ' ' } else { c.c })
-                .collect::<String>()
-                .trim_end()
-                .to_string()
+        .enumerate()
+        .map(|(row, cells)| {
+            let mut line = String::new();
+            for (col, c) in cells.iter().enumerate() {
+                if c.flags & wire::flags::SPACER != 0 {
+                    continue;
+                }
+                line.push(if c.c == '\0' { ' ' } else { c.c });
+                // Its accents and selectors with it: "é" as written, not "e".
+                line.extend(screen.marks_at(row * cols + col).into_iter().flat_map(str::chars));
+            }
+            line.trim_end().to_string()
         })
         .collect();
     while lines.last().is_some_and(|l| l.is_empty()) {
@@ -1760,7 +1765,14 @@ fn command_on(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod describe_tests {
-    use super::command_on;
+    use super::*;
+
+    #[test]
+    fn a_screens_text_keeps_its_accents() {
+        let cell = |c: char| wire::Cell { c, fg: [0; 3], bg: [0; 3], flags: 0 };
+        let screen = Screen { cols: 4, rows: 1, cells: "cafe".chars().map(cell).collect(), marks: vec![(3, "\u{301}".into())], ..Screen::default() };
+        assert_eq!(screen_lines(&screen), vec!["cafe\u{301}".to_string()]);
+    }
 
     #[test]
     fn commands_are_read_off_prompts() {
