@@ -38,11 +38,12 @@ final class Battery {
 
     private static void hand(Intent intent) {
         if (intent == null || !intent.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true)) {
-            Native.battery(0, 0, 0);
+            Native.battery(0, 0, 0, 0);
             return;
         }
         Native.battery(intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1),
                 intent.getIntExtra(BatteryManager.EXTRA_SCALE, 0),
-                intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN));
+                intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN),
+                intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0));
     }
 }

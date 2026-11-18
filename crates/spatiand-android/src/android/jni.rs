@@ -274,12 +274,19 @@ pub extern "system" fn Java_id_prasetya_spatiand_Native_audioOutput(_env: *mut J
     spatiand_audio::server::set_output_device(id);
 }
 
-/// `Native.battery(level, scale, status)`: the phone's battery from `ACTION_BATTERY_CHANGED`,
-/// for the status pill, as the Deck reads its own from sysfs (which an app may not read here). A
-/// scale of 0 takes it away.
+/// `Native.battery(level, scale, status, plugged)`: the phone's battery from
+/// `ACTION_BATTERY_CHANGED`, for the status pill, as the Deck reads its own from sysfs (which an
+/// app may not read here). A scale of 0 takes it away.
 #[no_mangle]
-pub extern "system" fn Java_id_prasetya_spatiand_Native_battery(_env: *mut JNIEnv, _class: jclass, level: jint, scale: jint, status: jint) {
-    crate::status::set_android_battery(crate::status::Battery::from_android(level, scale, status));
+pub extern "system" fn Java_id_prasetya_spatiand_Native_battery(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    level: jint,
+    scale: jint,
+    status: jint,
+    plugged: jint,
+) {
+    crate::status::set_android_battery(crate::status::Battery::from_android(level, scale, status, plugged));
 }
 
 /// `Native.padButton(device, code, down)`: a gamepad's button. Returns whether it was one.

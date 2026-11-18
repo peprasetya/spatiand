@@ -48,20 +48,28 @@ impl Battery {
 
 impl Battery {
     /// What Android's `ACTION_BATTERY_CHANGED` says, read as the Deck's sysfs is: its
-    /// `EXTRA_LEVEL` out of `EXTRA_SCALE`, and `EXTRA_STATUS`, of which `BATTERY_STATUS_CHARGING`
-    /// (2) and `BATTERY_STATUS_FULL` (5) count as charging, as "Charging" and "Full" do on the
-    /// Deck. `None` for a scale of 0 or less, which is how "no battery, or not heard yet" is
-    /// sent.
+    /// `EXTRA_LEVEL` out of `EXTRA_SCALE`, and `EXTRA_STATUS` with `EXTRA_PLUGGED`: charging is
+    /// `BATTERY_STATUS_CHARGING` (2) or `BATTERY_STATUS_FULL` (5), or plugged in at all (a phone
+    /// holding its charge on the cable says "not charging", 4), as on the Deck and the Mac: the
+    /// question is whether it is going down. `None` for a scale of 0 or less, which is how "no
+    /// battery, or not heard yet" is sent.
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
-    pub fn from_android(level: i32, scale: i32, status: i32) -> Option<Battery> {
+    pub fn from_android(level: i32, scale: i32, status: i32, plugged: i32) -> Option<Battery> {
         if scale <= 0 || level < 0 {
             return None;
         }
         let percent = ((level as i64 * 100 + scale as i64 / 2) / scale as i64).clamp(0, 100) as u8;
         Some(Battery {
             percent,
-            charging: status == 2 || status == 5,
+            charging: status == 2 || status == 5 || plugged != 0,
         })
+    }
+
+    /// Whether sysfs's `status` of a battery means power is going in or held: "Not charging" is
+    /// a battery on the cable that is not taking charge (a charge limit, or full).
+    #[cfg_attr(any(target_os = "macos", target_os = "android"), allow(dead_code))]
+    fn on_power(status: &str) -> bool {
+        matches!(status, "Charging" | "Full" | "Not charging")
     }
 }
 
@@ -112,9 +120,9 @@ pub fn battery() -> Option<Battery> {
         let status = read_trimmed(&path.join("status")).unwrap_or_default();
         return Some(Battery {
             percent: percent.min(100),
-            // "Full" while plugged in counts as charging: the useful question is "is it going
-            // down", not "are electrons moving".
-            charging: status == "Charging" || status == "Full",
+            // "Full" or "Not charging" while plugged in counts as charging: the useful question
+            // is "is it going down", not "are electrons moving".
+            charging: Battery::on_power(&status),
         });
     }
     None
@@ -140,6 +148,7 @@ pub fn battery() -> Option<Battery> {
         fn CFDictionaryGetValue(dictionary: Ref, key: Ref) -> Ref;
         fn CFStringCreateWithCString(allocator: Ref, text: *const c_char, encoding: u32) -> Ref;
         fn CFNumberGetValue(number: Ref, kind: isize, value: *mut c_void) -> u8;
+        fn CFEqual(a: Ref, b: Ref) -> u8;
     }
     // SAFETY: Core Foundation calls on objects made here and released here; what a "Get" hands
     // back belongs to the object it came from, which outlives its use.
@@ -175,9 +184,17 @@ pub fn battery() -> Option<Battery> {
                 if full <= 0 {
                     continue;
                 }
-                // On mains and full counts as charging, as on the Deck: the question is whether
-                // it is going down.
-                let charging = value(description, "Is Charging") == kCFBooleanTrue
+                // On mains counts as charging, full or held at a limit, as on the Deck: the
+                // question is whether it is going down.
+                let ac_c = CString::new("AC Power").unwrap();
+                let ac = CFStringCreateWithCString(std::ptr::null(), ac_c.as_ptr(), 0x0800_0100);
+                let state = value(description, "Power Source State");
+                let on_mains = !state.is_null() && !ac.is_null() && CFEqual(state, ac) != 0;
+                if !ac.is_null() {
+                    CFRelease(ac);
+                }
+                let charging = on_mains
+                    || value(description, "Is Charging") == kCFBooleanTrue
                     || value(description, "Is Charged") == kCFBooleanTrue;
                 found = Some(Battery {
                     percent: ((now * 100 + full / 2) / full).clamp(0, 100) as u8,
@@ -277,19 +294,24 @@ mod tests {
     #[test]
     fn android_reads_as_the_deck_does() {
         // The Beam Pro's level is out of a scale of 100, but Android lets a phone pick another.
-        assert_eq!(Battery::from_android(82, 100, 3), Some(Battery { percent: 82, charging: false }));
-        assert_eq!(Battery::from_android(41, 50, 2), Some(Battery { percent: 82, charging: true }));
-        assert_eq!(Battery::from_android(1, 3, 3).unwrap().percent, 33);
-        assert_eq!(Battery::from_android(2, 3, 3).unwrap().percent, 67);
-        // Full on the charger is charging, as "Full" is on the Deck; "not charging" (4, a phone
-        // holding its charge on the cable) and "unknown" (1) are not, as on the Deck.
-        assert!(Battery::from_android(100, 100, 5).unwrap().charging);
-        assert!(!Battery::from_android(80, 100, 4).unwrap().charging);
-        assert!(!Battery::from_android(80, 100, 1).unwrap().charging);
+        assert_eq!(Battery::from_android(82, 100, 3, 0), Some(Battery { percent: 82, charging: false }));
+        assert_eq!(Battery::from_android(41, 50, 2, 1), Some(Battery { percent: 82, charging: true }));
+        assert_eq!(Battery::from_android(1, 3, 3, 0).unwrap().percent, 33);
+        assert_eq!(Battery::from_android(2, 3, 3, 0).unwrap().percent, 67);
+        // Full on the charger is charging, as "Full" is on the Deck; so is "not charging" (4) on
+        // the cable, a phone holding its charge, as "Not charging" is on the Deck: it is not
+        // going down. Off the cable, "not charging" and "unknown" (1) are not.
+        assert!(Battery::from_android(100, 100, 5, 2).unwrap().charging);
+        assert!(Battery::from_android(80, 100, 4, 2).unwrap().charging);
+        assert!(Battery::from_android(80, 100, 1, 1).unwrap().charging);
+        assert!(!Battery::from_android(80, 100, 4, 0).unwrap().charging);
+        assert!(!Battery::from_android(80, 100, 1, 0).unwrap().charging);
+        assert!(Battery::on_power("Not charging") && Battery::on_power("Full") && Battery::on_power("Charging"));
+        assert!(!Battery::on_power("Discharging") && !Battery::on_power("Unknown"));
         // Nothing heard, or a nonsense intent, is no battery rather than 0%.
-        assert_eq!(Battery::from_android(0, 0, 0), None);
-        assert_eq!(Battery::from_android(-1, 100, 2), None);
-        assert_eq!(Battery::from_android(150, 100, 2).unwrap().percent, 100);
+        assert_eq!(Battery::from_android(0, 0, 0, 0), None);
+        assert_eq!(Battery::from_android(-1, 100, 2, 0), None);
+        assert_eq!(Battery::from_android(150, 100, 2, 0).unwrap().percent, 100);
     }
 
     #[test]

@@ -111,9 +111,9 @@ final class Native {
 
     /**
      * The phone's battery for the room's status pill (Battery.java): ACTION_BATTERY_CHANGED's
-     * EXTRA_LEVEL, EXTRA_SCALE and EXTRA_STATUS; a scale of 0 for none.
+     * EXTRA_LEVEL, EXTRA_SCALE, EXTRA_STATUS and EXTRA_PLUGGED; a scale of 0 for none.
      */
-    static native void battery(int level, int scale, int status);
+    static native void battery(int level, int scale, int status, int plugged);
 
     /**
      * The phone's apps, for the room's launcher (Shell.listApps): a JSON list of objects with
