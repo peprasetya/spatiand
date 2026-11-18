@@ -103,7 +103,7 @@ final class MacHost {
         // (`Notices.Reader`); said only to a session that is attached, and not while this Mac is
         // locked, when what it would say is said as a state (`sayHeld`).
         Notices.shared.onShown = { [weak self] text in
-            guard let self, self.attached, !self.macLocked else { return }
+            guard let self, self.attached, !self.macLocked, text.isEmpty || Settings.notifications else { return }
             if !text.isEmpty { print("host: a notification here, said to the session") }
             self.link?.say(["Notice": ["text": text]])
         }

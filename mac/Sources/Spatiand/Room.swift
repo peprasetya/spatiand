@@ -146,7 +146,9 @@ final class Room {
         }
         PadInput.shared.start()
         // The Mac's notifications, under the clock.
-        if Settings.notifications, RoomTap.allowed(ask: false) { Notices.shared.start(for: .room) }
+        // (Read whatever the setting is now: `Notices` asks it each time, so that turning it on
+        // in the Settings window shows them without the room starting again.)
+        if RoomTap.allowed(ask: false) { Notices.shared.start(for: .room) }
         // The sound of each application with a window on show, taken and placed at that window.
         if Settings.soundPlacement, !preview || ProcessInfo.processInfo.environment["SPATIAND_DEBUG_TAP"] != nil {
             sound.onProblem = { print("sound: \($0)") }

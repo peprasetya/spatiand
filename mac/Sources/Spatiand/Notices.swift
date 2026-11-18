@@ -44,7 +44,13 @@ final class Notices {
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self, !self.looking else { return }
             self.looking = true
-            self.queue.async { self.look(); DispatchQueue.main.async { self.looking = false } }
+            // **"Show this Mac's notifications" is asked each time, for every reader**: off, no
+            // banner is read, none is shown under the clock and none is said to a session this
+            // Mac is the host of -- and turning it off or on takes effect at once, not at the
+            // room's next start. The card is the room's only while the room is a reader.
+            let on = Settings.notifications
+            let room = self.readers.contains(.room)
+            self.queue.async { self.look(on: on, room: room); DispatchQueue.main.async { self.looking = false } }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -52,11 +58,14 @@ final class Notices {
 
     func stop(for reader: Reader) {
         readers.remove(reader)
+        // The room's card goes with the room's reading, whoever else still reads.
+        if reader == .room { queue.async { [self] in if cardShown { sp_notice("") }; cardShown = false } }
         guard readers.isEmpty else { return }
         timer?.invalidate()
         timer = nil
         queue.async { [self] in
-            if !shown.isEmpty { sp_notice("") }
+            if cardShown { sp_notice("") }
+            cardShown = false
             shown = ""
         }
     }
@@ -136,7 +145,20 @@ final class Notices {
     private var seen: Set<String> = []
     private var since = Date.distantPast
 
-    private func look() {
+    /// Whether the room's card has words on it now (`sp_notice`).
+    private var cardShown = false
+
+    private func look(on: Bool, room: Bool) {
+        guard on else {
+            // Turned off while one was on show: it goes, from the card and from the session.
+            if cardShown { sp_notice("") }
+            cardShown = false
+            if !shown.isEmpty { DispatchQueue.main.async { [self] in onShown?("") } }
+            shown = ""
+            banner = nil
+            return
+        }
+        if !room, cardShown { sp_notice(""); cardShown = false }
         let all = Self.banners().map { ($0.0, $0.1, $0.1.joined(separator: "\u{1}")) }
         let fresh = all.first { !seen.contains($0.2) }
         seen = Set(all.map { $0.2 })
@@ -147,14 +169,15 @@ final class Notices {
             let rest = fresh.1.dropFirst().joined(separator: " \u{2014} ")
             shown = rest.isEmpty ? head : head + "\n" + rest
             since = Date()
-            sp_notice(shown)
+            if room { sp_notice(shown); cardShown = true }
             let words = shown
             DispatchQueue.main.async { [self] in onShown?(words) }
         } else if !shown.isEmpty, Date().timeIntervalSince(since) > 8 {
             // A glance's worth: the banner itself may stay on the Mac's screen much longer.
             shown = ""
             banner = nil
-            sp_notice("")
+            if cardShown { sp_notice("") }
+            cardShown = false
             DispatchQueue.main.async { [self] in onShown?("") }
         }
     }
