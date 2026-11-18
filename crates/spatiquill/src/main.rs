@@ -1348,9 +1348,12 @@ fn decode(text: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
+        // Two hex digits, read as bytes: slicing the text there could cut a character in two,
+        // and from_str_radix would take a sign ("%+5").
+        let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&text[i + 1..i + 3], 16) {
-                out.push(b);
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
                 i += 3;
                 continue;
             }
@@ -1379,6 +1382,17 @@ mod drop_tests {
         let list = "file:///home/me/notes.txt\r\nfile:///home/me/My%20Files/it's.png\r\n";
         assert_eq!(paths_typed(list), "/home/me/notes.txt '/home/me/My Files/it'\\''s.png' ");
         assert_eq!(paths_typed("# nothing\r\n"), "");
+    }
+
+    #[test]
+    fn an_escape_is_two_hex_digits_and_nothing_else() {
+        assert_eq!(decode("/a%20b"), "/a b");
+        // A character of two bytes straight after the %: not cut in two.
+        assert_eq!(decode("/%a\u{e9}"), "/%a\u{e9}");
+        assert_eq!(decode("/%\u{e9}9"), "/%\u{e9}9");
+        // A sign is not a digit.
+        assert_eq!(decode("/%+5"), "/%+5");
+        assert_eq!(decode("/%4"), "/%4");
     }
 }
 
