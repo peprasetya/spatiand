@@ -265,6 +265,17 @@ impl ShelfTab {
         self.place = place.clone();
         self.state = State::Loading(Instant::now());
         self.filter.clear();
+        // What the place left held is not on show any more, nor chosen: keys and menus while
+        // the new one loads act on nothing, and a refilter does not put its names under the new
+        // place.
+        self.top.clear();
+        self.items.clear();
+        self.entries.clear();
+        self.shown.clear();
+        self.selected.clear();
+        self.cursor = 0;
+        self.anchor = 0;
+        self.revealed = None;
         self.tell(&ToTab::Go(place));
     }
 
