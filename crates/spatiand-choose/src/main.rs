@@ -14,7 +14,7 @@
 
 use std::path::{Path, PathBuf};
 
-use spatiand_app::ui::{draw_icon, look, theme, Field, Icon, Input, List, Painter, Rect, Row};
+use spatiand_app::ui::{draw_icon, look, theme, Button, Field, Icon, Input, List, Painter, Rect, Row};
 use spatiand_app::{App, Event, Key};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -92,8 +92,8 @@ struct Chooser {
     said: Option<String>,
     /// A name to save under that is there already, once the wearer has been told.
     replacing: Option<PathBuf>,
-    ok: Rect,
-    cancel: Rect,
+    ok: Button,
+    cancel: Button,
     stale: bool,
     /// The cursor to go to the folder's own first line when the lines are next made: on opening,
     /// on going to a folder, and on finding (so that Enter takes what was found).
@@ -113,6 +113,9 @@ impl Chooser {
         }
         let mut list = List::default();
         list.focused = true;
+        // The yes is the lit one, as a question's is: Enter answers with it.
+        let mut ok = Button::default();
+        ok.focused = true;
         Chooser {
             dir: ask.dir.clone(),
             ask,
@@ -124,8 +127,8 @@ impl Chooser {
             all_kinds: false,
             said: None,
             replacing: None,
-            ok: Rect::default(),
-            cancel: Rect::default(),
+            ok,
+            cancel: Button::default(),
             stale: true,
             to_folder: true,
         }
@@ -232,7 +235,7 @@ impl Chooser {
             } else if self.ask.mode == Mode::Folder {
                 continue;
             } else if self.wanted(&name) {
-                let size = std::fs::metadata(&path).map(|m| size(m.len())).unwrap_or_default();
+                let size = std::fs::metadata(&path).map(|m| look::size(m.len())).unwrap_or_default();
                 let mark = if self.chosen.contains(&path) { format!("\u{2713}  {size}") } else { size };
                 rows.push(Row::with(name, mark).icon(Icon::Document));
                 targets.push(Target::File(path));
@@ -306,7 +309,7 @@ impl Chooser {
             Mode::Save => {
                 let name = self.field.text.trim().to_string();
                 if name.is_empty() {
-                    self.said = Some("Type the file's name first".into());
+                    self.said = Some("Type the file's name first.".into());
                     return None;
                 }
                 let path = self.dir.join(&name);
@@ -315,7 +318,7 @@ impl Chooser {
                     return None;
                 }
                 if path.exists() && self.replacing.as_ref() != Some(&path) {
-                    self.said = Some(format!("{name} is here already: press Replace to write over it"));
+                    self.said = Some(format!("{name} is here already: press Replace to write over it."));
                     self.replacing = Some(path);
                     return None;
                 }
@@ -325,7 +328,7 @@ impl Chooser {
             _ => match self.targets.get(self.list.cursor).cloned() {
                 Some(Target::File(path)) => Some(vec![path]),
                 _ => {
-                    self.said = Some("Choose a file first".into());
+                    self.said = Some("Choose a file first.".into());
                     None
                 }
             },
@@ -360,7 +363,7 @@ impl Chooser {
             } else if path.is_file() {
                 return Some(vec![path]);
             }
-            self.said = Some(format!("Nothing is at {}", path.display()));
+            self.said = Some(format!("Nothing is at {}.", path.display()));
             return None;
         }
         if control || self.ask.mode == Mode::Save || self.ask.mode == Mode::Folder {
@@ -370,7 +373,28 @@ impl Chooser {
         self.target(target)
     }
 
-    fn draw(&mut self, p: &mut Painter, gl: &spatiand_app::Gl, hover: (f32, f32)) {
+    /// What it shows, for dictation and the assistant: the folder's names and what is typed.
+    fn description(&self) -> spatiand_app::Description {
+        let names: Vec<String> = self
+            .targets
+            .iter()
+            .filter_map(|t| match t {
+                Target::Go(p) | Target::File(p) if p.parent() == Some(self.dir.as_path()) => p.file_name().map(|n| n.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect();
+        spatiand_app::Description {
+            kind: "files".into(),
+            app: "Spatiand".into(),
+            title: self.title(),
+            text: self.field.text.clone(),
+            vocabulary: names.into_iter().take(150).collect(),
+            directory: self.dir.display().to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn draw(&mut self, p: &mut Painter, gl: &spatiand_app::Gl) {
         if self.stale {
             self.build();
         }
@@ -385,7 +409,7 @@ impl Chooser {
             _ => Icon::Document,
         };
         draw_icon(p, gl, icon, Rect::new(mark.x, mark.y + (mark.h - 34.0) * 0.5, 34.0, 34.0), theme::ink_hint());
-        p.label(gl, &self.title(), head, theme::TITLE_EM * 0.7, theme::ink(), 0.0);
+        p.label(gl, &self.title(), head, theme::TITLE_EM * 0.8, theme::ink(), 0.0);
         if let Some(said) = self.said.as_deref() {
             p.label(gl, said, inner.take_top(36.0), theme::DETAIL_EM, look::trouble(), 0.0);
         }
@@ -395,15 +419,12 @@ impl Chooser {
         let mut buttons = inner.take_bottom(theme::ROW_HEIGHT);
         inner.take_bottom(14.0);
         let label = self.ok_label();
-        let ok_w = (p.measure(gl, &label, theme::ROW_EM * 0.86, 800.0).0 + 60.0).max(180.0);
-        self.ok = buttons.take_right(ok_w);
-        buttons.take_right(16.0);
-        self.cancel = buttons.take_right(180.0);
-        let lit = |r: Rect| r.contains(hover.0, hover.1);
-        p.fill(gl, self.ok, theme::ROW_RADIUS, if lit(self.ok) { theme::mark() } else { theme::selected() });
-        p.label(gl, &label, self.ok, theme::ROW_EM * 0.86, theme::ink(), 0.5);
-        p.fill(gl, self.cancel, theme::ROW_RADIUS, if lit(self.cancel) { theme::wash(0.14) } else { theme::raised() });
-        p.label(gl, "Cancel", self.cancel, theme::ROW_EM * 0.86, theme::ink_row(), 0.5);
+        // The no on the left, the yes on the right and lit, 12 apart, as a question's two.
+        let ok = buttons.take_right(Button::width(p, gl, &label).max(180.0));
+        buttons.take_right(12.0);
+        let cancel = buttons.take_right(Button::width(p, gl, "Cancel").max(180.0));
+        self.ok.draw(p, gl, ok, &label);
+        self.cancel.draw(p, gl, cancel, "Cancel");
         let keys = match self.ask.mode {
             Mode::Save => "[Enter] Save  [Esc] Cancel",
             Mode::Folder => "[Enter] Choose this folder  [Esc] Cancel",
@@ -412,21 +433,6 @@ impl Chooser {
         look::keys(p, gl, buttons, keys, 0.0, 0.8);
         self.list.draw(p, gl, inner, &self.rows);
     }
-}
-
-/// A file's size as a person reads it.
-fn size(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
-    if bytes < 1000 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64 / 1000.0;
-    let mut unit = 0;
-    while value >= 1000.0 && unit + 1 < UNITS.len() {
-        value /= 1000.0;
-        unit += 1;
-    }
-    format!("{value:.1} {}", UNITS[unit])
 }
 
 /// What is under a path and Backspace: the folder up from it.
@@ -473,20 +479,38 @@ fn run(ask: Ask) -> Result<Option<Vec<PathBuf>>, String> {
                 // Closed, or Command-Q or Control-Q (the SDK's): quitting a chooser is its Cancel.
                 Event::CloseRequested { .. } | Event::Quit { .. } => return Ok(None),
                 Event::Resized { width, height, .. } => app.resize(window, (*width, *height)),
+                Event::Describe { window } => {
+                    let description = chooser.description();
+                    app.describe(*window, &description);
+                    continue;
+                }
                 _ => {}
             }
             let Some(input) = Input::of(&event, 1.0) else { continue };
             let done = match input {
                 Input::Pointer { x, y } => {
                     hover = (x, y);
+                    chooser.ok.input(&input);
+                    chooser.cancel.input(&input);
                     chooser.list.input(&input);
                     None
                 }
-                Input::Press { pressed, .. } => {
-                    if !pressed && chooser.ok.contains(hover.0, hover.1) {
+                Input::PointerLeft => {
+                    hover = (-1.0, -1.0);
+                    chooser.ok.input(&input);
+                    chooser.cancel.input(&input);
+                    chooser.list.input(&input);
+                    None
+                }
+                Input::Press { .. } => {
+                    let ok = chooser.ok.input(&input);
+                    let cancel = chooser.cancel.input(&input);
+                    if ok {
                         chooser.ok()
-                    } else if !pressed && chooser.cancel.contains(hover.0, hover.1) {
+                    } else if cancel {
                         return Ok(None);
+                    } else if chooser.ok.contains(hover.0, hover.1) || chooser.cancel.contains(hover.0, hover.1) {
+                        None
                     } else if let Some(index) = chooser.list.input(&input) {
                         let target = chooser.targets.get(index).cloned().unwrap_or(Target::Nothing);
                         chooser.target(target)
@@ -536,7 +560,7 @@ fn run(ask: Ask) -> Result<Option<Vec<PathBuf>>, String> {
         app.draw(window, |gl, size| {
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
             p.begin(gl, size, 1.0, theme::ground());
-            chooser.draw(p, gl, hover);
+            chooser.draw(p, gl);
             p.end(gl);
         })?;
     }
