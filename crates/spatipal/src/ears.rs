@@ -667,8 +667,9 @@ pub fn addressed(text: &str, name: &str) -> Option<String> {
     while at < words.len() && GREETINGS.contains(&plain(words[at]).as_str()) && at < 2 {
         at += 1;
     }
-    // The name may come as two words ("Pi xel") or one.
-    for n in [1usize, 2] {
+    // The name may come as one word more than it has ("Pi xel"), as many, or one.
+    let most = name.split_whitespace().count().max(1) + 1;
+    for n in 1..=most {
         if at + n > words.len() {
             continue;
         }
@@ -724,6 +725,10 @@ mod tests {
         assert_eq!(addressed("Piksel tolong ingatkan aku", "Pixel").as_deref(), Some("tolong ingatkan aku"));
         assert_eq!(addressed("Pixel.", "Pixel").as_deref(), Some(""));
         assert_eq!(addressed("Oke Pixel open the browser", "Pixel").as_deref(), Some("open the browser"));
+        // A name of three words, said as three, or with one of them in two.
+        assert_eq!(addressed("Hey Mister Pixel Bot, open the browser", "Mister Pixel Bot").as_deref(), Some("open the browser"));
+        assert_eq!(addressed("Mister Pi xel Bot, open it", "Mister Pixel Bot").as_deref(), Some("open it"));
+        assert_eq!(addressed("Mister Pixel, open it", "Mister Pixel Bot"), None);
     }
 
     #[test]
