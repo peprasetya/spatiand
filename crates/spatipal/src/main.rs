@@ -101,6 +101,8 @@ struct Pal {
     /// When to ask hemera again, the settings having changed what it needs ready: a moment
     /// after the last change, so that stepping through the models warms only the one stopped at.
     warm_due: Option<Instant>,
+    /// Whether its voice was busy when the window was last drawn.
+    drawn_speaking: bool,
     name: Arc<Mutex<String>>,
     waker: Waker,
     woken: std::fs::File,
@@ -132,6 +134,7 @@ macro_rules! view {
             chats: &$pal.chats,
             current: $pal.current.as_ref().and_then(|id| $pal.chats.iter().position(|c| &c.id == id)),
             answering: $pal.answering.as_ref(),
+            speaking: $pal.voice.busy(),
             settings: &$pal.settings,
             speech: &$pal.speech,
             listening: $pal.ears.is_some(),
@@ -651,7 +654,10 @@ impl Pal {
             return Ok(());
         }
         let animating = self.answering.is_some();
-        if !std::mem::take(&mut self.dirty) && !animating {
+        // Stop shows while it speaks: drawn again when it starts and stops.
+        let speaking = self.voice.busy();
+        let speaking_changed = speaking != std::mem::replace(&mut self.drawn_speaking, speaking);
+        if !std::mem::take(&mut self.dirty) && !animating && !speaking_changed {
             return Ok(());
         }
         let size = self.size;
@@ -900,6 +906,7 @@ fn main() {
             ear: Ear::Quiet,
             warmed: None,
             warm_due: None,
+            drawn_speaking: false,
             name,
             waker,
             woken,

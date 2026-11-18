@@ -33,6 +33,8 @@ pub struct View<'a> {
     pub chats: &'a [Chat],
     pub current: Option<usize>,
     pub answering: Option<&'a Answering>,
+    /// Its voice is speaking, or has something still to say: Stop stops it.
+    pub speaking: bool,
     pub settings: &'a Settings,
     pub speech: &'a VoiceSettings,
     pub listening: bool,
@@ -185,7 +187,7 @@ impl Window {
         foot.take_right(gap);
         let listen = foot.take_right(round);
         foot.take_right(gap);
-        let busy = view.answering.is_some();
+        let busy = view.answering.is_some() || view.speaking;
         let send_w = Button::width(p, gl, if busy { "Stop" } else { "Send" });
         let send = foot.take_right(send_w);
         foot.take_right(gap);
@@ -374,7 +376,7 @@ impl Window {
         if self.cog.input(&input) {
             return Some(Want::Settings);
         }
-        if view.answering.is_some() {
+        if view.answering.is_some() || view.speaking {
             if self.stop.input(&input) {
                 return Some(Want::Stop);
             }
@@ -731,6 +733,7 @@ mod tests {
             chats: &chats,
             current: Some(1),
             answering: None,
+            speaking: false,
             settings: &settings,
             speech: &speech,
             listening: false,
