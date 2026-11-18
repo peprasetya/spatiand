@@ -12,7 +12,7 @@
 use crate::grid::Direction;
 
 /// The last row of the picker. Not an environment — a way to go and find one.
-pub const BROWSE_LABEL: &str = "Add an image...";
+pub const BROWSE_LABEL: &str = "Add an image\u{2026}";
 
 /// What the wearer has chosen to be surrounded by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -201,7 +201,12 @@ impl Dictation {
         match &self.running {
             Some(r) if r.microphone.is_some() && r.writing > 0 => "Dictation\nWriting\u{2026}".into(),
             Some(r) if r.microphone.is_some() && r.hearing => "Dictation\nHearing you\u{2026}".into(),
-            Some(r) if r.microphone.is_some() => "Dictation\nListening \u{2014} press \u{1F3A4} to stop".into(),
+            // The microphone is the room's own drawn symbol, the one on the keyboard's dictation
+            // key (spatiand_render::symbols), the same picture on every platform: not a font's
+            // emoji, which the Beam Pro's fonts draw blank.
+            Some(r) if r.microphone.is_some() => {
+                format!("Dictation\nListening \u{2014} press {} to stop", spatiand_render::symbols::Symbol::Mic.char())
+            }
             Some(_) => "Dictation\nWriting the last of it\u{2026}".into(),
             None => String::new(),
         }

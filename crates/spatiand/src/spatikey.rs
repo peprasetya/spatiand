@@ -369,7 +369,7 @@ fn type_into(state: &mut Spatiand, window: u64, steps: &[Step], time_ms: u32) ->
     // on the Deck) turns every letter to its other case: a password that arrives wrong without
     // anyone seeing it. Refused, and said, rather than typed so.
     if state.seat.get_keyboard().is_some_and(|keyboard| keyboard.modifier_state().caps_lock) {
-        return Err("Caps Lock is on: turn it off and try again".into());
+        return Err("Caps Lock is on: turn it off and try again.".into());
     }
     give_keyboard(state, window)?;
     for (code, shift) in strokes {

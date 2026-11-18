@@ -164,7 +164,7 @@ const NO_APP_MENU: HudItem = HudItem {
 };
 
 const NO_AUDIO: HudItem = HudItem {
-    label: "Looking for sound devices",
+    label: "Looking for sound devices\u{2026}",
     detail: "None found yet",
     action: HudAction::Dismiss,
 };
@@ -471,7 +471,7 @@ impl Hud {
             .enumerate()
             .map(|(index, (name, input, current))| HudItem {
                 label: keep(format!("{}: {name}{}", if *input { "Microphone" } else { "Output" }, if *current { "  \u{2713}" } else { "" })),
-                detail: if *current { "In use now" } else { "Press A to use this one" },
+                detail: if *current { "In use now" } else { "Choose to use this one" },
                 action: HudAction::ChooseAudio(index),
             })
             .collect();

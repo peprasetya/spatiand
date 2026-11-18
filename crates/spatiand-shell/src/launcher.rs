@@ -211,7 +211,15 @@ impl Launcher {
             own_icon: None,
             level: Level::Local,
             hosts: Vec::new(),
-            local_name: "This computer".into(),
+            // As the apps name it (the SDK's `look::this_device`, which the shell does not link).
+            local_name: if cfg!(target_os = "macos") {
+                "This Mac"
+            } else if cfg!(target_os = "android") {
+                "This device"
+            } else {
+                "This computer"
+            }
+            .into(),
             machine_cursor: 0,
             query: String::new(),
             shown: Vec::new(),

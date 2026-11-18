@@ -62,16 +62,16 @@ impl Stage {
     /// stops there the message is the diagnosis.
     pub fn label(self) -> &'static str {
         match self {
-            Stage::Graphics => "Starting the graphics",
-            Stage::Environment => "Loading the room",
-            Stage::Headset => "Finding the glasses",
-            Stage::Sidecar => "Waking this panel",
-            Stage::Link => "Bringing up the display",
+            Stage::Graphics => "Starting the graphics\u{2026}",
+            Stage::Environment => "Loading the room\u{2026}",
+            Stage::Headset => "Finding the glasses\u{2026}",
+            Stage::Sidecar => "Waking this panel\u{2026}",
+            Stage::Link => "Bringing up the display\u{2026}",
             // Named for what it is waiting on, because this is the long one and the one that
             // fails. A wearer stuck here has glasses that answered over USB and will not
             // switch modes, which is a real fault with a real fix -- a different cable.
-            Stage::Stereo => "Asking the glasses for 3D",
-            Stage::World => "Building the world",
+            Stage::Stereo => "Asking the glasses for 3D\u{2026}",
+            Stage::World => "Building the world\u{2026}",
         }
     }
 
@@ -97,10 +97,10 @@ mod tests {
     fn every_label_fits_on_the_panel() {
         for stage in STAGES {
             assert!(
-                stage.label().len() <= MAX_LABEL,
+                stage.label().chars().count() <= MAX_LABEL,
                 "{:?} is {} characters: {:?}",
                 stage,
-                stage.label().len(),
+                stage.label().chars().count(),
                 stage.label()
             );
         }
