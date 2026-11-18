@@ -118,13 +118,26 @@ impl SetUp {
 
 // --- the recovery code, shown once ---
 
+/// Where the window goes once a recovery code shown is said to be saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum After {
+    /// Shown after setting up: to the screen that follows from how things stand.
+    SetUp,
+    /// A new code from settings, or a holder removed there: back to them.
+    Settings,
+    /// A code made here before and never seen through, shown on opening: to the list.
+    List,
+}
+
 /// The recovery code, large, with what to do with it -- and then, before it goes for good, the
 /// question whether that was done. There is no copy button: the room's clipboard is shared
 /// with every computer it is linked to.
 pub struct ShowCode {
     code: Zeroizing<String>,
-    /// Shown after setting up, rather than as a new code from settings: where "Saved it" leads.
-    pub first: bool,
+    /// Where "Yes, it is saved" leads.
+    pub after: After,
+    /// Said over the code, before it: that it replaces the one before.
+    note: Option<String>,
     asking: bool,
     saved: Button,
     sure: Button,
@@ -134,8 +147,14 @@ pub struct ShowCode {
 }
 
 impl ShowCode {
-    pub fn new(code: Zeroizing<String>, first: bool) -> ShowCode {
-        ShowCode { code, first, asking: false, saved: ui::keyed_button(), sure: Button::default(), again: Button::default(), on_again: false }
+    pub fn new(code: Zeroizing<String>, after: After) -> ShowCode {
+        ShowCode { code, after, note: None, asking: false, saved: ui::keyed_button(), sure: Button::default(), again: Button::default(), on_again: true }
+    }
+
+    /// The same, with what the code replaces said over it.
+    pub fn noting(mut self, note: impl Into<String>) -> ShowCode {
+        self.note = Some(note.into());
+        self
     }
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, view: &View) {
@@ -163,10 +182,14 @@ impl ShowCode {
             self.again.draw(p, gl, row.take_left(again_w), "Show it again");
             return;
         }
-        look::header(p, gl, &mut all, "Your recovery code", "shown this once");
+        let title = if self.note.is_some() { "Your new recovery code" } else { "Your recovery code" };
+        look::header(p, gl, &mut all, title, "shown this once");
         ui::foot(p, gl, &mut all, "[Enter] Saved it", view);
         let mut column = ui::column(all, ui::COLUMN.max(1110.0));
         column.take_top(12.0);
+        if let Some(note) = &self.note {
+            ui::prose(p, gl, &mut column, note, look::trouble());
+        }
         ui::recovery_code(p, gl, &mut column, &self.code);
         ui::prose(
             p,
@@ -193,7 +216,9 @@ impl ShowCode {
         if !self.asking {
             if self.saved.input(input) {
                 self.asking = true;
-                self.on_again = false;
+                // On the answer that changes nothing: the Enter that pressed "Saved it", held
+                // or pressed once more, does not say yes as well.
+                self.on_again = true;
             }
             return Want::Nothing;
         }
@@ -208,7 +233,7 @@ impl ShowCode {
         self.sure.focused = !self.on_again;
         self.again.focused = self.on_again;
         if self.sure.input(input) {
-            return Want::CodeSaved { first: self.first };
+            return Want::CodeSaved { after: self.after, code: self.code.clone() };
         }
         if self.again.input(input) {
             self.asking = false;
@@ -800,4 +825,29 @@ fn centred(p: &mut Painter, gl: &Gl, column: &mut Rect, text: &str, color: spati
     let (w, h) = p.measure(gl, text, theme::DETAIL_EM, column.w);
     p.text(gl, text, column.x + (column.w - w) * 0.5, column.y, theme::DETAIL_EM, column.w, color);
     column.take_top(h + 12.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(key: Key) -> Input {
+        Input::Key { key, text: None, modifiers: Default::default() }
+    }
+
+    /// Enter on "Saved it", pressed again (or held), is not also the yes to "is it saved?".
+    #[test]
+    fn the_question_after_the_code_starts_on_the_answer_that_changes_nothing() {
+        let mut shown = ShowCode::new(Zeroizing::new("7KQ2M-X9D4F-H3TNB-W6PZR-0CJ8V".into()), After::Settings);
+        assert!(matches!(shown.input(&key(Key::Enter)), Want::Nothing));
+        assert!(shown.asking);
+        assert!(matches!(shown.input(&key(Key::Enter)), Want::Nothing), "a second Enter shows the code again");
+        assert!(!shown.asking);
+        shown.input(&key(Key::Enter));
+        shown.input(&key(Key::Right));
+        match shown.input(&key(Key::Enter)) {
+            Want::CodeSaved { after: After::Settings, code } => assert_eq!(code.as_str(), "7KQ2M-X9D4F-H3TNB-W6PZR-0CJ8V"),
+            _ => panic!("chosen, yes is yes"),
+        }
+    }
 }

@@ -1083,6 +1083,10 @@ impl SettingsPage {
     }
 
     pub fn input(&mut self, input: &Input, view: &View) -> Want {
+        // While a touch or a new code is waited on, the page stays: its answer is shown here.
+        if view.busy() {
+            return Want::Nothing;
+        }
         if let Some((confirm, then)) = self.confirm.as_mut() {
             let answer = confirm.input(input);
             let want = match (answer, then) {
@@ -1118,8 +1122,14 @@ impl SettingsPage {
                 Want::Nothing
             }
             Some(Line::Holder { fp, name }) if !fp.is_empty() => {
+                // Said before, not after: the code the owner has saved stops working.
+                let new_code = if view.devices.is_some_and(|d| d.removal_new_code) {
+                    " It also makes a new recovery code: the one you have saved stops working, and the new one is shown once, here, to be saved in its place."
+                } else {
+                    ""
+                };
                 let text = format!(
-                    "Remove {name}? It will no longer open SpatiKey with its own finger: to be added again it asks again, or is given the recovery code. {} here says yes.",
+                    "Remove {name}? It will no longer open SpatiKey with its own finger: to be added again it asks again, or is given the recovery code.{new_code} {} here says yes.",
                     view.sensor()
                 );
                 self.confirm = Some((Confirm::new(text, "Remove", "Keep it"), Then::Forget(fp)));

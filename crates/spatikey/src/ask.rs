@@ -35,6 +35,8 @@ pub enum Asked {
     Type(String),
     Target,
     RecoveryNew,
+    /// The recovery code shown was said to be saved.
+    RecoverySaved,
     Recover,
     Devices,
     Forget,

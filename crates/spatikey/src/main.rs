@@ -40,7 +40,7 @@ use spatikey_core::wire::{
 use zeroize::Zeroizing;
 
 use ask::{Answer, Asked, Asker, Trouble};
-use locked::{Away, Join, Locked, Pair, Recover, SetUp, ShowCode, Stage};
+use locked::{After, Away, Join, Locked, Pair, Recover, SetUp, ShowCode, Stage};
 use open::{Current, Edit, EntryPage, ListPage, SettingsPage};
 use ui::{Screen, View, Want};
 
@@ -55,6 +55,8 @@ const SAID_FOR: Duration = Duration::from_secs(6);
 const LOOK_FOR_MAC: Duration = Duration::from_secs(15);
 /// How often a device waiting to be added as a holder looks whether it has been.
 const LOOK_FOR_ADDED: Duration = Duration::from_secs(3);
+/// What a recovery code that replaces another is shown with.
+const REPLACES: &str = "This replaces your recovery code: the one before it no longer opens the vault. Save this one in its place.";
 /// How often, at most, the service is told that an open SpatiKey is being used: well inside the
 /// shortest time it may be set to stay open.
 const KEEP_OPEN: Duration = Duration::from_secs(5);
@@ -117,6 +119,9 @@ struct SpatiKey {
     /// Quitting (Command-Q, Control-Q, the window closed) with an entry's changes not saved:
     /// asked first, over the editor.
     asking: Option<Confirm>,
+    /// A new recovery code may be on its way (a new code asked for, a holder being removed): the
+    /// window does not close before it has come, and been shown.
+    code_coming: bool,
 }
 
 /// What the screen is lent, from the fields themselves, so that the screen itself can be
@@ -231,6 +236,18 @@ impl SpatiKey {
         }
     }
 
+    /// Show a recovery code, over whatever is up -- the settings it was asked from, as a rule.
+    fn show_code(&mut self, code: ShowCode) {
+        self.set_screen(Screen::Code(code));
+    }
+
+    /// Ask for the summaries again: what another device changed shows.
+    fn ask_list(&mut self) {
+        if let Some(session) = self.session.clone() {
+            self.ask(Asked::List, Request::List { session });
+        }
+    }
+
     /// The list, as it was left.
     fn show_list(&mut self) {
         let list = self.kept_list.take().unwrap_or_else(ListPage::new);
@@ -295,11 +312,22 @@ impl SpatiKey {
                 let name = self.status.name.clone();
                 self.ask_waiting(Asked::Setup, Request::Setup { name }, "Touch ID on this Mac");
             }
-            Want::CodeSaved { first } => {
-                if first {
-                    self.route();
-                } else {
-                    self.show_settings();
+            Want::CodeSaved { after, code } => {
+                // The service's copy, kept until now in case this window went first, goes.
+                self.ask(Asked::RecoverySaved, Request::RecoverySaved { code: code.to_string() });
+                drop(code);
+                match after {
+                    After::Settings if self.session.is_some() => self.show_settings(),
+                    After::List if self.session.is_some() => {
+                        self.show_list();
+                        self.ask_list();
+                    }
+                    // Set up, or SpatiKey shut meanwhile: the screen that follows from how things
+                    // stand.
+                    _ => {
+                        self.screen = Screen::Waiting(Instant::now());
+                        self.route();
+                    }
                 }
             }
             Want::Open => {
@@ -391,11 +419,16 @@ impl SpatiKey {
             }
             Want::Forget(fp) => {
                 if let Some(session) = self.session.clone() {
-                    self.ask(Asked::Forget, Request::ForgetDevice { session, fp, recovery_code: None });
+                    // A holder goes with a new touch here, and may bring a new recovery code.
+                    let holder = self.devices.as_ref().is_some_and(|d| d.holders.iter().any(|h| h.fp.eq_ignore_ascii_case(&fp)));
+                    let words = if holder { format!("{} on this device", ui::sensor(&self.status.kind)) } else { "Forgetting".to_string() };
+                    self.code_coming = true;
+                    self.ask_waiting(Asked::Forget, Request::ForgetDevice { session, fp, recovery_code: None }, words);
                 }
             }
             Want::NewCode => {
                 if let Some(session) = self.session.clone() {
+                    self.code_coming = true;
                     self.ask_waiting(Asked::RecoveryNew, Request::RecoveryNew { session }, "Making a new code");
                 }
             }
@@ -413,7 +446,14 @@ impl SpatiKey {
             Err(Trouble::Away(why)) => {
                 self.forget_open();
                 self.waiting = None;
-                self.screen = Screen::Away(Away::new(why));
+                if matches!(asked, Asked::Forget | Asked::RecoveryNew) {
+                    self.code_coming = false;
+                }
+                // A recovery code on show stays until it is said to be saved: the old one is
+                // already dead, and this is the one showing of the new.
+                if !matches!(self.screen, Screen::Code(_)) {
+                    self.screen = Screen::Away(Away::new(why));
+                }
                 return;
             }
             Err(Trouble::Refused(refusal)) => return self.refused(asked, refusal),
@@ -431,7 +471,7 @@ impl SpatiKey {
                 if added {
                     self.say(format!("Added: {} on this device opens SpatiKey now.", ui::sensor(&self.status.kind)));
                 }
-                if self.session.is_none() && (route || unsettled || added) {
+                if self.session.is_none() && (route || unsettled || added) && !matches!(self.screen, Screen::Code(_)) {
                     self.screen = door(&self.status);
                 }
             }
@@ -450,7 +490,7 @@ impl SpatiKey {
             }
             Asked::Setup => {
                 let Some(answer) = read::<SetupAnswer>(value) else { return };
-                self.screen = Screen::Code(ShowCode::new(Zeroizing::new(answer.recovery_code), true));
+                self.screen = Screen::Code(ShowCode::new(Zeroizing::new(answer.recovery_code), After::SetUp));
                 then.push((Asked::Status { route: false }, Request::Status));
             }
             Asked::Open => {
@@ -463,6 +503,12 @@ impl SpatiKey {
                 self.screen = Screen::List(ListPage::new());
                 then.push((Asked::Settings, Request::Settings { session: answer.session.clone(), set: None }));
                 self.session = Some(answer.session);
+                if !answer.recovery_code.is_empty() {
+                    // A code made here whose showing was not seen through (the window went): its
+                    // one showing, now.
+                    let note = "This recovery code was made on this device, and SpatiKey closed before it was said to be saved. The one before it no longer opens the vault: save this one in its place.";
+                    self.show_code(ShowCode::new(Zeroizing::new(answer.recovery_code), After::List).noting(note));
+                }
             }
             Asked::Close | Asked::PairConfirm(false) => {}
             Asked::List => {
@@ -506,9 +552,11 @@ impl SpatiKey {
             Asked::Type(title) => self.say(format!("Typed into {title}.")),
             Asked::Target => self.target = read::<TargetAnswer>(value),
             Asked::RecoveryNew => {
+                self.code_coming = false;
                 let Some(answer) = read::<SetupAnswer>(value) else { return };
-                self.set_screen(Screen::Code(ShowCode::new(Zeroizing::new(answer.recovery_code), false)));
+                self.show_code(ShowCode::new(Zeroizing::new(answer.recovery_code), After::Settings).noting(REPLACES));
             }
+            Asked::RecoverySaved => {}
             Asked::Recover => {
                 self.fingers_changed = false;
                 self.say(format!("{} is set up for SpatiKey on this device.", ui::sensor(&self.status.kind)));
@@ -523,6 +571,7 @@ impl SpatiKey {
                 // A holder removed is new keys for the vault. Where its record of the recovery
                 // code was from before (only the code itself could carry such a one over), a
                 // new code was made: shown now, once, as at setting up.
+                self.code_coming = false;
                 let done = read::<ForgetAnswer>(value).unwrap_or_default();
                 let mut said = if done.rekeyed { "Removed, and the vault has new keys.".to_string() } else { "Forgotten.".to_string() };
                 if !done.left_out.is_empty() {
@@ -531,11 +580,9 @@ impl SpatiKey {
                 if let Some(session) = self.session.clone() {
                     then.push((Asked::Devices, Request::Devices { session }));
                 }
-                if done.recovery_code.is_empty() {
-                    self.say(said);
-                } else {
-                    self.say(format!("{said} The recovery code before opens it no more: save this new one."));
-                    self.set_screen(Screen::Code(ShowCode::new(Zeroizing::new(done.recovery_code), false)));
+                self.say(said);
+                if !done.recovery_code.is_empty() {
+                    self.show_code(ShowCode::new(Zeroizing::new(done.recovery_code), After::Settings).noting(REPLACES));
                 }
             }
             Asked::Settings => {
@@ -585,6 +632,20 @@ impl SpatiKey {
     }
 
     fn refused(&mut self, asked: Asked, refusal: Refusal) {
+        if matches!(asked, Asked::Forget | Asked::RecoveryNew) {
+            self.code_coming = false;
+        }
+        // An older service does not know the request: its copy is not there to let go of.
+        if asked == Asked::RecoverySaved {
+            return;
+        }
+        // A recovery code on show stays until it is said to be saved, session or not: the
+        // session goes, the screen does not.
+        if refusal.code == Code::BadSession && matches!(self.screen, Screen::Code(_)) {
+            self.forget_open();
+            self.waiting = None;
+            return;
+        }
         // A session that has ended -- unused too long, or the service started again -- ends
         // here too.
         if refusal.code == Code::BadSession && self.session.is_some() {
@@ -653,13 +714,13 @@ impl SpatiKey {
     /// What happens with time alone: an unused SpatiKey shutting, a code running out, a device
     /// looking again for its Mac.
     fn tick(&mut self) {
-        if let Some(session) = self.session.clone() {
-            // A new recovery code is shown this once, to be typed by eye into another window:
-            // it is not taken down for this window's sitting unused meanwhile (the old code
-            // stopped working when it was made). The service closes the session by its own
-            // clock all the same, and the next thing asked here finds that out.
-            let code_shown = matches!(self.screen, Screen::Code(_));
-            if !code_shown && self.used.elapsed() >= Duration::from_secs(self.settings.open_secs.max(30)) {
+        // A new recovery code is shown this once, to be typed by eye into another window: it is
+        // not taken down for this window's sitting unused meanwhile (the old code stopped working
+        // when it was made), and nothing is asked in the session while it is up -- the service
+        // closes the session by its own clock, and an answer that it has would take the screen.
+        let code_shown = matches!(self.screen, Screen::Code(_));
+        if let Some(session) = self.session.clone().filter(|_| !code_shown) {
+            if self.used.elapsed() >= Duration::from_secs(self.settings.open_secs.max(30)) {
                 let unused = ui::span(self.settings.open_secs).to_lowercase();
                 log::info!("SpatiKey sat unused for {unused}: shut");
                 self.lock();
@@ -741,6 +802,21 @@ impl SpatiKey {
                 if self.asking.is_some() {
                     return true;
                 }
+                // The answer may be the new recovery code, shown only here.
+                if self.code_coming {
+                    self.trouble = Some("A new recovery code is on its way: SpatiKey closes once it has been shown and saved.".into());
+                    self.dirty = true;
+                    return true;
+                }
+                if matches!(self.screen, Screen::Code(_)) {
+                    self.asking = Some(Confirm::new(
+                        "Quit SpatiKey? This recovery code is not said to be saved yet, and the one before it no longer opens the vault. It is shown again the next time SpatiKey opens here.",
+                        "Quit",
+                        "Cancel",
+                    ));
+                    self.dirty = true;
+                    return true;
+                }
                 if matches!(&self.screen, Screen::Edit(edit) if edit.changed()) {
                     self.asking = Some(Confirm::new("Quit SpatiKey? The changes to this entry are not saved, and quitting loses them.", "Quit", "Cancel"));
                     self.dirty = true;
@@ -762,6 +838,11 @@ impl SpatiKey {
         }
         self.dirty = true;
         if event.window().is_some_and(|window| window != self.window) {
+            return true;
+        }
+        // A key held on the recovery code's screen is one press: "Saved it" held would otherwise
+        // go on to answer the question it brings up.
+        if matches!(self.screen, Screen::Code(_)) && matches!(event, Event::Key { repeat: true, .. }) {
             return true;
         }
         let Some(input) = Input::of(&event, 1.0) else { return true };
@@ -802,11 +883,15 @@ impl SpatiKey {
                     }
                 }
                 None if !self.asker_gone => {
-                    // What it held of the vault went with it: SpatiKey starts again from asking.
+                    // What it held of the vault went with it: SpatiKey starts again from asking --
+                    // once a recovery code on show has been said to be saved.
                     self.asker_gone = true;
+                    self.code_coming = false;
                     self.forget_open();
                     self.waiting = None;
-                    self.screen = Screen::Away(Away::new("Something went wrong inside SpatiKey while it was asking.".into()));
+                    if !matches!(self.screen, Screen::Code(_)) {
+                        self.screen = Screen::Away(Away::new("Something went wrong inside SpatiKey while it was asking.".into()));
+                    }
                     self.dirty = true;
                 }
                 None => {}
@@ -855,6 +940,7 @@ fn main() {
             kept: Instant::now(),
             looked: Instant::now(),
             asking: None,
+            code_coming: false,
         };
         key.run()
     };

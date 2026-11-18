@@ -82,8 +82,9 @@ pub enum Want {
     /// Ask how things stand, and show the screen that follows from it.
     Status,
     SetUp,
-    /// The recovery code has been seen to: after setting up (`first`), or a new one from settings.
-    CodeSaved { first: bool },
+    /// The recovery code shown is said to be saved: the code, for the service to let go of the copy
+    /// it keeps until then, and where the window goes next.
+    CodeSaved { after: crate::locked::After, code: Zeroizing<String> },
     Open,
     Lock,
     /// The screen that takes the recovery code.
