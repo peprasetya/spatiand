@@ -62,6 +62,16 @@ fn fit(image: DynamicImage, largest: u32) -> DynamicImage {
 /// Read the picture at `path`, at most `largest` pixels a side: [`LARGEST`] to look at, a few
 /// hundred for a tile.
 pub fn read(path: &Path, largest: u32) -> Result<Picture, String> {
+    read_as(path, largest, true)
+}
+
+/// The same, a moving picture's first frame only: for a tile, which does not move, and which a
+/// long GIF's every frame is not to be decoded for.
+pub fn read_still(path: &Path, largest: u32) -> Result<Picture, String> {
+    read_as(path, largest, false)
+}
+
+fn read_as(path: &Path, largest: u32, may_move: bool) -> Result<Picture, String> {
     // What FFmpeg reads, it reads from the file or the stream itself.
     if ["heic", "heif", "hif", "avif", "jp2", "j2k", "jpf", "jpx", "j2c", "jxl"].contains(&ending(path).as_str()) {
         let mut picture = by_ffmpeg(path, largest)?;
@@ -69,16 +79,20 @@ pub fn read(path: &Path, largest: u32) -> Result<Picture, String> {
         return Ok(picture);
     }
     let bytes = crate::place::read(path)?;
-    read_bytes(path, &bytes, largest)
+    read_bytes_as(path, &bytes, largest, may_move)
 }
 
 /// The same, from what has already been read: a picture that came over the network.
 pub fn read_bytes(path: &Path, bytes: &[u8], largest: u32) -> Result<Picture, String> {
+    read_bytes_as(path, bytes, largest, true)
+}
+
+fn read_bytes_as(path: &Path, bytes: &[u8], largest: u32, may_move: bool) -> Result<Picture, String> {
     let kind = ending(path);
     let mut picture = match kind.as_str() {
         "svg" => drawn(bytes, largest)?,
         "heic" | "heif" | "hif" | "avif" | "jp2" | "j2k" | "jpf" | "jpx" | "j2c" | "jxl" => by_ffmpeg(path, largest)?,
-        _ => match by_image(bytes, largest, kind == "gif" || kind == "png" || kind == "apng" || kind == "webp") {
+        _ => match by_image(bytes, largest, may_move && (kind == "gif" || kind == "png" || kind == "apng" || kind == "webp")) {
             Ok(picture) => picture,
             // Named wrongly, or something the image crate does not know: FFmpeg reads most
             // things that are pictures at all.
@@ -118,6 +132,12 @@ fn by_image(bytes: &[u8], largest: u32, may_move: bool) -> Result<Picture, Strin
         }
     }
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    // Decoded whole before it is made small: a canvas that claims to be enormous (a GIF may say
+    // 65535 a side in a few bytes) is not given the memory it asks for.
+    if decoder.total_bytes() > STILL_BYTES {
+        let (w, h) = decoder.dimensions();
+        return Err(format!("it is {w} \u{d7} {h} pixels, too large to show"));
+    }
     let orientation = decoder.orientation().ok();
     let mut image = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     if let Some(orientation) = orientation {
@@ -127,46 +147,83 @@ fn by_image(bytes: &[u8], largest: u32, may_move: bool) -> Result<Picture, Strin
     Ok(Picture::of(fit(image, largest).to_rgba8(), original))
 }
 
-/// A GIF, an animated PNG or WebP, as its frames: `None` for one that is still.
+/// The most memory a still picture may take as it is decoded, before it is made to fit.
+const STILL_BYTES: u64 = 1 << 30;
+
+/// The largest canvas a moving picture may have: every frame is a whole canvas.
+const MOVING_SIDE: u32 = 8192;
+
+/// How much a moving picture's frames may hold in memory, all together, as they are shown: the
+/// frames past this are not kept, and it plays as far as they go.
+const MOVING_BYTES: usize = 512 << 20;
+
+/// What a decoder of a moving picture may take: a canvas no larger than [`MOVING_SIDE`] a side,
+/// and one frame's worth of memory at a time within the image crate's usual bound.
+fn moving_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MOVING_SIDE);
+    limits.max_image_height = Some(MOVING_SIDE);
+    limits
+}
+
+/// A GIF, an animated PNG or WebP, as its frames: `None` for one that is still -- or that is not
+/// to be played, its canvas absurd -- which is then read as a still, within its limits.
 fn moving(bytes: &[u8], format: Option<image::ImageFormat>, largest: u32) -> Option<Picture> {
     use image::ImageFormat;
-    let frames: Vec<image::Frame> = match format? {
-        ImageFormat::Gif => image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).ok()?.into_frames().take(2000).collect::<Result<_, _>>().ok()?,
+    let frames: image::Frames = match format? {
+        ImageFormat::Gif => {
+            let mut decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).ok()?;
+            decoder.set_limits(moving_limits()).ok()?;
+            decoder.into_frames()
+        }
         ImageFormat::Png => {
-            let decoder = image::codecs::png::PngDecoder::new(Cursor::new(bytes)).ok()?;
+            let mut decoder = image::codecs::png::PngDecoder::new(Cursor::new(bytes)).ok()?;
             if !decoder.is_apng().ok()? {
                 return None;
             }
-            decoder.apng().ok()?.into_frames().take(2000).collect::<Result<_, _>>().ok()?
+            decoder.set_limits(moving_limits()).ok()?;
+            decoder.apng().ok()?.into_frames()
         }
         ImageFormat::WebP => {
-            let decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).ok()?;
+            let mut decoder = image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).ok()?;
             if !decoder.has_animation() {
                 return None;
             }
-            decoder.into_frames().take(2000).collect::<Result<_, _>>().ok()?
+            decoder.set_limits(moving_limits()).ok()?;
+            decoder.into_frames()
         }
         _ => return None,
     };
-    if frames.len() < 2 {
-        return None;
-    }
     let length = |frame: &image::Frame| {
         let (n, d) = frame.delay().numer_denom_ms();
         // Browsers' rule: a delay of almost nothing is a tenth of a second.
         let ms = if d == 0 { 100 } else { n / d };
         Duration::from_millis(if ms < 20 { 100 } else { ms as u64 })
     };
-    let mut frames = frames.into_iter();
-    let first = frames.next()?;
-    let first_length = length(&first);
-    let buffer = first.into_buffer();
-    let original = buffer.dimensions();
     let shrink = |image: RgbaImage| fit(DynamicImage::ImageRgba8(image), largest).to_rgba8();
-    let mut picture = Picture::of(shrink(buffer), original);
-    picture.first = first_length;
-    picture.frames = frames.map(|frame| (length(&frame), frame.into_buffer())).map(|(l, b)| (shrink(b).into_raw(), l)).collect();
-    Some(picture)
+    // Each frame made small as it comes, so that only one is ever at the canvas's own size.
+    let mut picture: Option<Picture> = None;
+    let mut held = 0usize;
+    for frame in frames.take(2000) {
+        let Ok(frame) = frame else { break };
+        let frame_length = length(&frame);
+        let buffer = frame.into_buffer();
+        let original = buffer.dimensions();
+        let small = shrink(buffer);
+        held += small.as_raw().len();
+        if held > MOVING_BYTES {
+            break;
+        }
+        match picture.as_mut() {
+            None => {
+                let mut first = Picture::of(small, original);
+                first.first = frame_length;
+                picture = Some(first);
+            }
+            Some(picture) => picture.frames.push((small.into_raw(), frame_length)),
+        }
+    }
+    picture.filter(|p| !p.frames.is_empty())
 }
 
 fn by_ffmpeg(path: &Path, largest: u32) -> Result<Picture, String> {
@@ -255,6 +312,42 @@ mod tests {
         let picture = read_bytes(Path::new("a.svg"), svg, 200).unwrap();
         assert_eq!((picture.width, picture.height), (200, 100));
         assert_eq!(&picture.rgba[..4], &[255, 0, 0, 255]);
+    }
+
+    /// A GIF of two frames, `width` by `height`.
+    fn gif(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut out);
+            for v in [10u8, 200] {
+                let frame = image::Frame::from_parts(RgbaImage::from_pixel(width, height, image::Rgba([v, v, v, 255])), 0, 0, image::Delay::from_numer_denom_ms(100, 1));
+                encoder.encode_frame(frame).unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_moving_picture_moves_and_its_tile_does_not() {
+        let bytes = gif(4, 4);
+        let dir = std::env::temp_dir().join(format!("spatiloupe-gif-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("two.gif");
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(read(&path, 100).unwrap().frames.len(), 1);
+        assert!(read_still(&path, 100).unwrap().frames.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_gif_that_claims_an_enormous_canvas_is_not_given_it() {
+        let mut bytes = gif(1, 1);
+        // The logical screen's size, after "GIF89a": 65535 a side, which would be 17 GB a frame.
+        bytes[6..10].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        let started = std::time::Instant::now();
+        let read = read_bytes(Path::new("huge.gif"), &bytes, 360);
+        assert!(read.is_err(), "refused, not decoded");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

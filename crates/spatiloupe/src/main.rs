@@ -71,7 +71,7 @@ fn worker(name: &str, done: Sender<Done>) -> Sender<Job> {
 fn tile_picture(path: &Path, kind: Kind, index: usize) -> Option<Arrived> {
     match kind {
         Kind::Picture => {
-            let picture = picture::read(path, 360).ok()?;
+            let picture = picture::read_still(path, 360).ok()?;
             let word = picture.eyes.is_stereo().then(|| "3D".to_string());
             // What one eye of the whole picture sees, from its own size rather than the tile's
             // rounded one: the tile stands in for the picture as the carousel brings it in.
