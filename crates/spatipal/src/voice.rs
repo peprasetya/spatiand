@@ -13,10 +13,11 @@
 //! each sentence, the speech model made up a new voice for every one, and a long answer changed
 //! voice from sentence to sentence (the owner, 2026-11-15). Each sentence's voice is in the log.
 //!
-//! **What it plays is kept** ([`Played`]), sample by sample with when it is heard, so that the
-//! ears can take it back out of the microphone and hear the wearer over it (`crate::ears`);
-//! [`Voice::interrupt`] stops it mid-word: what is waiting, what is being made, and what the room
-//! has not yet played.
+//! **What it says is kept** ([`Played`]), sample by sample with when it is heard, so that the
+//! ears can take it back out of the microphone and hear the wearer over it (`crate::ears`) --
+//! what the room really played: not the soft tone while the larger model thinks, nor what a cut
+//! dropped. [`Voice::interrupt`] stops it mid-word: what is waiting, what is being made, and what
+//! the room has not yet played.
 //!
 //! **The voice shares its GPU with the models.** Alone it makes speech 2.5 times faster than it is
 //! spoken; while the small model writes, 0.7 times; while the larger one does, 0.6 (measured
@@ -66,6 +67,8 @@ const MOST_AHEAD: f32 = 4.0;
 /// How long a slice is handed to the room at a time, in samples: it drops what is more than a
 /// third of a second ahead, and speech comes in pieces of up to two thirds.
 const SLICE: usize = SPEECH_RATE as usize / 20;
+/// What the room's output already has when it is told to drop the rest: still heard.
+const HEARD_ANYWAY: Duration = Duration::from_millis(30);
 
 /// The voice, to be told what to say. Cheap to clone.
 #[derive(Clone)]
@@ -256,6 +259,27 @@ impl Voice {
         });
         Voice { lines, sounds, shared }
     }
+
+    /// For tests: a line waiting to be said -- busy, and nothing heard -- or none.
+    #[cfg(test)]
+    pub fn pretend_waiting(&self, waiting: bool) {
+        self.shared.waiting.store(waiting as u64, Ordering::Relaxed);
+    }
+
+    /// For tests: `pcm` (at the speech's rate) handed to the room to be heard from `at`, as the
+    /// player hands it over.
+    #[cfg(test)]
+    pub fn pretend_played(&self, at: Instant, pcm: &[f32]) {
+        self.shared.played.lock().unwrap().push(at, pcm, SPEECH_RATE);
+        let end = at + Duration::from_secs_f64(pcm.len() as f64 / SPEECH_RATE as f64);
+        self.shared.quiet_at.fetch_max(end.saturating_duration_since(self.shared.epoch).as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// For tests: how many times it was told to stop.
+    #[cfg(test)]
+    pub fn cuts(&self) -> u64 {
+        self.shared.cuts.load(Ordering::Relaxed)
+    }
 }
 
 fn speak(lines: Receiver<Line>, sounds: Sender<Sound>, shared: Arc<Shared>) {
@@ -416,6 +440,11 @@ fn play(heard: Receiver<Sound>, shared: Arc<Shared>) {
                 waiting.clear();
                 stream.clear();
                 heard_by = Instant::now();
+                // And what the room dropped was not heard: kept as played, the canceller took
+                // away an echo that never came -- "the canceller went wrong (4.5 dB added)" after
+                // each interruption on the owner's Mac, 2026-11-19 -- and started again from
+                // nothing. What was heard stays, for the canceller and the delay's matching.
+                shared.played.lock().unwrap().cut(heard_by + HEARD_ANYWAY);
                 holding = true;
                 all_came = true;
                 shared.quiet_at.store(heard_by.saturating_duration_since(shared.epoch).as_millis() as u64, Ordering::Relaxed);
@@ -459,7 +488,11 @@ fn play(heard: Receiver<Sound>, shared: Arc<Shared>) {
         if waiting.is_empty() && shared.thinking.load(Ordering::Relaxed) && shared.waiting.load(Ordering::Relaxed) == 0 && now >= next_tone && now >= heard_by {
             let tone = thinking_tone();
             stream.push(&tone, 1, SPEECH_RATE);
-            shared.played.lock().unwrap().push(now, &tone, SPEECH_RATE);
+            // Not kept with what it says: the tone is not its voice, and nothing is spoken over
+            // it. Kept, the wearer could "speak over" a model thinking -- a key's click, under the
+            // tone's echo (a pure tone, which repeats as a voice does), was taken for them -- the
+            // delay was matched against two soft notes, and what was learnt of its voice from
+            // them expected a roar from its next sentence.
             heard_by = now + Duration::from_secs_f64(tone.len() as f64 / SPEECH_RATE as f64);
             next_tone = now + Duration::from_millis(1800);
         }

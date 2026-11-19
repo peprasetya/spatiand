@@ -21,7 +21,10 @@
 //! it stops it at once -- its voice, what it was about to say, the model writing the rest -- and
 //! what they say is heard from where they began ([`Heard::Interrupted`]; the owner, 2026-11-15:
 //! "let user interrupt with voice if the spatipal is speaking"). Anything else heard while it
-//! speaks is let go, as before.
+//! speaks is let go, as before. **Only its voice being heard is spoken over, and only by a
+//! voice**: busy and silent -- a sentence being made, a model writing or thinking -- or with keys
+//! clicking under its voice, nothing stops it (on the owner's Mac, 2026-11-19, typed questions got
+//! no answer at all: the keys stopped each one before a word of it was heard).
 
 use std::collections::VecDeque;
 use std::io::Read;
@@ -159,7 +162,7 @@ pub fn start(
     std::thread::Builder::new()
         .name("ears".into())
         .spawn(move || {
-            cut(microphone, busy, stopped, said_tx.clone());
+            cut(microphone, busy, stopped, said_tx.clone(), test_room());
             // The judge holds a sender to its own channel (for Whisper's helpers), so the
             // channel never ends by itself: it is told.
             let _ = said_tx.send(Said::Closed);
@@ -197,13 +200,16 @@ pub fn start(
 }
 
 /// The microphone, cut into what was said -- with its own voice taken out of it first
-/// (`spatiand_voice::echo`), and the wearer heard over it: speaking while it speaks stops it.
-fn cut(mut microphone: std::fs::File, voice: Voice, stopped: Arc<AtomicBool>, said: Sender<Said>) {
+/// (`spatiand_voice::echo`), and the wearer heard over it: speaking while it speaks stops it --
+/// while its voice is heard, and only by a voice: busy and silent (a sentence being made, the
+/// larger model thinking), or with keys clicking under its voice, nothing stops it. `room`: a
+/// test's made-up room ([`test_room`]).
+fn cut(mut microphone: std::fs::File, voice: Voice, stopped: Arc<AtomicBool>, said: Sender<Said>, room: Option<SimulatedRoom>) {
     let mut cutter = Cutter { phrases: Phrases::new(RATE, PAUSE_MS), began: Instant::now(), hearing: false, jobs: 0, draft: None, said };
     let mut bytes = vec![0u8; (RATE as usize / 50) * 2];
     let played = voice.played();
     let mut echo = Echo::new();
-    let mut room = test_room().map(|r| (r, MicClock::new()));
+    let mut room = room.map(|r| (r, MicClock::new()));
     // What was heard while it spoke, cleaned of its voice: the start of what the wearer said
     // over it, which the barge-in is sure of only a quarter of a second in.
     let mut lately: VecDeque<i16> = VecDeque::new();
@@ -810,6 +816,97 @@ mod tests {
         assert_eq!(made_up("Oke.", 0.8, 0.9), None);
         assert_eq!(made_up("Pixel, can you check the log?", 2.0, 0.95), None);
         assert_eq!(made_up("ya", 1.2, 0.7), None);
+    }
+
+    /// The ears as they run ([`cut`]), on a microphone fed in real time through a pipe, with the
+    /// test room putting its voice back into it as a speaker beside the microphone would (120 ms
+    /// later, 20 dB down): for 1.5 s it has a line waiting and nothing heard -- the larger model
+    /// handed it over, the sentence being made -- then its sentence plays, handed to the room as
+    /// the voice hands it, 50 ms at a time a fifth of a second ahead; keys clicking all the while,
+    /// as the owner typed his questions on the Mac (2026-11-19), and perhaps the wearer speaking
+    /// over it from `wearer_at`. When each interruption was told, in seconds, and how many times
+    /// the voice was stopped.
+    fn the_ears_hear(seconds: f64, typing: f32, wearer_at: Option<f64>) -> (Vec<f64>, u64) {
+        use spatiand_voice::speech::SPEECH_RATE;
+        use std::io::Write;
+        let voice = Voice::silent();
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let microphone = std::fs::File::from(std::os::fd::OwnedFd::from(reader));
+        let (said_tx, said_rx) = channel();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let ears = {
+            let (voice, stopped) = (voice.clone(), stopped.clone());
+            std::thread::spawn(move || cut(microphone, voice, stopped, said_tx, Some(SimulatedRoom::new(0.1, 0.12, 0.0))))
+        };
+        let keys = SimulatedRoom::typing(seconds as f32 + 1.0, typing, 3);
+        let own = SimulatedRoom::voice(seconds as f32, 210.0, 1, SPEECH_RATE);
+        let wearer = SimulatedRoom::voice(2.5, 120.0, 5, RATE);
+        let slice = SPEECH_RATE as usize / 20;
+        let piece = RATE as usize / 50;
+        let started = Instant::now();
+        let mut next_slice = 0;
+        let mut seed = 99u32;
+        let mut told = Vec::new();
+        for k in 0..(seconds * 50.0) as usize {
+            let t = k as f64 / 50.0;
+            if let Some(wait) = (started + Duration::from_secs_f64(t + 0.02)).checked_duration_since(Instant::now()) {
+                std::thread::sleep(wait);
+            }
+            // Its voice, until it is stopped: a line waiting from the start, played from 1.5 s.
+            if voice.cuts() == 0 {
+                voice.pretend_waiting(true);
+                while t >= 1.5 && next_slice * slice < own.len() && 1.5 + next_slice as f64 * 0.05 < t + 0.2 {
+                    let at = started + Duration::from_secs_f64(1.5 + next_slice as f64 * 0.05);
+                    voice.pretend_played(at, &own[next_slice * slice..((next_slice + 1) * slice).min(own.len())]);
+                    next_slice += 1;
+                }
+            } else {
+                voice.pretend_waiting(false);
+            }
+            let mut bytes = Vec::with_capacity(piece * 2);
+            for i in k * piece..(k + 1) * piece {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let mut s = keys[i] + ((seed >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.002;
+                if let Some(from) = wearer_at.map(|w| (w * RATE as f64) as usize) {
+                    s += i.checked_sub(from).and_then(|j| wearer.get(j)).map_or(0.0, |w| w * 0.9);
+                }
+                bytes.extend_from_slice(&((s * 32768.0).clamp(-32768.0, 32767.0) as i16).to_le_bytes());
+            }
+            writer.write_all(&bytes).unwrap();
+            while let Ok(said) = said_rx.try_recv() {
+                if matches!(said, Said::Interrupted) {
+                    told.push(started.elapsed().as_secs_f64());
+                }
+            }
+        }
+        // The microphone closed: the ears hear what is still on its way to them, and stop.
+        drop(writer);
+        ears.join().unwrap();
+        eprintln!("the ears were done {:.2} s after the microphone closed", started.elapsed().as_secs_f64() - seconds);
+        while let Ok(said) = said_rx.try_recv() {
+            if matches!(said, Said::Interrupted) {
+                told.push(started.elapsed().as_secs_f64());
+            }
+        }
+        drop(stopped);
+        (told, voice.cuts())
+    }
+
+    #[test]
+    fn a_typed_question_is_never_cut_by_the_keys() {
+        // As loud as the owner's typing in the glasses on the Mac, and ten times louder.
+        for typing in [0.01, 0.1] {
+            let (told, cuts) = the_ears_hear(6.5, typing, None);
+            assert!(told.is_empty() && cuts == 0, "typing {typing}: stopped, told at {told:?} s");
+        }
+    }
+
+    #[test]
+    fn the_wearer_speaking_over_its_voice_stops_it() {
+        let (told, cuts) = the_ears_hear(7.5, 0.01, Some(6.0));
+        eprintln!("told at {told:?} s, the wearer began at 6.0 s");
+        assert_eq!(cuts, 1, "told at {told:?} s");
+        assert!(told.len() == 1 && told[0] > 6.0 && told[0] < 6.9, "the wearer began at 6.0 s; told at {told:?} s");
     }
 
     #[test]
