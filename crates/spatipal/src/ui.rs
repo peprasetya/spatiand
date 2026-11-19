@@ -118,6 +118,10 @@ pub struct Window {
     forget_row: Option<usize>,
     /// The question being asked, and the id of the chat it is about.
     asking: Option<(String, Confirm)>,
+    /// The Copy button on the answer under the pointer, that answer's text, and the last copied.
+    copy: Button,
+    copy_text: Option<String>,
+    copied: Option<(std::time::Instant, String)>,
 }
 
 impl Window {
@@ -149,6 +153,9 @@ impl Window {
             forget: Button::default(),
             forget_row: None,
             asking: None,
+            copy: Button::default(),
+            copy_text: None,
+            copied: None,
         }
     }
 
@@ -268,11 +275,30 @@ impl Window {
         self.scroll = self.scroll.clamp(0.0, (tall - all.h).max(0.0));
         p.clip(gl, all);
         let mut y = all.bottom() - tall + self.scroll;
+        let mut answers = Vec::new();
         for (block, h) in blocks.iter().zip(heights) {
             if y + h >= all.y && y <= all.bottom() {
-                block.draw(p, gl, Rect::new(all.x, y, all.w, h), width);
+                let bubble = block.draw(p, gl, Rect::new(all.x, y, all.w, h), width);
+                if !block.mine && !block.text.is_empty() && block.text != "\u{2026}" {
+                    answers.push((bubble, block.text.clone()));
+                }
             }
             y += h + 18.0;
+        }
+        // The answer under the pointer has a Copy button beside its top right: its text, onto the
+        // room's clipboard (it cannot be chosen as a field's can).
+        let (px, py) = self.pointer;
+        self.copy_text = None;
+        let beside = |b: &Rect| Rect::new(b.right() + 8.0, b.y + 4.0, 44.0, 44.0);
+        if let Some((bubble, text)) = answers.into_iter().find(|(b, _)| (b.contains(px, py) || beside(b).contains(px, py)) && all.contains(px, py)) {
+            let at = beside(&bubble);
+            let copied = self.copied.as_ref().is_some_and(|(when, was)| when.elapsed() < std::time::Duration::from_secs(2) && *was == text);
+            if copied {
+                p.label(gl, "Copied", Rect { w: 124.0, ..at }, theme::FOOTER_EM, theme::ink_hint(), 0.0);
+            } else {
+                self.copy.draw_icon(p, gl, at, Icon::Copy, "");
+            }
+            self.copy_text = Some(text);
         }
         p.unclip(gl);
         if tall > all.h {
@@ -342,6 +368,25 @@ impl Window {
     }
 
     fn chat_input(&mut self, input: Input, view: &View) -> Option<Want> {
+        // An answer's Copy button, before anything under it.
+        if let Some(text) = self.copy_text.clone() {
+            let on_copy = self.copy.contains(self.pointer.0, self.pointer.1);
+            match input {
+                Input::Press { pressed: true, .. } if on_copy => {
+                    self.copy.input(&input);
+                    return None;
+                }
+                Input::Press { pressed: false, .. } if self.copy.input(&input) => {
+                    spatiand_app::clipboard::copy(text.clone());
+                    self.copied = Some((std::time::Instant::now(), text));
+                    return None;
+                }
+                Input::Pointer { .. } | Input::PointerLeft => {
+                    self.copy.input(&input);
+                }
+                _ => {}
+            }
+        }
         if let Input::Scroll { dy, .. } = input {
             if self.talk.contains(self.pointer.0, self.pointer.1) {
                 // Content follows the fingers: scrolling up shows what came before.
@@ -656,7 +701,8 @@ impl Block {
         h
     }
 
-    fn draw(&self, p: &mut Painter, gl: &Gl, rect: Rect, width: f32) {
+    /// Drawn in `rect`; where its bubble is.
+    fn draw(&self, p: &mut Painter, gl: &Gl, rect: Rect, width: f32) -> Rect {
         let w = width * if self.mine { 0.78 } else { 0.92 };
         let inner = w - BUBBLE_PAD * 2.0;
         // Its text, at the size it needs, at most `w` wide.
@@ -686,6 +732,7 @@ impl Block {
         if !self.did.is_empty() {
             p.text_left(gl, &self.did_line(), left, y + SMALL_EM * 0.3, SMALL_EM, inner, look::TEAL);
         }
+        bubble
     }
 }
 

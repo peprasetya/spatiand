@@ -223,6 +223,16 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     // request is about it; then the window's own text, when the request reaches past the screen.
     let mut words = format!("{}\n{}", room_note(&windows, &seen), turn.text);
     let looked = seen.pointer("/looking_at/window").and_then(Value::as_u64);
+    // The text read in the picture looked at (Live Text), whatever is asked: printed there and read
+    // exactly, for a name or a number ("what is the NIK") to be answered from it, not read again
+    // off the picture. With the window's own text, below, it is in that already.
+    let in_picture = seen.pointer("/looking_at/app").and_then(Value::as_str).is_some_and(reads_pictures);
+    if let (Some(window), true, false) = (looked, in_picture, past_the_view(&turn.text)) {
+        if let Some(read) = read_in_picture(room, window) {
+            words = format!("{read}\n{words}");
+            log::info!("brain: given the text read in window {window}'s picture ({} characters)", read.chars().count());
+        }
+    }
     if let (Some(window), true) = (looked, past_the_view(&turn.text)) {
         let own = room.ask(json!({"do": "describe", "window": window}));
         if let Some(text) = own.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
@@ -483,6 +493,31 @@ pub fn prime(s: &Settings, ai: &AiSettings, larger: bool) -> Value {
 
 /// The room as it is now, for the wearer's message: the time, the window the wearer is looking
 /// at and how much of it they see, and the windows in the room.
+/// Whether an application reads the text in its pictures (`spatiand_app::live_text`): SpatiLoupe's
+/// pictures and pages, SpatiReel's paused frames. Its description is asked for that text.
+fn reads_pictures(app: &str) -> bool {
+    ["id.prasetya.spatiand.spatiloupe", "id.prasetya.spatiand.spatireel"].iter().any(|id| app.starts_with(id))
+}
+
+/// The text read in the picture in `window`, from its description (after
+/// `spatiand_app::live_text::HEADING`), marked for the model as on screen and exact.
+fn read_in_picture(room: &Room, window: u64) -> Option<String> {
+    let own = room.ask(json!({"do": "describe", "window": window}));
+    picture_text(window, own.get("text").and_then(Value::as_str)?)
+}
+
+/// The part of a window's description that is the text read in its picture, as it is given.
+fn picture_text(window: u64, described: &str) -> Option<String> {
+    let heading = spatiand_app::live_text::HEADING;
+    let at = described.find(heading)?;
+    let read: String = described[at + heading.len()..].trim().chars().take(3000).collect();
+    (!read.trim().is_empty()).then(|| {
+        format!(
+            "[The text in the picture in window {window}, read from it exactly as it is printed, on screen now. Answer names, numbers and codes from this text, not by reading the picture again; a word in [? ?] was read with less certainty: say so if you give it:]\n{read}\n[End of the text in the picture.]"
+        )
+    })
+}
+
 fn room_note(windows: &Value, seen: &Value) -> String {
     let looked = seen.pointer("/looking_at/window").and_then(Value::as_u64);
     let in_view: Vec<u64> = seen.get("others").and_then(Value::as_array).into_iter().flatten().filter_map(|o| o.get("window").and_then(Value::as_u64)).collect();
@@ -700,6 +735,22 @@ fn looks_indonesian(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_text_read_in_a_picture_is_given_as_on_screen_and_exact() {
+        // SpatiLoupe's description of an ID card: what is known of the file, then what was read.
+        let described = format!("Name: ktp.jpg\nPixels: 4000 × 3000\n\n{}\nNIK\n: 3171234567890001\nNama\n: [?RINA?] KARTIKA SARI", spatiand_app::live_text::HEADING);
+        let given = picture_text(7, &described).unwrap();
+        assert!(given.contains("window 7") && given.contains("on screen now") && given.contains("not by reading the picture"));
+        assert!(given.contains("NIK\n: 3171234567890001\nNama\n: [?RINA?] KARTIKA SARI"));
+        assert!(!given.contains("Pixels"), "only what was read");
+        // Nothing read: nothing given.
+        assert_eq!(picture_text(7, "Name: ktp.jpg\nPixels: 4000 × 3000"), None);
+        assert_eq!(picture_text(7, spatiand_app::live_text::HEADING), None);
+        // Asked of the two that read pictures, on every platform (an instance's own number after).
+        assert!(reads_pictures("id.prasetya.spatiand.spatiloupe") && reads_pictures("id.prasetya.spatiand.spatireel@4321"));
+        assert!(!reads_pictures("id.prasetya.spatiand.spatimesh") && !reads_pictures(""));
+    }
 
     #[test]
     fn what_is_sent_begins_the_same_whatever_the_room() {
