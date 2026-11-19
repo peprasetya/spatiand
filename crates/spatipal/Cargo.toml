@@ -15,7 +15,8 @@ spatiand-app = { path = "../spatiand-app" }
 spatiand-voice = { path = "../spatiand-voice" }
 spatiand-media = { path = "../spatiand-media", default-features = false, features = ["sound"] }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `raw_value`: a pal.json written back keeps every other field as it was written (`pack::with_fields`).
+serde_json = { workspace = true, features = ["raw_value"] }
 log.workspace = true
 env_logger.workspace = true
 libc = "0.2"

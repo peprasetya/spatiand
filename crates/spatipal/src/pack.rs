@@ -1,6 +1,8 @@
-//! A pal: SpatiPal as someone of the wearer's own making -- a name to answer to, who it is, a
-//! figure that changes clothes and moves, a voice, models of its own -- kept in a folder of its
-//! own beside SpatiPal's settings, and never in Spatiand's source (`docs/spatipal-pals.md`).
+//! A pal: who SpatiPal is -- a name to answer to, a personality, a figure that changes clothes
+//! and moves, a voice, models of its own (`docs/spatipal-pals.md`). **Pixel is the built-in one**,
+//! first among them: its name, personality, figure and voice are SpatiPal's own settings
+//! (`assistant.json`), as they always were. Every other is a folder of the wearer's own making
+//! beside them, never in Spatiand's source:
 //!
 //! ```text
 //! ~/.config/spatiand/apps/assistant/pals/<folder>/
@@ -9,15 +11,21 @@
 //!     persona.md   who it is: given to its model whole, every turn
 //!     figure.glb   its figure (or a .vrm): options, animations, expressions
 //!     look.json    how it looks now -- kept here as it changes, so it looks the same tomorrow
+//!     moves/       moves made for it, `<name>.json` each
 //! ```
+//!
+//! Pixel keeps what changes as it is used -- its look, the moves made for it -- in `pals/pixel/`,
+//! made the first time something is kept there; it has no `pal.json` (its definition is the
+//! settings'), and one put there is not read: the folder is Pixel's.
 //!
 //! The folder is the shared one (`crate::store::shared`), so a pal is on every linked machine --
 //! but a figure of more than 4 MB is not sent (spatiand-sync's limit for a setting). Its persona
 //! and what is said to it go to the models on hemera and nowhere else; a pal marked `private`
-//! has its words kept out of SpatiPal's log, and its chats are its own.
+//! has its words kept out of SpatiPal's log, and its chats are its own (Pixel's are those had
+//! with no pal before there were pals).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
@@ -131,11 +139,20 @@ pub fn root() -> PathBuf {
     crate::store::shared().join("assistant").join("pals")
 }
 
-/// The pals there are, by folder: each folder with a `pal.json`.
+/// Pixel's own folder in [`root`]: its look and its moves, never a pal of that name.
+pub const PIXEL: &str = "pixel";
+
+/// The pals installed, by folder: each folder with a `pal.json` -- Pixel's own excepted. Pixel,
+/// built in, is not among them: it is always there, before them.
 pub fn folders() -> Vec<String> {
-    let mut all: Vec<String> = std::fs::read_dir(root())
+    folders_in(&root())
+}
+
+fn folders_in(root: &Path) -> Vec<String> {
+    let mut all: Vec<String> = std::fs::read_dir(root)
         .map(|entries| entries.flatten().filter(|e| e.path().join("pal.json").is_file()).filter_map(|e| e.file_name().to_str().map(str::to_string)).collect())
         .unwrap_or_default();
+    all.retain(|f| f != PIXEL);
     all.sort();
     all
 }
@@ -196,9 +213,13 @@ impl Look {
     }
 }
 
+/// A pal: Pixel, built in (its `folder` empty), or one installed in a folder of its own.
 pub struct Pack {
+    /// Its folder in [`root`], by which it is chosen (`Settings::pal`); empty for Pixel.
     pub folder: String,
+    /// Its own folder: what it keeps of itself is there (Pixel's is [`PIXEL`]).
     pub dir: PathBuf,
+    /// What `pal.json` says -- for Pixel, what its settings say, in the same terms.
     pub about: About,
     /// Who it is, as given to its model.
     pub persona: String,
@@ -206,6 +227,9 @@ pub struct Pack {
     /// What its figure offers, read from the file.
     pub offers: Offers,
     pub look: Look,
+    /// Its files can be changed from its settings: an installed pal's folder, `pal.json` and
+    /// persona are the wearer's to write here (Pixel's are SpatiPal's settings, always).
+    pub writable: bool,
     /// Moves asked for: the room plays one each time this goes up.
     moves: u64,
     /// When its files last changed, as last read: read again when they change.
@@ -213,9 +237,70 @@ pub struct Pack {
 }
 
 impl Pack {
+    /// Pixel, built in: its name, personality, figure and voice as SpatiPal's settings have them.
+    pub fn pixel(s: &Settings) -> Pack {
+        Pack::pixel_at(&root(), s)
+    }
+
+    /// Pixel, with `root` for where pals are kept.
+    pub fn pixel_at(root: &Path, s: &Settings) -> Pack {
+        let figure = crate::store::character_path(&s.character);
+        let about = About { name: s.name.clone(), figure: s.character.clone(), voice: s.voice.clone(), described: s.described.clone(), ..Default::default() };
+        let dir = root.join(PIXEL);
+        let mut pack = Pack { folder: String::new(), offers: offers_of(figure.as_deref(), "pixel"), look: look_in(&dir), dir, about, persona: s.persona.clone(), figure, writable: true, moves: 0, stamps: Vec::new() };
+        pack.stamps = pack.stamps_now();
+        pack
+    }
+
+    /// Whether it is Pixel, the built-in pal.
+    pub fn is_pixel(&self) -> bool {
+        self.folder.is_empty()
+    }
+
+    /// What it answers to and calls itself: an installed pal with no name in its `pal.json` is
+    /// called by its folder's.
+    pub fn name(&self) -> String {
+        match self.about.name.trim() {
+            "" if !self.is_pixel() => self.folder.clone(),
+            name => name.to_string(),
+        }
+    }
+
+    /// Its own folder, made if it is not there yet (Pixel's, the first time it keeps something):
+    /// the wearer's alone (0700).
+    pub fn own_dir(&self) -> Result<PathBuf, String> {
+        if !self.dir.is_dir() {
+            let mut make = std::fs::DirBuilder::new();
+            make.recursive(true);
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut make, 0o700);
+            make.create(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
+        }
+        Ok(self.dir.clone())
+    }
+
+    /// Where the moves made for it from words are kept, `<name>.json` each (`crate::moves`): in
+    /// its own folder, Pixel's too (made with [`Self::own_dir`] before the first is written).
+    pub fn moves_dir(&self) -> PathBuf {
+        self.dir.join("moves")
+    }
+
+    /// Where the poses made for it from words are kept, likewise.
+    pub fn poses_dir(&self) -> PathBuf {
+        self.dir.join("poses")
+    }
+
     /// The pal in `folder`.
     pub fn load(folder: &str) -> Result<Pack, String> {
-        let dir = root().join(folder);
+        Pack::load_at(&root(), folder)
+    }
+
+    /// The pal in `folder` of `root`.
+    pub fn load_at(root: &Path, folder: &str) -> Result<Pack, String> {
+        if folder == PIXEL {
+            return Err(format!("{PIXEL} is Pixel's own folder, not a pal's"));
+        }
+        let dir = root.join(folder);
         let about_path = dir.join("pal.json");
         let text = std::fs::read_to_string(&about_path).map_err(|e| format!("{}: {e}", about_path.display()))?;
         let about: About = serde_json::from_str(&text).map_err(|e| format!("{} is not readable: {e}", about_path.display()))?;
@@ -230,15 +315,14 @@ impl Pack {
         };
         let persona = without_comments(&persona);
         let figure = (!about.figure.trim().is_empty()).then(|| dir.join(about.figure.trim())).filter(|p| p.is_file());
-        let offers = match &figure {
-            Some(path) => spatiand_voice::figure::read(path).unwrap_or_else(|e| {
-                log::warn!("pal {folder}: its figure says nothing of what it offers: {e}");
-                Offers::default()
-            }),
-            None => Offers::default(),
-        };
-        let look = std::fs::read(dir.join("look.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-        let mut pack = Pack { folder: folder.to_string(), dir, about, persona, figure, offers, look, moves: 0, stamps: Vec::new() };
+        let offers = offers_of(figure.as_deref(), folder);
+        let look = look_in(&dir);
+        // Its own to change from its settings only where every file a change writes may be
+        // written: the folder (a file is written beside itself and put in its place), pal.json,
+        // and its persona's file if it has one.
+        let persona_file = Some(dir.join(about.persona.trim())).filter(|p| !about.persona.trim().is_empty() && p.is_file());
+        let writable = may_write(&dir) && may_write(&about_path) && persona_file.as_deref().is_none_or(may_write);
+        let mut pack = Pack { folder: folder.to_string(), dir, about, persona, figure, offers, look, writable, moves: 0, stamps: Vec::new() };
         pack.stamps = pack.stamps_now();
         Ok(pack)
     }
@@ -251,10 +335,15 @@ impl Pack {
         let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("spatipal-made-up-{}-{n}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        Pack { folder: "made-up".into(), dir, about, persona: persona.to_string(), figure: None, offers, look: Look::default(), moves: 0, stamps: Vec::new() }
+        Pack { folder: "made-up".into(), dir, about, persona: persona.to_string(), figure: None, offers, look: Look::default(), writable: true, moves: 0, stamps: Vec::new() }
     }
 
+    /// The files it is made of, watched for changes: an installed pal's `pal.json`, its persona's
+    /// file (if it is one) and its figure; Pixel's figure, its settings being SpatiPal's own.
     fn files(&self) -> Vec<PathBuf> {
+        if self.is_pixel() {
+            return self.figure.iter().cloned().collect();
+        }
         let mut files = vec![self.dir.join("pal.json")];
         if !self.about.persona.trim().is_empty() {
             files.push(self.dir.join(self.about.persona.trim()));
@@ -279,43 +368,96 @@ impl Pack {
         self.stamps = self.stamps_now();
     }
 
-    /// The settings as this pal has them: its name, who it is, its voice and models over the
-    /// wearer's.
+    /// The settings as this pal has them. Pixel's are SpatiPal's settings themselves. An installed
+    /// pal has its own name, personality, figure and voice whatever the settings say -- none of
+    /// them Pixel's: one its folder leaves out is the room's own (its folder's name, no more
+    /// personality than SpatiPal's first line, the robot, the voice described in words of a
+    /// SpatiPal never set up). The rest is SpatiPal's, the same for every pal.
     pub fn over(&self, s: &Settings) -> Settings {
         let mut s = s.clone();
+        if self.is_pixel() {
+            return s;
+        }
         let a = &self.about;
-        if !a.name.trim().is_empty() {
-            s.name = a.name.trim().to_string();
-        }
-        if !self.persona.trim().is_empty() {
-            s.persona = self.persona.trim().to_string();
-        }
-        if self.figure.is_some() {
-            s.character = a.figure.trim().to_string();
-        }
-        if !a.voice.trim().is_empty() || !a.described.trim().is_empty() {
-            s.voice = a.voice.trim().to_string();
-            s.described = a.described.trim().to_string();
+        s.name = self.name();
+        s.persona = self.persona.trim().to_string();
+        s.character = if self.figure.is_some() { a.figure.trim().to_string() } else { "robot".into() };
+        s.voice = a.voice.trim().to_string();
+        s.described = match a.described.trim() {
+            "" if s.voice.is_empty() => Settings::default().described,
+            described => described.to_string(),
+        };
+        s
+    }
+
+    /// The settings to keep, from `edited` (the settings window's, this pal's lines and
+    /// SpatiPal's): for Pixel, all of them; for an installed pal, SpatiPal's, with Pixel's own
+    /// left as they are, `saved` -- the pal's are written into its folder ([`Self::edit`]).
+    pub fn under(&self, edited: &Settings, saved: &Settings) -> Settings {
+        let mut s = edited.clone();
+        if !self.is_pixel() {
+            s.name = saved.name.clone();
+            s.persona = saved.persona.clone();
+            s.character = saved.character.clone();
+            s.voice = saved.voice.clone();
+            s.described = saved.described.clone();
         }
         s
     }
 
-    /// The settings to keep, from `edited` (as the window showed them, this pal's over the
-    /// wearer's): what this pal sets goes back to the wearer's own, `saved`.
-    pub fn under(&self, edited: &Settings, saved: &Settings) -> Settings {
-        let mut s = edited.clone();
-        let mine = self.over(saved);
-        let theirs = |mine: &str, edited: &mut String, saved: &str| {
-            if *edited == mine {
-                *edited = saved.to_string();
+    /// An installed pal's own lines as changed in its settings window (`edited`, against what
+    /// the window showed, `shown`), written into its folder: its name and voice into `pal.json`,
+    /// every other field there kept as it was and where it was; its personality into its
+    /// persona's file (`persona.md` made for one that had none), its maker's notes in it kept.
+    /// Written the wearer's alone (0600), through a file beside it; the folder is left as it is.
+    /// Whether anything was written. A pal whose files cannot be written is not changed.
+    pub fn edit(&mut self, edited: &Settings, shown: &Settings) -> Result<bool, String> {
+        if self.is_pixel() {
+            return Ok(false);
+        }
+        let mut fields: Vec<(&str, String)> = Vec::new();
+        if edited.name.trim() != shown.name.trim() && !edited.name.trim().is_empty() {
+            fields.push(("name", edited.name.trim().to_string()));
+        }
+        if edited.voice.trim() != shown.voice.trim() {
+            fields.push(("voice", edited.voice.trim().to_string()));
+        }
+        if edited.described.trim() != shown.described.trim() {
+            fields.push(("described", edited.described.trim().to_string()));
+        }
+        let persona = (edited.persona.trim() != shown.persona.trim()).then(|| edited.persona.trim().to_string());
+        if fields.is_empty() && persona.is_none() {
+            return Ok(false);
+        }
+        if !self.writable {
+            return Err(format!("{}'s files cannot be changed here: assistant/pals/{} is not writable.", self.name(), self.folder));
+        }
+        if let Some(words) = persona {
+            let named = self.about.persona.trim().to_string();
+            // Its persona's file; or, for one given in pal.json's own words, those words.
+            let file = if named.is_empty() {
+                Some("persona.md".to_string())
+            } else {
+                self.dir.join(&named).is_file().then_some(named)
+            };
+            match file {
+                Some(file) => {
+                    let path = self.dir.join(&file);
+                    let was = std::fs::read_to_string(&path).unwrap_or_default();
+                    crate::store::write(&path, &with_notes_of(&was, &words))?;
+                    if self.about.persona.trim().is_empty() {
+                        fields.push(("persona", file));
+                    }
+                }
+                None => fields.push(("persona", words)),
             }
-        };
-        theirs(&mine.name, &mut s.name, &saved.name);
-        theirs(&mine.persona, &mut s.persona, &saved.persona);
-        theirs(&mine.character, &mut s.character, &saved.character);
-        theirs(&mine.voice, &mut s.voice, &saved.voice);
-        theirs(&mine.described, &mut s.described, &saved.described);
-        s
+        }
+        if !fields.is_empty() {
+            let path = self.dir.join("pal.json");
+            let was = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            crate::store::write(&path, &with_fields(&was, &fields).map_err(|e| format!("{} is not readable: {e}", path.display()))?)?;
+        }
+        Ok(true)
     }
 
     /// The room's AI settings (`ai.json`, which SpatiPal reads and does not write) as this pal
@@ -329,19 +471,6 @@ impl Pack {
             ai.models.larger = self.about.large_model.trim().to_string();
         }
         ai
-    }
-
-    /// What it sets itself, of the settings' lines: `name`, `persona`, `figure`, `voice` (its
-    /// models are over the room's AI settings, `ai_over`).
-    pub fn sets(&self, what: &str) -> bool {
-        let a = &self.about;
-        match what {
-            "name" => !a.name.trim().is_empty(),
-            "persona" => !self.persona.trim().is_empty(),
-            "figure" => self.figure.is_some(),
-            "voice" => !a.voice.trim().is_empty() || !a.described.trim().is_empty(),
-            _ => false,
-        }
     }
 
     /// Its groups of options, as offered: each with its options (the figure's own order).
@@ -377,13 +506,14 @@ impl Pack {
         }
     }
 
+    /// Its moves made from words, in its own folder ([`Self::moves_dir`]), Pixel's in Pixel's.
     pub fn shelf(&self) -> spatiand_voice::motion::Shelf {
-        spatiand_voice::motion::Shelf { dir: self.dir.join("moves") }
+        spatiand_voice::motion::Shelf { dir: self.moves_dir() }
     }
 
-    /// Its poses made from words, held as its poses by name are.
+    /// Its poses made from words, held as its poses by name are ([`Self::poses_dir`]).
     pub fn pose_shelf(&self) -> spatiand_voice::motion::Shelf {
-        spatiand_voice::motion::Shelf { dir: self.dir.join("poses") }
+        spatiand_voice::motion::Shelf { dir: self.poses_dir() }
     }
 
     /// One of its moves or poses made from words, let go of -- or what it has made, when not.
@@ -708,17 +838,20 @@ impl Pack {
     }
 
     fn keep_look(&self) {
-        match serde_json::to_string_pretty(&self.look) {
-            Ok(text) => {
-                if let Err(e) = crate::store::write(&self.dir.join("look.json"), &text) {
-                    log::warn!("pal {}: how it looks could not be kept: {e}", self.folder);
-                }
-            }
-            Err(e) => log::warn!("pal {}: {e}", self.folder),
+        let kept = serde_json::to_string_pretty(&self.look).map_err(|e| e.to_string()).and_then(|text| crate::store::write(&self.own_dir()?.join("look.json"), &text));
+        if let Err(e) = kept {
+            log::warn!("pal {}: how it looks could not be kept: {e}", self.key());
         }
     }
 
-    /// What the room is told of its figure: which file, how large, how it looks now.
+    /// Who it is to the room (the avatar's `character`): `pixel`, or `pal:<folder>`. The room
+    /// remembers where the wearer put each one's figure by it.
+    pub fn key(&self) -> String {
+        if self.is_pixel() { PIXEL.to_string() } else { format!("pal:{}", self.folder) }
+    }
+
+    /// What the room is told of its figure: which file, how large, how it looks now. All of it,
+    /// every time: what is left out the room keeps from before, which may be another pal's.
     pub fn figure_request(&self, shown: bool) -> Value {
         // Its moves and poses made from words, which the room plays as its animations.
         let mut motions = self.shelf().room();
@@ -726,9 +859,9 @@ impl Pack {
             all.extend(poses);
         }
         let options: BTreeMap<&String, &String> = self.look.options.iter().filter(|(g, o)| self.offers.groups.iter().any(|(group, all)| group == *g && all.contains(o))).collect();
-        let mut room = json!({
+        json!({
             "do": "avatar",
-            "character": format!("pal:{}", self.folder),
+            "character": self.key(),
             "path": self.figure,
             "visible": shown,
             "options": options,
@@ -736,14 +869,9 @@ impl Pack {
             "expression": self.look.face,
             "colors": self.look.colours,
             "motions": motions,
-        });
-        if self.about.size > 0.0 {
-            room["size"] = json!(self.about.size);
-        }
-        if let Some(signs) = self.about.signs {
-            room["signs"] = json!(signs);
-        }
-        room
+            "size": if self.about.size > 0.0 { self.about.size } else { 1.0 },
+            "signs": self.about.signs.unwrap_or(true),
+        })
     }
 
     /// How it looks now, in words, for its model with the wearer's words: what each group shows,
@@ -781,6 +909,88 @@ impl Pack {
         }
         format!("[How you look now: {}.]{body}", parts.join("; "))
     }
+}
+
+/// What a figure offers, read from its file; nothing for the room's robot (no file), or for a
+/// file that says nothing of it.
+fn offers_of(figure: Option<&Path>, who: &str) -> Offers {
+    match figure {
+        Some(path) => spatiand_voice::figure::read(path).unwrap_or_else(|e| {
+            log::warn!("pal {who}: its figure says nothing of what it offers: {e}");
+            Offers::default()
+        }),
+        None => Offers::default(),
+    }
+}
+
+/// How a pal looked when it was last kept, in its own folder.
+fn look_in(dir: &Path) -> Look {
+    std::fs::read(dir.join("look.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Whether this process may write `path` (a folder: make and replace files in it).
+#[cfg(unix)]
+fn may_write(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(name) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
+    unsafe { libc::access(name.as_ptr(), libc::W_OK) == 0 }
+}
+
+#[cfg(not(unix))]
+fn may_write(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| !m.permissions().readonly())
+}
+
+/// A persona's file, its words changed to `words`: its maker's notes in it (`<!-- ... -->`,
+/// which its model is never given) kept, before the words.
+fn with_notes_of(was: &str, words: &str) -> String {
+    let mut notes = Vec::new();
+    let mut rest = was;
+    while let Some(start) = rest.find("<!--") {
+        let Some(end) = rest[start..].find("-->") else { break };
+        notes.push(&rest[start..start + end + 3]);
+        rest = &rest[start + end + 3..];
+    }
+    let words = words.trim();
+    if notes.is_empty() { format!("{words}\n") } else { format!("{}\n\n{words}\n", notes.join("\n")) }
+}
+
+/// A pal.json's object, field by field in the order written, each value as it was written.
+struct Fields(Vec<(String, Box<serde_json::value::RawValue>)>);
+
+impl<'de> Deserialize<'de> for Fields {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Fields, D::Error> {
+        struct Each;
+        impl<'de> serde::de::Visitor<'de> for Each {
+            type Value = Fields;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("an object")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<Fields, M::Error> {
+                let mut all = Vec::new();
+                while let Some(field) = map.next_entry::<String, Box<serde_json::value::RawValue>>()? {
+                    all.push(field);
+                }
+                Ok(Fields(all))
+            }
+        }
+        d.deserialize_map(Each)
+    }
+}
+
+/// `pal.json` with `fields` set to these words: each where it was, a new one at the end, and
+/// every other field as it was written.
+fn with_fields(was: &str, fields: &[(&str, String)]) -> Result<String, String> {
+    let Fields(mut all) = serde_json::from_str(was).map_err(|e| e.to_string())?;
+    for (name, words) in fields {
+        let value = serde_json::value::to_raw_value(words).map_err(|e| e.to_string())?;
+        match all.iter_mut().find(|(n, _)| n == name) {
+            Some(field) => field.1 = value,
+            None => all.push((name.to_string(), value)),
+        }
+    }
+    let lines: Vec<String> = all.iter().map(|(name, value)| format!("  {}: {}", serde_json::to_string(name).unwrap_or_default(), value.get())).collect();
+    Ok(format!("{{\n{}\n}}\n", lines.join(",\n")))
 }
 
 /// Left as right and right as left: a part's name, or a pose's words.
@@ -876,6 +1086,7 @@ mod tests {
             figure: None,
             offers,
             look: Look::default(),
+            writable: true,
             moves: 0,
             stamps: Vec::new(),
         }
@@ -1099,5 +1310,196 @@ mod tests {
     fn a_personas_comments_are_its_makers_own() {
         let text = "<!-- notes to myself -->\nYou are Mira.\n\n<!-- more\nnotes -->\n\nYou tease.";
         assert_eq!(without_comments(text), "You are Mira.\n\nYou tease.");
+    }
+
+    /// A folder of pals of a test's own, as the wearer's would be.
+    fn pals_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("spatipal-pals-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// A pal's folder made as docs/spatipal-pals.md asks: the folder 0700, its files 0600.
+    fn installed(root: &Path, folder: &str, files: &[(&str, &str)]) -> PathBuf {
+        let dir = root.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, text) in files {
+            std::fs::write(dir.join(name), text).unwrap();
+            #[cfg(unix)]
+            std::fs::set_permissions(dir.join(name), std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+        }
+        #[cfg(unix)]
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn pixel_is_the_settings_own_pal_and_first_and_none_is_gone() {
+        let root = pals_root("pixel");
+        installed(&root, "mira", &[("pal.json", r#"{"name": "Mira"}"#)]);
+        // A pal.json in Pixel's own folder is not a pal; a folder without one is not either.
+        installed(&root, PIXEL, &[("pal.json", r#"{"name": "Not Pixel"}"#)]);
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        assert_eq!(folders_in(&root), ["mira"]);
+        assert!(Pack::load_at(&root, PIXEL).is_err());
+        // The settings as an older SpatiPal kept them, with no pal chosen: they are Pixel's, all
+        // of them, and nothing is changed by being Pixel's.
+        let older = r#"{"on": true, "pal": "", "name": "Robo", "persona": "A grumpy old robot.", "character": "robot", "voice": "alba", "described": "", "spoken": false, "model": "gemma4:e4b"}"#;
+        let saved: Settings = serde_json::from_str(older).unwrap();
+        let pixel = Pack::pixel_at(&root, &saved);
+        assert!(pixel.is_pixel() && pixel.writable);
+        assert_eq!(pixel.over(&saved), saved);
+        assert_eq!((pixel.name(), pixel.persona.as_str()), ("Robo".to_string(), "A grumpy old robot."));
+        let mut edited = saved.clone();
+        edited.name = "Robby".into();
+        assert_eq!(pixel.under(&edited, &saved), edited);
+        // Told to the room as itself, the robot, and all of it: size and signs too, which a pal
+        // chosen before would otherwise have left there.
+        let room = pixel.figure_request(true);
+        assert_eq!(room["character"], "pixel");
+        assert!(room["path"].is_null());
+        assert_eq!((room["size"].as_f64(), room["signs"].as_bool()), (Some(1.0), Some(true)));
+        // Its own folder, for its look and its moves, made only when first wanted.
+        assert_eq!(pixel.moves_dir(), root.join(PIXEL).join("moves"));
+        let _ = std::fs::remove_dir_all(root.join(PIXEL));
+        assert!(!root.join(PIXEL).exists());
+        assert_eq!(pixel.own_dir().unwrap(), root.join(PIXEL));
+        #[cfg(unix)]
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(root.join(PIXEL)).unwrap().permissions()) & 0o777, 0o700);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_installed_pal_has_its_own_name_personality_figure_and_voice() {
+        let root = pals_root("own");
+        installed(&root, "mira", &[("pal.json", r#"{"name": "Mira", "persona": "persona.md", "voice": "alba", "size": 1.6}"#), ("persona.md", "You are Mira.")]);
+        installed(&root, "nameless", &[("pal.json", "{}")]);
+        let saved: Settings = serde_json::from_str(r#"{"name": "Robo", "persona": "A grumpy old robot.", "character": "hero.vrm", "voice": "", "described": "A deep slow voice."}"#).unwrap();
+        let mira = Pack::load_at(&root, "mira").unwrap();
+        let s = mira.over(&saved);
+        assert_eq!((s.name.as_str(), s.persona.as_str(), s.voice.as_str()), ("Mira", "You are Mira.", "alba"));
+        // No figure of its own: the robot, not Pixel's.
+        assert_eq!(s.character, "robot");
+        assert_eq!(mira.figure_request(true)["character"], "pal:mira");
+        assert!((mira.figure_request(true)["size"].as_f64().unwrap() - 1.6).abs() < 1e-6);
+        // What its folder leaves out is the room's own, never Pixel's.
+        let nameless = Pack::load_at(&root, "nameless").unwrap();
+        let s = nameless.over(&saved);
+        assert_eq!((s.name.as_str(), s.persona.as_str(), s.voice.as_str()), ("nameless", "", ""));
+        assert_eq!(s.described, Settings::default().described);
+        assert_ne!(s.described, saved.described);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_installed_pal_edited_writes_its_own_folder_and_keeps_the_rest() {
+        let root = pals_root("edit");
+        let about = "{\n  \"name\": \"Mira\",\n  \"private\": true,\n  \"persona\": \"persona.md\",\n  \"options\": {\"outfit\": {\"dress\": \"a short dress\", \"casual\": \"jeans\"}},\n  \"zeta\": [1, 2],\n  \"figure\": \"mira.glb\"\n}\n";
+        let dir = installed(&root, "mira", &[("pal.json", about), ("persona.md", "<!-- my notes -->\nYou are Mira.\n\nYou tease.\n")]);
+        let saved = Settings::default();
+        let mut mira = Pack::load_at(&root, "mira").unwrap();
+        assert!(mira.writable);
+        let shown = mira.over(&saved);
+        assert_eq!(shown.persona, "You are Mira.\n\nYou tease.");
+        let mut edited = shown.clone();
+        edited.name = "Mirabel".into();
+        edited.voice = "alba".into();
+        edited.persona = "You are Mirabel.\n\nYou tease, kindly.".into();
+        edited.spoken = !shown.spoken;
+        assert_eq!(mira.edit(&edited, &shown), Ok(true));
+        // Its other fields kept, in their order and as written; its own changed; one new at the end.
+        let written = std::fs::read_to_string(dir.join("pal.json")).unwrap();
+        let Fields(fields) = serde_json::from_str(&written).unwrap();
+        let names: Vec<&str> = fields.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["name", "private", "persona", "options", "zeta", "figure", "voice"]);
+        assert_eq!(fields[3].1.get(), r#"{"outfit": {"dress": "a short dress", "casual": "jeans"}}"#);
+        let about: About = serde_json::from_str(&written).unwrap();
+        assert_eq!((about.name.as_str(), about.voice.as_str(), about.private), ("Mirabel", "alba", true));
+        // Its personality in its persona's file, its maker's notes still there.
+        assert_eq!(std::fs::read_to_string(dir.join("persona.md")).unwrap(), "<!-- my notes -->\n\nYou are Mirabel.\n\nYou tease, kindly.\n");
+        let again = Pack::load_at(&root, "mira").unwrap();
+        assert_eq!(again.over(&saved).persona, "You are Mirabel.\n\nYou tease, kindly.");
+        assert!(again.about.private);
+        // The wearer's own alone: the folder and its files as they were.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: PathBuf| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!((mode(dir.clone()), mode(dir.join("pal.json")), mode(dir.join("persona.md"))), (0o700, 0o600, 0o600));
+        }
+        // SpatiPal's own settings are kept as the window changed them, Pixel's as they were.
+        let kept = mira.under(&edited, &saved);
+        assert_eq!((kept.name.as_str(), kept.voice.as_str(), kept.persona.as_str()), (saved.name.as_str(), saved.voice.as_str(), saved.persona.as_str()));
+        assert_eq!(kept.spoken, edited.spoken);
+        // Nothing changed of its own: nothing written.
+        assert_eq!(mira.edit(&shown, &shown), Ok(false));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_personality_goes_where_the_pal_keeps_it() {
+        let root = pals_root("persona");
+        // None yet: a persona.md of its own, named in its pal.json.
+        let ada = installed(&root, "ada", &[("pal.json", r#"{"name": "Ada"}"#)]);
+        let mut pack = Pack::load_at(&root, "ada").unwrap();
+        let shown = pack.over(&Settings::default());
+        let edited = Settings { persona: "You are Ada, precise and dry.".into(), ..shown.clone() };
+        assert_eq!(pack.edit(&edited, &shown), Ok(true));
+        assert_eq!(std::fs::read_to_string(ada.join("persona.md")).unwrap(), "You are Ada, precise and dry.\n");
+        assert_eq!(serde_json::from_str::<About>(&std::fs::read_to_string(ada.join("pal.json")).unwrap()).unwrap().persona, "persona.md");
+        #[cfg(unix)]
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(ada.join("persona.md")).unwrap().permissions()) & 0o777, 0o600);
+        // Given in pal.json's own words: changed there.
+        let bo = installed(&root, "bo", &[("pal.json", r#"{"name": "Bo", "persona": "You are Bo."}"#)]);
+        let mut pack = Pack::load_at(&root, "bo").unwrap();
+        let shown = pack.over(&Settings::default());
+        let edited = Settings { persona: "You are Bo, slow and kind.".into(), ..shown.clone() };
+        assert_eq!(pack.edit(&edited, &shown), Ok(true));
+        assert!(!bo.join("persona.md").exists());
+        assert_eq!(Pack::load_at(&root, "bo").unwrap().persona, "You are Bo, slow and kind.");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pal_whose_files_cannot_be_written_says_so_and_is_left_as_it_is() {
+        use std::os::unix::fs::PermissionsExt;
+        // Whoever may write anything may write this too: only as someone else is it refused.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let root = pals_root("readonly");
+        let about = r#"{"name": "Mira", "private": true}"#;
+        let dir = installed(&root, "mira", &[("pal.json", about)]);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let mut mira = Pack::load_at(&root, "mira").unwrap();
+        assert!(!mira.writable);
+        let shown = mira.over(&Settings::default());
+        let edited = Settings { name: "Mirabel".into(), ..shown.clone() };
+        let why = mira.edit(&edited, &shown).unwrap_err();
+        assert!(why.contains("cannot be changed"), "{why}");
+        assert_eq!(std::fs::read_to_string(dir.join("pal.json")).unwrap(), about);
+        // A pal.json of its own made read-only is the same.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(dir.join("pal.json"), std::fs::Permissions::from_mode(0o400)).unwrap();
+        assert!(!Pack::load_at(&root, "mira").unwrap().writable);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_pal_chosen_before_stays_chosen() {
+        let root = pals_root("chosen");
+        installed(&root, "mira", &[("pal.json", r#"{"name": "Mira"}"#)]);
+        // The settings as the owner's are: a pal chosen, or none -- which is Pixel now.
+        let chose: Settings = serde_json::from_str(r#"{"on": true, "pal": "mira", "name": "Pixel"}"#).unwrap();
+        assert_eq!(chose.pal, "mira");
+        assert_eq!(Pack::load_at(&root, &chose.pal).unwrap().name(), "Mira");
+        for none in [r#"{"on": true, "pal": "", "name": "Pixel"}"#, r#"{"on": true, "name": "Pixel"}"#] {
+            let s: Settings = serde_json::from_str(none).unwrap();
+            assert!(s.pal.is_empty());
+            assert!(Pack::pixel_at(&root, &s).is_pixel());
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

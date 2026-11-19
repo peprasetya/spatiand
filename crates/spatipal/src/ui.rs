@@ -1,6 +1,8 @@
 //! SpatiPal's window: its chats down the left, the conversation in the middle, a field to type
-//! in at the foot -- and its own settings behind the cog. hemera, the models and dictation are
-//! the room's AI settings, which more than one app uses: its settings say so, in one line.
+//! in at the foot -- and its own settings behind the cog: the pal it is (Pixel, built in, or one
+//! installed) with that pal's own name, personality, figure and voice, then SpatiPal's own lines,
+//! the same for every pal. hemera, the models and dictation are the room's AI settings, which
+//! more than one app uses: its settings say so, in one line.
 //!
 //! Drawn with the room's own widgets (`spatiand_app::ui`), so it looks like the rest of Spatiand.
 
@@ -40,8 +42,9 @@ pub struct View<'a> {
     /// Voices fetched from hemera's library, for the choice of one.
     pub voices: &'a [String],
     pub characters: &'a [String],
-    /// The pal it is, if one is chosen, and the pals there are, by folder.
-    pub pack: Option<&'a crate::pack::Pack>,
+    /// The pal it is -- Pixel, or the one chosen (`settings.pal`) if it could be read -- and the
+    /// pals installed, by folder.
+    pub pack: &'a crate::pack::Pack,
     pub pals: &'a [String],
 }
 
@@ -71,7 +74,7 @@ pub enum Page {
 }
 
 /// One line of the settings page.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Line {
     Pal,
     On,
@@ -87,9 +90,12 @@ enum Line {
     Continue,
 }
 
+/// The pal first, and its own lines -- each pal has its own name, personality, figure and voice
+/// (the owner, 2026-11-19: "each pal... have it's own [voice] and personality") -- then
+/// SpatiPal's, the same whichever pal it is.
 const LINES: &[(&str, &[Line])] = &[
-    ("Assistant", &[Line::Pal, Line::On, Line::Name, Line::Persona, Line::Figure, Line::Shown]),
-    ("Voice and ears", &[Line::Voice, Line::Described, Line::Spoken, Line::Listening, Line::Thinking]),
+    ("Who it is", &[Line::Pal, Line::Name, Line::Persona, Line::Figure, Line::Voice, Line::Described]),
+    ("Assistant", &[Line::On, Line::Shown, Line::Spoken, Line::Listening, Line::Thinking]),
     ("Chats", &[Line::Continue]),
 ];
 
@@ -525,14 +531,31 @@ impl Window {
         }
         let row = self.lines.input(&input)?;
         let line = Self::line_at(row)?;
+        self.choose_line(line, view)
+    }
+
+    /// A line of the settings chosen: changed, opened to type in, or said why it cannot be.
+    fn choose_line(&mut self, line: Line, view: &View) -> Option<Want> {
         let mut s = view.settings.clone();
-        if let Some(p) = view.pack.filter(|p| pal_sets(p, line)) {
-            return Some(Want::Note(format!("{} is set in the pal's own folder (assistant/pals/{}): change it there.", label(line), p.folder)));
+        let p = view.pack;
+        // An installed pal's own lines are its folder's: changed here and written there, unless
+        // its files cannot be written; its figure is the file its folder has.
+        if !p.is_pixel() && is_the_pals(line) {
+            if line == Line::Figure {
+                return Some(Want::Note(format!("A pal's figure is the file its pal.json names, in assistant/pals/{}: change it there.", p.folder)));
+            }
+            if !p.writable {
+                return Some(Want::Note(format!("{}'s files cannot be changed here: assistant/pals/{} is not writable.", s.name, p.folder)));
+            }
         }
         match line {
             Line::Pal => {
+                // Pixel, built in, first; then each pal installed.
                 let mut choices = vec![String::new()];
                 choices.extend(view.pals.iter().cloned());
+                if choices.len() == 1 && s.pal.is_empty() {
+                    return Some(Want::Note(format!("{} is the only pal here: one of your own is a folder in assistant/pals/ (docs/spatipal-pals.md).", s.name)));
+                }
                 s.pal = next(&choices, &s.pal);
                 Some(Want::Keep(s))
             }
@@ -591,20 +614,15 @@ fn next<S: AsRef<str>>(choices: &[S], now: &str) -> String {
     choices[at].as_ref().to_string()
 }
 
-/// Whether the pal sets this line itself, over the wearer's own.
-fn pal_sets(p: &crate::pack::Pack, line: Line) -> bool {
-    match line {
-        Line::Name => p.sets("name"),
-        Line::Persona => p.sets("persona"),
-        Line::Figure => p.sets("figure"),
-        Line::Voice | Line::Described => p.sets("voice"),
-        _ => false,
-    }
+/// Whether the line is the pal's own -- its name, personality, figure, voice -- rather than
+/// SpatiPal's.
+fn is_the_pals(line: Line) -> bool {
+    matches!(line, Line::Name | Line::Persona | Line::Figure | Line::Voice | Line::Described)
 }
 
 fn label(line: Line) -> &'static str {
     match line {
-        Line::Pal => "Pal (someone of your own)",
+        Line::Pal => "Pal",
         Line::On => "Start with the room",
         Line::Shown => "Show its figure",
         Line::Name => "Name (what it answers to)",
@@ -625,28 +643,28 @@ fn on(b: bool) -> String {
 
 fn value(line: Line, view: &View) -> String {
     let s = view.settings;
-    // What a pal sets is shown as its own; who it is, never -- the window is in the room.
-    if let Some(p) = view.pack.filter(|p| pal_sets(p, line)) {
-        return match line {
-            Line::Persona => "The pal's own".into(),
-            Line::Name => format!("{} (the pal's)", s.name),
-            Line::Figure => format!("{} (the pal's)", p.about.figure),
-            Line::Voice | Line::Described => "The pal's own".into(),
-            _ => String::new(),
-        };
-    }
+    let p = view.pack;
     match line {
-        Line::Pal => match view.pack {
-            Some(p) => format!("{} (pals/{})", s.name, p.folder),
-            None if !s.pal.is_empty() => format!("{} cannot be read", s.pal),
-            None if view.pals.is_empty() => "None (see docs/spatipal-pals.md)".into(),
-            None => "None".into(),
+        Line::Pal => match (p.is_pixel(), s.pal.is_empty()) {
+            (true, true) if view.pals.is_empty() => format!("{} (built in; others: docs/spatipal-pals.md)", s.name),
+            (true, true) => format!("{} (built in)", s.name),
+            // Chosen, but its folder could not be read: Pixel, until it can.
+            (true, false) => format!("{} cannot be read", s.pal),
+            (false, _) if !p.writable => format!("{} (pals/{}, read-only)", s.name, p.folder),
+            (false, _) => format!("{} (pals/{})", s.name, p.folder),
         },
         Line::On => on(s.on),
         Line::Shown => if s.shown { "Shown".into() } else { "Hidden (still listening)".into() },
         Line::Name => s.name.clone(),
-        Line::Persona => short(&s.persona),
-        Line::Figure => s.character.clone(),
+        // A private pal's is not on show: pressed, it is there to change.
+        Line::Persona if !p.is_pixel() && p.about.private => "Its own (private)".into(),
+        Line::Persona if s.persona.trim().is_empty() => "None".into(),
+        Line::Persona => short(&flat(&s.persona)),
+        Line::Figure if p.is_pixel() => s.character.clone(),
+        Line::Figure => match &p.figure {
+            Some(_) => format!("{} (its folder's)", p.about.figure.trim()),
+            None => "The robot (none in its folder)".into(),
+        },
         Line::Voice => if s.voice.is_empty() { "Described in words".into() } else { s.voice.clone() },
         Line::Described => short(&s.described),
         Line::Spoken => on(s.spoken),
@@ -668,7 +686,7 @@ fn text_of(line: Line, view: &View) -> String {
     let s = view.settings;
     match line {
         Line::Name => s.name.clone(),
-        Line::Persona => s.persona.clone(),
+        Line::Persona => flat(&s.persona),
         Line::Described => s.described.clone(),
         _ => String::new(),
     }
@@ -677,10 +695,32 @@ fn text_of(line: Line, view: &View) -> String {
 fn set_text(line: Line, text: &str, s: &mut Settings) {
     match line {
         Line::Name if !text.is_empty() => s.name = text.to_string(),
-        Line::Persona => s.persona = text.to_string(),
+        Line::Persona => s.persona = unflat(text),
         Line::Described => s.described = text.to_string(),
         _ => {}
     }
+}
+
+/// A personality of more than one line -- a pal's persona.md is pages of its own -- in the
+/// one-line field: each line break shown as a pilcrow, and put back where one is when it is kept.
+const BREAK: &str = " \u{b6} ";
+
+fn flat(text: &str) -> String {
+    text.trim().replace("\r\n", "\n").replace('\n', BREAK)
+}
+
+fn unflat(text: &str) -> String {
+    let parts: Vec<&str> = text.split('\u{b6}').collect();
+    let last = parts.len().saturating_sub(1);
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, part)| {
+            let part = if i > 0 { part.strip_prefix(' ').unwrap_or(part) } else { part };
+            if i < last { part.strip_suffix(' ').unwrap_or(part) } else { part }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn short(text: &str) -> String {
@@ -794,10 +834,24 @@ mod tests {
         Input::Key { key, text: None, modifiers: Modifiers::default(), letter: None }
     }
 
+    /// A folder of pals of a test's own.
+    fn pals_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("spatipal-ui-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn view<'a>(settings: &'a Settings, pack: &'a crate::pack::Pack, pals: &'a [String], voices: &'a [String]) -> View<'a> {
+        View { chats: &[], current: None, answering: None, speaking: false, settings, listening: false, look: false, status: "", trouble: None, voices, characters: &[], pack, pals }
+    }
+
     #[test]
     fn control_delete_forgets_the_open_chat_only_pressed_twice_and_with_nothing_typed() {
         let chats: Vec<Chat> = ["a", "b"].iter().map(|id| Chat { id: id.to_string(), ..Default::default() }).collect();
         let settings = Settings::default();
+        let root = pals_root("delete");
+        let pixel = crate::pack::Pack::pixel_at(&root, &settings);
         let view = View {
             chats: &chats,
             current: Some(1),
@@ -810,7 +864,7 @@ mod tests {
             trouble: None,
             voices: &[],
             characters: &[],
-            pack: None,
+            pack: &pixel,
             pals: &[],
         };
         let delete = || Input::Key { key: Key::Delete, text: None, modifiers: Modifiers { control: true, ..Default::default() }, letter: None };
@@ -836,27 +890,29 @@ mod tests {
         let mut w = Window::new();
         assert!(w.ask_to_forget("a".into()).is_none());
         let settings = Settings::default();
-        let view = View { chats: &[], current: None, answering: None, speaking: false, settings: &settings, listening: false, look: false, status: "", trouble: None, voices: &[], characters: &[], pack: None, pals: &[] };
+        let root = pals_root("bin");
+        let pixel = crate::pack::Pack::pixel_at(&root, &settings);
+        let view = view(&settings, &pixel, &[], &[]);
         assert!(w.input(key(Key::Escape), &view).is_none());
         assert!(w.asking.is_none());
     }
 
     #[test]
     fn its_settings_keep_its_own_and_say_where_the_rest_went() {
-        // The assistant's own lines stay, the pal it is first; hemera, the models and dictation
+        // The pal first, with its own lines; then SpatiPal's; hemera, the models and dictation
         // are the room's now.
         let labels: Vec<&str> = LINES.iter().flat_map(|(_, lines)| lines.iter().map(|l| label(*l))).collect();
         assert_eq!(
             labels,
             [
-                "Pal (someone of your own)",
-                "Start with the room",
+                "Pal",
                 "Name (what it answers to)",
                 "Personality",
                 "Figure",
-                "Show its figure",
                 "Voice",
                 "Voice described",
+                "Start with the room",
+                "Show its figure",
                 "Speak answers",
                 "Listen for its name",
                 "While the larger model thinks",
@@ -864,8 +920,108 @@ mod tests {
             ]
         );
         let headings: Vec<&str> = LINES.iter().map(|(h, _)| *h).collect();
-        assert_eq!(headings, ["Assistant", "Voice and ears", "Chats"]);
+        assert_eq!(headings, ["Who it is", "Assistant", "Chats"]);
+        assert!(LINES[0].1.iter().all(|l| *l == Line::Pal || is_the_pals(*l)));
         assert!(ELSEWHERE.contains("Spatiand's settings, under AI"));
         assert!(ELSEWHERE.ends_with('.'));
+    }
+
+    #[test]
+    fn the_pal_is_pixel_first_then_each_installed_and_never_none() {
+        let root = pals_root("choice");
+        std::fs::create_dir_all(root.join("mira")).unwrap();
+        std::fs::write(root.join("mira").join("pal.json"), r#"{"name": "Mira"}"#).unwrap();
+        let settings = Settings::default();
+        let pixel = crate::pack::Pack::pixel_at(&root, &settings);
+        let pals = vec!["mira".to_string()];
+        let v = view(&settings, &pixel, &pals, &[]);
+        assert_eq!(value(Line::Pal, &v), "Pixel (built in)");
+        assert!(!LINES.iter().flat_map(|(_, l)| l.iter()).any(|l| value(*l, &v).starts_with("None (")));
+        // Chosen: Pixel, then the pal, then Pixel again.
+        let mut w = Window::new();
+        let Some(Want::Keep(s)) = w.choose_line(Line::Pal, &v) else { panic!("the pal line should choose") };
+        assert_eq!(s.pal, "mira");
+        let mira = crate::pack::Pack::load_at(&root, "mira").unwrap();
+        let as_mira = mira.over(&s);
+        let v = view(&as_mira, &mira, &pals, &[]);
+        assert_eq!(value(Line::Pal, &v), "Mira (pals/mira)");
+        let Some(Want::Keep(s)) = w.choose_line(Line::Pal, &v) else { panic!("the pal line should choose") };
+        assert_eq!(s.pal, "");
+        // Pixel alone: said so, and how to have another.
+        let v = view(&settings, &pixel, &[], &[]);
+        assert!(value(Line::Pal, &v).starts_with("Pixel (built in"));
+        assert!(matches!(w.choose_line(Line::Pal, &v), Some(Want::Note(n)) if n.contains("assistant/pals/")));
+        // A pal chosen whose folder cannot be read: said so; Pixel is what is used meanwhile.
+        let gone = Settings { pal: "gone".into(), ..Settings::default() };
+        let v = view(&gone, &pixel, &pals, &[]);
+        assert_eq!(value(Line::Pal, &v), "gone cannot be read");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_installed_pals_lines_are_its_own_and_pixels_are_the_settings() {
+        let root = pals_root("lines");
+        let dir = root.join("mira");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pal.json"), r#"{"name": "Mira", "persona": "persona.md", "voice": "alba"}"#).unwrap();
+        std::fs::write(dir.join("persona.md"), "You are Mira.\n\nYou tease.").unwrap();
+        let settings = Settings::default();
+        let mira = crate::pack::Pack::load_at(&root, "mira").unwrap();
+        let shown = mira.over(&settings);
+        let voices = vec!["alba".to_string(), "bram".to_string()];
+        let v = view(&shown, &mira, &[], &voices);
+        assert_eq!(value(Line::Name, &v), "Mira");
+        assert_eq!(value(Line::Voice, &v), "alba");
+        assert_eq!(value(Line::Figure, &v), "The robot (none in its folder)");
+        let mut w = Window::new();
+        // Its figure is its folder's; its voice and its words are changed here.
+        assert!(matches!(w.choose_line(Line::Figure, &v), Some(Want::Note(n)) if n.contains("assistant/pals/mira")));
+        let Some(Want::Keep(s)) = w.choose_line(Line::Voice, &v) else { panic!("the voice should step") };
+        assert_eq!(s.voice, "bram");
+        assert!(w.choose_line(Line::Persona, &v).is_none());
+        assert_eq!(w.editing, Some(Line::Persona));
+        // Its personality's lines in the one-line field, and back as they were.
+        assert_eq!(w.edit.text, "You are Mira. \u{b6}  \u{b6} You tease.");
+        let mut kept = shown.clone();
+        set_text(Line::Persona, &w.edit.text, &mut kept);
+        assert_eq!(kept.persona, shown.persona);
+        assert_eq!(unflat("a\u{b6}b \u{b6} c"), "a\nb\nc");
+        // Pixel's figure is chosen here, among the room's.
+        let pixel = crate::pack::Pack::pixel_at(&root, &settings);
+        let characters = vec!["robot".to_string(), "hero.vrm".to_string()];
+        let v = View { characters: &characters, ..view(&settings, &pixel, &[], &[]) };
+        let Some(Want::Keep(s)) = w.choose_line(Line::Figure, &v) else { panic!("Pixel's figure should step") };
+        assert_eq!(s.character, "hero.vrm");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pal_that_cannot_be_written_shows_its_lines_and_says_why_they_stay() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let root = pals_root("readonly");
+        let dir = root.join("mira");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pal.json"), r#"{"name": "Mira", "private": true}"#).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let mira = crate::pack::Pack::load_at(&root, "mira").unwrap();
+        let shown = mira.over(&Settings::default());
+        let v = view(&shown, &mira, &[], &[]);
+        assert_eq!(value(Line::Pal, &v), "Mira (pals/mira, read-only)");
+        assert_eq!(value(Line::Name, &v), "Mira");
+        // A private one's personality is not on show in the room.
+        assert_eq!(value(Line::Persona, &v), "Its own (private)");
+        let mut w = Window::new();
+        for line in [Line::Name, Line::Persona, Line::Voice, Line::Described] {
+            assert!(matches!(w.choose_line(line, &v), Some(Want::Note(n)) if n.contains("cannot be changed")));
+            assert!(w.editing.is_none());
+        }
+        // SpatiPal's own lines are still SpatiPal's to change.
+        assert!(matches!(w.choose_line(Line::Spoken, &v), Some(Want::Keep(_))));
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

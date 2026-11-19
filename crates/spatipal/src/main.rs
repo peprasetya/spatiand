@@ -83,12 +83,13 @@ struct Pal {
     ready: bool,
     dirty: bool,
     ui: Window,
-    /// The settings as used: the pal's (`pack`) over the wearer's own.
+    /// The settings as used: the pal's (`pack`) over SpatiPal's own.
     settings: Settings,
-    /// The wearer's own, as kept in `assistant.json`.
+    /// SpatiPal's own, as kept in `assistant.json`: Pixel's name, personality, figure and voice
+    /// among them.
     saved: Settings,
-    /// The pal it is, when one is chosen, and the pals there are.
-    pack: Option<pack::Pack>,
+    /// The pal it is -- Pixel, built in, or the one chosen -- and the pals installed.
+    pack: pack::Pack,
     pals: Vec<String>,
     /// When the pal's files were last looked at for a change.
     pack_looked: Instant,
@@ -162,7 +163,7 @@ macro_rules! view {
             trouble: $pal.trouble.as_ref().filter(|(_, at)| at.elapsed() < Duration::from_secs(8)).map(|(t, _)| t.as_str()),
             voices: &$pal.voices,
             characters: &$pal.characters,
-            pack: $pal.pack.as_ref(),
+            pack: &$pal.pack,
             pals: &$pal.pals,
         }
     };
@@ -410,7 +411,7 @@ impl Pal {
         if let Err(e) = chat.save() {
             log::warn!("the chat could not be kept: {e}");
         }
-        let looks = self.pack.as_ref().map(pack::Pack::note).unwrap_or_default();
+        let looks = self.pack.note();
         let turn = Turn { number: 0, text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), ai: self.pal_ai(), appearance: self.appearance(), looks, ended };
         self.answering = self.brain.ask(turn).map(|turn| Answering { turn, chat: chat_id, ..Default::default() });
         if self.answering.is_none() {
@@ -573,21 +574,28 @@ impl Pal {
     }
 
     fn keep(&mut self, settings: Settings) {
-        // What the pal sets is the pal's: the wearer's own is what is kept.
-        let saved = match &self.pack {
-            Some(p) => p.under(&settings, &self.saved),
-            None => settings,
+        // An installed pal's own lines go into its folder; SpatiPal's settings keep the rest,
+        // and Pixel's own as they are. Pixel's own are SpatiPal's settings.
+        let written = match self.pack.edit(&settings, &self.settings) {
+            Ok(written) => written,
+            Err(why) => {
+                self.say_trouble(&why);
+                false
+            }
         };
+        let saved = self.pack.under(&settings, &self.saved);
         if let Err(e) = saved.save() {
             self.say_trouble(&e);
         }
         let pal_changed = saved.pal != self.saved.pal;
         self.saved = saved;
         let before = self.settings.clone();
-        if pal_changed {
-            self.load_pack();
+        // Read again as it is now: another pal, its files just written, or Pixel's settings.
+        self.load_pack();
+        if written {
+            log::info!("pal {}: its own lines written into its folder", self.pack.folder);
         }
-        let settings = self.over(&self.saved);
+        let settings = self.settings.clone();
         self.settings = before;
         self.use_settings(settings, pal_changed);
     }
@@ -652,56 +660,43 @@ impl Pal {
         self.dirty = true;
     }
 
-    /// The figure, as chosen: which, and whether it is shown.
+    /// The figure, as the pal is: which, how it looks, and whether it is shown.
     fn tell_figure(&mut self) {
-        let figure = match &self.pack {
-            Some(p) if p.figure.is_some() => p.figure_request(self.settings.shown),
-            // A pal of no figure of its own has the one chosen in the settings.
-            _ => json!({"do": "avatar", "character": self.settings.character, "path": store::character_path(&self.settings.character), "visible": self.settings.shown, "options": {}, "pose": "", "expression": "", "colors": {}, "size": 1.0, "signs": true}),
-        };
+        let figure = self.pack.figure_request(self.settings.shown);
         let _ = self.app.room_ask(&figure.to_string(), channel().0);
     }
 
     /// The room's AI settings as this pal has them: its own everyday and larger models, when it
     /// names any, over the room's.
     fn pal_ai(&self) -> AiSettings {
-        match &self.pack {
-            Some(p) => p.ai_over(&self.ai),
-            None => self.ai.clone(),
-        }
+        self.pack.ai_over(&self.ai)
     }
 
-    /// The settings as used: the pal's over `saved`.
-    fn over(&self, saved: &Settings) -> Settings {
-        match &self.pack {
-            Some(p) => p.over(saved),
-            None => saved.clone(),
-        }
-    }
-
-    /// The pal chosen in the settings, read; and with it what is said kept out of the log or not.
+    /// The pal chosen in the settings, read -- Pixel, or an installed one; Pixel too while the
+    /// one chosen cannot be read -- and with it what is said kept out of the log or not.
     fn load_pack(&mut self) {
         self.pack = match self.saved.pal.trim() {
-            "" => None,
+            "" => pack::Pack::pixel(&self.saved),
             folder => match pack::Pack::load(folder) {
                 Ok(p) => {
                     log::info!(
-                        "pal {folder}: {} groups of options, {} animations, {} expressions{}",
+                        "pal {folder}: {} groups of options, {} animations, {} expressions{}{}",
                         p.offers.groups.len(),
                         p.offers.animations.len(),
                         p.offers.expressions.len(),
-                        if p.about.private { ", private" } else { "" }
+                        if p.about.private { ", private" } else { "" },
+                        if p.writable { "" } else { ", its files read-only here" }
                     );
-                    Some(p)
+                    p
                 }
                 Err(why) => {
                     self.say_trouble(&format!("The pal {folder} could not be read: {why}"));
-                    None
+                    pack::Pack::pixel(&self.saved)
                 }
             },
         };
-        store::set_private(self.pack.as_ref().is_some_and(|p| p.about.private));
-        self.settings = self.over(&self.saved);
+        store::set_private(self.pack.about.private);
+        self.settings = self.pack.over(&self.saved);
         self.pack_looked = Instant::now();
     }
 
@@ -712,11 +707,14 @@ impl Pal {
             return;
         }
         self.pack_looked = Instant::now();
-        let Some(old) = self.pack.as_mut().filter(|p| p.changed()) else { return };
-        let folder = old.folder.clone();
-        match pack::Pack::load(&folder) {
+        if !self.pack.changed() {
+            return;
+        }
+        let folder = self.pack.folder.clone();
+        let read = if self.pack.is_pixel() { Ok(pack::Pack::pixel(&self.saved)) } else { pack::Pack::load(&folder) };
+        match read {
             Ok(_) => {
-                log::info!("pal {folder}: its files changed: read again");
+                log::info!("pal {}: its files changed: read again", self.pack.key());
                 let before = self.settings.clone();
                 self.load_pack();
                 let after = self.settings.clone();
@@ -727,7 +725,7 @@ impl Pal {
             }
             Err(why) => {
                 log::warn!("pal {folder}: its files changed but cannot be read ({why}): it stays as it was");
-                old.mark_read();
+                self.pack.mark_read();
             }
         }
     }
@@ -735,7 +733,7 @@ impl Pal {
     /// The pal's own tools: `appearance`, when its figure offers anything, and `make_move` for a
     /// figure with a body.
     fn appearance(&self) -> Option<Value> {
-        let p = self.pack.as_ref()?;
+        let p = &self.pack;
         let make = (!p.offers.body.is_empty()).then(moves::tool);
         match (p.tool(), make) {
             (Some(a), Some(m)) => Some(Value::Array(vec![a, m])),
@@ -745,7 +743,11 @@ impl Pal {
 
     /// A move asked for in words (`tools.rs`'s `make_move`): begun, and answered at once.
     fn make_move(&mut self, with: &Value) -> Value {
-        let Some(p) = self.pack.as_ref().filter(|p| !p.offers.body.is_empty()) else { return json!({"error": "your figure has no body to move"}) };
+        // The pal it is, Pixel too: one whose figure has a body (the robot has none).
+        let p = &self.pack;
+        if p.offers.body.is_empty() {
+            return json!({"error": "your figure has no body to move"});
+        }
         match moves::asked(with) {
             // One it has already, by that name: done now, not made again -- after making a pose,
             // the small model made the next one asked for, "fold your arms", one of its poses
@@ -768,6 +770,11 @@ impl Pal {
             Ok(moves::Asked::Make { ref name, .. }) if self.making.iter().any(|m| &m.name == name) => json!({"error": format!("{name} is being made already: a moment")}),
             Ok(moves::Asked::Make { ask, name, kind }) => {
                 log::info!("making the {} {name}: {}", kind.word(), store::quoted(&ask.prompt));
+                // Kept in the pal's own folder: Pixel's is made now, the wearer's alone, if it
+                // was not there yet.
+                if let Err(e) = p.own_dir() {
+                    return json!({"error": format!("its folder could not be made: {e}")});
+                }
                 let shelf = if kind == moves::Kind::Pose { p.pose_shelf() } else { p.shelf() };
                 let mut making = moves::start(&self.ai.hemera, ask, name.clone(), kind, shelf.dir);
                 making.held_then = p.look.holding();
@@ -797,7 +804,7 @@ impl Pal {
             }
             // Let go of: the room is told, and plays the figure's own of that name, if it has one.
             Ok(moves::Asked::Forget(name)) => {
-                let Some(p) = self.pack.as_mut() else { return json!({"error": "there is no figure"}) };
+                let p = &mut self.pack;
                 match p.forget(&name) {
                     Ok(()) => {
                         let mut room = p.figure_request(true);
@@ -838,10 +845,11 @@ impl Pal {
                     return;
                 }
                 // Kept with the pal it was made for, and done only if that pal is still here.
-                let Some(p) = self.pack.as_mut().filter(|p| p.dir == making.pal) else {
+                let p = &mut self.pack;
+                if p.dir != making.pal {
                     log::info!("the {word} {name} kept for {}, no longer in the room", making.pal.display());
                     return;
-                };
+                }
                 let room = match making.kind {
                     moves::Kind::Idle => {
                         let mut r = p.figure_request(true);
@@ -872,8 +880,7 @@ impl Pal {
 
     /// A pal's look changed by its model (`tools.rs`'s `appearance`): kept, and the room told.
     fn appear(&mut self, with: &Value) -> Value {
-        let Some(p) = self.pack.as_mut() else { return json!({"error": "there is no figure to change"}) };
-        match p.apply(with) {
+        match self.pack.apply(with) {
             Ok((room, did)) => {
                 self.app.room_ask(&room.to_string(), channel().0);
                 json!({"did": did})
@@ -1233,9 +1240,9 @@ fn main() {
             ready: false,
             dirty: true,
             ui: Window::new(),
+            pack: pack::Pack::pixel(&saved),
             settings,
             saved,
-            pack: None,
             pals: pack::folders(),
             pack_looked: Instant::now(),
             making: Vec::new(),
