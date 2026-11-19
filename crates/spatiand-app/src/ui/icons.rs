@@ -87,6 +87,27 @@ pub enum Icon {
     /// holds (Finder's disclosure triangles).
     Disclose,
     Disclosed,
+    /// Drawing over a picture or a page: a pen's nib in a ring (Preview's Markup).
+    Markup,
+    /// Choosing what was drawn: the pointer's arrow.
+    Pointer,
+    /// Cutting a picture down: two corners.
+    Crop,
+    /// Words put on a picture.
+    Text,
+    /// Shapes drawn: a box, an oval, an arrow.
+    Square,
+    Oval,
+    Arrow,
+    /// A change taken back, and put back again.
+    Undo,
+    Redo,
+    /// Written to the file.
+    Save,
+    /// How heavy a line is drawn.
+    LineThin,
+    LineMedium,
+    LineThick,
 }
 
 impl Icon {
@@ -147,6 +168,19 @@ impl Icon {
             Icon::Disclosed => r##"<path d="M6.8 9.5h10.4a.7.7 0 0 1 .6 1.1l-5.2 7.1a.7.7 0 0 1-1.2 0l-5.2-7.1a.7.7 0 0 1 .6-1.1z" fill="#fff" stroke-width="1.2"/>"##,
             Icon::Back10 => r#"<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v3.8h3.8"/><path d="M9.3 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="14.4" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
             Icon::Forward10 => r#"<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v3.8h-3.8"/><path d="M8.8 10.4l1.3-1v6" stroke-width="1.6"/><ellipse cx="13.9" cy="12.4" rx="1.7" ry="2.9" stroke-width="1.6"/>"#,
+            Icon::Markup => r#"<circle cx="12" cy="12" r="9.2"/><path d="M8.2 15.8l1.1-3.9 5.2-5.2 2.8 2.8-5.2 5.2zM9.3 11.9l2.8 2.8"/>"#,
+            Icon::Pointer => r#"<path d="M7 3.8v14.4l3.6-3.4 2.6 5.6 2.4-1.1-2.6-5.5h5z"/>"#,
+            Icon::Crop => r#"<path d="M7 3.5V17h13.5M3.5 7H17v13.5"/>"#,
+            Icon::Text => r#"<path d="M5.5 6.5V5h13v1.5M12 5v14M9 19h6"/>"#,
+            Icon::Square => r#"<rect x="4.5" y="5.5" width="15" height="13" rx="1.2"/>"#,
+            Icon::Oval => r#"<ellipse cx="12" cy="12" rx="8.6" ry="6.6"/>"#,
+            Icon::Arrow => r#"<path d="M5 19L18.5 5.5M10.5 5.5h8v8"/>"#,
+            Icon::Undo => r#"<path d="M9 13.5L4.5 9 9 4.5"/><path d="M4.5 9h10a5 5 0 0 1 0 10H11"/>"#,
+            Icon::Redo => r#"<path d="M15 13.5L19.5 9 15 4.5"/><path d="M19.5 9h-10a5 5 0 0 0 0 10H13"/>"#,
+            Icon::Save => r#"<path d="M5 4.5h11.2l2.8 2.8v12.2H5z"/><path d="M8.5 4.5v4.5h6.5V4.5M8 19.5v-5.5h8v5.5"/>"#,
+            Icon::LineThin => r#"<path d="M4.5 12h15" stroke-width="1.2"/>"#,
+            Icon::LineMedium => r#"<path d="M4.5 12h15" stroke-width="2.8"/>"#,
+            Icon::LineThick => r#"<path d="M5.5 12h13" stroke-width="5"/>"#,
         }
     }
 }
@@ -206,11 +240,15 @@ mod tests {
         let all = [
             Back, Forward, Up, Down, Play, Pause, Options, Info, Close, Plus, Grid, List, Search, Home, Folder, Desktop, Document, Download, Picture, Film, Music, Drive,
             Cloud, Trash, Rotate, Cube, Terminal, Link, Import, Server, Refresh, Eye, Back10, Forward10, Lock, SortName, SortRecent, Shuffle, Speaker, Muted,
-            Star, Pin, Puzzle, Copy, Globe, Warning, Cut, Pencil, Paste, Disclose, Disclosed,
+            Star, Pin, Puzzle, Copy, Globe, Warning, Cut, Pencil, Paste, Disclose, Disclosed, Markup, Pointer, Crop, Text, Square, Oval, Arrow, Undo, Redo, Save,
+            LineThin, LineMedium, LineThick,
         ];
         for icon in all {
             let (_, _, rgba) = render(icon, 48).unwrap_or_else(|| panic!("{icon:?} does not render"));
             assert!(rgba.chunks_exact(4).filter(|p| p[3] > 128).count() > 40, "{icon:?} is nearly empty");
         }
+        // The three weights of line are drawn heavier one after the other.
+        let ink = |icon| render(icon, 48).unwrap().2.chunks_exact(4).filter(|p| p[3] > 128).count();
+        assert!(ink(LineThin) < ink(LineMedium) && ink(LineMedium) < ink(LineThick));
     }
 }
