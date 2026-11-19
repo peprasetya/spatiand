@@ -73,12 +73,12 @@ impl Placed {
         self.rect.w / self.region.w().max(1e-6)
     }
 
-    pub fn to_page(&self, at: (f32, f32)) -> Point {
+    pub fn to_page(self, at: (f32, f32)) -> Point {
         let s = self.scale();
         (self.region.x0 + (at.0 - self.rect.x) / s, self.region.y0 + (at.1 - self.rect.y) / s)
     }
 
-    pub fn to_window(&self, p: Point) -> (f32, f32) {
+    pub fn to_window(self, p: Point) -> (f32, f32) {
         let s = self.scale();
         (self.rect.x + (p.0 - self.region.x0) * s, self.rect.y + (p.1 - self.region.y0) * s)
     }

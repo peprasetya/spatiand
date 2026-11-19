@@ -370,8 +370,10 @@ fn object_round(text: &[u8], at: usize) -> Option<(u32, u16, usize, usize)> {
 /// with an arrow at its end, in an update of its own after PDFium's: its page (or itself, were it
 /// written apart) written again, a cross-reference of the same kind as PDFium's, and a trailer.
 pub fn arrows_as_lines(saved: &[u8], original: usize, arrows: &[ArrowLine]) -> Result<Vec<u8>, String> {
-    // Which object each arrow is in, and where in it.
-    let mut objects: Vec<(u32, u16, usize, usize, Vec<(usize, &ArrowLine)>)> = Vec::new();
+    // Which object each arrow is in -- its number, its generation, where its body begins and
+    // ends -- and where in it each arrow's name is.
+    type Holding<'a> = (u32, u16, usize, usize, Vec<(usize, &'a ArrowLine)>);
+    let mut objects: Vec<Holding> = Vec::new();
     for arrow in arrows {
         let mark = format!("/NM({})", arrow.name).into_bytes();
         let at = find(saved, &mark, original).ok_or_else(|| format!("{} is not in what PDFium wrote", arrow.name))?;
