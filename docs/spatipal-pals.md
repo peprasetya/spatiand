@@ -10,14 +10,20 @@ when it is chosen -- a name it answers to, who it is, a figure that changes clot
 voice, models of its own. Nothing of any pal is in this repository. This is how a pal is made, what
 SpatiPal and the room do with one, and how one was made on hemera.
 
+**Pixel is a pal too: the built-in one** (the owner, 2026-11-19: "I am thinking the pixel is one
+pal... the any other custom figure... if installed... then become selectable... and each pal...
+have it's own [voice] and personality"). It is always there, first; every pal installed is a
+choice beside it.
+
 ## What a pal is
 
 | | |
 |---|---|
 | Where it is kept | `~/.config/spatiand/apps/assistant/pals/<folder>/`: the folder spatiand-sync shares between the wearer's linked machines, peer to peer, so a pal made on one is on all of them -- the Deck, the Mac, the Beam Pro. **A file over 4 MB is not sent** (spatiand-sync's limit for a setting): keep a figure under it, or copy it to each machine. |
-| How it is chosen | SpatiPal's Settings, **Pal**: it steps through None and the pals there are. None is SpatiPal as its settings have it (Pixel, the robot). |
-| What it sets | Its name (the wake word), who it is, its figure, its voice, and its models if it names them -- over the settings' own, which are kept as they were and come back when no pal is chosen. The settings page shows those lines as the pal's and does not show its persona at all: the window is in the room. |
-| Its chats | Its own. The chat list shows the chats had with the pal chosen; another pal's, and those of SpatiPal with no pal, are not shown, and are still there when that one is chosen again. |
+| How it is chosen | SpatiPal's Settings, **Pal**: it steps through Pixel (built in) and then each pal there is. The pal chosen is kept in `assistant.json` (`pal`: its folder, empty for Pixel). |
+| What it is | Its own name (the wake word), personality, figure and voice -- none of them Pixel's -- and its models if it names them, over the AI card's. SpatiPal's own lines (start with the room, show its figure, speak answers, listen for its name, while the larger model thinks, go on in the last chat) are the same whichever pal it is. |
+| Its settings | SpatiPal's settings window shows and changes the pal chosen: its name, personality and voice are written into its folder (below, "Its settings, in SpatiPal's window"). |
+| Its chats | Its own. The chat list shows the chats had with the pal chosen; another pal's are not shown, and are still there when that one is chosen again. Pixel's are those SpatiPal had with no pal before there were pals. |
 | Private | `"private": true` keeps what is heard and said out of SpatiPal's log -- only how many letters there were is written -- and its window describes no chat to the room (dictation and the assistant read windows by their descriptions). |
 | Where its words go | To the models on hemera, and nowhere else. Its persona is part of the system message of every turn. |
 | On every platform | The same: SpatiPal and the room's figure renderer are the same code on the Deck, the Mac and the Beam Pro. |
@@ -29,22 +35,25 @@ pal.json      what it is called, its files, its voice and models; its figure's c
 persona.md    who it is
 figure.glb    its figure (or a .vrm)
 look.json     how it looks now: written by SpatiPal as it changes, so it looks the same tomorrow
+moves/        the moves made for it from words, <name>.json each (make_move, below)
+poses/        the poses made for it from words, likewise
 ```
 
 The folder and its files should be the wearer's alone (`chmod 700` the folder, `600` the files);
-SpatiPal writes `look.json` that way.
+SpatiPal writes `look.json`, the moves and poses, and what its settings window changes that way,
+and leaves the folder as it is.
 
 ### pal.json
 
-Every field may be left out.
+Every field may be left out; one left out is the room's own, never Pixel's.
 
 | Field | |
 |---|---|
-| `name` | What it answers to and calls itself. |
-| `persona` | A file in the folder (`persona.md`), read whole; or, when there is no such file, the words themselves. HTML comments (`<!-- ... -->`) in it are its maker's notes and are not given to the model. |
-| `figure` | Its figure: a file in the folder. None: the figure chosen in the settings. |
+| `name` | What it answers to and calls itself. None: its folder's name. |
+| `persona` | A file in the folder (`persona.md`), read whole; or, when there is no such file, the words themselves. HTML comments (`<!-- ... -->`) in it are its maker's notes and are not given to the model. None: no more than SpatiPal's own first line. |
+| `figure` | Its figure: a file in the folder. None: the room's robot. |
 | `size` | Its figure's height against the room's usual, 0.5 to 3. The room draws a larger figure into a larger picture (512 pixels square to 1024), so it is as sharp. |
-| `voice`, `described` | A voice from hemera's library by name, or one described in words, made into a library voice once (as the settings' is) so that every sentence is the same voice. |
+| `voice`, `described` | A voice from hemera's library by name, or one described in words, made into a library voice once (as the settings' is) so that every sentence is the same voice. None: the voice described in words of a SpatiPal never set up ("A friendly young voice, light and warm..."). |
 | `model`, `large_model` | Its own everyday and larger models; the settings' when left out. |
 | `private` | See above. |
 | `signs` | `false` takes away the robot's lights over its head (listening, writing down, thinking): for a figure whose own animations show what it is doing. |
@@ -71,12 +80,79 @@ The everyday model is SpatiPal's small one unless the pal names its own; a long 
 once and kept by the server (the system message is the same every turn), so its length costs the
 first answer only.
 
+## Pixel, the built-in pal
+
+Pixel is what SpatiPal was before there were pals, made a pal like the others
+(`crates/spatipal/src/pack.rs`, `Pack::pixel`): its name, personality, figure and voice are
+SpatiPal's own settings (`assistant.json`'s `name`, `persona`, `character`, `voice`,
+`described`) -- left as they were when pals came, so nothing set before is lost. Its figure is the
+room's robot or a file in `assistant/characters/`, chosen in its settings; one of those that
+offers options or animations gets `appearance` as a pal's does, and a body `make_move`. Its models
+are the AI card's.
+
+What it keeps as it is used -- how it looks (`look.json`), the moves and poses made for it
+(`moves/`, `poses/`) -- is in a folder of its own, `assistant/pals/pixel/`, made the wearer's
+alone the first time something is kept there. That folder holds no `pal.json` (Pixel's definition
+is the settings'), and one put there is not read: `pixel` is never the folder of a pal installed.
+In code, each pal's folder is `Pack::dir`, its moves' `Pack::moves_dir()` and its poses'
+`Pack::poses_dir()`, Pixel's included (`Pack::own_dir()` makes Pixel's when first needed).
+
+## Its settings, in SpatiPal's window
+
+The settings window shows the pal chosen, then SpatiPal's own lines:
+
+| Line | Pixel | A pal installed |
+|---|---|---|
+| Pal | "Pixel (built in)"; pressed, the next pal | "Mira (pals/mira)"; "read-only" when its files cannot be written |
+| Name (what it answers to) | the settings' | written into its `pal.json` (`name`) |
+| Personality | the settings' | written into its persona's file -- `persona.md`, made for one that had none and named in `pal.json`; one given in `pal.json`'s own words is changed there -- its maker's notes (`<!-- -->`) kept before the words. A private pal's is not on show in the row ("Its own (private)"); pressed, it is there to change |
+| Figure | the room's robot or a file in `assistant/characters/`, stepped through | its folder's file, shown; pressed, where to change it |
+| Voice, Voice described | the settings' | written into its `pal.json` (`voice`, `described`) |
+
+A pal's `pal.json` is written back field by field: every other field kept as it was written, and
+where -- `private`, `options`, the maker's own -- the one changed in its place, a new one at the
+end. Files are written whole through a file beside them, the wearer's alone (`600`), and the folder
+is left as it is. A pal whose folder or files may not be written (a folder made `500`, a
+`pal.json` made `400`) says so when one of its lines is pressed and is shown, not changed. A
+personality of several lines is shown in the one-line field with a pilcrow (`¶`) for each line
+break, and put back so.
+
 ## The figure
 
 A GLB, or a VRM (which is a GLB with a humanoid and its expressions). The room reads it itself
-(`crates/spatiand/src/figure.rs`), the same way on every platform, and draws it low in the corner
-of the view opposite the pinned windows, facing the wearer, about 15 cm tall at 1.35 m (times
-`size`). glTF's way up: +Y up, facing +Z, metres. A VRM 0.x, which faces -Z, is turned.
+(`crates/spatiand/src/figure.rs`), the same way on every platform, and draws it facing the wearer
+where it stands (below). glTF's way up: +Y up, facing +Z, metres. A VRM 0.x, which faces -Z, is
+turned.
+
+### Where it stands
+
+The owner, 2026-11-19, of a figure drawn over the middle of SpatiPal's window: "The pal become too
+center in screen." The room places it (`crates/spatiand/src/figure_place.rs`, the same on the
+Deck, the Beam Pro and the Mac):
+
+- **Beside SpatiPal's window**, while that window is on show in the view and the place beside it
+  is in sight: in the room with the window, not with the head -- on the side of it away from the
+  middle of the view and from the other windows (away from the pinned windows when neither says),
+  its feet at the window's bottom edge, 0.42 of the window's height tall (times `size`, as tall as
+  the window at most), never over it: kept clear of it by the figure's own width, its arms as they
+  rest. It goes with the window when the window is moved or resized; the side it took is chosen
+  again only once a moved window is still.
+- **In a corner of the view** otherwise -- its window put away or out of view, the assistant used
+  by voice, or the window so large that the place beside it is out of sight (SpatiPal's own, 1500
+  by 1000, is 1.29 m wide at 2.2 m: with its frame it nearly fills a 40-degree view): low, on the
+  side away from the pinned windows, about 15 cm tall at 1.35 m (times `size`), following the head.
+  It never comes further in than the corner -- as much as 22% of the view's width and 42% of its
+  height: a figure too large for that is drawn smaller there rather than moved towards the middle.
+  A top corner is kept under the room's status line.
+- **Where the wearer puts it**: pressed and dragged -- the head pointer or a pad, the room's press
+  as a window's title bar is taken -- beside the window on any side, as far along it and as far
+  from it as it is let go (out of the window by the nearest edge if let go over it), or, with no
+  window beside it, to any corner of the view, the one nearest where it is let go. Remembered for
+  each pal on that machine, in the room's `prefs.toml` (`[figure."pal:mira"]`, `[figure."pixel"]`:
+  `beside` and `corner` each its own), and used again next time; **a double press** on it puts it
+  back where it stands by itself (that one of the two).
+
+SpatiPal tells the room which pal it is by the avatar's `character` (`pixel`, `pal:<folder>`).
 
 ### Its skeleton
 
@@ -429,6 +505,14 @@ own start (a cube, a camera, a light) is deleted first: it was exported with the
   `SPATIAND_STEPS` (`type:`, `key:28`, `wait:`). Its log says `pal <folder>: N groups of options,
   N animations, N expressions`, and `brain: appearance(outfit, move) -> ...` when its model used
   the tool.
+- **Where it stands**, in the same room: `size:1000,700` makes SpatiPal's window small enough to
+  have the figure beside it in sight, `SPATIAND_SNAPSHOT_PITCH=4` looks a little down to its feet,
+  `SPATIAND_CLOSE=1` closes the window (the figure goes to its corner, SpatiPal switched on staying).
+  `figure:du,dv` presses the figure where it stands and drags it that far across and down the view
+  (fractions of it), `figure:u0,v0,u1,v1` from one place to another, `figureback` is a double press
+  on it -- through the same calls each backend makes, kept in the room's `prefs.toml` as a session
+  keeps it. The log says `figure: drawn N m away, N m tall, its middle at ...` and, for a drag,
+  `figure: let go at ...: ("pal:<folder>", Put { beside: ..., corner: ... })`.
 - **Its model's choices, against hemera**: `cargo test -p spatipal -- --ignored --test-threads 1
   appearance` asks the small model, with a made-up pal and SpatiPal's own system message and
   tools, to change its clothes and twirl, and to get into its pyjamas (2026-11-19, `neohorse-1:4b`:
@@ -527,3 +611,40 @@ feature polished.. nothing left over, no bug untested"):
 Not checked: in the glasses; a pal's voice saying what it does while a move is made (the
 snapshot room's SpatiPal is silent); feet planted in a move hemera makes (its figures slide when
 they turn or travel); fingers (not in hemera's motions).
+
+## What was checked: Pixel a pal, and where the figure stands (2026-11-20)
+
+On deepmagpie, in the snapshot room with scratch settings only (no glasses), a made-up pal "Tess"
+on the mannequin (`tools/mannequin.py --idle`), private, with a field of its maker's own:
+
+- **The settings window**: Pixel's ("Pal: Pixel (built in)", its lines the settings'); the Pal
+  line pressed: Tess chosen and kept in `assistant.json`, Pixel's own lines there untouched; Tess's
+  window ("Tess (pals/tess)", her name, "Its own (private)", "figure.glb (its folder's)", her
+  described voice); her name changed in the window: written into her `pal.json` with every other
+  field as it was and where, `private` still true, the folder `700` and its files `600`.
+- **Where the figure stands**: beside SpatiPal's window made 1000 by 700 -- Pixel's robot and
+  Tess, on the side away from the pinned windows (the window in the middle of the view), their feet
+  at its bottom edge, clear of it (Tess's arms, spread in an A-pose, too: the box she is kept clear
+  by is her own width); with SpatiPal's own size the place beside it out of sight, and the robot in
+  the corner of the view instead; the window closed (switched on, SpatiPal stays): in the corner;
+  a figure of size 2.5 in the corner drawn at about half that (0.20 m, not 0.39), its outer edges
+  at the view's; Tess dragged from beside the window's left to its right, a little higher: put
+  there (`side = "right"`, `along = 0.125`), kept in `prefs.toml` and there again in a new session;
+  a double press: back where she stands by herself, and her place forgotten; with no window, Tess
+  dragged to the top right: kept there in the next session, under the status line, while Pixel kept
+  its own corner, the bottom left.
+- `cargo test -p spatiand` (545: the placement -- beside never over the window on any side at
+  any gap, the side away from the middle and the other windows, a moved or resized window followed,
+  a window filling the view leaving no room in sight, a figure let go put by the edge it is nearest,
+  a corner smaller rather than further in for every corner and a view drawn upside down, a press
+  finding the figure, a drag kept and a double press putting it back; where it was put kept as
+  words in `prefs.toml`), `cargo test -p spatipal` (64: Pixel first and None gone, an older
+  `assistant.json` Pixel's unchanged, a pal edited writing its own files and keeping the rest,
+  a personality where the pal keeps it, a pal that cannot be written refused, the choice kept),
+  `-p spatiand-voice`; `cargo check --workspace`; the Beam Pro's `cargo ndk check` of
+  `spatiand-android` and SpatiPal.
+
+Not checked: in the glasses; on the Deck, the Beam Pro and the Mac themselves (the press and drag
+go through the same calls in the Deck's backend and the one the Beam Pro and the Mac share; the
+Mac is not built here); a pad's or a mouse's real press on the figure (the snapshot room presses it
+through the same calls the backends make, not through a backend's own input); a VRM's figure.

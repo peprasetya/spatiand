@@ -280,6 +280,11 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 - Right click: the context menu, where there is one (SpatiShelf, SpatiQuill; the text in a picture
   or a paused frame in SpatiLoupe and SpatiReel, or a press held 800 ms on it).
 - Wheel: scrolls; in SpatiLoupe zooms a picture; in SpatiReel wakes the controls.
+- **The room's figure** (the assistant's) is pressed and dragged as a title bar is -- the room's
+  press, before any window under it, as it is drawn in front -- and put where it is let go; **two
+  presses** on it (the first one going nowhere) within `ui::DOUBLE_CLICK` put it back where it
+  stands by itself (2026-11-20, `room/figure_place.rs`). A press that goes less than half a degree
+  is not a drag.
 
 ### 17. Controls that hide themselves
 

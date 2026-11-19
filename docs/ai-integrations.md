@@ -19,7 +19,7 @@ and act.
 | Context | What has focus steers Whisper's spelling: a terminal's recent commands and file names, a page's words, a folder's names, a Mac field's text. Spatiand's own apps say it themselves; Mac windows through Accessibility; anything else by its title. |
 | Terminals | Spoken symbols become symbols, then a quick pass of the small model; **never presses Enter**. |
 | The assistant | A setting, off by default. **Its own process** (a first-party app), with its chat window; Spatiand draws its avatar and plays its voice from where the avatar stands. |
-| Avatar | **VRM** (VRoid and the like: humanoid, expressions, spring bones) and **plain glTF/GLB** (robots, anything). Moods, animations, outfits, a voice of its own. Light: a small skinned mesh, nothing like a game character. In the corner **opposite the pinned windows**; it can be hidden and stay active. |
+| Avatar | **VRM** (VRoid and the like: humanoid, expressions, spring bones) and **plain glTF/GLB** (robots, anything). Moods, animations, outfits, a voice of its own. Light: a small skinned mesh, nothing like a game character. In the corner **opposite the pinned windows** -- since 2026-11-20 beside SpatiPal's window while that is on show and the place beside it in sight, and wherever the wearer drags it ([spatipal-pals.md](spatipal-pals.md)); it can be hidden and stay active. |
 | Hearing | Three states: **listening** (continuous), **not listening**, **muted** (answers in text only). In continuous listening, speech counts when it **starts with the character's name**, or comes **within a few seconds of its answer** (a follow-up). |
 | Models | Each role is a **setting**, picked from hemera's list: the assistant's model, dictation clean-up's, and a **larger one for heavy work**. Default small model: **`neohorse-1:4b`** (below). Since 2026-11-19 they are the room's, on the **AI card** of its settings, with hemera's address and dictation's languages and words: more than one app uses them (below, "The AI settings"). |
 | Handing over | **The small model decides, quickly and by itself, to hand a request to the larger one** (changed 2026-10-28 from "offered"). While the larger one thinks, the avatar shows it is thinking; a setting has **the thinking read aloud** as it comes. |
@@ -477,7 +477,8 @@ plan's "moods, animations, outfits" had been built as far as a figure standing s
 - **Pals** (`crates/spatipal/src/pack.rs`): a folder in `assistant/pals/`, chosen in the settings,
   with its name, persona, figure, voice and models over the settings'; its chats its own; a
   private one's words out of the log. Its models get `appearance`, made from what its figure
-  offers (`spatiand_voice::figure`, read the same way by the room).
+  offers (`spatiand_voice::figure`, read the same way by the room). Since 2026-11-20 Pixel is the
+  built-in pal and each pal is wholly its own (below, "Pixel is a pal").
 - For every SpatiPal: the routing counts changing its figure as the quick model's (a change of
   clothes had gone to the larger model, which had to load); a stage direction in an answer
   (`*leans in*`) is not said, and the system message asks for none; a GLB's sparse accessors --
@@ -578,10 +579,12 @@ not carried until it is whole. The older files are left as they are, and SpatiPa
 `model` and `large_model` in `assistant.json` when it saves it, for a machine still running an
 older SpatiPal; a change made in an older SpatiPal after this is not carried.
 
-**What SpatiPal keeps**: "Assistant" (start with the room, name, personality, figure, shown),
-"Voice and ears" (voice, voice described, speak answers, listen for its name, while the larger model
-thinks) and "Chats" (go on in the last chat), and one line: "hemera, the models and dictation are in
-Spatiand's settings, under AI." It holds the AI settings and takes a change up as it comes: the
+**What SpatiPal keeps**: "Who it is" (the pal, and that pal's own name, personality, figure,
+voice and voice described -- since 2026-11-20, below), "Assistant" (start with the room, show its
+figure, speak answers, listen for its name, while the larger model thinks) and "Chats" (go on in
+the last chat), and one line: "hemera, the models and dictation are in Spatiand's settings, under
+AI." (Until 2026-11-20: "Assistant" with name, personality and figure, and "Voice and ears".) It
+holds the AI settings and takes a change up as it comes: the
 next turn asks with the new models and hemera, its ears are started again if their languages or
 words changed, hemera is asked to have the new models ready.
 
@@ -649,6 +652,37 @@ wearer does, and how SpatiLoupe and SpatiReel choose what to read, is in docs/sp
 
 Not verified: any of it on the Deck, the Beam Pro, the Mac or the glasses; SpatiPal's answer from a
 paused film's text (the same path as SpatiLoupe's, by its application's id).
+
+### Pixel is a pal, and where the figure stands (2026-11-20)
+
+The owner, 2026-11-19, at night: "I am thinking the pixel is one pal... the any other custom
+figure... if installed... then become selectable. doesn't that will be simpler...? and each pal...
+have it's own [voice] and personality." -- "The pal become too center in screen." -- "I thought the
+other session just build the 3d model and change needed.. not positioning the 3d model in screen."
+
+- **Pixel is the built-in pal** (`pack::Pack::pixel`), first in SpatiPal's Pal line, where None
+  was: its name, personality, figure and voice are SpatiPal's own settings, left as they were, its
+  chats those had with no pal; the choice kept as before, so the one made stays made. Each pal
+  installed has its own name, personality, figure and voice -- one its folder leaves out is the
+  room's own, never Pixel's. Pixel's look and the moves made for it are kept in
+  `assistant/pals/pixel/`; every pal's moves in its own folder (`Pack::moves_dir()`).
+- **The settings window edits the pal chosen**: Pixel's lines its settings, as before; a pal's name
+  and voice written into its `pal.json` (every other field kept as written, and where), its
+  personality into its persona's file (its maker's notes kept), the wearer's alone; a pal whose
+  files cannot be written says so and is shown, not changed.
+- **The room places the figure** (`crates/spatiand/src/figure_place.rs`, in `avatar.rs`): beside
+  SpatiPal's window while that is on show and the place beside it in sight -- in the room with the
+  window, on the side away from the middle of the view and the other windows, its feet at the
+  window's bottom edge, a share of its height, never over it -- else in a corner of the view, drawn
+  smaller rather than further in. SpatiPal's own window (1500 by 1000, 1.29 m wide at 2.2 m) nearly
+  fills a 40-degree view, so beside it there is no room in sight and the figure keeps to the corner
+  until the window is made smaller or looked past (2026-11-20, decided with the owner away: rather
+  than stand out of sight; the window's size is not changed). The wearer presses and drags it --
+  beside the window anywhere, or to any corner of the view -- and it is remembered for each pal in
+  the room's `prefs.toml`; a double press puts it back. The press and drag go through the room's
+  own, as a title bar's do, in the Deck's backend and the Beam Pro's and the Mac's alike.
+
+The details, and what was checked: [spatipal-pals.md](spatipal-pals.md).
 
 ## Dictation with no room
 
