@@ -28,6 +28,9 @@ use spatiand_media::still::Upright;
 use crate::source::Play;
 use spatiand_media::{Eye, Packing, Projection, StereoLayout, VideoLayout};
 
+/// Live Text: a paused frame's text, and its subtitles', chosen, copied and translated.
+mod lens;
+
 /// Where the film's picture is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Staging {
@@ -262,6 +265,8 @@ pub struct Playing {
     /// Held by the cue itself: by its address alone, a cue dropped and a new one made where it
     /// had been showed the old one's picture.
     words_picture: Vec<(Arc<Cue>, Texture)>,
+    /// The paused frame's text, and its subtitles' (Live Text).
+    lens: lens::Lens,
 }
 
 /// The `.srt` that goes with a film on this machine: the one with its name, or with its
@@ -359,6 +364,7 @@ impl Playing {
             words_late: 0.0,
             words_shown: Vec::new(),
             words_picture: Vec::new(),
+            lens: lens::Lens::new(),
         })
     }
 
@@ -392,12 +398,16 @@ impl Playing {
         self.dirty = true;
     }
 
-    /// What is on show, in words: where the film is, and the next episode while it is offered.
+    /// What is on show, in words: where the film is, the next episode while it is offered, and
+    /// the text read in the frame it is paused on.
     pub fn said(&self) -> String {
         let info = self.player.info();
         let mut said = format!("{}, at {}.", self.name, times(self.player.position(), info.duration, info.duration_guessed));
         if let (true, Some(next)) = (self.offered(), self.next.as_ref()) {
             said.push_str(&format!(" Next episode is offered: {next}. N or the Next episode button plays it."));
+        }
+        if let Some(read) = self.text_described() {
+            said.push_str(&format!(" It is paused.\n\n{read}"));
         }
         said
     }
@@ -433,8 +443,9 @@ impl Playing {
         // Hands on some other window are not this one's business, and typing into another
         // program counts as hands too, whatever the room thinks has the keyboard: only the
         // pointer over this window is told apart. Keys this window receives wake it by
-        // themselves, in `input`.
-        if self.inside {
+        // themselves, in `input`. The hands of a press or a key the paused frame's text took
+        // are the text's: the controls coming up would lift the subtitles from under it.
+        if self.inside && !self.text_deaf() {
             self.clock.stir(Instant::now());
         }
     }
@@ -452,7 +463,9 @@ impl Playing {
             Duration::from_millis(8)
         } else {
             let most = Duration::from_millis(250);
-            self.clock.left(Instant::now()).map_or(most, |left| (left + Duration::from_millis(5)).min(most))
+            let wake = self.clock.left(Instant::now()).map_or(most, |left| (left + Duration::from_millis(5)).min(most));
+            // The paused frame's text: read once it has stayed, a press held, a translation.
+            self.text_wake().map_or(wake, |text| wake.min(text.max(Duration::from_millis(4))))
         }
     }
 
@@ -565,6 +578,8 @@ impl Playing {
 
     fn draw_over_film(&mut self, app: &mut App, window: WindowId, painter: &mut Option<Painter>) -> Result<bool, String> {
         self.arrange(app, window);
+        // Paused: the frame's text, read once the film has stayed on it.
+        self.dirty |= self.text_tick();
         let (picture, new) = self.player.picture();
         // Next Episode offered: the controls come up by themselves to show it, once, and go
         // as they always do.
@@ -633,6 +648,8 @@ impl Playing {
             if let Some(picture) = picture.as_ref() {
                 this.screen.load(gl, picture);
             }
+            // The paused frame, taken off the GPU at its own size to be read, if it is wanted.
+            this.text_capture(gl, size);
             clear(gl);
             // A picture subtitle no longer on show lets its texture go.
             if let Some(p) = painter.as_mut() {
@@ -649,7 +666,7 @@ impl Playing {
                 Staging::Sky { .. } | Staging::Sound => {}
             }
             let alone = staging.controls_alone();
-            if !shown && !alone && cues.is_empty() {
+            if !shown && !alone && cues.is_empty() && !this.text_shown() {
                 return;
             }
             let p = painter.get_or_insert_with(|| Painter::new(gl).expect("the painter"));
@@ -666,6 +683,15 @@ impl Playing {
             };
             for (eye, part) in parts.iter().enumerate() {
                 p.begin_over(gl, size, *part, logical);
+                let lifted = this.text_lift(shown);
+                if !alone {
+                    // Paused: the subtitles' words to be chosen where they are drawn, and what is
+                    // chosen of them and of the frame.
+                    if eye == 0 {
+                        this.text_cues(p, gl, &cues);
+                    }
+                    this.text_draw(p, gl, lifted);
+                }
                 if !cues.is_empty() && !alone {
                     // In a film with two eyes the words stand a little in front of the
                     // screen: each eye's are moved towards the other's side, so that the
@@ -673,10 +699,13 @@ impl Playing {
                     let nearer = if parts.len() == 2 { logical.0 * 0.0035 } else { 0.0 };
                     let first_is_left = !this.swapped;
                     let shift = if (eye == 0) == first_is_left { nearer } else { -nearer };
-                    this.words(p, gl, &cues, shift, if shown { 230.0 } else { 0.0 });
+                    this.words(p, gl, &cues, shift, lifted);
                 }
                 if shown || alone {
                     this.controls(p, gl, &name, position, duration, paused, alone, offered);
+                }
+                if !alone {
+                    this.text_draw_over(p, gl, (shown || alone).then_some(this.panel));
                 }
                 p.end(gl);
             }
@@ -906,6 +935,10 @@ impl Playing {
             Input::PointerLeft => self.inside = false,
             _ => {}
         }
+        // A press on the paused frame's text or its subtitles is theirs, and does not bring the
+        // controls up: they would come up under it, over the subtitles. A tap there does, once it
+        // is known not to be the first of two (`text_tick`).
+        let on_text = self.text_takes(input, was_shown);
         match input {
             // A pointer leaving is no reason to show anything.
             Input::PointerLeft => {}
@@ -916,6 +949,7 @@ impl Playing {
                     self.clock.stir(now);
                 }
             }
+            _ if on_text => {}
             _ => self.clock.wake(now),
         }
         if let Input::Pointer { x, y } = input {
@@ -946,6 +980,12 @@ impl Playing {
             if self.menu.is_some() || matches!(input, Input::Key { .. }) {
                 return Outcome::Nothing;
             }
+        }
+        // The paused frame's text, and its subtitles': a press and drag on them chooses, their
+        // menu and translation have everything while open; a tap on them is still the controls'.
+        let meant = was_shown && self.clock.settled(now) && !self.staging.controls_alone() && !menu_was_open && !self.panel.contains(self.pointer.0, self.pointer.1);
+        if let Some(outcome) = self.text_input(input, was_shown, meant) {
+            return outcome;
         }
         // Buttons that are not on show are not pressed: the press that brings the controls
         // back is only that. Where the pointer is they are always told, or one passed over while
