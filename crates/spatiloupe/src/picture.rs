@@ -44,11 +44,13 @@ pub struct Picture {
 pub struct Saves {
     pub not_over: Option<String>,
     pub depth: crate::save::Depth,
+    /// An HDR gain map it carries (a JPEG's: `gainmap`): whether it goes with it when it is saved.
+    pub hdr: Option<bool>,
 }
 
 impl Default for Saves {
     fn default() -> Saves {
-        Saves { not_over: None, depth: crate::save::Depth::Eight }
+        Saves { not_over: None, depth: crate::save::Depth::Eight, hdr: None }
     }
 }
 
@@ -98,15 +100,22 @@ fn read_as(path: &Path, largest: u32, may_move: bool) -> Result<Picture, String>
         // remote's by the pieces it is in -- the head, and where its Exif is -- each fetched
         // by a range, never the whole file a second time. JPEG 2000 and JPEG XL keep no account
         // that is read, so a remote's are not asked for it.
+        let heif = ["heic", "heif", "hif", "avif"].contains(&ending(path).as_str());
         match crate::place::pieces(path) {
             Some(mut pieces) => {
-                if ["heic", "heif", "hif", "avif"].contains(&ending(path).as_str()) {
+                if heif {
                     picture.about = about_from(&mut pieces);
+                    // An HDR gain map a copy of it would not carry.
+                    picture.saves.hdr = heif_gain_map(&mut pieces).then_some(false);
                 }
             }
             None => {
                 if let Ok(file) = std::fs::File::open(path) {
-                    picture.about = about_from(&mut std::io::BufReader::new(file));
+                    let mut file = std::io::BufReader::new(file);
+                    picture.about = about_from(&mut file);
+                    if heif {
+                        picture.saves.hdr = heif_gain_map(&mut file).then_some(false);
+                    }
                 }
             }
         }
@@ -130,11 +139,13 @@ pub struct Whole {
     pub cicp: Option<(u8, u8)>,
     pub format: Option<image::ImageFormat>,
     pub bytes: Vec<u8>,
+    /// How its camera said to turn it upright, which it was: its gain map is turned the same.
+    pub orientation: Option<image::metadata::Orientation>,
 }
 
 impl Whole {
     fn of(image: DynamicImage) -> Whole {
-        Whole { image, exif: None, icc: None, cicp: None, format: None, bytes: Vec::new() }
+        Whole { image, exif: None, icc: None, cicp: None, format: None, bytes: Vec::new(), orientation: None }
     }
 }
 
@@ -175,7 +186,7 @@ pub fn read_whole(path: &Path) -> Result<Whole, String> {
         if let Some(orientation) = orientation {
             image.apply_orientation(orientation);
         }
-        Ok(Whole { image, exif, icc, cicp: None, format, bytes: Vec::new() })
+        Ok(Whole { image, exif, icc, cicp: None, format, bytes: Vec::new(), orientation })
     };
     // Named wrongly, or not the image crate's: FFmpeg, as for the window.
     let mut whole = read().or_else(|e| whole_by_ffmpeg(path, &kind).map_err(|_| e))?;
@@ -227,7 +238,7 @@ fn whole_by_ffmpeg(path: &Path, kind: &str) -> Result<Whole, String> {
             }
         }
     }
-    Ok(Whole { image, exif, icc, cicp, format: None, bytes: Vec::new() })
+    Ok(Whole { image, exif, icc, cicp, format: None, bytes: Vec::new(), orientation: None })
 }
 
 /// What a HEIF's boxes are read from: a file, or a remote's pieces.
@@ -238,6 +249,21 @@ impl<T: std::io::Read + std::io::Seek> ReadSeek for T {}
 /// profile (`prof`, or `rICC`) among its item properties that the primary item is associated
 /// with (ISO/IEC 23008-12) -- or, with none associated, the first there is.
 pub(crate) fn heif_icc(from: &mut dyn ReadSeek) -> Option<Vec<u8>> {
+    heif_meta_icc(&heif_meta(from)?)
+}
+
+/// Whether a HEIF or AVIF carries an HDR gain map: Apple's auxiliary picture
+/// (`urn:com:apple:photo:2020:aux:hdrgainmap`), or ISO 21496-1's derived item (`tmap`). A copy of
+/// one -- a JPEG or a PNG -- does not carry it, which the question before it says.
+pub(crate) fn heif_gain_map(from: &mut dyn ReadSeek) -> bool {
+    let Some(meta) = heif_meta(from) else { return false };
+    let named = meta.windows(36).any(|w| w == b"urn:com:apple:photo:2020:aux:hdrgain");
+    let iinf = boxes(meta.get(4..).unwrap_or_default()).into_iter().find(|(k, _)| k == b"iinf").map(|(_, b)| b.to_vec()).unwrap_or_default();
+    named || iinf.windows(4).any(|w| w == b"tmap")
+}
+
+/// A HEIF's meta box, read whole: it is small (the pictures are in mdat).
+fn heif_meta(from: &mut dyn ReadSeek) -> Option<Vec<u8>> {
     use std::io::SeekFrom;
     from.seek(SeekFrom::Start(0)).ok()?;
     // The top level's boxes, to the meta box; read whole, it is small (the pictures are in mdat).
@@ -265,7 +291,7 @@ pub(crate) fn heif_icc(from: &mut dyn ReadSeek) -> Option<Vec<u8>> {
         }
         from.seek(SeekFrom::Current((size - header) as i64)).ok()?;
     };
-    heif_meta_icc(&meta)
+    Some(meta)
 }
 
 /// The boxes in `body`, each its type and what is inside it.
@@ -358,6 +384,10 @@ fn read_bytes_as(path: &Path, bytes: &[u8], largest: u32, may_move: bool) -> Res
         },
     };
     picture.about = about(bytes);
+    // An HDR gain map, and whether it is carried when the picture is saved.
+    if matches!(kind.as_str(), "jpg" | "jpeg" | "jpe" | "jfif") {
+        picture.saves.hdr = crate::gainmap::find(bytes).kept();
+    }
     // A second image after the first: a stereo camera's MPO, and some phones' JPEGs.
     if matches!(kind.as_str(), "mpo" | "jpg" | "jpeg") {
         if let Some((second, what)) = stereo::mpo_second(bytes) {
@@ -406,7 +436,7 @@ fn by_image(bytes: &[u8], ending: &str, largest: u32, may_move: bool) -> Result<
         image.apply_orientation(orientation);
     }
     let original = (image.width(), image.height());
-    let saves = Saves { not_over: crate::save::not_over(&format!("a.{ending}"), bytes), depth: crate::save::Depth::of(&image) };
+    let saves = Saves { not_over: crate::save::not_over(&format!("a.{ending}"), bytes), depth: crate::save::Depth::of(&image), hdr: None };
     let mut picture = Picture::of(shown(fit(image, largest)), original);
     picture.saves = saves;
     Ok(picture)
@@ -685,6 +715,34 @@ mod tests {
         let mut mdat = vec![0x5a; pictures];
         mdat.extend_from_slice(&exif);
         [ftyp, meta(offset), boxed(b"mdat", &mdat)].concat()
+    }
+
+    #[test]
+    fn a_heif_s_hdr_gain_map_is_seen_and_its_profile_read() {
+        fn boxed(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut out = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+            out.extend_from_slice(kind);
+            out.extend_from_slice(body);
+            out
+        }
+        let full = |kind: &[u8; 4], body: &[u8]| boxed(kind, &[&[0, 0, 0, 0][..], body].concat());
+        // An iPhone's, as far as it matters: its gain map an auxiliary picture of Apple's type.
+        let aux = full(b"auxC", b"urn:com:apple:photo:2020:aux:hdrgainmap\0");
+        let colr = boxed(b"colr", &[&b"prof"[..], b"an ICC profile"].concat());
+        let ipco = boxed(b"ipco", &[colr, aux].concat());
+        // Item 1 has property 1 (its profile); item 2, the gain map, property 2.
+        let ipma = full(b"ipma", &[&2u32.to_be_bytes()[..], &1u16.to_be_bytes(), &[1, 0x81], &2u16.to_be_bytes(), &[1, 0x82]].concat());
+        let meta = full(b"meta", &[full(b"pitm", &1u16.to_be_bytes()), boxed(b"iprp", &[ipco, ipma].concat())].concat());
+        let apple = [boxed(b"ftyp", b"heic\0\0\0\0mif1heic"), meta].concat();
+        assert!(heif_gain_map(&mut Cursor::new(&apple)));
+        assert_eq!(heif_icc(&mut Cursor::new(&apple)).as_deref(), Some(&b"an ICC profile"[..]));
+        // ISO 21496-1's: a tmap item.
+        let infe = full(b"infe", &[&[0u8, 3, 0, 0][..], b"tmap", b"\0"].concat());
+        let iso = [boxed(b"ftyp", b"heic\0\0\0\0mif1heic"), full(b"meta", &full(b"iinf", &[&1u16.to_be_bytes()[..], &infe].concat()))].concat();
+        assert!(heif_gain_map(&mut Cursor::new(&iso)));
+        // The iPhone-like test picture (testdata) has none.
+        let plain = include_bytes!("../testdata/pictures/iphone.heic");
+        assert!(!heif_gain_map(&mut Cursor::new(&plain[..])));
     }
 
     #[test]

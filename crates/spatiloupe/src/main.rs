@@ -14,6 +14,7 @@
 mod annotate;
 mod depth;
 mod folder;
+mod gainmap;
 mod ink;
 mod markup;
 mod model;

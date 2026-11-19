@@ -273,6 +273,7 @@ pub struct Rendered {
     pub whole: crate::picture::Whole,
     pub turns: u8,
     pub layer: Vec<u8>,
+    pub turned_size: (u32, u32),
     pub crop: Option<(u32, u32, u32, u32)>,
 }
 
@@ -303,7 +304,7 @@ pub fn render(saving: &Saving) -> Result<Rendered, String> {
     if let Some((x, y, cw, ch)) = crop {
         image = image.crop_imm(x, y, cw, ch);
     }
-    Ok(Rendered { image, whole, turns, layer, crop })
+    Ok(Rendered { image, whole, turns, layer, turned_size: (w, h), crop })
 }
 
 /// Whether a picture has no see-through parts at all.
@@ -342,11 +343,25 @@ pub fn save(saving: &Saving) -> Result<PathBuf, String> {
         (format, None)
     };
     // An OpenEXR written as it was: every channel of its layer, not only the picture of it.
-    let bytes = if format == ImageFormat::OpenExr && own {
+    let mut bytes = if format == ImageFormat::OpenExr && own {
         depth::exr_bytes(&whole.bytes, rendered.turns, &rendered.layer, rendered.crop)?
     } else {
         encode(image, format, whole)?
     };
+    // A JPEG's HDR gain map, made as the picture was and written after it; one that cannot be
+    // carried is left (the question before the save said so), and the picture is SDR.
+    if format == ImageFormat::Jpeg && whole.format == Some(ImageFormat::Jpeg) {
+        match crate::gainmap::find(&whole.bytes) {
+            crate::gainmap::Found::Carried(gain) => {
+                let map = crate::gainmap::remade(&gain, whole.orientation, rendered.turns, &rendered.layer, rendered.turned_size, rendered.crop)?;
+                bytes = crate::gainmap::written(&bytes, &gain, &map)?;
+            }
+            // Its XMP too (its rating, its words), upright: what the image crate does not keep.
+            crate::gainmap::Found::None => bytes = crate::gainmap::with_xmp(&bytes, &whole.bytes),
+            // An HDR layer's own description goes with it.
+            crate::gainmap::Found::Lost(_) => {}
+        }
+    }
     if saving.copy {
         let folder = crate::place::parent(&saving.source).ok_or("it is in no folder")?;
         let copy = copy_name(&name, extension, |candidate| crate::place::exists(&crate::place::join(&folder, candidate)));
@@ -522,6 +537,26 @@ mod tests {
         assert!(reddish(read.get_pixel(0, 6)), "{:?}", read.get_pixel(0, 6));
         let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         assert_eq!(names.len(), 3, "{names:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_jpeg_s_xmp_is_kept_upright() {
+        let dir = folder("xmp");
+        let path = dir.join("rated.jpg");
+        sideways_jpeg(&path);
+        // Its XMP: a rating, words, and the orientation as a camera's software writes it.
+        let xmp = b"http://ns.adobe.com/xap/1.0/\0<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmlns:tiff=\"http://ns.adobe.com/tiff/1.0/\" xmp:Rating=\"4\" tiff:Orientation=\"6\"/></rdf:RDF></x:xmpmeta>";
+        let jpeg = std::fs::read(&path).unwrap();
+        let mut segment = vec![0xFF, 0xE1];
+        segment.extend_from_slice(&((xmp.len() + 2) as u16).to_be_bytes());
+        segment.extend_from_slice(xmp);
+        std::fs::write(&path, [&jpeg[..2], &segment, &jpeg[2..]].concat()).unwrap();
+        let marks = Marks { notes: vec![red_box(Area::new(4.0, 4.0, 16.0, 16.0), 4.0)], ..Marks::default() };
+        save(&Saving { source: path.clone(), marks, frame: (20.0, 40.0), copy: false }).unwrap();
+        let written = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned();
+        assert!(written.contains("xmp:Rating=\"4\"") && written.contains("tiff:Orientation=\"1\""), "kept, upright");
+        assert!(!written.contains("tiff:Orientation=\"6\""));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

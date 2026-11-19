@@ -637,6 +637,8 @@ enum Then {
     Quit,
     /// The file written over with its markup.
     Replace,
+    /// A copy written, losing an HDR layer the file has.
+    Copy,
 }
 
 /// All of a picture: no crop.
@@ -912,21 +914,41 @@ impl View {
         }
     }
 
-    /// A question asked, with what follows its yes. Both destroy something, and start on Cancel.
+    /// Whether the picture has an HDR gain map SpatiLoupe cannot carry over: saved, it is SDR.
+    fn loses_hdr(&self) -> bool {
+        matches!(&self.doc, Doc::Picture(shown) if shown.picture.saves.hdr == Some(false))
+    }
+
+    /// A question asked, with what follows its yes. Each destroys something, and starts on Cancel.
     fn ask(&mut self, then: Then) {
         let name = &self.entry.name;
         let text = match then {
+            Then::Replace if self.loses_hdr() => format!("Replace {name} with the edited picture? Its HDR layer will be lost: SpatiLoupe cannot carry it over. This cannot be undone."),
             Then::Replace => {
                 let what = if matches!(self.doc, Doc::Pdf(_)) { "PDF" } else { "picture" };
                 format!("Replace {name} with the edited {what}? This cannot be undone.")
             }
+            Then::Copy => format!("Save a copy of {name} without its HDR layer? SpatiLoupe cannot carry it over."),
             _ => format!("Discard your changes to {name}?"),
         };
-        let yes = if then == Then::Replace { "Replace" } else { "Discard" };
+        let yes = match then {
+            Then::Replace => "Replace",
+            Then::Copy => "Save a copy",
+            _ => "Discard",
+        };
         if let Some(desk) = self.desk.as_mut() {
             desk.finish_typing();
         }
         self.asking = Some((Confirm::careful(text, yes, "Cancel"), then));
+    }
+
+    /// A copy saved: asked first only if it would lose an HDR layer the picture has.
+    fn save_copy(&mut self) -> Want {
+        if self.loses_hdr() {
+            self.ask(Then::Copy);
+            return Want::Nothing;
+        }
+        self.save(true)
     }
 
     /// The window closed, or SpatiLoupe quit, with markup not saved: asked first.
@@ -938,8 +960,10 @@ impl View {
         if !yes {
             return Want::Nothing;
         }
-        if then == Then::Replace {
-            return self.save(false);
+        match then {
+            Then::Replace => return self.save(false),
+            Then::Copy => return self.save(true),
+            _ => {}
         }
         // The changes let go of, and on to what was asked.
         self.desk = None;
@@ -949,7 +973,7 @@ impl View {
             Then::Slide(by) => self.go_by(by),
             Then::SlideTo(place) => self.go_to_place(place),
             Then::Quit => Want::Quit,
-            Then::Replace => Want::Nothing,
+            Then::Replace | Then::Copy => Want::Nothing,
         }
     }
 
@@ -1835,7 +1859,7 @@ impl View {
                     }
                     ('s', copy) if self.unsaved() => {
                         if copy || !self.can_save_in_place() {
-                            return self.save(true);
+                            return self.save_copy();
                         }
                         self.ask(Then::Replace);
                         return Want::Nothing;
@@ -2034,7 +2058,7 @@ impl View {
             return Want::Nothing;
         }
         if self.copy_button.input(input) {
-            return self.save(true);
+            return self.save_copy();
         }
         if !self.foot.w.eq(&0.0) {
             if let Some(chosen) = self.strip.input(input) {
@@ -3486,6 +3510,37 @@ mod tests {
         view.saved(Err("the disk is full".into()), None);
         assert_eq!(view.trouble.as_deref(), Some("SpatiLoupe could not save b.jpg: the disk is full."));
         assert!(view.unsaved(), "nothing lost when it was not written");
+    }
+
+    #[test]
+    fn a_picture_whose_hdr_layer_would_be_lost_says_so_before_it_is_saved() {
+        let mut view = marking(3, 1);
+        if let Doc::Picture(shown) = &mut view.doc {
+            shown.picture.saves.hdr = Some(false);
+        }
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 400.0), (800.0, 600.0));
+        // Save: the question says the HDR layer goes.
+        view.input(&chord('s', false));
+        let Some((confirm, Then::Replace)) = &view.asking else { panic!("asked") };
+        assert_eq!(confirm.text, "Replace b.jpg with the edited picture? Its HDR layer will be lost: SpatiLoupe cannot carry it over. This cannot be undone.");
+        assert!(matches!(view.input(&key(Key::Enter, "")), Want::Nothing), "Cancel lit");
+        // Save a copy: asked too, which it otherwise is not.
+        view.input(&chord('s', true));
+        let Some((confirm, Then::Copy)) = &view.asking else { panic!("asked") };
+        assert_eq!(confirm.text, "Save a copy of b.jpg without its HDR layer? SpatiLoupe cannot carry it over.");
+        assert!(matches!(view.input(&key(Key::Enter, "")), Want::Nothing), "Cancel lit");
+        view.input(&chord('s', true));
+        view.input(&key(Key::Right, ""));
+        assert!(matches!(view.input(&key(Key::Enter, "")), Want::Save(saving) if saving.copy));
+        // A gain map that is carried: no more asked than of any picture.
+        let mut view = marking(3, 1);
+        if let Doc::Picture(shown) = &mut view.doc {
+            shown.picture.saves.hdr = Some(true);
+        }
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 400.0), (800.0, 600.0));
+        assert!(matches!(view.input(&chord('s', true)), Want::Save(saving) if saving.copy));
     }
 
     #[test]
