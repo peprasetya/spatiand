@@ -454,6 +454,22 @@ impl Default for TextRenderer {
 mod padded_tests {
     use super::*;
 
+    /// Each glyph's place along a line, for choosing words drawn as a label: left to right, one
+    /// after another, as wide in all as the line is drawn.
+    #[test]
+    fn a_line_s_glyphs_are_placed_one_after_another() {
+        let mut t = TextRenderer::new();
+        let places = t.places("Diskon 20%", 40.0);
+        assert!(places.len() >= 10, "{places:?}");
+        assert!(places.windows(2).all(|w| w[0].1 <= w[1].1 && w[0].2 <= w[1].2 + 0.5), "{places:?}");
+        assert_eq!(places.first().map(|p| p.0.start), Some(0));
+        let wide = places.last().unwrap().2 - places[0].1;
+        let drawn = t.render("Diskon 20%", 40.0, 4096, [255, 255, 255, 255]).width as f32;
+        assert!((wide - drawn).abs() < 8.0, "{wide} placed, {drawn} drawn");
+        // Only the first line of a text with two.
+        assert_eq!(t.places("ab\ncd", 40.0).len(), 2);
+    }
+
     /// A padded render's width must not depend on what it contains.
     ///
     /// This is the property the settings panel needs: it is fitted to the rendered image's

@@ -474,7 +474,8 @@ shared; each loop only opens it, hands it what the wearer changed and ticks it):
 | First language, Second language | English and Indonesian to begin with | a page of 24 languages; choosing for one the other's swaps them |
 
 Under the three of text in pictures: "Text in the first language is translated into the second;
-anything else into the first. Nothing reads text in pictures yet: these are kept for when it does."
+anything else into the first. For the text in pictures and paused films in SpatiLoupe and SpatiReel."
+(Until Live Text came, the same day: "Nothing reads text in pictures yet".)
 hemera is asked for its lists on a thread when the card opens (three GETs, no model started), and
 again when its address changes; a model page opened before it answers shows the one in use, and
 keeps the cursor on it when the list comes.
@@ -529,6 +530,49 @@ taking up a change made to `ai.json` from outside within a second, and having he
 everyday model. The Beam Pro's library and SpatiPal type-check for Android. Not checked: the
 glasses; the Deck, the Beam Pro and the Mac themselves (the Mac not built: the owner decides when);
 two paired machines synchronising `ai.json`.
+
+### Live Text: the text in pictures, read by hemera (2026-11-19)
+
+The owner: "I want it can select text from images (also on image of pdf)... even non latin, unicode
+character. Like apple preview."; "read automatic"; of translating, "2 language... primary and
+secondary... the selection in primary, translate to secondary. other, translate to primary". What the
+wearer does, and how SpatiLoupe and SpatiReel choose what to read, is in docs/spatiand-apps.md
+("Live Text"); here, what is asked of hemera, and what the assistant does with it.
+
+- **Reading** (`spatiand_voice::hemera::ocr`, hemera's `docs/ocr-api.md`): `POST /v1/ocr`, the picture
+  whole in a part `image` -- a photograph as its own file, a screenshot, a frame or a page drawn as a
+  PNG, nothing shrunk unless over hemera's 50 million pixels -- and its options: the AI card's first
+  and second language then `auto` (`["en", "id", "auto"]`), characters, orientation 0 for a frame or
+  a page drawn, the card's text reading model or none for hemera's choice. A 503 (hemera's reader
+  starting) is waited out once for its Retry-After; every refusal is said in hemera's own words. Each
+  reading has a connection of its own, shut when the wearer moves on: hemera stops its work. Read by
+  itself when the card's "Read text in pictures by itself" is on; else from the picture's menu ("Read
+  the text").
+- **Translating** (`spatiand_voice::hemera::translate`): with the card's everyday model, thinking
+  off. Told the rule itself, the 4B model gave Indonesian back unchanged, a lone "Diskon" as it was,
+  Japanese in Indonesian; so the model is asked only which language the text is in (a two-letter
+  code), the rule is applied in code -- text in the first language into the second, anything else
+  into the first -- and the model then asked to translate into that one language, the lines numbered
+  and given back numbered so that each is where its line was, never a digit changed. Against hemera:
+  Indonesian, English, Japanese, Arabic, a sign and a lone word each went the way the rule gives, in
+  0.4-0.7 s, lines and digits kept; an ID card's labels ("Nama") were left as they were. A workaround
+  for a model that does not keep to the rule: the proper way is one that does, or hemera translating
+  into a language it is given.
+- **The assistant** (`crates/spatipal/src/brain.rs`): when the window looked at is SpatiLoupe's or
+  SpatiReel's, its description is asked for with every request, and the text read in its picture
+  (after `spatiand_app::live_text::HEADING`, each word read less surely than 0.9 marked `[?word?]`)
+  goes with the wearer's words: "The text in the picture in window N, read from it exactly as it is
+  printed, on screen now. Answer names, numbers and codes from this text, not by reading the picture
+  again; a word in [? ?] was read with less certainty: say so if you give it". Asked "Pixel, what is
+  the NIK on this card?" in the headless room, SpatiLoupe showing the ID card photographed askew, it
+  answered "The NIK on this card is 4188889534495509." in 1.3 s -- the card's number. Its answers have
+  a Copy button beside them under the pointer: the chat's text cannot be chosen.
+- **Privacy**: hemera neither keeps nor logs a picture or its text, and Spatiand logs only sizes,
+  times and counts; what is read is kept in the application's memory for the session (SpatiLoupe, by
+  the file's path, size and time), never on disk -- an ID card passes through.
+
+Not verified: any of it on the Deck, the Beam Pro, the Mac or the glasses; SpatiPal's answer from a
+paused film's text (the same path as SpatiLoupe's, by its application's id).
 
 ## Dictation with no room
 

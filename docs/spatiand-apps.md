@@ -1292,3 +1292,160 @@ pictured in the room -- fetching PDFium (`tools/fetch-pdfium.sh`) was refused on
 day; they pass over without it, and are to be run where it is. A real phone's Ultra HDR or iPhone
 HEIC, and an Android phone, Chrome or macOS showing a saved one as HDR (none here); the Mac, the
 Deck, the Beam Pro and the glasses.
+
+## 2026-11-19: Live Text -- the text in pictures, PDF pages and paused films
+
+The owner: "I want it can select text from images (also on image of pdf)... even non latin, unicode
+character. Like apple preview."; "spatireel also can be treated same too... so when play video, any
+text, when paused, can be selected"; "read automatic"; and of translating, "2 language... primary and
+secondary... the selection in primary, translate to secondary. other, translate to primary". He had
+found SpatiPal could not give him one field of an ID card to copy. One piece in the SDK, used by both
+applications, the same on the Deck, the Beam Pro and the Mac; hemera reads (`POST /v1/ocr`, its
+`docs/ocr-api.md`), the room's AI settings say how (`spatiand_app::ai`: hemera's address, the reading
+and everyday models, the first and second language, "read text in pictures by itself").
+
+**What the wearer does, in either application.** The text in a picture is chosen as text: a press
+and drag on it chooses from grapheme to grapheme in reading order, across lines and blocks -- left to
+right, right to left for Arabic, down a column for vertical Japanese, along a line photographed
+askew; two presses choose a word, three a line, Shift runs on. A drag that starts off the text is the
+window's as it always was (a pan, a swipe, a film's view turned); a press there lets go of what was
+chosen. Command/Control-C copies it to the room's clipboard (lines one under another, blocks an empty
+line apart, as hemera writes all of it), Command/Control-A chooses all, Escape lets go (before it
+leaves). The right button, or a press held 800 ms (a pad's or a hand's), opens the text's menu at the
+pointer: Copy, Select all, Translate -- the word there chosen first -- or Read the text, where the
+pictures are read only when asked (the AI card's switch off). Translate puts what is chosen, or all,
+into the other language by the rule (docs/ai-integrations.md) in a pane beside it: "In English", the
+translation, Copy and Done; Escape, Enter or a press beside it close it. "Copied." for five seconds.
+The line under the pointer is lit faintly -- the hint that there is text there, the room's pointer
+being cast from the head -- and a word hemera was less than 0.9 sure of has a row of dots under it in
+`look::unsure` (the room's amber, deepened in the light look), on a halo, seen on a dark picture and
+on white paper: an ID number copied wrong is worse than none.
+
+**The SDK's piece** (`crates/spatiand-app/src/live_text`). `ReadText` is one picture's text in
+reading order, each `Line` with the side it is read along and the side opposite, from where reading
+begins to where it ends (hemera's corners 0 to 1, or 0 to 3 for right to left), and each extended
+grapheme cluster's place as a fraction of the way along both -- so a stretch of a line is the
+quadrilateral between those fractions of its two sides, true for a photo taken askew; a press is
+found on its line by the quadrilateral's own coordinates (inverse bilinear), never inside a grapheme;
+`Line::across` makes one from glyph places (a PDF's characters, a subtitle as drawn); `mapped` moves
+a reading of a copy onto the picture itself. `Mapping` is where the picture's pixels are on the
+window -- its EXIF orientation (hemera reads stored pixels), quarter turns, a crop, zoom and pan --
+one affine map, undone exactly. `LiveText` is the wearer's part above: `input` (saying `Pass`,
+`Taken`, `Tapped` -- a press let go of where it went down, the application's own tap -- `Copied`,
+`Read`), `context` (the right button), `tick` and `next_wake` (the press held, the translation
+coming), `draw` over the picture and `draw_over` over the controls (the menu, the pane, the pill for
+"Reading the text…", what was done or went wrong), `described` for the room's speech (`HEADING`, then
+the text with each unsure word `[?like this?]`). `Reading` reads a picture on a thread of its own --
+the picture made on that thread, a 4K frame's PNG being no job for the one that draws -- with the AI
+settings as they are, and calls hemera off when dropped; `Picture::file` sends a file as it is (a
+photo, never remade from its pixels), `Picture::png` pixels as a quickly made PNG; `within_limit`
+keeps a picture under hemera's 50 million pixels, the only shrinking. `Translating` likewise. The
+Painter gained `fill_quad` (the one shader, a convex quadrilateral with rounded corners in its own
+frame) and `places` (each glyph of a line, from spatiand-render's `TextRenderer::places`, shaped and
+not painted); the icons Translate and Select all. Beside dictation's client, spatiand-voice's
+`hemera::ocr` is the call itself -- the picture whole in a part `image`, the options as JSON (the
+wearer's two languages then `auto`, characters, orientation 0 where it is known, the reading model or
+hemera's choice), refusals in hemera's words with their status, a 503 waited out once for its
+Retry-After, each reading on a connection of its own, shut to call it off (hemera stops when its
+connection closes) -- and `hemera::translate` the translation. Nothing of a picture or its text is
+logged, here or by hemera: sizes, times and counts; what is read is kept in memory only.
+
+**SpatiLoupe** (`view/lens.rs`). A picture is read by itself once it has stayed on the window a third
+of a second -- not while it slides through the strip; slid away from or left, its reading is called
+off. Sent: the file itself where hemera reads its kind (JPEG, PNG, WebP, TIFF), stood upright here by
+its EXIF orientation; over 50 million pixels, made smaller as a JPEG; HEIC, AVIF, JPEG XL, JPEG 2000,
+a drawing or a still GIF as its pixels, a JPEG of a photograph's (quality 92) and a PNG of the rest,
+the wearer's turns made on them undone; a stereo pair in one frame, its left eye; a moving picture and
+an object, not at all. Kept for the session by the file's path, size and time, in memory only: coming
+back to a picture shows its text at once, and the same name written again since is read again. The
+text follows the picture through quarter turns, markup's crop, zoom and pan; a pair's, read in one
+eye, is let go of when it is turned. A PDF page with text of its own is its own characters and boxes,
+PDFium's (`Ask::Letters`, run by run; nothing read); one with next to none (a scan), or turned by its
+/Rotate, is drawn at 300 dots to the inch within hemera's limit (`Ask::Scan`) and read -- the page on
+show only, one scrolled past let go of. While markup's tools are out the text is not chosen. "Reading
+the text…" at the foot while it is read, over the strip; what went wrong once, in words, and not again
+for every picture after until a reading comes. The controls stay while the text's menu or
+translation is open. Its description has the text read.
+
+**SpatiReel** (`play/lens.rs`). A flat film paused on one frame for half a second has that frame
+read: taken at its own height and as wide as it is seen (1080p to 4K; a DVD's frame unsqueezed; one
+eye of a film with two, at its true shape), upright, by drawing it once with the film's own screen
+into a picture of that size and reading that back off the GPU -- one way for a hardware frame on
+every platform (VAAPI, VideoToolbox, MediaCodec) and for one in memory -- then sent as a PNG,
+orientation 0. Playing on, or moving to another frame while paused, calls it off and lets go of its
+text; a film in the sky (VR180, 360), or looked about in, is not read. A subtitle on show in words is
+chosen from its own words where they are drawn; nothing is read for it (a picture subtitle is not
+chosen). The controls' rules, and the subtitles under the pointer: a tap on the text does what a tap
+on the picture does -- puts the controls away, or brings them up -- once it is known not to be the
+first of two; a press, a drag or a double press on the text does not bring them up, nor a key the
+text acts on, nor the room's word that the hands stirred for those (it comes a frame or a few after
+each press and key, and for a press before the press itself: the pointer resting on the text is taken
+as the text's), as the controls coming up would lift the subtitles from under the pointer; the
+subtitles are held where they were while a press on them goes on or a second may come; the text's
+menu and translation leave the controls as they are. "Reading the text…" and what went wrong are said
+in the piece's pill, over the controls when they are up. Its description says it is paused and has
+the frame's text.
+
+**SpatiPal** answers from that text: when the window looked at is SpatiLoupe's or SpatiReel's, its
+description is asked for with every request, and the text read in its picture goes with the wearer's
+words, marked as on screen now and exact (docs/ai-integrations.md). Its answers have a Copy button
+beside them under the pointer.
+
+**Times, against deepmagpie's hemera** (warm; the whole request as SpatiLoupe makes it, nearly all of
+it hemera's own): a phone screenshot 1170x2532, 1.0 s; 1080p frames 0.7-1.0 s; 1440p 1.1 s; 4K frames
+2.8 s; a 12-megapixel photo (the ID card, askew) 4.0 s; an A4 page at 300 dpi 4.5 s; a two-column
+article 3.7 s; short scripts 0.4-1.2 s. A paused 1080p frame taken off the GPU in 28-34 ms, its PNG
+1.6 MB, read in 0.85 s. A translation 0.4-0.7 s (two requests).
+
+**Accuracy, against the test set's truth.json** (`live_text::truth`, every test picture as the
+applications send it, each true line's text against the read lines inside it, chosen whole and copied
+through the piece): 376 of 432 lines exactly as their truth, 1.47% of characters wrong, 1.06% leaving
+spaces aside. Exact: both screenshots, the A4 page, the article, small print, the slanted photo, all
+three turned pictures, low contrast, both receipts (a row read as its item and its price). What
+differs is hemera's known gaps: spaces dropped (after a form's colons, ": 3171..." read ":3171...";
+between Arabic words), a vertical Japanese line's 、, full-width brackets read half-width, a Devanagari
+anusvara, a Cyrillic word read as Latin ("рейс" as "pec"), and signs in video frames missed or cut
+("PHARMACY" and "OPEN 24 HOURS" in the low-light frame, "편의점" in the 4K Korean one); the street sign
+photographs are the worst, at 15-20%.
+
+**Checked** (deepmagpie): the client's tests (options, hemera's own example answer, every refusal,
+Retry-After, the form, and against a stand-in hemera: a 503 waited for and asked again, a reading
+called off hanging up at once, hemera not there); the piece's tests (graphemes with combining marks,
+flags, skin tones, Thai and a ZWJ family; choosing across lines and blocks; unsure words; hits and the
+nearest place; glyph places, Arabic from the right; quarter turns, the eight EXIF orientations, zoom
+and pan there and back, a crop; a drag, two and three presses, Select all, Escape, a tap, a press held
+and its release, the menus; a turned picture); against truth.json every line of ar, ja_vertical,
+rotated_90/180/270, ktp_photo, slanted, screenshot_light and mixed_scripts -- all of a line is its own
+corners, its graphemes run the way it is read, each grapheme's middle is found to be it, an askew
+line's stretch is the same fraction of its top and its bottom; SpatiLoupe's (the mapping through turns
+and a crop, the description, markup taking the presses, a pair's text let go of, a file read this
+session, a page's own characters, a scan asked to be drawn once, a photo stored on its side stood
+upright), SpatiReel's (which films are read and at what size), SpatiPal's; `cargo check --workspace`;
+`cargo ndk -t arm64-v8a -P 34 check` of the SDK, spatiand-voice, SpatiLoupe, SpatiReel and SpatiPal.
+In the headless room (scratch folders, deepmagpie's hemera), dark and light: SpatiLoupe on the light
+screenshot -- read by itself and described, a drag across two lines copied, a word by two presses,
+the menu, a three-line message translated "In English" with its code kept, all chosen and copied; the
+ID card photographed askew, the NIK chosen on its slant and copied; Arabic chosen from the right;
+vertical Japanese down one column into the next; SpatiReel on a 30-second clip made with ffmpeg from
+video_1080_h264_id.png -- paused, read, a sign chosen and copied, the menu, the description with
+"Jl." marked unsure -- and the same with a subtitle beside it, light: a drag along the subtitle
+copied, a word of it by two presses, the menu, its translation; SpatiPal beside SpatiLoupe on the ID
+card, asked by a voice "Pixel, what is the NIK on this card?" (made by hemera's voxcpm2): given the
+card's text, it answered "The NIK on this card is 4188889534495509." -- truth.json's number -- in
+1.3 s; a chat's answer copied by its button.
+
+**Not done or not seen.** The PDF parts with PDFium: a page's own characters, a scan drawn at 300 dpi
+and read, and their pictures in the room -- PDFium for Linux is not on deepmagpie (third_party/pdfium
+has android-arm64 and mac-x64) and was not to be fetched; the test that needs it is written and passes
+over without it, and a scanned page made from page_a4.png (with Pillow) waits to be opened where
+PDFium is. The Mac, the Deck, the Beam Pro and the glasses: the same code, not run there (the Mac not
+built); a hardware frame's read-back (VAAPI, VideoToolbox, MediaCodec) -- the frames here were
+FFmpeg's in memory, drawn the same way. A stereo pair's text drawn in the right eye at the left eye's
+places (no disparity), not looked at. A picture subtitle (DVD, PGS) is not chosen. Workarounds,
+named: the translation is two requests (the language, then the translation into the one the rule
+gives) because the everyday 4B model did not keep to the rule in one -- the proper way is a model that
+does, or hemera translating into a language it is given; pictures in kinds hemera does not read go as
+a JPEG or a PNG made here -- properly hemera would read HEIC, AVIF and JPEG XL itself; SpatiReel takes
+the room's `hands` while the pointer rests on the text for the text's -- properly the room would say
+which press a `hands` is for; a subtitle's glyphs are placed from where its first glyph's ink is
+taken to begin (side bearings not known), a pixel or two off.
