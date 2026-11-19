@@ -54,6 +54,8 @@ SpatiandOS; that is far off and not a goal here.
 ### SpatiLoupe — media viewer
 - Like Preview on a Mac: PDF, JPEG, PNG, HEIF, JPEG 2000, GLB — any still media that is not
   video or audio.
+- Markup, as Preview's: crop, words, a box, a circle, an arrow, on pictures and PDFs, saved over
+  the file (asked first) or as a copy beside it (2026-11-19; see below).
 - Stereo photographs (samples to come from the Beam Pro's album).
 - 3D objects with textures and PBR, in true stereo in the 3D room and flat in 2D.
 
@@ -1072,3 +1074,116 @@ room that was not meant for it. It never sees SpatiKey's windows (docs/spatikey.
 
 **Not checked on hardware, and open:** deinterlacing through MediaCodec and VideoToolbox frames;
 raw AV1 (`.obu`) cannot be seeked; the Android frame handover (docs/beam-pro.md).
+
+## 2026-11-19: SpatiLoupe's markup
+
+The owner: "like apple preview, I want it to able to simple edit and annotate, cropping, add text,
+box, circle, arrow." Pictures and PDFs both; "Save" asks before replacing the original, "Save a
+copy" writes a new file beside it, with no hidden backups. The same code on the Deck, the Beam Pro
+and the Mac: nothing in it is a platform's own.
+
+**What the wearer does.** The Markup button in the view's bar (a pen's nib, the SDK's
+`Icon::Markup`), or Command/Control-Shift-A as in Preview, brings out the tools under the bar;
+the picture or the pages are fitted under them, and the controls stay. The button again, or
+Escape with nothing else to let go of, puts them away; what was drawn stays, to be saved.
+
+| Tool | Does |
+|---|---|
+| Select | A press chooses what is under it (a shape's line before what is only round it, then the smallest: a box inside a box is reached inside it); a drag moves it; its corners (a box, a circle) and ends (an arrow) are handles 44 across; Delete or Backspace deletes it; Enter or a double press changes chosen words; the arrows nudge it a pixel (Shift: ten). A press on nothing is the view's: a zoomed picture moved about, a document along. |
+| Crop | A drag draws what is kept, the rest dimmed; its corners and its middle move it; Enter or the Crop button in the toolbar makes it, Escape lets it go. A picture is shown cropped at once and cropped in its pixels when saved; a PDF page is shown as what is kept and gets that crop box. A crop on a crop is within it. |
+| Text | A press puts a field there; typing in any script, set in the room's fonts and fallbacks (cosmic-text, `spatiand_render::text::font_system`); Enter or a press elsewhere keeps the words (the look and feel's rule 9), Escape drops them. |
+| Box, Circle, Arrow | A drag from one corner, or end, to the other; Shift keeps a square, a circle, a line level or at 45 degrees. What was drawn is chosen, as in Preview, and the tool goes back to Select. |
+| Colour | Red (the first), orange, yellow, green, blue, black, white, in a row under its button: for the chosen note and what is drawn next. |
+| Weight | Thin, medium, thick for lines (a quarter, a half and one per cent of the page's shorter side, never under one to three of its units); small, medium, large for words (2.5, 4 and 6.5 per cent): an A4 page's lines 1.5, 3 and 6 points, a 12-megapixel photograph's 7.5, 15 and 30 pixels. |
+| Undo, Redo | Command/Control-Z, with Shift to redo, and the toolbar's buttons (drawn only when they can act): every change, a drag as one step, crops and turns included; 200 steps. |
+
+A quarter turn (R, Shift-R) while there is markup turns the marks with the picture -- words stay
+upright, their middle where the picture's went -- and is a step to undo: **a picture is saved as
+it is shown, turned.** A turn with no markup is the view's, as before, and nothing is saved by
+it. The packing of a stereo pair is not changed under markup, and Markup is not offered for an
+object, a stereo pair or a moving picture (no button). Outside Markup a press-drag keeps its
+meaning; a later job is to make a press-drag over a picture's words choose them (text
+selection), so nothing here gives the plain view's press-drag another.
+
+With markup not saved the bar shows **Save** and **Save a copy** (Command/Control-S, with Shift a
+copy), and leaving the file asks `Confirm::careful` "Discard your changes to <name>?" (Cancel
+lit; the SDK's question has two answers, so Cancel lets the wearer save first): Back, Escape, the
+arrows, the strip, Home and End, a sideways swipe or scroll over the fitted picture, closing the
+window and quitting. While the tools are out a drag draws and the arrows stay on the file.
+`describe` says "Markup is on, with the box tool, in red." before what it says of the file, or
+gives the words being typed.
+
+**How it is drawn.** The marks are shapes (`markup.rs`) in the picture's own pixels as it is shown
+(a PDF page's points from its top left as PDFium shows it, `/Rotate` and crop box applied), kept
+while the file is open. They are painted on the CPU (`ink.rs`): lines and shapes by tiny-skia,
+words by cosmic-text, unhinted, so that they scale in proportion. The window's layer is that
+painting at the window's size, laid over the picture at its zoom and pan and redrawn only when the
+marks or where the pages are change; a saved picture is the same painting at its own size. So what
+is saved is what was seen, with no GPU size limit, on every system.
+
+**Saving a picture** (`save.rs`). Read again whole from its file, turned, drawn on, cropped, then:
+
+| The file | Save | Save a copy |
+|---|---|---|
+| JPEG | over it, JPEG at quality 92; its Exif kept with the orientation set upright (the pixels are written upright), its thumbnail dropped (it showed the picture as it was) and its pixel size made true; its colour profile kept | "<stem> (edited).jpg" beside it, the same way |
+| PNG, WebP, BMP | over it in its format (WebP without loss: the image crate writes no other); a PNG's or WebP's profile and Exif kept | "<stem> (edited).<ext>" |
+| HEIC, AVIF, JPEG XL, JPEG 2000, TIFF, GIF, OpenEXR, Radiance HDR, TGA, a drawing | not offered; the foot says "SpatiLoupe does not write HEIC pictures: Save a copy writes a JPEG beside it, or a PNG if it has see-through parts." | "<stem> (edited).jpg", or .png for a picture with see-through parts |
+
+Save asks "Replace <name> with the edited picture? This cannot be undone." (`Confirm::careful`,
+Cancel lit, "Replace") and writes a new file in the same folder, hidden, synced, given the
+original's permissions, then renamed over it; a copy is written the same way under its own name
+and not over anything there ("(edited 2)" and on if the name is taken). Either is then opened as
+it now is, and the foot says "Saved <name>." or "Saved a copy as <name>." for five seconds; what
+went wrong is said for eight ("SpatiLoupe could not save <name>: …."), the marks kept. A file
+whose bytes are not the format its name says is only copied. Ten-bit and sixteen-bit pictures are
+written at eight bits.
+
+**Saving a PDF** (`annotate.rs`, on the PDF's own thread). PDFium writes an incremental update --
+the file as it was, then what changed -- with each mark a real annotation, so that Preview or
+Acrobat can move, change or delete it: a box a **Square**, a circle a **Circle**, an arrow a
+**Line** with a closed arrow at its end (`/LE [/None /ClosedArrow]`), words a **FreeText** whose
+`/Contents` are the words and `/DA` Helvetica at their size in their colour. Each carries its own
+appearance stream, written here: the words as their glyphs' outlines from cosmic-text, so every
+script shows with no font in the PDF (a colour emoji's picture has no outline and is left out of
+the appearance; the words keep it). A crop sets the page's crop box. What is written is opened
+again by PDFium, every mark found as the kind it was made, before the file is written. Save and
+Save a copy as for a picture ("Replace <name> with the edited PDF? …", "<stem> (edited).pdf").
+
+A workaround, named: PDFium makes no Line annotations (`FPDFAnnot_IsSupportedSubtype` leaves Line
+out, and nothing sets `/L` or `/LE`). An arrow is made as an Ink annotation of the same look, and
+a second update of SpatiLoupe's own after PDFium's gives the page again with that annotation's
+dictionary as a Line's. It is read back before the file is written; if it cannot be made (an
+encrypted PDF, whose strings SpatiLoupe does not encrypt) or does not read back, the arrow stays
+an Ink annotation, which looks the same and moves and deletes as one. The proper way is PDFium
+making Line annotations itself (`FPDFPage_CreateAnnot(FPDF_ANNOT_LINE)` and a setter for `/L` and
+`/LE`), upstream or in a PDFium this project builds.
+
+**Remote files.** The storage service can write a file back: its `/dav/<remote>/` is rclone's VFS
+read and write (cache off, written to the remote as it is written), and rclone's `operations/movefile`
+moves on the remote. `spatiand-storage` gained `write` (a PUT), `exists`, `rename` and `delete`.
+A remote's picture or PDF is saved where it is, both ways: written beside it under a hidden name,
+then moved over it (on most remotes a move there is not atomic as a rename here is; the original
+is only replaced once the new file is whole there). rename has the VFS forget both names: a move
+by rclone is not seen by the WebDAV, which kept the old length for half a minute.
+
+Also: a TGA, which begins with nothing that says what it is, is read by its name; it was listed
+and never shown.
+
+**Checked** (deepmagpie): the tests of SpatiLoupe (115, 30 of them new: the model, hit tests,
+handles, undo over notes, crops and turns; coordinates through zoom, pan and a turn; a red box's
+edge in the pixels where it should be, words in Latin, Cyrillic and Chinese; JPEG, PNG, TGA and
+TIFF saved and read back, Exif upright, permissions kept, copies named; a PDF of a plain and a
+`/Rotate 90` page marked up, saved and opened again with PDFium: Square, Circle, Line (its ends
+read back), FreeText, the crop box, the pages drawn with the marks where they were put; the
+questions starting on Cancel), of the SDK and of `spatiand-storage`; `cargo check --workspace`;
+`cargo ndk -t arm64-v8a -P 34 check` of SpatiLoupe, the SDK and the storage client. Poppler reads
+and draws the PDFs written, the Line with its arrow. The headless room, dark and light: the
+toolbar, the colours and the weights, a box, a circle, an arrow and words on a picture, a crop
+drawn and made, the questions, Save and Save a copy (the copy opened, the file written over), a
+TIFF that is only copied, a PDF marked up and saved, a PDF page cropped; and with the real storage
+service and a scratch alias remote, a picture and a PDF saved over themselves and as copies and
+read back whole. **Not done or not seen:** the Mac -- its build and tests are prepared in
+`~/Developer/Spatiand-markup` on littleotter (`markup-test.sh`) and were not run, the owner being
+at that Mac in the day (CLAUDE.md: it compiles at night or when he says so); the Deck and the Beam
+Pro themselves, and the glasses; a HEIC or AVIF copied (the code path is FFmpeg's, as their
+viewing is); an encrypted PDF (its arrows stay Ink by design, not tried).

@@ -72,8 +72,9 @@ Every colour is a function of `ui::theme`, which answers for dark or light:
   `room/keyboard_face.rs:32-55`) and the Look setting says so (`shell/hud.rs:217`: "for
   Spatiand's own apps and the pages in SpatiMesh").
 - A literal `[r, g, b, a]` in an app is right only for: a tile's own tint
-  (`Tile::tint`), white ink on such a tint, a film's subtitles, a page's paper, and a `uv`
-  rectangle. Every other literal is a departure (Part 2).
+  (`Tile::tint`), white ink on such a tint, a film's subtitles, a page's paper, a markup's ink
+  (SpatiLoupe's `markup::Ink`: what is drawn on a picture is the picture's, the same in both
+  looks), and a `uv` rectangle. Every other literal is a departure (Part 2).
 
 ### 3. Corners, borders, shadow
 
@@ -239,7 +240,8 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 |---|---|---|---|---|---|---|
 | Cmd-C / X / V | files | copy / - / paste (see `quill/keys.rs:42`) | field | field | field | field |
 | Cmd-A | all files | - (menu: Select all) | field | field | field | field |
-| Cmd-Z | - | - | - | - | - | - |
+| Cmd-Z | - | - | - | - | - | in Markup: undo; Shift: redo |
+| Cmd-S | - | - | - | - | - | with markup: save (asks); Shift: save a copy |
 | Cmd-T / Cmd-W | new tab / close tab | new tab / close tab | - | - | - | - |
 | Cmd-Q | quit (`Event::Quit`, the SDK's) in all six | | | | | |
 | Cmd-F | find in folder | - | - | - (field always on show) | - | find in a PDF (also `/`) |
@@ -249,10 +251,14 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 | Enter | open | (the program's) | send | open / next | open; play or pause | - |
 | Backspace | up a folder | (the program's) | field | field | up a folder; closes the player | up a folder |
 | Tab | Cmd-Tab: next tab | Ctrl-Tab: next tab | field | next kind / next field | next field | - |
-| Delete | to the Trash; Shift: for good | (the program's) | Cmd-Delete: delete the chat | - | forget a server | - |
-| Others | Cmd-D duplicate, R refresh, H hidden, 1 / 2 view, L path, F2 rename, Space mark | Cmd-1..9 tab, Cmd-M move tab, Shift-PgUp/PgDn history | - | Cmd-L lock | M menu, N next, arrows seek | I about, R turn, 3 eyes, X swap, P page, O contents, N next found |
+| Delete | to the Trash; Shift: for good | (the program's) | Cmd-Delete: delete the chat | - | forget a server | in Markup: delete what is chosen (Backspace too) |
+| Others | Cmd-D duplicate, R refresh, H hidden, 1 / 2 view, L path, F2 rename, Space mark | Cmd-1..9 tab, Cmd-M move tab, Shift-PgUp/PgDn history | - | Cmd-L lock | M menu, N next, arrows seek | I about, R turn, 3 eyes, X swap, P page, O contents, N next found, Cmd-Shift-A Markup (Preview's) |
 
-- Nothing binds Cmd-Z: there is no undo anywhere. That is the norm, not a gap to fill here.
+- Only SpatiLoupe's Markup binds Cmd-Z: its marks, crops and turns are undone and redone (2026-11-19).
+  Nothing else has undo; that is the norm elsewhere, not a gap to fill.
+- In SpatiLoupe's Markup, Escape lets go of what is going on (words typed, a crop drawn, what is
+  chosen) and then puts the tools away; Enter makes a crop or changes the chosen words; the arrows
+  nudge what is chosen.
 - **Key repeat**: the SDK repeats held keys itself (`app/lib.rs:704`). `Input::of` drops a
   repeated Escape and Enter, and hands a repeated Space on as the character only, so a field
   still types spaces but nothing is pressed again (`app/ui/mod.rs`). A key that toggles, confirms or destroys must not act
