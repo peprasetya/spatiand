@@ -156,6 +156,16 @@ Later the same day:
   in the shared folder (`assistant/`, `assistant.json`, `voice.json`, the last two's shared part
   carried into `ai.json` since). The small model decides in one word whether the larger one
   answers (`brain.rs`, `wants_larger`); a `hand_over` tool remains as well. Tools in `tools.rs`.
+  **What it did is given back as the calls it made** (2026-11-20): each answer keeps its tool
+  calls (`store::Said::calls` -- the call, its arguments, how an action went; never what a tool
+  read, which is the wearer's), given back to the model as those calls before its words. Given as
+  a note after its words, "(Done in the room: ...)", the small model wrote the note itself and
+  called nothing: it acted on 6 of 15 follow-ups, on 13 of 15 since. **A decision for the larger
+  model is let go of when the small model is already acting** (`ACTING_TOOLS`: in the room or
+  with its figure -- not reading, opening an application or typing, which may begin a piece of
+  writing): "Close SpatiQuill." after another answer had gone to the 27B. The decision is given
+  the last reply as "The pal's last reply to the wearer" (as "Your last answer" the small model
+  took it for its own last decision). A turn hemera fails before a word of is asked again once.
   **Closing a window and Enter in a terminal are held by the app until the wearer says yes**:
   the model, given a `confirmed` flag, was seen to set it itself and press Enter. Speech a
   sentence at a time, paced into the room (`voice.rs`); never code. Ears (`ears.rs`): the room's
@@ -482,10 +492,14 @@ Spatiand side"; "make sure the function is polished"):
 - **Asked for by the pal's model**: `make_move` (`crates/spatipal/src/moves.rs`), offered beside
   `appearance` for a figure with a body. The model writes the English sentence hemera's
   HY-Motion understands ("a person does a cartwheel"), a short name to keep it by, how long it
-  lasts, and `kind` -- `move`, done once, or `idle`, a loop that is then the pal's idle (`kind` a
-  required choice: a 4B left an optional `idle: true` out every time). The tool answers at once
-  that the move is being made and is not done yet (a 4B, told only "say something meanwhile",
-  said "there you go" 45 s before the move came).
+  lasts, and `kind` -- `move`, done once; `pose`, a position held until another (`moves/` and
+  `poses/` in the pal's folder); `idle`, a loop that is then the pal's idle; or `forget`, to let
+  one go (`kind` a required choice: a 4B left an optional `idle: true` out every time). The tool
+  answers at once that it is not ready yet and that the pal will do it by itself the moment it
+  is: told only "say something meanwhile", a 4B said "there you go" 45 s before the move came,
+  and told "then you do it" both models acted it out at once. A name it has already is done at
+  once, not made; several are made at once, each done as it comes; a pose still being made is
+  not taken once another pose or move is asked for. The details: [spatipal-pals.md](spatipal-pals.md).
 - **Made on hemera** (`spatiand_voice::motion`, hemera's docs/media-api.md section 10): asked,
   polled every half second, fetched as JSON, then deleted there; a 503 while its model loads waited
   out by its Retry-After. About 7 s a move, 35-45 s more when hemera has to load its model (21 GB,

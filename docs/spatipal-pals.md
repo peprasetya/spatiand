@@ -150,10 +150,15 @@ the parts it moves and where each points, from its own point of view:
   whole and the pose comes back after it; a change of pose takes 0.6 s.
 - **Poses by name, made of words**, for a figure with a body: `hands_on_hips`, `left_hand_on_hip`
   and `right_hand_on_hip`, `arms_folded`, `thinking`, `shrug`, `left_hand_raised` and
-  `right_hand_raised`, `arms_up`, `hands_behind_head`, `lean_in`, `point`,
-  `look_over_left_shoulder` and `look_over_right_shoulder` (`STOCK` in `crates/spatipal/src/pack.rs`,
-  each looked at from the front and the side). One of the figure's own animations of the same name
-  is its own instead; a part it lacks is left out.
+  `right_hand_raised`, `arms_up`, `hands_behind_head`, `hands_behind_back`, `lean_in`, `point`,
+  `look_over_left_shoulder` and `look_over_right_shoulder`, `right_hand_on_heart` and
+  `left_hand_on_heart`, `look_up`, `look_down`, `head_tilt` (`STOCK` in
+  `crates/spatipal/src/pack.rs`, each looked at from the front and the side; `hands_behind_back`
+  from the back too). One of the figure's own animations of the same name is its own instead; a
+  part it lacks is left out. Any other pose is made from words (below): the small model, given
+  every pose by name and left to make its own part by part, chose the nearest name instead
+  ("look up at the sky" over its shoulder), so it is told to take one of these only by its name,
+  and is not given `own_pose` at all.
 
 ### Its options
 
@@ -165,9 +170,12 @@ always three digits) is the same option; a node of no group (the body, the eyes)
 An option that is nothing -- no hat -- is an empty node: `hat=none`. A group named `move`, `pose`
 or `face` is not offered (those are the tool's own words).
 
-Options can be whole looks, each a mesh of the figure in other clothes and hair (as the figure made
-below is, one mesh a look), or parts over one body: a body always there, clothes and hair in groups
-of their own. Parts need the body under the clothes trimmed or hidden where it would show through.
+Options can be whole looks, each a mesh of the figure in other clothes and hair, or parts over one
+body: a body always there, clothes and hair in groups of their own -- a doll, dressed (the owner,
+2026-11-19: "the body is naked... can be dressed... concept like second life avatar"; "dont
+hide... but at layer"). Clothes made for the body and fitted to it, each with its own weights,
+move with the skin; a few millimetres between them keep the skin from showing through, so nothing
+of the body need be hidden or cut away (below).
 
 ### Its face
 
@@ -175,14 +183,19 @@ A VRM's expressions, by VRM 1.0's names (0.x's are read under them: `joy` is `ha
 GLB's morph targets by their own names -- what Blender calls shape keys, which it exports as the
 mesh's `extras.targetNames`. The room moves `blink` now and then, `aa` and `oh` while its voice is
 heard, `happy` after an answer, `relaxed`, `surprised` and the looks (`lookUp`, `lookDown`) with
-the states. Any other can be held, as its model asks (`faces` in `pal.json`).
+the states. Any other can be held, as its model asks (`faces` in `pal.json`). A MakeHuman body
+gets them all from MakeHuman's own expression units (below).
 
 ### Its colours
 
 A material may be given another colour by its name: the colour takes the place of the material's
 own, tinting a picture on it as glTF's base colour does. Offered to its model only for the materials
-`colours` in `pal.json` names. A colour cannot lighten a dark picture: a material meant to be
-recoloured is best pale, or plain.
+`colours` in `pal.json` names. Several materials may share a name, and Blender's way of keeping
+names apart (`hair.001`, three digits) is the same name: a doll's three hairstyles, each its own
+picture, are all its `hair` (`spatiand_voice::figure::material_name`). A colour cannot lighten a
+dark picture: a material meant to be recoloured is best plain, or its picture grey -- only its
+light and shade -- with its own colour as the material's base colour, which a colour asked for
+then takes the place of (as the doll below).
 
 ### Not read
 
@@ -209,6 +222,53 @@ not there is answered with the ones that are, for the model to choose again.
 SpatiPal keeps the look in `look.json` and tells the room, through `spatiand_assist_v1`'s `avatar`
 (the protocol's notes, `crates/spatiand-proto/protocol/spatiand-xr-v1.xml`, have its fields).
 
+## Moves and poses made from words: `make_move`
+
+For a figure with a body, its models also get `make_move` (`crates/spatipal/src/moves.rs`; the
+owner, 2026-11-19, of hemera's motion model: "build the Spatiand side"): anything a person's body
+can do that is not one of its moves or poses -- a cartwheel, a bow, kneeling, standing on one leg
+-- is made by hemera from words and kept, to be done again by its name.
+
+| `kind` | | Kept as |
+|---|---|---|
+| `move` | done once, now; then it stands as before | `moves/<name>.json` |
+| `pose` | a position held until another, or none -- its words say how it is while in it, not how it gets there | `poses/<name>.json` |
+| `idle` | a quiet loop, how it stands whenever nothing else happens | `moves/idle.json` |
+| `forget` | lets one it made go, by its name | -- |
+
+- **The words** are hemera's HY-Motion's: one or two actions of "a person", in English, only the
+  body ("a person kneels on one knee", "a person spins around twice with both arms out"); 1 to 10
+  seconds, 3 or 4 by default. Each file keeps the words and the seed, which make it again exactly;
+  80-300 KB each, synchronised with the pal.
+- **Made** in about 7 s; 35-45 s more when hemera has first to load its model (21 GB, unloaded
+  after ten idle minutes). The tool answers at once that it is not ready yet and that the pal will
+  do it by itself the moment it is, and to answer in character that it is about to: told only to
+  say something meanwhile, a 4B said "there you go" 45 s before the move came; told "then you do
+  it", both models acted it out at once ("I'm standing on one leg now", "... there! Did you see
+  that?"). Now: "Hold onto your virtual seats", "One second, I'm learning that spin!"
+- **Done** as it comes: a move played once, a pose held (and kept in `look.json`), an idle the
+  figure's from then on. Several may be made at once, each done as it comes. A pose still being
+  made is not taken once another pose or move is asked for after it, or another pose taken -- it
+  is kept, to take by its name later ("Actually no, just put your hands on your hips": the pose
+  asked first came 7 s later, and was kept, not taken). Let go of while it is made, it is not kept.
+  Made for a pal no longer in the room, it is kept for that pal and not done.
+- **Not made again**: a name it has already -- its own, the figure's, a pose by name -- is done at
+  once, and so is the only one whose name has all the words of the name asked ("hips":
+  `hands_on_hips`). After one move was made, the small model made the next it was asked for the
+  same way, though it was one of its poses.
+- **Played by the room** (`crates/spatiand/src/motion.rs`) as the figure's own animations, made
+  from the motion -- SMPL's 22 joints onto the body the room finds in the figure (above): each
+  limb first brought from its rest to where it points in a T-pose, then turned as the motion turns
+  it; the body and head as they are; a hand with its forearm (the motion has no fingers); the hips
+  moved by the figure's leg over SMPL's, within half a leg of where it stands. A move fades in and
+  out as the figure's own do, and a pose of words lies over it. A made one of the same name as the
+  figure's own is the one done.
+
+`appearance`'s moves and poses list the ones made ("a move of your own, made from words"). Every
+turn's note tells the model that its body can do anything asked of it, by one of its moves or
+poses or a new one made with `make_move`, never "I cannot": told only by the tool's description,
+the small model still refused a backflip.
+
 ## Making a figure
 
 Any GLB or VRM that keeps to the above. Three ways:
@@ -219,9 +279,12 @@ Any GLB or VRM that keeps to the above. Three ways:
 - **VRoid Studio and the like** make VRMs with expressions and spring bones (spring bones are not
   simulated: hair stays where its bones put it). A VRM's licence is in its meta (`VRMC_vrm.meta`,
   0.x's `meta`): many forbid violent or sexual use, or use by anyone but their author.
+- **A doll from MakeHuman**, in Blender: one body, clothes and hair fitted over it as layers,
+  MakeHuman's own faces, colours that change. How one was made so on deepmagpie, 2026-11-19 and
+  20, is below ("A doll from MakeHuman").
 - **On hemera**, from words to a picture to a mesh, then Blender. How one figure was made so, on
   deepmagpie on 2026-11-19 -- five looks, each with its own clothes and hair, 32 animations, one
-  3.5 MB GLB:
+  3.5 MB GLB (a mesh a look, its clothes part of its skin: replaced by a doll the same day):
 
 ### From hemera
 
@@ -281,6 +344,67 @@ triangles.
 
 The scripts for that figure are its owner's and are not here; the steps are all there is to them.
 
+### A doll from MakeHuman
+
+[MPFB](https://static.makehumancommunity.org/mpfb.html) 2 (MakeHuman's Blender extension; 2.0.18
+in Blender 5.3 on deepmagpie), its body and its assets -- clothes, hair, brows, lashes, eyes,
+skins, made for its body, each with its own fitting and weights -- scripted with
+`blender -b --python`. The steps:
+
+1. **The body**: `HumanService.create_human()`, its shape by macros
+   (`HumanObjectProperties.set_value`: gender, age, muscle, weight, height, proportions, the
+   ethnic mix...) and `TargetService.reapply_macro_details`; a skin
+   (`HumanService.set_character_skin`, `GAMEENGINE`); the **`game_engine` skeleton**
+   (`HumanService.add_builtin_rig`): 53 bones, `pelvis` up `spine_01`-`03` to `neck_01` and
+   `head`, `clavicle`/`upperarm`/`lowerarm`/`hand` and fingers, `thigh`/`calf`/`foot`/`ball`,
+   which the room finds a body in by its shape.
+2. **Layers**: eyes, brows, lashes, then each hairstyle and each outfit's garments,
+   `HumanService.add_mhclo_asset(..., subdiv_levels=0)`, their Subdivision modifiers taken off;
+   each object named `hair=<style>` or `outfit=<look>` (several garments of one look are
+   `outfit=<look>.001`, `.002`...); an empty `outfit=none`. Each garment pushed out along its
+   normals by **4 mm**: fitted exactly, the skin showed through where it bends. **Nothing
+   hidden**: MPFB hides the body under clothes with Mask modifiers by its delete-groups; they are
+   taken off, so every outfit -- and none -- is over the whole body.
+3. **Made lighter**: the targets baked (`TargetService.bake_targets`), helpers taken off
+   (`ExportService.bake_modifiers_remove_helpers`), the body decimated to half (6700 vertices)
+   before it is rigged further; layers as they are.
+4. **Faces from MakeHuman's expression units**, which MPFB ships as targets
+   (`targets/expression/units/<african|asian|caucasian>/`): an eye closed, opened or narrowed, the
+   brows up, down or in, the mouth open, its corners pulled, pursed, pushed out, pressed... --
+   sculpted for this body. Each is read on the whole body, before it is made lighter
+   (`TargetService.load_target`, then the shape key's distance from the rest), blended by the
+   body's ethnic mix as MakeHuman blends them. Each face is a mix of units, made a shape key of the
+   lighter body vertex by vertex from **the four nearest of the whole body's that face the same
+   way**, by nearness -- and of the brows and lashes, which lie on the skin, from the nearest.
+   From the nearest alone, where the lips meet (the upper's inside facing down, the lower's up, a
+   hair apart) an open mouth grew fangs, and a kiss creased the cheek. The faces made:
+   `blink` (both eyes closed), `aa` (the mouth open), `oh` (open and pursed), `happy`, `relaxed`,
+   `surprised` -- the room's -- and `smile`, `grin`, `wink`, `pout`, `kiss`, `angry`, `sad`,
+   `eyebrow_raise` to hold. A new shape key from the rest shape (`from_mix=False`): MPFB pins the
+   last made, and from the mix the second took the first in whole. Made by hand instead -- a jaw
+   turned about a hinge placed by the head bone, lids turned about the eyes -- the mouth bent the
+   cheeks (the game skeleton's head bone is not where the old figure's was) and the lashes tore
+   from the lids.
+5. **Materials, simply**: the base colour's picture and transparency where it is cut out (hair,
+   brows, lashes, as PNG); everything else opaque (JPEG); no normal maps; pictures 1024 pixels at
+   most for the skin, 512 for clothes, 256 for hair (a picture's size is 0 until it is loaded:
+   load it before scaling it). **Colours that change**: each hairstyle's material named `hair`,
+   each garment's by what it is (`dress`, `top`...; `pal.json`'s `colours` say which); its
+   picture made grey (its light, against its brightest 5%), its average colour -- times a tint
+   the outfit asks for -- the material's base colour, through a Mix node set to Multiply, which
+   the exporter writes as glTF's base colour factor. It looks as it did; a colour asked for
+   takes the place of the base colour.
+6. **Animations**: each a Blender action of poses in the figure's own frame (as with the figure
+   from hemera, below), every animation an NLA track of its name.
+7. **Exported**: GLB, `export_animation_mode='NLA_TRACKS'`, `export_frame_step` 4, deforming
+   bones only, no vertex colours, `export_morph=True`, **`export_morph_normal=False`** (the room
+   moves only the positions; the normals were half the faces' bytes); Blender writes shape keys as
+   sparse accessors -- only the vertices they move -- which the room reads.
+
+Size, against spatiand-sync's 4 MB: 3.9 MB for one body, three hairstyles, six outfits of one to
+three garments, 32 animations and 14 faces -- the pictures 0.8 MB of it, the faces 0.1. Blender's
+own start (a cube, a camera, a light) is deleted first: it was exported with the doll.
+
 ## Trying one
 
 - **A made-up figure to pose**: `blender -b --python tools/mannequin.py -- /tmp/mannequin.glb`
@@ -309,6 +433,11 @@ The scripts for that figure are its owner's and are not here; the steps are all 
   appearance` asks the small model, with a made-up pal and SpatiPal's own system message and
   tools, to change its clothes and twirl, and to get into its pyjamas (2026-11-19, `neohorse-1:4b`:
   `appearance({"move":"spin","outfit":"dress"})` and `appearance({"outfit":"pyjamas"})`, 1.5 s).
+  The same way: `own_pose` (eleven poses asked for, by name or to be made), `make_move` (moves,
+  a pose, an idle, a forget, and what it says while one is made), `body_is_quick` (what it is
+  asked to do with its body, and in the room, goes to the quick model, or the quick model is
+  already doing it), `does_the_next` (having done one thing with a tool, it does the next with
+  one too). `SPATIPAL_TEST_MODEL=Qwen3.8:27b-q3` for the larger model.
 
 ## What was checked (2026-11-19)
 
@@ -368,3 +497,33 @@ Not checked: in the glasses; on the Deck, the Mac and the Beam Pro (the same cod
 built on littleotter only when the owner says so); a VRM with a skeleton (there is still none on
 any machine); a figure of separate clothes over one body; a pal's voice (the snapshot room's
 SpatiPal was silent).
+
+## What was checked (2026-11-20)
+
+On deepmagpie, overnight, with the owner away (his words: "make sure you use the time to make this
+feature polished.. nothing left over, no bug untested"):
+
+- **Against hemera** (`cargo test -p spatipal -- --ignored --test-threads 1 ...`), the small model
+  and, where it applies, `Qwen3.8:27b-q3`: `own_pose` 11 of 11 for both (the small model then 16
+  runs in a row after a single miss); `make_move` 7 of 7 for both, and what each then says while
+  it is made, in character and not claiming it done; `body_is_quick` 16 requests three times
+  each, each kept with the quick model or already done by it; `does_the_next` 5 follow-ups three
+  times each, each done with a tool; `appearance`.
+- **In the snapshot room, SpatiPal typed to**, with a made-up pal on a mannequin: a pose made from
+  words and held (44 s, hemera loading first); "forget it" while a move was made (made in 40.7 s,
+  not kept, not done); another pose taken while one was made (the late one kept, not taken);
+  "Forget that ... a cartwheel instead" (both made at once, the pose not taken, the cartwheel
+  done); five turns of windows and poses, a pose asked of `make_move` by a name it had done at
+  once; hemera refusing the first ask (a stand-in) -- asked again, and done.
+- **A doll from MakeHuman**, as above: each look, each hairstyle given a colour (red, red, blonde),
+  a sweater green, a dress blue with black shoes, a two-piece swimsuit white, in the snapshot
+  room; its faces in Blender's close-ups (each of the fourteen) and the room's own (talking, a
+  held wink, surprise); a made-up pal on it asked "Dye your hair red", "Give me a wink", "Put on
+  your swimsuit, and make it white" -- each done by `appearance`. Its figure checked by its
+  numbers and dressed only.
+- `cargo test -p spatipal` (55), `-p spatiand-voice`, `-p spatiand` (534); clippy; the Beam Pro's
+  `cargo ndk check` of `spatiand-android`, SpatiPal and spatiand-voice.
+
+Not checked: in the glasses; a pal's voice saying what it does while a move is made (the
+snapshot room's SpatiPal is silent); feet planted in a move hemera makes (its figures slide when
+they turn or travel); fingers (not in hemera's motions).
