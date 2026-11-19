@@ -11,19 +11,23 @@
 //! The way through:
 //!
 //! 1. [`Played`]: what was handed to the room, on a timeline of 16 kHz samples, with when it
-//!    began to be heard.
+//!    began to be heard -- its voice as the room really played it: what a cut dropped is not kept.
 //! 2. [`MicClock`]: the microphone on the same timeline, from when its pieces arrive.
 //! 3. [`DelayFinder`]: how long the room, the sound device, the air and the microphone take
 //!    between the two -- 50 ms to a second, unknown and not the same on any two machines --
-//!    found by matching the loudness of the two over the last four seconds.
+//!    found by matching the loudness of the two over the last four seconds, every delay on the
+//!    same second or more of its voice.
 //! 4. [`Canceller`]: an adaptive filter, frequency domain and in partitions (the same family as
 //!    Speex's and WebRTC's), that learns the path from what was played to what the microphone
 //!    hears -- the room's spatial filters, the speakers, the frame of the glasses -- and takes it
 //!    away. It learns only while the wearer is quiet.
-//! 5. [`Gate`]: what is left is the wearer's when it is a voice (a pitch), well above the room's
-//!    own floor, and well above what is left of the assistant's voice -- which it learns as it
-//!    goes: how loud what is left is for how loud the voice played was, the loud end of it.
-//! 6. [`BargeIn`]: enough of that, close enough together, while it is speaking, and it stops.
+//! 5. [`Gate`]: what is left is the wearer's when it is a voice (a speaking pitch, held from one
+//!    block to the next: not a key's click, not a ring), well above the room's own floor, and
+//!    well above what is left of the assistant's voice -- which it learns as it goes: how loud
+//!    what is left is for how loud the voice played was, the loud end of it.
+//! 6. [`BargeIn`]: enough of that, running long enough, **while its voice is heard**, and it
+//!    stops. Busy and silent -- a sentence being made, a model writing or thinking -- nothing
+//!    the room hears stops it: there is no voice of its own to speak over.
 //!
 //! Everything works in blocks of [`BLOCK`] samples (16 ms).
 
@@ -196,6 +200,22 @@ impl Played {
     pub fn played_since(&self, index: u64) -> bool {
         self.end > index
     }
+
+    /// Nothing from `at` on was heard after all: what was handed over and then dropped -- the
+    /// voice stopped mid-word, the room told to forget what it had not played -- is not kept as
+    /// played. Kept, the canceller takes away an echo that never comes (it "went wrong", adding
+    /// what it meant to take away, after every interruption) and the delay is matched against
+    /// sound no one heard. What was heard before `at` stays, all of it.
+    pub fn cut(&mut self, at: Instant) {
+        let from = self.index_at(at);
+        if from >= self.end {
+            return;
+        }
+        for i in from..self.end.min(from + RING as u64) {
+            self.ring[i as usize % RING] = 0.0;
+        }
+        self.end = from;
+    }
 }
 
 // --- the microphone's clock ---
@@ -256,7 +276,8 @@ impl MicClock {
 /// How long between a sample played and its echo in the microphone, in blocks, found by matching
 /// their loudness: the log of each block's energy, the microphone's against the played's at
 /// each delay up to a second, over the last four seconds. Asked again every half second while
-/// there is voice to match; believed when the match is good, and the same twice running.
+/// there is a second of its voice to match; believed when the match is good, and the same twice
+/// running; once found, moved only for a delay that matches clearly better.
 pub struct DelayFinder {
     mic: VecDeque<f32>,
     played: VecDeque<f32>,
@@ -267,6 +288,10 @@ pub struct DelayFinder {
 }
 
 const HISTORY: usize = 256;
+/// How many blocks of its voice a match is made on, at the least: a second of it. On fewer -- the
+/// last of a sentence leaving the history -- one of the 65 delays tried matched as well as 0.68 by
+/// chance, the room's typing in the microphone.
+const MATCHED: usize = 64;
 
 impl Default for DelayFinder {
     fn default() -> Self {
@@ -293,10 +318,20 @@ impl DelayFinder {
             return false;
         }
         self.since = 0;
-        let Some((lag, r)) = self.best() else { return false };
+        let Some(matches) = self.matches() else { return false };
+        let (lag, r) = matches.iter().copied().enumerate().fold((0, f32::MIN), |b, (l, r)| if r > b.1 { (l, r) } else { b });
         self.confidence = r;
         if r < 0.45 {
             return false;
+        }
+        // Found already, it stays unless another delay matches clearly better than it still does:
+        // with the room loud -- typing -- the best match wanders by chance.
+        if let Some(d) = self.delay {
+            let still = matches[d.saturating_sub(1)..=(d + 1).min(MOST_DELAY)].iter().copied().fold(f32::MIN, f32::max);
+            if r < still + 0.1 {
+                self.candidate = None;
+                return false;
+            }
         }
         let agreed = self.candidate.is_some_and(|c| c.abs_diff(lag) <= 1);
         self.candidate = Some(lag);
@@ -309,31 +344,28 @@ impl DelayFinder {
         false
     }
 
-    /// The delay that matches best, and how well (a correlation, -1 to 1). Only blocks where
-    /// something loud enough was played count: silence matches everything.
-    fn best(&self) -> Option<(usize, f32)> {
-        let n = self.mic.len();
+    /// How well each delay matches, 0 to [`MOST_DELAY`] blocks (a correlation, -1 to 1). Only
+    /// blocks where something loud enough was played count: silence matches everything.
+    ///
+    /// **Every delay is judged on the same blocks played**: those whose echo is in the history
+    /// at any delay looked for. Each judged on its own blocks -- the microphone's newest against
+    /// what was played that long before -- a voice that had stopped left the short delays first,
+    /// as it went out of the history: with too few blocks they were not judged at all, and a long
+    /// one, matching the last of its voice against a microphone with only the room in it, won by
+    /// chance -- twice running, on much the same blocks -- and was believed (its voice back after
+    /// 432 ms rather than 120 in a test; on the owner's Mac 160 ms, then 944, five seconds apart).
+    fn matches(&self) -> Option<Vec<f32>> {
         let mic: Vec<f32> = self.mic.iter().copied().collect();
         let played: Vec<f32> = self.played.iter().copied().collect();
-        let loudest = played.iter().copied().fold(f32::MIN, f32::max);
+        let reach = played.len().saturating_sub(MOST_DELAY);
+        let loudest = played[..reach].iter().copied().fold(f32::MIN, f32::max);
         // Blocks within 40 dB of the loudest played.
         let floor = loudest - 4.0;
-        let active = played.iter().filter(|&&p| p > floor).count();
-        if active < 30 {
+        let active: Vec<usize> = (0..reach).filter(|&j| played[j] > floor).collect();
+        if active.len() < MATCHED {
             return None;
         }
-        let mut best: Option<(usize, f32)> = None;
-        for lag in 0..=MOST_DELAY {
-            let pairs: Vec<(f32, f32)> = (MOST_DELAY..n).filter(|&k| played[k - lag] > floor).map(|k| (mic[k], played[k - lag].max(floor))).collect();
-            if pairs.len() < 24 {
-                continue;
-            }
-            let r = correlation(&pairs);
-            if best.is_none_or(|(_, b)| r > b) {
-                best = Some((lag, r));
-            }
-        }
-        best
+        Some((0..=MOST_DELAY).map(|lag| correlation(&active.iter().map(|&j| (mic[j + lag], played[j])).collect::<Vec<_>>())).collect())
     }
 }
 
@@ -519,7 +551,9 @@ fn bands_of(fft: &Fft, before: &[f32], now: &[f32]) -> Bands {
 /// band is learnt from what was left for what was played, the loud end of it, whatever the
 /// canceller managed. A clock that drifts, a path that changes as the head turns, small
 /// speakers that distort -- the canceller takes less away, the gate learns that, and asks more
-/// of the wearer.
+/// of the wearer. And a voice: repeating at a speaking pitch, and holding it from one block to
+/// the next -- a key's click repeats as a voice does, and rings at a pitch of its own for a few
+/// hundredths of a second, a spring's or a cup's faster than any voice.
 pub struct Gate {
     /// The quietest in each band in half-second steps, the last eight seconds: the room's floor --
     /// long enough that a stretch of the wearer and its voice together is not taken for it.
@@ -531,24 +565,37 @@ pub struct Gate {
     ratios: Vec<VecDeque<f32>>,
     /// The same for the microphone as it came, before the canceller.
     raw: Vec<VecDeque<f32>>,
+    /// The period the block before repeated at, in samples, when it was voiced.
+    period: Option<usize>,
+    /// For the log: the block rang, faster than a voice.
+    pub rings: bool,
     /// For the log: the block's level, the floor, what was expected of its voice (a sample's
-    /// power, over the speech bands), how much like a voice it was, and how much of it was more
-    /// than its voice.
+    /// power, over the speech bands), how much like a voice it was and how much it held the
+    /// pitch of the block before, and how much of it was more than its voice.
     pub level: f32,
     pub floor: f32,
     pub expected: f32,
     pub voiced: f32,
+    pub held: f32,
     pub excess: f32,
     /// How much the canceller has been taking away of its voice, dB, smoothed over a second or so.
     pub taken: f32,
 }
 
+/// How strongly a block must repeat at a speaking pitch to be voiced: as strongly at the pitch the
+/// block before had, for a voice held from one block to the next.
+const VOICED: f32 = 0.4;
+
 /// How far above the loud end of its voice a band must be to be more than it: after the
 /// canceller (what is left of its voice varies most), and in the microphone as it came.
 const FINE_MARGIN: f32 = 3.0;
 const RAW_MARGIN: f32 = 2.0;
-/// What a band needs to have learnt before what is left of its voice there is known.
-const RATIOS_NEEDED: usize = 40;
+/// What a band needs to have learnt before what is left of its voice there is known: a second and
+/// a quarter of its voice. Of forty blocks -- just after the canceller started again -- the loud
+/// end was the fourth loudest, too few to stand for it: its next loud syllable was heard as the
+/// wearer (its voice squashed by small speakers, louder than it played). And not the loudest
+/// either: a key's click while it spoke, in a band its voice hardly reaches, expected a roar there.
+const RATIOS_NEEDED: usize = 80;
 /// Below this, a band of what was played is nothing: what it plays is exact, so its silence is.
 const PLAYED_NOTHING: f32 = 1e-10;
 
@@ -566,10 +613,13 @@ impl Gate {
             blocks: 0,
             ratios: (0..BANDS).map(|_| VecDeque::new()).collect(),
             raw: (0..BANDS).map(|_| VecDeque::new()).collect(),
+            period: None,
+            rings: false,
             level: 0.0,
             floor: 0.0,
             expected: 0.0,
             voiced: 0.0,
+            held: 0.0,
             excess: 0.0,
             taken: 0.0,
         }
@@ -588,9 +638,11 @@ impl Gate {
 
     /// One block: what is left in each band (`left`), the loudest played in each band around
     /// where its echo would be (`played`; `None` while where is not known and anything played
-    /// may be heard), and the block's samples with the one before (for its pitch). Whether it is
-    /// the wearer's voice.
-    pub fn block(&mut self, left: &Bands, mic: &Bands, played: Option<&Bands>, playing: bool, unsure: bool, before: &[f32], now: &[f32]) -> Verdict {
+    /// may be heard), whether anything was (`playing`), whether what is left of its voice is to
+    /// be learnt from this block (`learn`: where its echo is believed to be), and the block's
+    /// samples with the one before (for its pitch). Whether it is the wearer's voice.
+    #[allow(clippy::too_many_arguments)]
+    pub fn block(&mut self, left: &Bands, mic: &Bands, played: Option<&Bands>, playing: bool, learn: bool, unsure: bool, before: &[f32], now: &[f32]) -> Verdict {
         for b in 0..BANDS {
             self.quietest[b] = self.quietest[b].min(left[b]);
         }
@@ -609,7 +661,18 @@ impl Gate {
             }
         }
         let floor = floor.map(|f| f.clamp(1e-12, 1.0));
-        let voiced = voicing(before, now);
+        // A voice, not a click: voiced, and holding the pitch the block before had. Voiced alone
+        // a key's click is, as often as not -- the ringing of the key and the desk under it
+        // repeats as a voice does, and its loudness fading does not lower how alike it is to
+        // itself -- and typing a question was heard as the wearer speaking, in every turn (the
+        // owner's Mac, 2026-11-19: "voiced 0.40" to "0.77"). A click rings at its own pitch for a
+        // few hundredths of a second, the next at another; a voice holds one, a syllable long.
+        let pitch = voicing(before, now, self.period);
+        let (voiced, held) = (pitch.voiced, pitch.held);
+        let voiced_like = voiced > VOICED && !pitch.rings;
+        self.period = voiced_like.then_some(pitch.period);
+        let steady = voiced_like && held > VOICED;
+        self.rings = pitch.rings;
         // Against what is left after the canceller, and against the microphone as it came:
         // the first is sensitive, the second does not depend on the canceller having kept up.
         // What was played, each band at least a thousandth of the loudest: a band it hardly plays
@@ -629,12 +692,13 @@ impl Gate {
         self.floor = fine.floors;
         self.expected = fine.expected;
         self.voiced = voiced;
+        self.held = held;
         self.excess = if fine.total > 0.0 { fine.more / fine.total } else { 0.0 };
         // Speaking over its voice: the microphone well above its voice, whatever the canceller
         // made of it. The canceller does not learn then, and neither does this.
         let over = raw.bands_more >= 2 && raw.more > 0.2 * raw.total;
         // How much the canceller has been taking away, while only its voice was heard, for the log.
-        if playing && !over && raw.total > 4.0 * raw.floors {
+        if learn && !over && raw.total > 4.0 * raw.floors {
             let taken = 10.0 * (raw.total / fine.total.max(1e-12)).log10();
             self.taken += (taken.clamp(-10.0, 40.0) - self.taken) * 0.03;
         }
@@ -644,10 +708,10 @@ impl Gate {
         // sentence began, were then heard as the wearer four times in a minute and a half (real
         // speech, 2026-11-15). So the canceller makes the wearer's words clearer for Whisper, and
         // the decision to stop rests on the microphone well above its own voice.
-        let voice = fine.total > 6.0 * fine.floors && fine.bands_more >= 3 && fine.more > 0.3 * fine.total && voiced > 0.4 && (over || !playing);
+        let voice = fine.total > 6.0 * fine.floors && fine.bands_more >= 3 && fine.more > 0.3 * fine.total && steady && (over || !playing);
         if let (Some(p), false) = (played, over || voice) {
             for b in 0..BANDS {
-                if playing && p[b] > PLAYED_NOTHING {
+                if learn && p[b] > PLAYED_NOTHING {
                     for (ratios, heard) in [(&mut self.ratios[b], left[b]), (&mut self.raw[b], mic[b])] {
                         ratios.push_back(heard / p[b]);
                         if ratios.len() > 300 {
@@ -714,13 +778,33 @@ fn percentile(values: &VecDeque<f32>, p: f32) -> f32 {
     v[((v.len() - 1) as f32 * p) as usize]
 }
 
-/// How much like a voice a block is: its strongest repetition at a speaking pitch (80-400 Hz),
-/// 0 to 1, over the block and the one before.
-fn voicing(before: &[f32], now: &[f32]) -> f32 {
+/// How much like a voice a block is, over the block and the one before.
+struct Pitch {
+    /// Its strongest repetition at a speaking pitch (80-400 Hz), 0 to 1.
+    voiced: f32,
+    /// The period it repeats at most strongly there, in samples.
+    period: usize,
+    /// How strongly it repeats at the block before's period, give or take a twentieth (a voice's
+    /// pitch glides, and its period's multiples are as strong as the period).
+    held: f32,
+    /// It repeats as strongly, or nearly, at a period shorter than any voice's: a ring -- a key's
+    /// spring, a cup -- at a kilohertz or more, which repeats at every multiple of its own period,
+    /// and so at a speaking pitch's too. A voice's period is the shortest it repeats at.
+    rings: bool,
+}
+
+/// The shortest period looked at for a ring, in samples: 2 kHz; and how like itself a ring is, at
+/// the least.
+const FASTEST: usize = RATE as usize / 2000;
+const RINGS: f32 = 0.6;
+
+fn voicing(before: &[f32], now: &[f32], held: Option<usize>) -> Pitch {
     let x: Vec<f32> = before.iter().chain(now).copied().collect();
     let n = x.len();
-    let mut best = 0.0f32;
-    for lag in (RATE as usize / 400)..=(RATE as usize / 80) {
+    let (shortest, longest) = (RATE as usize / 400, RATE as usize / 80);
+    let mut alike = vec![0.0f32; longest + 1];
+    let (mut best, mut period) = (0.0f32, shortest);
+    for lag in FASTEST - 1..=longest {
         let (mut ab, mut aa, mut bb) = (0.0f32, 0.0f32, 0.0f32);
         for i in 0..n - lag {
             ab += x[i] * x[i + lag];
@@ -728,16 +812,29 @@ fn voicing(before: &[f32], now: &[f32]) -> f32 {
             bb += x[i + lag] * x[i + lag];
         }
         if aa > 0.0 && bb > 0.0 {
-            best = best.max(ab / (aa * bb).sqrt());
+            alike[lag] = ab / (aa * bb).sqrt();
+            if lag >= shortest && alike[lag] > best {
+                (best, period) = (alike[lag], lag);
+            }
         }
     }
-    best
+    let held = held.map_or(0.0, |p| {
+        let slack = p / 20 + 1;
+        alike[p.saturating_sub(slack).max(shortest)..=(p + slack).min(longest)].iter().copied().fold(0.0, f32::max)
+    });
+    // A peak (not the slope down from no lag at all, which a low voice has) at a period too short
+    // for a voice, strong -- a ring is very like itself, its fading undone by the measure; two
+    // voices at once, its and the wearer's, are not, and a formant of theirs peaks there weakly --
+    // and as strong as the best at a speaking pitch.
+    let rings = (FASTEST..shortest).any(|l| alike[l] >= alike[l - 1] && alike[l] >= alike[l + 1] && alike[l] > RINGS.max(best - 0.1));
+    Pitch { voiced: best, period, held, rings }
 }
 
 // --- deciding to stop ---
 
 /// The wearer has begun speaking over it: enough blocks of voice, close enough together, while
-/// it speaks -- [`NEEDED`] of the last [`WINDOW`], [`RUN`] of them running.
+/// its voice is heard -- [`NEEDED`] of the last [`WINDOW`], [`RUN`] of them running (80 ms of a
+/// pitch held: a syllable; a key's click rings for less).
 #[derive(Default)]
 pub struct BargeIn {
     recent: VecDeque<bool>,
@@ -746,7 +843,7 @@ pub struct BargeIn {
 
 pub const WINDOW: usize = 16;
 pub const NEEDED: usize = 6;
-pub const RUN: usize = 3;
+pub const RUN: usize = 5;
 
 impl BargeIn {
     /// One block: whether it is speaking (or about to), and whether the gate heard a voice. `true`
@@ -877,25 +974,14 @@ impl Echo {
             // What was left before is no guide to what will be.
             self.gate.forget_voice();
         }
-        // Where its echo would be: a little before the delay to a little after, for the room's
-        // own tail; anywhere in the last second while the delay is not known.
+        // What it played in the last second as the microphone hears this block: its voice may be
+        // in it, at any delay looked for. And where its echo would be once the delay is known: a
+        // little before the delay to a little after, for the room's own tail.
+        let second = self.loudest(played, index, 0..=MOST_DELAY);
         let window = match self.delay.delay {
-            Some(d) => d.saturating_sub(3)..=d + 10,
-            None => 0..=MOST_DELAY,
+            Some(d) => self.loudest(played, index, d.saturating_sub(3)..=d + 10),
+            None => second,
         };
-        let mut loudest = [0.0f32; BANDS];
-        let mut playing = false;
-        for b in window {
-            let start = lag(b);
-            if !played.played_since(start) {
-                continue;
-            }
-            let bands = self.played_bands(played, start);
-            playing |= bands.iter().any(|p| *p > PLAYED_NOTHING);
-            for k in 0..BANDS {
-                loudest[k] = loudest[k].max(bands[k]);
-            }
-        }
         let mut left = vec![0.0; BLOCK];
         match self.delay.delay {
             Some(d) => {
@@ -903,7 +989,7 @@ impl Echo {
                 played.read(lag(d.saturating_sub(LEAD)), &mut x);
                 let mut echo = vec![0.0; BLOCK];
                 // Learning needs something played, and the wearer quiet: the gate's last word.
-                let learn = playing && !self.over;
+                let learn = window.is_some() && !self.over;
                 self.canceller.block(&x, mic, learn, &mut left, &mut echo);
             }
             None => left.copy_from_slice(mic),
@@ -916,27 +1002,66 @@ impl Echo {
         // so that there is no echo to find.
         // But not before it has played for longer than any delay looked for: what is learnt of
         // its voice before its echo can have come back is nothing, and the echo then a roar.
-        if playing {
+        if window.is_some() {
             self.played_blocks += 1;
         }
         let window_full = self.delay.delay.is_some() || self.played_blocks > MOST_DELAY + 8;
-        let verdict = self.gate.block(&left_bands, &mic_bands, window_full.then_some(&loudest), playing, self.delay.delay.is_none(), &self.before, &left);
+        // Where the delay's window holds nothing it played but the last second does, the whole
+        // second stands for what may be heard, as before the delay was known: a delay can be
+        // wrong -- matched by chance, as on the owner's Mac (160 ms, then 944 ms, five seconds
+        // apart) -- and its voice then comes back where nothing was expected of it, a voice like
+        // the wearer's. Only where the window holds it is what is left of its voice learnt.
+        let (heard, unsure) = match (window, second) {
+            (Some(w), _) => (Some(w), self.delay.delay.is_none()),
+            (None, s) => (s, true),
+        };
+        let playing = heard.is_some();
+        let loudest = heard.unwrap_or([0.0; BANDS]);
+        let verdict = self.gate.block(&left_bands, &mic_bands, window_full.then_some(&loudest), playing, window.is_some(), unsure, &self.before, &left);
         self.over = verdict.over;
         let voice = verdict.voice;
         self.before.copy_from_slice(&left);
         self.before_mic.copy_from_slice(mic);
-        let barge_in = self.barge.block(speaking, voice);
+        // **Only while its voice is heard** -- something it played in the last second, as the
+        // microphone hears it -- can the wearer be speaking over it. Busy and silent (a sentence
+        // being made, the model writing, the larger one thinking: its soft tone is not its voice,
+        // and is not kept with it) there is nothing to speak over, and what the room heard then
+        // -- typing the question -- stopped every answer before it was heard (the owner's Mac,
+        // 2026-11-19: "its voice expected -120.0 dB", nothing played to expect).
+        let barge_in = self.barge.block(speaking && second.is_some(), voice);
         let db = |v: f32| if v == f32::MAX { f32::INFINITY } else { 10.0 * (v + 1e-12).log10() };
         self.last = format!(
-            "taken away {:.1} dB, left {:.1} dB, floor {:.1} dB, its voice expected {:.1} dB, {:.0}% more than it, voiced {:.2}",
+            "taken away {:.1} dB, left {:.1} dB, floor {:.1} dB, its voice expected {:.1} dB, {:.0}% more than it, voiced {:.2}{}, its pitch held {:.2}{}",
             self.gate.taken,
             db(self.gate.level),
             db(self.gate.floor),
             db(self.gate.expected),
             self.gate.excess * 100.0,
-            self.gate.voiced
+            self.gate.voiced,
+            if self.gate.rings { " (a ring, faster than a voice)" } else { "" },
+            self.gate.held,
+            if second.is_some() { "" } else { ", nothing of its voice heard" }
         );
         Heard { left, voice, barge_in }
+    }
+
+    /// The loudest it played in each band in the blocks `blocks` before `index` (0 the block
+    /// itself), if it played anything there.
+    fn loudest(&mut self, played: &Played, index: u64, blocks: std::ops::RangeInclusive<usize>) -> Option<Bands> {
+        let mut loudest = [0.0f32; BANDS];
+        let mut any = false;
+        for b in blocks {
+            let start = index.saturating_sub((b * BLOCK) as u64);
+            if !played.played_since(start) {
+                continue;
+            }
+            let bands = self.played_bands(played, start);
+            any |= bands.iter().any(|p| *p > PLAYED_NOTHING);
+            for k in 0..BANDS {
+                loudest[k] = loudest[k].max(bands[k]);
+            }
+        }
+        any.then_some(loudest)
     }
 
     /// The bands of what was played in the block starting at `start`, kept: the same blocks are
@@ -996,37 +1121,12 @@ impl SimulatedRoom {
             *o = if self.distortion > 0.0 { (self.distortion * s).tanh() / self.distortion } else { s };
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn the_fft_goes_there_and_back() {
-        let fft = Fft::new(16);
-        let original: Vec<C> = (0..16).map(|i| C { re: (i as f32 * 0.7).sin(), im: 0.0 }).collect();
-        let mut x = original.clone();
-        fft.forward(&mut x);
-        fft.inverse(&mut x);
-        for (a, b) in x.iter().zip(&original) {
-            assert!((a.re - b.re).abs() < 1e-5 && a.im.abs() < 1e-5);
-        }
-        // A cosine at bin 3 is there and nowhere else.
-        let mut c: Vec<C> = (0..16).map(|i| C { re: (2.0 * std::f32::consts::PI * 3.0 * i as f32 / 16.0).cos(), im: 0.0 }).collect();
-        fft.forward(&mut c);
-        assert!((c[3].re - 8.0).abs() < 1e-4 && c[5].norm() < 1e-6);
-    }
-
-    /// Something like speech: a voice with a pitch, syllables and pauses, `seed` for which.
-    fn talk(seconds: f32, pitch: f32, seed: u32, rate: u32) -> Vec<f32> {
+    /// Something like speech, at `rate`: a voice with a pitch, syllables and pauses, `seed` for
+    /// which. For tests, its own and the wearer's.
+    pub fn voice(seconds: f32, pitch: f32, seed: u32, rate: u32) -> Vec<f32> {
         let n = (seconds * rate as f32) as usize;
-        let mut s = seed;
-        let mut rand = move || {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            (s >> 8) as f32 / (1 << 24) as f32
-        };
+        let mut rand = random(seed);
         let mut out = Vec::with_capacity(n);
         let mut phase = 0.0f32;
         let mut syllable_left = 0usize;
@@ -1051,6 +1151,74 @@ mod tests {
             out.push(loud * v * 0.25 + (rand() - 0.5) * 0.01 * loud);
         }
         out
+    }
+
+    /// Keys clicking, at 16 kHz, as typing a question puts them into the microphone: each key a
+    /// sharp click, the ringing of the key and the desk under it (a few hundredths of a second, at
+    /// a few hundred hertz to a few kilohertz) and a spring's longer ping, pressed and let go, at
+    /// a quick typist's pace, words with a pause between them. `amplitude` is a click's peak:
+    /// 0.01 puts a key at the loudness of the owner's typing in the glasses' microphone on the Mac,
+    /// below its own voice's echo there (2026-11-19). For tests.
+    pub fn typing(seconds: f32, amplitude: f32, seed: u32) -> Vec<f32> {
+        let n = (seconds * RATE as f32) as usize;
+        let mut out = vec![0.0f32; n];
+        let mut rand = random(seed);
+        let mut t = 0.05f32;
+        let mut keys = 0;
+        while t < seconds {
+            let release = t + 0.05 + 0.06 * rand();
+            for (at, loud) in [(t, 1.0), (release, 0.5)] {
+                let start = (at * RATE as f32) as usize;
+                let mut modes: Vec<(f32, f32, f32)> = (0..3).map(|_| (150.0 + 2500.0 * rand(), 0.003 + 0.015 * rand(), 0.3 + 0.7 * rand())).collect();
+                modes.push((3000.0 + 2000.0 * rand(), 0.03 + 0.02 * rand(), 0.6));
+                let a = amplitude * loud * (0.6 + 0.4 * rand());
+                for i in 0..(0.06 * RATE as f32) as usize {
+                    let Some(o) = out.get_mut(start + i) else { break };
+                    let time = i as f32 / RATE as f32;
+                    let burst = if time < 0.0015 { (rand() - 0.5) * 2.0 * (-time / 0.0005).exp() } else { 0.0 };
+                    let ring: f32 = modes.iter().map(|(f, tau, g)| g * (-time / tau).exp() * (2.0 * std::f32::consts::PI * f * time).sin()).sum();
+                    *o += a * (burst + 0.5 * ring);
+                }
+            }
+            keys += 1;
+            t += if keys % 5 == 0 { 0.3 + 0.4 * rand() } else { 0.09 + 0.15 * rand() };
+        }
+        out
+    }
+}
+
+/// A made-up room's dice: 0 to 1, the same for the same seed.
+fn random(seed: u32) -> impl FnMut() -> f32 {
+    let mut s = seed;
+    move || {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (s >> 8) as f32 / (1 << 24) as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn the_fft_goes_there_and_back() {
+        let fft = Fft::new(16);
+        let original: Vec<C> = (0..16).map(|i| C { re: (i as f32 * 0.7).sin(), im: 0.0 }).collect();
+        let mut x = original.clone();
+        fft.forward(&mut x);
+        fft.inverse(&mut x);
+        for (a, b) in x.iter().zip(&original) {
+            assert!((a.re - b.re).abs() < 1e-5 && a.im.abs() < 1e-5);
+        }
+        // A cosine at bin 3 is there and nowhere else.
+        let mut c: Vec<C> = (0..16).map(|i| C { re: (2.0 * std::f32::consts::PI * 3.0 * i as f32 / 16.0).cos(), im: 0.0 }).collect();
+        fft.forward(&mut c);
+        assert!((c[3].re - 8.0).abs() < 1e-4 && c[5].norm() < 1e-6);
+    }
+
+    fn talk(seconds: f32, pitch: f32, seed: u32, rate: u32) -> Vec<f32> {
+        SimulatedRoom::voice(seconds, pitch, seed, rate)
     }
 
     /// Its voice played through a made-up room, the wearer's (or not) on top, through the whole
@@ -1222,6 +1390,289 @@ mod tests {
         let mut b = BargeIn::default();
         let fired: Vec<bool> = (0..12).map(|_| b.block(true, true)).collect();
         assert_eq!(fired.iter().position(|f| *f), Some(NEEDED - 1));
+    }
+
+    /// What SpatiPal does, turn by turn, as its voice does it (`spatipal::voice`).
+    #[derive(Clone)]
+    enum Part {
+        /// Busy, and nothing heard: a line waits while the model writes and the sentence is made.
+        Wait(f32),
+        /// The larger model thinks: its soft tone every 1.8 s, which the room plays and its
+        /// voice's record does not keep, and nothing waiting to be said.
+        Thinking(f32),
+        /// A sentence, 24 kHz, played in 50 ms slices up to a fifth of a second ahead.
+        Say(Vec<f32>),
+    }
+
+    /// What came of a conversation: when it stopped itself (seconds), each delay its voice was
+    /// found to come back after and when (seconds, ms), and how much of its voice it handed over.
+    struct Conversed {
+        stops: Vec<f32>,
+        delays: Vec<(f32, u32)>,
+        said: f32,
+    }
+
+    /// Turns of [`Part`]s, `gap` seconds of nothing between them (the wearer reading, typing the
+    /// next), through a room that brings its voice back at `gain` after `delay`, on a clock 40
+    /// parts in a million off, with `noise` in the microphone besides (typing), and perhaps the
+    /// wearer from a moment on. A barge-in stops it as `Voice::interrupt` does -- what the room had
+    /// not played is not heard, nor kept as played -- and drops the rest of that turn.
+    fn converse(turns: &[Vec<Part>], gap: f32, gain: f32, delay: f64, noise: &[f32], wearer: Option<(&[f32], f32)>) -> Conversed {
+        let epoch = Instant::now();
+        // What its voice keeps of what it handed over, and what the room really played.
+        let mut played = Played::new(epoch);
+        let mut heard = Played::new(epoch);
+        let room = SimulatedRoom::new(gain, delay, 40.0);
+        let mut echo = Echo::new();
+        let piece = 320;
+        let mut seed = 99u32;
+        let at = |s: f64| epoch + Duration::from_secs_f64(s);
+        // The script as one line of parts, each turn's own, the gaps between them nobody's.
+        let mut script: VecDeque<(Option<usize>, Part)> = VecDeque::new();
+        for (t, turn) in turns.iter().enumerate() {
+            for p in turn {
+                script.push_back((Some(t), p.clone()));
+            }
+            script.push_back((None, Part::Wait(gap)));
+        }
+        let (mut part, mut part_began): (Option<(Option<usize>, Part)>, f64) = (None, 0.0);
+        let (mut heard_by, mut quiet_at, mut next_tone) = (0.0f64, -1.0f64, 0.0f64);
+        let mut slice_at = 0usize;
+        let mut out = Conversed { stops: Vec::new(), delays: Vec::new(), said: 0.0 };
+        let mut mic_at = 0usize;
+        let mut block = 0usize;
+        loop {
+            let now = mic_at as f64 / RATE as f64;
+            // The voice's part: the next when this one is done.
+            let done = match &part {
+                None => true,
+                Some((_, Part::Wait(d) | Part::Thinking(d))) => now - part_began >= *d as f64,
+                Some((_, Part::Say(pcm))) => slice_at >= pcm.len(),
+            };
+            if done {
+                let Some(next) = script.pop_front() else { break };
+                part = Some(next);
+                part_began = now;
+                slice_at = 0;
+            }
+            let (turn, p) = part.as_ref().unwrap();
+            match p {
+                Part::Say(pcm) => {
+                    while slice_at < pcm.len() && heard_by - now < 0.2 {
+                        let slice = &pcm[slice_at..(slice_at + 1200).min(pcm.len())];
+                        heard_by = heard_by.max(now);
+                        played.push(at(heard_by), slice, 24_000);
+                        heard.push(at(heard_by), slice, 24_000);
+                        out.said += slice.len() as f32 / 24_000.0;
+                        heard_by += slice.len() as f64 / 24_000.0;
+                        slice_at += slice.len();
+                    }
+                    quiet_at = heard_by;
+                }
+                Part::Thinking(_) if now >= next_tone && now >= heard_by => {
+                    let mut tone = Vec::new();
+                    for (f, len) in [(523.25f32, 0.16f32), (659.25, 0.22)] {
+                        let n = (len * 24_000.0) as usize;
+                        for i in 0..n {
+                            let e = (std::f32::consts::PI * i as f32 / n as f32).sin().powi(2);
+                            tone.push(0.05 * e * (2.0 * std::f32::consts::PI * f * i as f32 / 24_000.0).sin());
+                        }
+                        tone.extend(std::iter::repeat(0.0).take(1200));
+                    }
+                    heard.push(at(now), &tone, 24_000);
+                    heard_by = now + tone.len() as f64 / 24_000.0;
+                    quiet_at = heard_by;
+                    next_tone = now + 1.8;
+                }
+                _ => {}
+            }
+            // Busy as `Voice::busy` is: a line waiting, or heard less than a moment ago.
+            let waiting = turn.is_some() && matches!(p, Part::Wait(_) | Part::Say(_));
+            let busy = waiting || now < quiet_at + 0.35;
+            let mut mic = vec![0.0; piece];
+            room.echo(&heard, mic_at as u64, &mut mic);
+            for (k, m) in mic.iter_mut().enumerate() {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                *m += ((seed >> 8) as f32 / (1 << 24) as f32 - 0.5) * 0.002;
+                let i = mic_at + k;
+                *m += noise.get(i).copied().unwrap_or(0.0);
+                if let Some((w, starts)) = wearer {
+                    let s = (starts * RATE as f32) as usize;
+                    if i >= s && i - s < w.len() {
+                        *m += w[i - s];
+                    }
+                }
+            }
+            let arrived = at((mic_at + piece) as f64 / RATE as f64 + 0.004);
+            let mut cut = false;
+            for h in echo.hear(&played, arrived, &mic, busy) {
+                let seconds = block as f32 * BLOCK as f32 / RATE as f32;
+                if std::env::var_os("ECHO_DEBUG").is_some() {
+                    eprintln!("{seconds:6.2} s busy {busy} voice {} delay {:?} {}", h.voice, echo.delay_ms(), echo.last);
+                }
+                if let Some(d) = echo.delay_ms().filter(|d| out.delays.last().is_none_or(|(_, last)| last != d)) {
+                    out.delays.push((seconds, d));
+                }
+                if h.barge_in {
+                    out.stops.push(seconds);
+                    cut = true;
+                }
+                block += 1;
+            }
+            mic_at += piece;
+            if cut {
+                // As `Voice::interrupt`: what the room has not played is dropped -- all but the
+                // few hundredths already on their way -- and the rest of the turn is not said.
+                let now = mic_at as f64 / RATE as f64;
+                heard.cut(at(now + 0.02));
+                played.cut(at(now + 0.02));
+                heard_by = now;
+                quiet_at = now;
+                next_tone = now;
+                if turn.is_some() {
+                    while script.front().is_some_and(|(t, _)| t.is_some()) {
+                        script.pop_front();
+                    }
+                    part = None;
+                }
+            }
+        }
+        out
+    }
+
+    /// Turns as the owner's on the Mac went (2026-11-19): a question typed, the small model's
+    /// answer -- a line waiting while it writes and the sentence is made, then said -- or the
+    /// larger model's, after it thinks to its tone.
+    fn turns_of(seed: u32, quick: u32, larger: u32) -> (Vec<Vec<Part>>, Vec<Vec<Part>>) {
+        let own = |s: u32, seconds: f32| talk(seconds, 210.0, s, 24_000);
+        let quick = (0..quick).map(|t| vec![Part::Wait(1.2), Part::Say(own(seed + t, 4.0)), Part::Wait(0.4), Part::Say(own(seed + t + 10, 3.0))]).collect();
+        let larger = (0..larger).map(|t| vec![Part::Thinking(8.0), Part::Wait(0.6), Part::Say(own(seed + t, 4.0))]).collect();
+        (quick, larger)
+    }
+
+    #[test]
+    fn keys_clicking_while_it_says_nothing_do_not_stop_it() {
+        // Busy and silent -- a line waiting while the model writes, the larger one thinking to its
+        // tone -- with keys clicking: there is nothing to speak over. As it was, the keys stopped
+        // it within a fifth of a second of every turn, at the owner's loudness.
+        let silent: Vec<Vec<Part>> = (0..2).map(|_| vec![Part::Wait(1.5), Part::Thinking(8.0), Part::Wait(1.0)]).collect();
+        for amplitude in [0.01, 0.1, 0.3] {
+            for seed in [3, 4] {
+                let keys = SimulatedRoom::typing(30.0, amplitude, seed);
+                let c = converse(&silent, 2.0, 0.1, 0.12, &keys, None);
+                assert!(c.stops.is_empty(), "typing {amplitude}, seed {seed}: stopped at {:?} s", c.stops);
+            }
+        }
+    }
+
+    /// Its voice heard, brought back by the room at `gain`, keys clicking all the while: at the
+    /// owner's loudness and ten times it, in turns of the small model's and the larger's.
+    fn keys_under_its_voice(gain: f32) {
+        let (quick, larger) = turns_of(1, 3, 2);
+        for amplitude in [0.01, 0.1] {
+            for seed in [3, 4] {
+                let keys = SimulatedRoom::typing(40.0, amplitude, seed);
+                for turns in [&quick, &larger] {
+                    let c = converse(turns, 2.0, gain, 0.12, &keys, None);
+                    assert!(c.stops.is_empty(), "typing {amplitude}, seed {seed}, its voice back at {gain}: stopped at {:?} s", c.stops);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn keys_clicking_under_its_voice_do_not_stop_it() {
+        // Its voice back 20 dB down, as the glasses' speakers on the Mac, turned down.
+        keys_under_its_voice(0.1);
+    }
+
+    #[test]
+    fn keys_clicking_under_its_voice_in_earphones_do_not_stop_it() {
+        // None of it back: nothing of its voice under the keys to hide them.
+        keys_under_its_voice(0.0);
+    }
+
+    #[test]
+    fn keys_clicking_under_its_voice_as_loud_as_it_plays_do_not_stop_it() {
+        keys_under_its_voice(1.0);
+    }
+
+    #[test]
+    fn the_wearer_speaking_over_its_voice_and_the_keys_stops_it() {
+        // Its second sentence of the first turn under way at 6 s, the keys clicking, and the
+        // wearer speaking: stopped at once, and not before.
+        let (quick, _) = turns_of(1, 1, 0);
+        let keys = SimulatedRoom::typing(30.0, 0.01, 3);
+        for (pitch, loud) in [(120.0, 0.9), (220.0, 0.9)] {
+            let wearer: Vec<f32> = talk(2.5, pitch, 5, RATE).iter().map(|s| s * loud).collect();
+            for gain in [0.1, 1.0] {
+                let c = converse(&quick[..1], 2.0, gain, 0.12, &keys, Some((&wearer, 6.0)));
+                let first = *c.stops.first().unwrap_or_else(|| panic!("pitch {pitch}, its voice back at {gain}: never stopped"));
+                assert!(first > 6.0 && first < 6.6, "pitch {pitch}, its voice back at {gain}: stopped at {first:.2} s, the wearer began at 6.0 s");
+            }
+        }
+    }
+
+    #[test]
+    fn it_learns_its_echo_turn_after_turn_and_never_stops_itself() {
+        // The spiral as the Mac's log showed it: its voice back 120 ms later and 20 dB down, the
+        // wearer silent, keys clicking, turn after turn -- every turn was cut before it was heard,
+        // so too little of its voice was ever played to find where it came back, and the next
+        // was cut again. Now none is cut, the delay is found within the first turn, and found once:
+        // not matched again by chance as its voice leaves the history, in the silences between.
+        let (quick, larger) = turns_of(1, 6, 4);
+        let keys = SimulatedRoom::typing(90.0, 0.01, 4);
+        for (turns, first_turn_ends) in [(&quick, 1.2 + 4.0 + 0.4 + 3.0), (&larger, 8.0 + 0.6 + 4.0)] {
+            let c = converse(turns, 2.0, 0.1, 0.12, &keys, None);
+            assert!(c.stops.is_empty(), "stopped itself at {:?} s", c.stops);
+            let all: f32 = turns.iter().flatten().map(|p| if let Part::Say(v) = p { v.len() as f32 / 24_000.0 } else { 0.0 }).sum();
+            assert!(c.said > all - 0.1, "{:.1} s of its voice said, of {all:.1} s", c.said);
+            let &(when, found) = c.delays.first().expect("its voice's delay never found");
+            assert!(when < first_turn_ends + 0.5 && found.abs_diff(120) <= 16, "found {found} ms at {when:.1} s");
+            assert_eq!(c.delays.len(), 1, "the delay moved: {:?}", c.delays);
+        }
+    }
+
+    #[test]
+    fn a_ring_repeats_faster_than_a_voice_and_a_voice_holds_its_pitch() {
+        // A spring's ping at 3.2 kHz, ringing: as alike to itself at a speaking pitch's period as
+        // a voice -- the "voiced 0.53" of the owner's log -- but faster still.
+        let ring: Vec<f32> = (0..2 * BLOCK).map(|i| (-(i as f32) / 600.0).exp() * (2.0 * std::f32::consts::PI * 3200.0 * i as f32 / RATE as f32).sin()).collect();
+        let p = voicing(&ring[..BLOCK], &ring[BLOCK..], None);
+        assert!(p.voiced > 0.9 && p.rings, "voiced {:.2}, rings {}", p.voiced, p.rings);
+        // A voice, low and high: voiced, not a ring, and its pitch held from block to block.
+        for pitch in [110.0, 220.0] {
+            let v = talk(1.0, pitch, 2, RATE);
+            let (mut voiced, mut held, mut rang) = (0, 0, 0);
+            let mut period = None;
+            for b in 1..v.len() / BLOCK {
+                let p = voicing(&v[(b - 1) * BLOCK..b * BLOCK], &v[b * BLOCK..(b + 1) * BLOCK], period);
+                voiced += (p.voiced > VOICED) as usize;
+                held += (p.voiced > VOICED && p.held > VOICED) as usize;
+                rang += (p.voiced > VOICED && p.rings) as usize;
+                period = (p.voiced > VOICED && !p.rings).then_some(p.period);
+            }
+            assert!(rang * 10 < voiced && held * 10 > voiced * 7, "pitch {pitch}: {voiced} voiced, {held} held, {rang} rang");
+        }
+    }
+
+    #[test]
+    fn what_a_cut_dropped_is_not_kept_as_played() {
+        let epoch = Instant::now();
+        let mut p = Played::new(epoch);
+        // A second handed over; heard to 0.4 s, and the rest dropped.
+        p.push(epoch, &[0.5; 24_000], 24_000);
+        p.cut(epoch + Duration::from_millis(400));
+        let mut out = vec![1.0; 16_000];
+        p.read(0, &mut out);
+        assert!(out[..6400].iter().all(|v| (*v - 0.5).abs() < 1e-6) && out[6400..].iter().all(|v| *v == 0.0));
+        assert!(p.played_since(6399) && !p.played_since(6400));
+        // A cut after all of it was heard drops nothing; and the next sentence is kept as before.
+        p.cut(epoch + Duration::from_secs(2));
+        assert!(p.played_since(6399));
+        p.push(epoch + Duration::from_millis(500), &[0.25; 2400], 24_000);
+        p.read(6400, &mut out[..2000]);
+        assert!(out[..1600].iter().all(|v| *v == 0.0) && (out[1600] - 0.25).abs() < 1e-6);
     }
 
     #[test]
