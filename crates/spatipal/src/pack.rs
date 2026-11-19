@@ -311,9 +311,20 @@ impl Pack {
         self.offers.groups.iter().filter(|(g, _)| !OWN.contains(&g.as_str()))
     }
 
-    /// Its animations played once, and those held: each with its words, if `pal.json` has them.
+    /// Its moves made from words (`crate::moves`), kept in its folder.
+    pub fn shelf(&self) -> spatiand_voice::motion::Shelf {
+        spatiand_voice::motion::Shelf { dir: self.dir.join("moves") }
+    }
+
+    /// Its animations played once, and those held: each with its words, if `pal.json` has them;
+    /// and the moves it made from words, played once too.
     fn moves_and_poses(&self) -> (Named, Named) {
         let (mut moves, mut poses) = (Vec::new(), Vec::new());
+        for kept in self.shelf().names() {
+            if !STATES.contains(&kept.as_str()) {
+                moves.push((kept, "a move of your own, made from words".to_string()));
+            }
+        }
         for name in &self.offers.animations {
             let bare = name.rsplit('|').next().unwrap_or(name);
             if STATES.iter().any(|s| s.eq_ignore_ascii_case(bare)) {
@@ -322,6 +333,8 @@ impl Pack {
             let words = |map: &BTreeMap<String, String>| map.iter().find(|(k, _)| k.eq_ignore_ascii_case(bare)).map(|(_, v)| v.clone());
             match (words(&self.about.poses), words(&self.about.moves)) {
                 (Some(w), _) => poses.push((bare.to_string(), w)),
+                // One of its own made of the same name is the one done.
+                (None, _) if moves.iter().any(|(n, _): &(String, String)| n.eq_ignore_ascii_case(bare)) => {}
                 (None, w) => moves.push((bare.to_string(), w.unwrap_or_default())),
             }
         }
@@ -588,6 +601,7 @@ impl Pack {
             "pose": if self.look.own_pose.is_empty() { json!(self.look.pose) } else { json!(self.look.own_pose) },
             "expression": self.look.face,
             "colors": self.look.colours,
+            "motions": self.shelf().room(),
         });
         if self.about.size > 0.0 {
             room["size"] = json!(self.about.size);
@@ -845,6 +859,27 @@ mod tests {
         assert_eq!(kept.own_pose.len(), 1);
         p.apply(&json!({"pose": "none"})).unwrap();
         assert!(p.look.own_pose.is_empty());
+        let _ = std::fs::remove_dir_all(&p.dir);
+    }
+
+    #[test]
+    fn its_moves_made_from_words_are_offered_and_told() {
+        let mut p = pack(about(), offers());
+        let motion: spatiand_voice::motion::Motion = serde_json::from_value(json!({"fps": 30, "skeleton": {"joints": ["Pelvis"], "parents": [-1], "offsets": [[0, 0.97, 0]]}, "frames": [{"translation": [0, 0.97, 0], "rotations": [[0, 0, 0, 1]]}]})).unwrap();
+        let ask = spatiand_voice::motion::Ask { prompt: "a person spins around once".into(), duration: 3.0, ..Default::default() };
+        let twirl = p.shelf().keep("twirl", &ask, &motion).unwrap();
+        // The same name as the figure's own `wave`: the one made is the one done.
+        p.shelf().keep("wave", &ask, &motion).unwrap();
+        // An idle made is the room's, not a move.
+        p.shelf().keep("idle", &ask, &motion).unwrap();
+        let tool = p.tool().unwrap();
+        let moves = tool["function"]["parameters"]["properties"]["move"]["enum"].clone();
+        assert_eq!(moves, json!(["twirl", "wave"]), "{moves}");
+        let room = p.figure_request(true);
+        assert_eq!(room["motions"]["twirl"], json!(twirl));
+        assert!(room["motions"].get("idle").is_some());
+        let (room, _) = p.apply(&json!({"move": "twirl"})).unwrap();
+        assert_eq!((room["move"].as_str(), room["moves"].as_u64()), (Some("twirl"), Some(1)));
         let _ = std::fs::remove_dir_all(&p.dir);
     }
 

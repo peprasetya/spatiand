@@ -15,6 +15,7 @@
 
 mod brain;
 mod ears;
+mod moves;
 mod pack;
 mod store;
 mod time;
@@ -91,6 +92,8 @@ struct Pal {
     pals: Vec<String>,
     /// When the pal's files were last looked at for a change.
     pack_looked: Instant,
+    /// A move being made from words (`crate::moves`).
+    making: Option<moves::Making>,
     /// The room's AI settings, which more than one app uses: hemera, the models, dictation's
     /// languages and words. Read again whenever the SDK says they changed.
     ai: AiSettings,
@@ -726,9 +729,60 @@ impl Pal {
         }
     }
 
-    /// The pal's `appearance` tool, when its figure offers anything.
+    /// The pal's own tools: `appearance`, when its figure offers anything, and `make_move` for a
+    /// figure with a body.
     fn appearance(&self) -> Option<Value> {
-        self.pack.as_ref().and_then(pack::Pack::tool)
+        let p = self.pack.as_ref()?;
+        let make = (!p.offers.body.is_empty()).then(moves::tool);
+        match (p.tool(), make) {
+            (Some(a), Some(m)) => Some(Value::Array(vec![a, m])),
+            (a, m) => a.or(m),
+        }
+    }
+
+    /// A move asked for in words (`tools.rs`'s `make_move`): begun, and answered at once.
+    fn make_move(&mut self, with: &Value) -> Value {
+        let Some(p) = self.pack.as_ref().filter(|p| !p.offers.body.is_empty()) else { return json!({"error": "your figure has no body to move"}) };
+        if let Some(m) = &self.making {
+            return json!({"error": format!("still making {} -- a moment", m.name)});
+        }
+        match moves::asked(with) {
+            Ok((ask, name)) => {
+                log::info!("making the move {name}: {}", store::quoted(&ask.prompt));
+                let looping = ask.looping;
+                self.making = Some(moves::start(&self.ai.hemera, ask, name.clone(), p.shelf().dir));
+                json!({"did": moves::begun(&name, looping)})
+            }
+            Err(why) => json!({"error": why}),
+        }
+    }
+
+    /// A move made: done at once -- an idle is simply the figure's idle from now on -- or why not.
+    fn look_at_moves(&mut self) {
+        let Some(done) = self.making.as_ref().and_then(moves::Making::done) else { return };
+        let Some(making) = self.making.take() else { return };
+        match done {
+            Ok(_) => {
+                log::info!("the move {} made in {:.1} s", making.name, making.since.elapsed().as_secs_f32());
+                let Some(p) = self.pack.as_mut() else { return };
+                let room = match making.name.as_str() {
+                    "idle" => {
+                        let mut r = p.figure_request(true);
+                        r.as_object_mut().map(|o| o.remove("visible"));
+                        Ok(r)
+                    }
+                    name => p.apply(&json!({"move": name})).map(|(r, _)| r),
+                };
+                match room {
+                    Ok(r) => self.app.room_ask(&r.to_string(), channel().0),
+                    Err(why) => log::warn!("the move {} was made but cannot be done: {why}", making.name),
+                }
+            }
+            Err(why) => {
+                log::warn!("the move {} could not be made: {why}", making.name);
+                self.say_trouble(&format!("The move {} could not be made: {why}", making.name));
+            }
+        }
     }
 
     /// A pal's look changed by its model (`tools.rs`'s `appearance`): kept, and the room told.
@@ -932,6 +986,11 @@ impl Pal {
                     let _ = reply.send(answer.to_string());
                     continue;
                 }
+                if asked.get("do").and_then(Value::as_str) == Some("make_move") {
+                    let answer = self.make_move(asked.get("with").unwrap_or(&Value::Null));
+                    let _ = reply.send(answer.to_string());
+                    continue;
+                }
                 self.app.room_ask(&json, reply);
             }
             loop {
@@ -978,6 +1037,7 @@ impl Pal {
             }
             self.look_at_reminders();
             self.look_at_pack();
+            self.look_at_moves();
             self.tend_mood();
             self.draw()?;
         }
@@ -1091,6 +1151,7 @@ fn main() {
             pack: None,
             pals: pack::folders(),
             pack_looked: Instant::now(),
+            making: None,
             ai,
             chats: Vec::new(),
             current: None,

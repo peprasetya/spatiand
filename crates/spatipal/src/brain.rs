@@ -857,6 +857,66 @@ mod tests {
         assert!(misses.is_empty(), "{} of {} missed:\n{}", misses.len(), asks.len(), misses.join("\n"));
     }
 
+
+    /// **Against hemera**: a pal's model, asked for a move its figure has not, makes one from
+    /// words (`make_move`), in English, as hemera's motion model understands them -- each call read
+    /// as SpatiPal reads it (`crate::moves::asked`). A made-up pal with a body.
+    /// `cargo test -p spatipal -- --ignored --test-threads 1 make_move`
+    #[test]
+    #[ignore]
+    fn a_pals_model_makes_a_move_from_words_make_move() {
+        use spatiand_voice::figure::{Offers, BODY_PARTS};
+        let offers = Offers { animations: vec!["idle".into(), "talking".into(), "wave".into()], body: BODY_PARTS.iter().map(|p| p.to_string()).collect(), ..Default::default() };
+        let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira", "moves": {"wave": "a wave"}})).unwrap();
+        let pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who loves to dance.", offers);
+        let s = pack.over(&Settings::default());
+        let ai = AiSettings::default();
+        let model = std::env::var("SPATIPAL_TEST_MODEL").unwrap_or_else(|_| ai.models.everyday.clone());
+        let hemera = Hemera::new(&ai.hemera);
+        let own = Value::Array(vec![pack.tool().unwrap(), crate::moves::tool()]);
+        let tools = tools::all(true, Some(&own));
+        let mut misses = Vec::new();
+        for asked in [
+            "Make up a little victory dance and show me.",
+            "Can you do a cartwheel?",
+            "Invent a new idle for yourself, something calm and swaying.",
+            "Spin around twice with your arms out.",
+            "Wave at me.",
+        ] {
+            let ask = Ask {
+                model: model.clone(),
+                messages: vec![json!({"role": "system", "content": system(&s, false)}), json!({"role": "user", "content": format!("[It is 21:40.]\n{}\n{asked}", pack.note())})],
+                tools: tools.clone(),
+                max_tokens: 400,
+                temperature: 0.2,
+                thinking: false,
+            };
+            let started = std::time::Instant::now();
+            let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
+            let calls: Vec<String> = answer.calls.iter().map(|c| format!("{}({})", c.name, c.arguments)).collect();
+            eprintln!("{asked:?} -> {calls:?} in {:.1} s; to the larger model: {}", started.elapsed().as_secs_f32(), wants_larger(&hemera, &ai.models.everyday, asked, ""));
+            let made = answer.calls.iter().find(|c| c.name == "make_move");
+            match (asked, made) {
+                // Its own wave is done, not made again.
+                ("Wave at me.", Some(_)) => misses.push(format!("{asked:?}: made a wave it has")),
+                ("Wave at me.", None) => {}
+                (_, None) => misses.push(format!("{asked:?}: no make_move: {calls:?}")),
+                (_, Some(c)) => match crate::moves::asked(&serde_json::from_str(&c.arguments).unwrap_or_default()) {
+                    Ok((a, name)) => {
+                        eprintln!("    {name}: {:?}, {} s, loop {}", a.prompt, a.duration, a.looping);
+                        // An idle asked for loops, as the figure's idle.
+                        if asked.contains("idle") != a.looping {
+                            misses.push(format!("{asked:?}: loop {}", a.looping));
+                        }
+                    }
+                    Err(why) => misses.push(format!("{asked:?}: {why}")),
+                },
+            }
+        }
+        let _ = std::fs::remove_dir_all(&pack.dir);
+        assert!(misses.is_empty(), "{}", misses.join("\n"));
+    }
+
     use super::*;
 
     #[test]

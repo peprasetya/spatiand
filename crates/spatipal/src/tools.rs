@@ -112,8 +112,11 @@ pub fn all(small: bool, appearance: Option<&Value>) -> Vec<Value> {
         tool("list_reminders", "The reminders still to come.", json!({}), &[]),
         tool("cancel_reminder", "Cancel a reminder by its number.", json!({"id": {"type": "integer"}}), &["id"]),
     ];
-    if let Some(appearance) = appearance {
-        tools.push(appearance.clone());
+    // A pal's own: `appearance`, and with it `make_move` for a figure with a body (`crate::moves`).
+    match appearance {
+        Some(Value::Array(pal)) => tools.extend(pal.iter().cloned()),
+        Some(appearance) => tools.push(appearance.clone()),
+        None => {}
     }
     if small {
         tools.push(tool(
@@ -215,6 +218,14 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
             match (answer.get("error").and_then(Value::as_str), answer.get("did").and_then(Value::as_str)) {
                 (Some(e), _) => done(format!("That did not work: {e}"), None),
                 (None, did) => done("Done: the room shows it.".to_string(), did.map(|d| format!("changed: {d}"))),
+            }
+        }
+        // A move made from words (`crate::moves`): begun on SpatiPal's thread, done when made.
+        "make_move" => {
+            let answer = room.ask(json!({"do": "make_move", "with": args}));
+            match (answer.get("error").and_then(Value::as_str), answer.get("did").and_then(Value::as_str)) {
+                (Some(e), _) => done(format!("That did not work: {e}"), None),
+                (None, did) => done(did.unwrap_or("Making it.").to_string(), Some("making a move".to_string())),
             }
         }
         "dismiss" => done("You will leave once you have said goodbye.".to_string(), Some("left the room".to_string())),

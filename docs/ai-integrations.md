@@ -476,8 +476,39 @@ plan's "moods, animations, outfits" had been built as far as a figure standing s
 Poses of its own (the owner, 2026-11-19: "if animation too complex, then pose"): a figure with a
 person's skeleton is posed by its model in words, part by part ("left upper arm down, out, a
 little back"), the room turning its joints as a body bends; thirteen poses by name are made of the
-same words. New movement -- animations made from words -- would need a text-to-motion model on
-hemera, which it has not.
+same words. Moves made from words (the owner, 2026-11-19: hemera "now makes motion from words ... build the
+Spatiand side"; "make sure the function is polished"):
+
+- **Asked for by the pal's model**: `make_move` (`crates/spatipal/src/moves.rs`), offered beside
+  `appearance` for a figure with a body. The model writes the English sentence hemera's
+  HY-Motion understands ("a person does a cartwheel"), a short name to keep it by, how long it
+  lasts, and `kind` -- `move`, done once, or `idle`, a loop that is then the pal's idle (`kind` a
+  required choice: a 4B left an optional `idle: true` out every time). The tool answers at once
+  that the move is being made and is not done yet (a 4B, told only "say something meanwhile",
+  said "there you go" 45 s before the move came).
+- **Made on hemera** (`spatiand_voice::motion`, hemera's docs/media-api.md section 10): asked,
+  polled every half second, fetched as JSON, then deleted there; a 503 while its model loads waited
+  out by its Retry-After. About 7 s a move, 35-45 s more when hemera has to load its model (21 GB,
+  unloaded after 10 idle minutes).
+- **Kept** in the pal's folder, `moves/<name>.json`: the words, the seed (the same words and seed
+  make it again exactly) and the motion; 80-300 KB each, synchronised with the pal. A kept move is
+  one of `appearance`'s moves from then on, done by its name without being made again; one of the
+  same name as the figure's own is the one done.
+- **Played by the room** (`crates/spatiand/src/motion.rs`): the avatar request's `motions` (name to
+  file) are made into ordinary animations of the figure -- SMPL's 22 joints onto the body the room
+  finds in it, each limb first brought from its rest to where it points in a T-pose, then turned
+  in the world as the motion turns it; the body and head taken as they are; a hand with its
+  forearm (the motion has no fingers); the hips moved by the figure's leg over SMPL's, kept within
+  half a leg of where it stands. So a move fades in and out as the figure's own do, a pose of the
+  pal's own making lies over it, and an `idle` made is played whenever the pal is idle.
+- **Checked** on deepmagpie: hemera's wave, spin and looping dance on a mannequin and on a pal's
+  figure in the snapshot room, front and side; SpatiPal with a made-up pal in the snapshot room,
+  typed to -- "Make up a little victory dance" (made in 44.8 s, the model loading first),
+  "Invent a new idle for yourself" (9.9 s, the mannequin then standing in it), "Make up a little
+  happy dance" (6.8 s, the answer saying it was being made); its model's calls against hemera
+  (`cargo test -p spatipal -- --ignored --test-threads 1 make_move`: a dance, a cartwheel, a new
+  idle and a double spin made, a wave done as the figure's own). Not checked: on the glasses and
+  the devices; feet planted (hemera's slide when turning or travelling); fingers (not moved).
 
 All of it, and how a figure was made on hemera: [spatipal-pals.md](spatipal-pals.md).
 
