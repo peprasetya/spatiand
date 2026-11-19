@@ -232,6 +232,27 @@ fn whole(place: &Place) -> String {
     }
 }
 
+/// Remote folders rclone has just changed, let go of in the storage service's WebDAV view
+/// (`Storage::forget_folders`): without it SpatiLoupe or SpatiReel reading a file there through
+/// it, or a listing through it, is up to half a minute behind -- a file moved over another read
+/// at the old one's length. Local places are passed over.
+fn forget(storage: &Storage, folders: &[Place]) {
+    let mut by_remote: std::collections::BTreeMap<&str, Vec<&str>> = Default::default();
+    for folder in folders {
+        if let Place::Remote(remote, path) = folder {
+            by_remote.entry(remote.as_str()).or_default().push(path.as_str());
+        }
+    }
+    for (remote, paths) in by_remote {
+        storage.forget_folders(remote, &paths);
+    }
+}
+
+/// The folder a place is in (the remote's top for a place at its top).
+fn folder_of(place: &Place) -> Place {
+    place.parent().unwrap_or_else(|| place.clone())
+}
+
 fn is_dir(place: &Place, storage: &Storage) -> bool {
     match place {
         Place::Trash => false,
@@ -363,7 +384,7 @@ fn transfer(item: &Place, into: &Place, moving: bool, storage: &Mutex<Option<Sto
     // Beside what is there by the name already, numbered, as on this machine: rclone's copies
     // and moves write over a file of the name and merge into a folder of it.
     let name = free_among(&name, |n| found(&into.join(n), &storage).map(|f| f.is_some()))?;
-    if dir {
+    let done = if dir {
         let target = whole(&into.join(&name));
         let method = if moving { "sync/move" } else { "sync/copy" };
         rclone_job(&storage, method, json!({"srcFs": whole(item), "dstFs": target, "createEmptySrcDirs": true, "deleteEmptySrcDirs": moving}), &what, report)
@@ -371,7 +392,14 @@ fn transfer(item: &Place, into: &Place, moving: bool, storage: &Mutex<Option<Sto
         let (src_fs, src_name) = fs_and_name(item);
         let method = if moving { "operations/movefile" } else { "operations/copyfile" };
         rclone_job(&storage, method, json!({"srcFs": src_fs, "srcRemote": src_name, "dstFs": whole(into), "dstRemote": name}), &what, report)
+    };
+    // Even after a failure part of it may have been done.
+    let mut changed = vec![into.clone()];
+    if moving {
+        changed.push(folder_of(item));
     }
+    forget(&storage, &changed);
+    done
 }
 
 fn storage_or(kept: &Mutex<Option<Storage>>) -> Result<Storage, String> {
@@ -385,12 +413,14 @@ fn delete(place: &Place, storage: &Mutex<Option<Storage>>) -> Result<(), String>
         Place::Local(p) => crate::trash::purge(&proto::path_of(p)),
         Place::Remote(..) => {
             let storage = storage_or(storage)?;
-            if is_dir(place, &storage) {
+            let done = if is_dir(place, &storage) {
                 storage.rc("operations/purge", json!({"fs": whole(place), "remote": ""})).map(|_| ())
             } else {
                 let (fs, name) = fs_and_name(place);
                 storage.rc("operations/deletefile", json!({"fs": fs, "remote": name})).map(|_| ())
-            }
+            };
+            forget(&storage, &[folder_of(place)]);
+            done
         }
     }
 }
@@ -480,11 +510,13 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
                             return Err(format!("There is already something called {name} here."));
                         }
                     }
-                    if is_dir(&item, &storage) {
+                    let done = if is_dir(&item, &storage) {
                         rclone_job(&storage, "sync/move", json!({"srcFs": whole(&item), "dstFs": whole(&parent.join(&name)), "deleteEmptySrcDirs": true}), "Renaming", report)
                     } else {
                         storage.rc("operations/movefile", json!({"srcFs": fs, "srcRemote": old, "dstFs": fs, "dstRemote": name})).map(|_| ())
-                    }
+                    };
+                    forget(&storage, &[parent]);
+                    done
                 }
             }
         }
@@ -497,7 +529,9 @@ fn run_op(op: Op, storage: &Mutex<Option<Storage>>, report: &mut dyn FnMut(u64, 
                 let storage = storage_or(storage)?;
                 let target = inside.join(&name);
                 let (fs, leaf) = fs_and_name(&target);
-                storage.rc("operations/mkdir", json!({"fs": fs, "remote": leaf})).map(|_| ())
+                let done = storage.rc("operations/mkdir", json!({"fs": fs, "remote": leaf})).map(|_| ());
+                forget(&storage, &[inside.clone()]);
+                done
             }
         },
     }

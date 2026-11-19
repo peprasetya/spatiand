@@ -309,6 +309,23 @@ impl Storage {
         Ok(())
     }
 
+    /// Folders of the remote that rclone has just changed by its own hand -- a move, a copy, a
+    /// deletion, a folder made -- let go of in the service's WebDAV view, which keeps what it
+    /// last listed for half a minute and does not see rclone's own changes: a file read or a
+    /// folder listed through it straight after is the remote's as it now is. Forgetting a folder
+    /// forgets what is in it. No WebDAV view of the remote yet is nothing to forget; and nothing
+    /// is asked with no folders, which rclone would take as "forget everything".
+    pub fn forget_folders(&self, remote: &str, folders: &[&str]) {
+        if folders.is_empty() {
+            return;
+        }
+        let mut input = json!({"fs": format!("{remote}:")});
+        for (i, folder) in folders.iter().enumerate() {
+            input[format!("dir{i}")] = json!(folder.trim_matches('/'));
+        }
+        let _ = self.rc("vfs/forget", input);
+    }
+
     /// The remote file at `path` deleted.
     pub fn delete(&self, remote: &str, path: &str) -> Result<(), String> {
         self.rc("operations/deletefile", json!({"fs": format!("{remote}:"), "remote": path.trim_start_matches('/')})).map(|_| ())
@@ -543,6 +560,8 @@ mod tests {
         assert!(storage.exists("My Drive", "Photos/there.jpg").unwrap());
         assert!(!storage.exists("My Drive", "Photos/not.jpg").unwrap());
         storage.rename("My Drive", "Photos/.a.tmp", "Photos/a.jpg").unwrap();
+        storage.forget_folders("My Drive", &["/Photos/", ""]);
+        storage.forget_folders("My Drive", &[]);
         let seen = seen.lock().unwrap();
         // The body went whole, as it was.
         assert!(seen[0].starts_with("PUT /dav/My%20Drive/Photos/a%20%28edited%29.jpg"));
@@ -554,6 +573,10 @@ mod tests {
         assert_eq!(body("/rc/operations/movefile"), json!({"srcFs": "My Drive:", "srcRemote": "Photos/.a.tmp", "dstFs": "My Drive:", "dstRemote": "Photos/a.jpg"}));
         // And the service's WebDAV told to look again at both names.
         assert_eq!(body("/rc/vfs/forget"), json!({"fs": "My Drive:", "file": "Photos/.a.tmp", "file2": "Photos/a.jpg"}));
+        // Folders changed by rclone: forgotten by name, and never everything at once.
+        let forgets: Vec<Value> = seen.iter().filter(|r| r.contains("/rc/vfs/forget")).map(|r| serde_json::from_str(&r[r.find("\r\n\r\n").unwrap() + 4..]).unwrap()).collect();
+        assert_eq!(forgets.len(), 2, "no call for no folders");
+        assert_eq!(forgets[1], json!({"fs": "My Drive:", "dir0": "Photos", "dir1": ""}));
     }
 
     /// A part of a file is asked for by a range and read no further, and a service that sends
