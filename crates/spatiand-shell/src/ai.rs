@@ -545,14 +545,14 @@ impl Ai {
     }
 
     /// Back to the list, its cursor where it was.
-    fn to_list(&mut self) {
+    fn back_to_list(&mut self) {
         self.page = Page::List;
         self.cursor = self.list_cursor;
         self.armed = None;
     }
 
     /// A page under the list, the cursor at `cursor`.
-    fn to_page(&mut self, page: Page, cursor: usize) {
+    fn open_page(&mut self, page: Page, cursor: usize) {
         if self.page == Page::List {
             self.list_cursor = self.cursor;
         }
@@ -568,13 +568,13 @@ impl Ai {
                 Item::Heading(_) => None,
                 Item::Hemera => {
                     self.typed = self.view.hemera.clone();
-                    self.to_page(Page::Hemera, 0);
+                    self.open_page(Page::Hemera, 0);
                     None
                 }
                 Item::Model(m) => {
                     let now = self.model(m).to_string();
                     let at = self.choices(m).iter().position(|c| *c == now).unwrap_or(0);
-                    self.to_page(Page::Model(m), at);
+                    self.open_page(Page::Model(m), at);
                     None
                 }
                 Item::Languages => {
@@ -583,21 +583,21 @@ impl Ai {
                     Some(AiAction::Languages(SPOKEN[at].iter().map(|l| l.to_string()).collect()))
                 }
                 Item::Words => {
-                    self.to_page(Page::Words, 0);
+                    self.open_page(Page::Words, 0);
                     None
                 }
                 Item::ReadByItself => Some(AiAction::ReadByItself(!self.view.read_by_itself)),
                 Item::Language(l) => {
                     let now = self.language(l).to_string();
                     let at = LANGUAGES.iter().position(|(c, _)| *c == now).unwrap_or(0);
-                    self.to_page(Page::Language(l), at);
+                    self.open_page(Page::Language(l), at);
                     None
                 }
             },
             Page::Model(m) => {
                 let chosen = self.choices(m).get(self.cursor).cloned()?;
                 let changed = chosen != self.model(m);
-                self.to_list();
+                self.back_to_list();
                 changed.then_some(AiAction::Model(m, chosen))
             }
             Page::Language(l) => {
@@ -609,7 +609,7 @@ impl Ai {
                     Language::Second if chosen == first => (second, chosen),
                     Language::Second => (first, chosen),
                 };
-                self.to_list();
+                self.back_to_list();
                 (pair != (self.view.first_language.clone(), self.view.second_language.clone())).then_some(AiAction::TextLanguages(pair.0, pair.1))
             }
             Page::Words => match self.view.words.get(self.cursor).cloned() {
@@ -645,7 +645,7 @@ impl Ai {
             }
             _ => {
                 self.typed.clear();
-                self.to_list();
+                self.back_to_list();
                 true
             }
         }
@@ -676,7 +676,7 @@ impl Ai {
                 let address = if text.contains("://") { text } else { format!("http://{text}") };
                 let address = address.trim_end_matches('/').to_string();
                 self.typed.clear();
-                self.to_list();
+                self.back_to_list();
                 (address != self.view.hemera).then_some(AiAction::Hemera(address))
             }
             Page::NewWord => {
