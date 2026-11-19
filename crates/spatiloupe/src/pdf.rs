@@ -119,6 +119,57 @@ pub enum Ask {
     Save { marks: crate::markup::Marks, copy: bool },
     /// The password to open a locked document with.
     Unlock(Secret),
+    /// Page `page`'s own characters and where each is, for Live Text -- or word that it has none.
+    Letters { page: usize },
+    /// Page `page` drawn to be read: at 300 dots to the inch, which keeps small print readable,
+    /// within the 50 million pixels hemera reads.
+    Scan { page: usize },
+}
+
+/// One run of a page's own text, as Live Text takes it: its characters, the rectangle they are
+/// in (left, top, right, bottom, in the page's points from its top left), and each character's
+/// bytes in the text and its left and right.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lettered {
+    pub text: String,
+    pub rect: [f32; 4],
+    pub places: Vec<(std::ops::Range<usize>, f32, f32)>,
+}
+
+/// How many letters a page must have of its own to be taken for text rather than a scan.
+const LETTERS_OF_ITS_OWN: usize = 4;
+
+/// Page `page`'s own text, run by run as PDFium lays it out -- `None` for a page with next to none
+/// of its own (a scan), and for one turned by its /Rotate, whose characters' places are in its
+/// unturned space: both are read from a picture of them instead.
+fn letters(page: &PdfPage) -> Option<Vec<Lettered>> {
+    if !matches!(page.rotation(), Ok(PdfPageRenderRotation::None)) {
+        return None;
+    }
+    let text = page.text().ok()?;
+    let height = page.height().value;
+    let mut lines = Vec::new();
+    let mut letters = 0;
+    for segment in text.segments().iter() {
+        let Ok(chars) = segment.chars() else { continue };
+        let bounds = segment.bounds();
+        let mut line = String::new();
+        let mut places = Vec::new();
+        for c in chars.iter() {
+            let Some(s) = c.unicode_string().filter(|s| !s.is_empty() && !s.chars().all(char::is_control)) else { continue };
+            let Ok(b) = c.loose_bounds() else { continue };
+            let at = line.len();
+            line.push_str(&s);
+            places.push((at..line.len(), b.left().value, b.right().value));
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        letters += line.chars().filter(|c| c.is_alphanumeric()).count();
+        // PDF's y is up from the foot of the page.
+        lines.push(Lettered { text: line, rect: [bounds.left().value, height - bounds.top().value, bounds.right().value, height - bounds.bottom().value], places });
+    }
+    (letters >= LETTERS_OF_ITS_OWN).then_some(lines)
 }
 
 pub enum Answer {
@@ -135,6 +186,10 @@ pub enum Answer {
     /// Where markup was written, or why it was not; and the password it was opened with, for the
     /// file written -- encrypted as it was, with the same password -- to be opened again with.
     Saved { result: Result<PathBuf, String>, password: Option<Secret> },
+    /// Page `page`'s own text (`Ask::Letters`), or `None`: it has none, and is to be read.
+    Letters { page: usize, lines: Option<Vec<Lettered>> },
+    /// Page `page` drawn to be read (`Ask::Scan`).
+    Scanned { page: usize, width: u32, height: u32, rgba: Vec<u8> },
 }
 
 /// The document at `path` written with `marks`: over itself (a new file beside it renamed over
@@ -334,6 +389,31 @@ impl Pdf {
                             let text = document.pages().get(page as PdfPageIndex).ok().and_then(|at| at.text().ok().map(|t| t.all())).unwrap_or_default();
                             Answer::Text { page, text }
                         }
+                        Ask::Letters { page } => {
+                            let lines = document.pages().get(page as PdfPageIndex).ok().and_then(|at| letters(&at));
+                            Answer::Letters { page, lines }
+                        }
+                        Ask::Scan { page } => {
+                            let Ok(at) = document.pages().get(page as PdfPageIndex) else { continue };
+                            // At 300 dots to the inch, as a scanner would; within what hemera reads.
+                            let (w, h) = (at.width().value / 72.0 * 300.0, at.height().value / 72.0 * 300.0);
+                            let (w, h) = spatiand_app::live_text::within_limit((w.round().max(1.0) as u32, h.round().max(1.0) as u32));
+                            let config = PdfRenderConfig::new().set_target_width(w as Pixels).set_maximum_height(h.max(1) as Pixels).render_form_data(true).render_annotations(true);
+                            match at.render_with_config(&config).map(|bitmap| (bitmap.width() as u32, bitmap.height() as u32, bitmap.as_rgba_bytes())) {
+                                Ok((w, h, mut rgba)) => {
+                                    // Paper behind it, as when it is drawn to be shown.
+                                    for px in rgba.chunks_exact_mut(4) {
+                                        let a = px[3] as u32;
+                                        for c in &mut px[..3] {
+                                            *c = ((*c as u32 * a + 255 * (255 - a)) / 255) as u8;
+                                        }
+                                        px[3] = 255;
+                                    }
+                                    Answer::Scanned { page, width: w, height: h, rgba }
+                                }
+                                Err(_) => continue,
+                            }
+                        }
                         Ask::Save { marks, copy } => {
                             let result = save(&pdfium, &path, &marks, copy, password.as_ref().map(Secret::expose));
                             // The file written opens with the same password: given back for it.
@@ -532,6 +612,72 @@ pub(crate) mod tests {
         assert!(matches!(next(&Pdf::open(&path, Some(again))), Answer::Opened { .. }));
         drop(pdf);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A PDF of one A4 page that is only a picture -- a scan, a grey square drawn over the whole
+    /// page -- and no text of its own.
+    fn scanned_page(name: &str) -> PathBuf {
+        let content = "q 595 0 0 842 0 0 cm BI /W 2 /H 2 /CS /G /BPC 8 ID \u{0}\u{80}\u{80}\u{ff} EI Q";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>".to_string(),
+            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+        ];
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut at = Vec::new();
+        for (i, object) in objects.iter().enumerate() {
+            at.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", i + 1).as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+        for offset in at {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).as_bytes());
+        let dir = std::env::temp_dir().join(format!("spatiloupe-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, out).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_page_s_own_text_is_its_characters_and_a_scan_is_drawn_to_be_read() {
+        if library().is_none() {
+            eprintln!("PDFium is not here (tools/fetch-pdfium.sh): not tried");
+            return;
+        }
+        // A page with text of its own: its characters, where they are, from the page's top left.
+        let pdf = Pdf::open(&made("lettered.pdf", &[(595.0, 842.0, "Live Text in a PDF")]), None);
+        assert!(matches!(next(&pdf), Answer::Opened { .. }));
+        pdf.ask(Ask::Letters { page: 0 });
+        let lines = loop {
+            if let Answer::Letters { lines, .. } = next(&pdf) {
+                break lines.expect("its own text");
+            }
+        };
+        let all: String = lines.iter().map(|l| l.text.as_str()).collect();
+        assert!(all.contains("Live Text"), "{all:?}");
+        // Set 10 points in and 10 up from the foot (Helvetica 12): near the page's foot, from its top.
+        let first = &lines[0];
+        assert!(first.rect[0] >= 5.0 && first.rect[0] <= 15.0 && first.rect[3] > 820.0 && first.rect[1] < first.rect[3], "{:?}", first.rect);
+        assert_eq!(first.places.len(), first.text.chars().count());
+        assert!(first.places.windows(2).all(|w| w[0].1 <= w[1].1), "left to right");
+        // A page that is only a picture: no text of its own; drawn at 300 dots to the inch.
+        let pdf = Pdf::open(&scanned_page("scanned.pdf"), None);
+        assert!(matches!(next(&pdf), Answer::Opened { .. }));
+        pdf.ask(Ask::Letters { page: 0 });
+        assert!(matches!(next(&pdf), Answer::Letters { lines: None, .. }));
+        pdf.ask(Ask::Scan { page: 0 });
+        match next(&pdf) {
+            Answer::Scanned { width, height, rgba, .. } => {
+                assert!((2470..=2490).contains(&width) && (3500..=3515).contains(&height), "{width}x{height}");
+                assert_eq!(rgba.len(), (width * height * 4) as usize);
+            }
+            _ => panic!("drawn to be read"),
+        }
     }
 
     #[test]

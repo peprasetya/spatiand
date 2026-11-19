@@ -28,6 +28,9 @@ use crate::stereo::Eyes;
 use crate::swipe::{Carousel, Glide, Reach, Scrolled};
 use crate::tools::{Desk, Placed, Said, BAR};
 
+/// Live Text: the text in a picture or a page, chosen, copied and translated.
+mod lens;
+
 /// The gap between the file looked at and the one beside it on the carousel, beyond the window's
 /// own width: with the room a fitted picture leaves around itself, about what a phone leaves
 /// between its photographs.
@@ -449,6 +452,8 @@ pub struct Paper {
     lock: Option<Lock>,
     /// What its owner allows done to it: what markup offers.
     rights: pdf::Rights,
+    /// Each page's text, for Live Text: its own characters, or read from a picture of it.
+    texts: HashMap<usize, lens::PageText>,
 }
 
 /// A locked PDF's question: its password, typed into a field that shows dots, given to the PDF's
@@ -514,6 +519,7 @@ impl Paper {
             placed: Vec::new(),
             lock: None,
             rights: pdf::Rights::ALL,
+            texts: HashMap::new(),
         }
     }
 
@@ -708,6 +714,8 @@ pub struct View {
     placed: Vec<Placed>,
     /// What the program is to do, come of something done between inputs (a save).
     wanted: Option<Want>,
+    /// The picture's text (Live Text).
+    lens: lens::Lens,
 }
 
 /// How long what was done stays on show.
@@ -760,6 +768,7 @@ impl View {
             said: None,
             placed: Vec::new(),
             wanted: None,
+            lens: lens::Lens::new(),
         }
     }
 
@@ -1049,6 +1058,8 @@ impl View {
         shown.orientation = (shown.orientation + if clockwise { 1 } else { 3 }) % 4;
         shown.zoom = None;
         shown.centre = (0.5, 0.5);
+        // A pair's text was read in one eye as it was: not carried through the turn.
+        self.text_turned();
     }
 
     /// The PDF opened; `password` one it was opened with before (saved, or its copy written),
@@ -1062,6 +1073,8 @@ impl View {
             Ok(picture) => Doc::Picture(Box::new(Shown::new(picture))),
             Err(e) => Doc::Failed(e),
         };
+        // Read already this session: its text at once.
+        self.text_known();
         self.stir();
     }
 
@@ -1119,7 +1132,7 @@ impl View {
     fn chrome(&self) -> f32 {
         // A document is read, not looked at: its controls stay. So do they while there is markup,
         // or a question.
-        if matches!(self.doc, Doc::Pdf(_) | Doc::Loading(_) | Doc::Failed(_)) || self.info || self.desk.is_some() || self.asking.is_some() || self.saving.is_some() || self.said.is_some() {
+        if matches!(self.doc, Doc::Pdf(_) | Doc::Loading(_) | Doc::Failed(_)) || self.info || self.desk.is_some() || self.asking.is_some() || self.saving.is_some() || self.said.is_some() || self.text_busy() {
             return 1.0;
         }
         match self.clock.off_since(Instant::now()) {
@@ -1157,11 +1170,12 @@ impl View {
         let carousel = self.carousel.deadline().map(|at| at.saturating_duration_since(Instant::now()));
         let trouble = self.trouble_at.map(|at| TROUBLE_SHOWN.saturating_sub(at.elapsed()));
         let said = self.said.as_ref().map(|(_, at)| SAID_SHOWN.saturating_sub(at.elapsed()));
-        [doc, carousel, trouble, said].into_iter().flatten().min()
+        [doc, carousel, trouble, said, self.text_wake()].into_iter().flatten().min()
     }
 
     /// What has come back from the PDF's thread.
     pub fn answers(&mut self) -> bool {
+        let by_itself = self.lens.by_itself();
         let Doc::Pdf(paper) = &mut self.doc else { return false };
         let mut any = false;
         loop {
@@ -1231,6 +1245,10 @@ impl View {
                     self.saved(result, password);
                     return true;
                 }
+                // Live Text: a page's own characters, or word that it has none and is to be read;
+                // and a page drawn to be read.
+                pdf::Answer::Letters { page, lines } => paper.lettered(page, lines, by_itself),
+                pdf::Answer::Scanned { page, width, height, rgba } => paper.scanned(page, width, height, rgba),
             }
         }
         any
@@ -1248,7 +1266,9 @@ impl View {
         if unsaid {
             self.said = None;
         }
-        self.frame_on() || slid || gone || unsaid
+        // The picture's text: read once it has settled, and what came of it.
+        let text = self.text_tick() | self.text_answers();
+        self.frame_on() || slid || gone || unsaid || text
     }
 
     /// Move the carousel on to now, and say where it is for the frame about to be drawn.
@@ -1405,6 +1425,8 @@ impl View {
         }
         let chrome = self.chrome();
         p.clip(gl, seen_here);
+        // Where the picture is drawn this frame, for its text to be drawn over it.
+        let mut picture_at = None;
         match &mut self.doc {
             // What it will be, where it will be, until it is: its tile, and after a while the dots
             // that say it is still coming.
@@ -1464,10 +1486,14 @@ impl View {
                     // A picture with see-through parts is shown on a checkerboard-free dark
                     // ground: the backdrop already is one.
                     p.image(gl, which, at, uv, if fitted { 6.0 } else { 0.0 }, [1.0, 1.0, 1.0, fade], false);
+                    picture_at = Some(at);
                 }
             }
             Doc::Pdf(paper) => draw_paper(p, gl, paper, here, seen_here, &self.entry.name),
             Doc::Model(_) => {}
+        }
+        if let Some(at) = picture_at {
+            self.text_draw_picture(p, gl, at);
         }
         p.unclip(gl);
         // Markup: where the pages are on the window, and what is drawn on them.
@@ -1483,6 +1509,13 @@ impl View {
         if chrome > 0.0 {
             self.controls(p, gl, all, chrome);
         }
+        // The picture's text being read: said at the foot, over the strip, till it has come.
+        if self.text_reading() && self.trouble.is_none() && self.said.is_none() && self.asking.is_none() {
+            let over = if self.foot.h > 0.0 && chrome > 0.05 { self.foot.y - 12.0 } else { all.bottom() - 18.0 };
+            hint_pane_over(p, gl, all, over, "Reading the text\u{2026}");
+        }
+        // Over everything: the text's menu, or its translation.
+        self.text_draw_over(p, gl, all);
         p.end(gl);
     }
 
@@ -1711,6 +1744,12 @@ impl View {
                 }
             }
             _ => self.about().into_iter().map(|(what, value)| format!("{what}: {value}")).collect::<Vec<_>>().join("\n"),
+        };
+        // The text read in the picture, or in a scanned page: what is printed on it, for the room's
+        // speech to answer from rather than read it again off the picture.
+        let text = match self.text_described() {
+            Some(read) => format!("{text}\n\n{read}"),
+            None => text,
         };
         // Markup: the words being typed onto the page, or that its tools are out, and which.
         let text = match self.desk.as_ref().filter(|d| d.on) {
@@ -2037,6 +2076,12 @@ impl View {
             if !*pressed && std::mem::take(&mut self.swallowing) {
                 return Want::Nothing;
             }
+        }
+        // The text in the picture or the page: a press and drag on it chooses, its menu and its
+        // translation have everything while they are open. A press or a drag off it is the
+        // window's own, as it always was.
+        if let Some(want) = self.text_input(input) {
+            return want;
         }
         if self.back.input(input) {
             return self.leave();
@@ -2566,6 +2611,9 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
                 p.fill(gl, at, 3.0, colour);
             }
         }
+        // Its text, for Live Text: its own characters asked for once, and drawn where it is.
+        paper.ask_letters(index);
+        paper.text_draw_page(p, gl, index, rect);
     }
     p.unclip(gl);
     // Pages are drawn at the width they are shown, and drawn again when that changes much.
