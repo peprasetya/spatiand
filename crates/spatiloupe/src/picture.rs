@@ -117,10 +117,8 @@ pub fn read_whole(path: &Path) -> Result<Whole, String> {
         let image = RgbaImage::from_raw(picture.width, picture.height, picture.rgba).ok_or("a picture of the wrong size")?;
         Ok(Whole { image, exif: None, icc: None, format: None })
     };
-    // FFmpeg's whole: as wide as a picture can be, which it then is not made smaller than.
-    let whole = i32::MAX as u32;
     if ["heic", "heif", "hif", "avif", "jp2", "j2k", "jpf", "jpx", "j2c", "jxl"].contains(&kind.as_str()) {
-        return plain(by_ffmpeg(path, whole)?);
+        return whole_by_ffmpeg(path, &kind);
     }
     let bytes = crate::place::read(path)?;
     if kind == "svg" {
@@ -150,7 +148,148 @@ pub fn read_whole(path: &Path) -> Result<Whole, String> {
         Ok(Whole { image: shown(image), exif, icc, format })
     };
     // Named wrongly, or not the image crate's: FFmpeg, as for the window.
-    read().or_else(|e| by_ffmpeg(path, whole).map_err(|_| e).and_then(plain))
+    read().or_else(|e| whole_by_ffmpeg(path, &kind).map_err(|_| e))
+}
+
+/// A picture FFmpeg reads, whole and upright, with what its file says of it: its colours'
+/// profile -- FFmpeg's, or a HEIF's or AVIF's own `colr` box, which FFmpeg leaves (an iPhone's
+/// Display P3 was lost, and a copy of one shown as if it were sRGB) -- and a HEIF's or AVIF's
+/// Exif, read from the file on this machine or a remote's by its pieces.
+fn whole_by_ffmpeg(path: &Path, kind: &str) -> Result<Whole, String> {
+    let deep = match crate::place::remote(path) {
+        Some(_) => spatiand_media::still::whole(&crate::place::source(path)),
+        None => spatiand_media::still::whole_file(path),
+    };
+    let deep = deep.ok_or("not a picture this can read")?;
+    // Eight bits a sample: sixteen's top eight, rounded.
+    let rgba: Vec<u8> = deep.rgba.iter().map(|&v| ((v as u32 + 128) / 257) as u8).collect();
+    let image = RgbaImage::from_raw(deep.width, deep.height, rgba).ok_or("a picture of the wrong size")?;
+    let (mut icc, mut exif) = (deep.icc, None);
+    if ["heic", "heif", "hif", "avif"].contains(&kind) {
+        let mut read = |from: &mut dyn ReadSeek| {
+            icc = icc.take().or_else(|| heif_icc(from));
+            if from.seek(std::io::SeekFrom::Start(0)).is_ok() {
+                exif = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(from)).ok().map(|e| e.buf().to_vec());
+            }
+        };
+        match crate::place::pieces(path) {
+            Some(mut pieces) => read(&mut pieces),
+            None => {
+                if let Ok(mut file) = std::fs::File::open(path) {
+                    read(&mut file);
+                }
+            }
+        }
+    }
+    Ok(Whole { image, exif, icc, format: None })
+}
+
+/// What a HEIF's boxes are read from: a file, or a remote's pieces.
+pub(crate) trait ReadSeek: std::io::Read + std::io::Seek {}
+impl<T: std::io::Read + std::io::Seek> ReadSeek for T {}
+
+/// The colour profile a HEIF or AVIF gives its primary picture: the `colr` box holding an ICC
+/// profile (`prof`, or `rICC`) among its item properties that the primary item is associated
+/// with (ISO/IEC 23008-12) -- or, with none associated, the first there is.
+pub(crate) fn heif_icc(from: &mut dyn ReadSeek) -> Option<Vec<u8>> {
+    use std::io::SeekFrom;
+    from.seek(SeekFrom::Start(0)).ok()?;
+    // The top level's boxes, to the meta box; read whole, it is small (the pictures are in mdat).
+    let meta = loop {
+        let mut head = [0u8; 8];
+        from.read_exact(&mut head).ok()?;
+        let mut size = u32::from_be_bytes(head[0..4].try_into().ok()?) as u64;
+        let mut header = 8;
+        if size == 1 {
+            let mut large = [0u8; 8];
+            from.read_exact(&mut large).ok()?;
+            size = u64::from_be_bytes(large);
+            header = 16;
+        }
+        if &head[4..8] == b"meta" {
+            if size < header || size - header > 16 << 20 {
+                return None;
+            }
+            let mut body = vec![0u8; (size - header) as usize];
+            from.read_exact(&mut body).ok()?;
+            break body;
+        }
+        if size < header {
+            return None;
+        }
+        from.seek(SeekFrom::Current((size - header) as i64)).ok()?;
+    };
+    heif_meta_icc(&meta)
+}
+
+/// The boxes in `body`, each its type and what is inside it.
+fn boxes(body: &[u8]) -> Vec<([u8; 4], &[u8])> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while at + 8 <= body.len() {
+        let size = u32::from_be_bytes(body[at..at + 4].try_into().unwrap()) as usize;
+        let kind: [u8; 4] = body[at + 4..at + 8].try_into().unwrap();
+        let (header, size) = match size {
+            0 => (8, body.len() - at),
+            1 if at + 16 <= body.len() => (16, u64::from_be_bytes(body[at + 8..at + 16].try_into().unwrap()) as usize),
+            _ => (8, size),
+        };
+        if size < header || at + size > body.len() {
+            break;
+        }
+        out.push((kind, &body[at + header..at + size]));
+        at += size;
+    }
+    out
+}
+
+fn heif_meta_icc(meta: &[u8]) -> Option<Vec<u8>> {
+    // A full box: its version and flags first.
+    let children = boxes(meta.get(4..)?);
+    let primary = children.iter().find(|(k, _)| k == b"pitm").and_then(|(_, b)| match b.first()? {
+        0 => Some(u16::from_be_bytes(b.get(4..6)?.try_into().ok()?) as u32),
+        _ => Some(u32::from_be_bytes(b.get(4..8)?.try_into().ok()?)),
+    });
+    let iprp = children.iter().find(|(k, _)| k == b"iprp")?.1;
+    let inside = boxes(iprp);
+    let ipco = inside.iter().find(|(k, _)| k == b"ipco")?.1;
+    let properties = boxes(ipco);
+    let profile = |index: usize| -> Option<Vec<u8>> {
+        let (kind, body) = properties.get(index.checked_sub(1)?)?;
+        (kind == b"colr" && matches!(body.get(0..4)?, b"prof" | b"rICC")).then(|| body[4..].to_vec())
+    };
+    // ipma: which properties each item has, by their places in ipco (counted from 1).
+    if let (Some(primary), Some((_, ipma))) = (primary, inside.iter().find(|(k, _)| k == b"ipma")) {
+        let (version, flags) = (*ipma.first()?, *ipma.get(3)?);
+        let count = u32::from_be_bytes(ipma.get(4..8)?.try_into().ok()?) as usize;
+        let mut at = 8;
+        for _ in 0..count {
+            let item = if version < 1 {
+                at += 2;
+                u16::from_be_bytes(ipma.get(at - 2..at)?.try_into().ok()?) as u32
+            } else {
+                at += 4;
+                u32::from_be_bytes(ipma.get(at - 4..at)?.try_into().ok()?)
+            };
+            let n = *ipma.get(at)? as usize;
+            at += 1;
+            for _ in 0..n {
+                let index = if flags & 1 != 0 {
+                    at += 2;
+                    (u16::from_be_bytes(ipma.get(at - 2..at)?.try_into().ok()?) & 0x7FFF) as usize
+                } else {
+                    at += 1;
+                    (*ipma.get(at - 1)? & 0x7F) as usize
+                };
+                if item == primary {
+                    if let Some(icc) = profile(index) {
+                        return Some(icc);
+                    }
+                }
+            }
+        }
+    }
+    (1..=properties.len()).find_map(profile)
 }
 
 /// The same, from what has already been read: a picture that came over the network.

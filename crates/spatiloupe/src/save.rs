@@ -201,11 +201,9 @@ pub fn save(saving: &Saving) -> Result<PathBuf, String> {
     let clear = image.pixels().any(|p| p.0[3] < 255);
     if saving.copy {
         let (format, extension) = copy_format(&name, clear);
-        // A file named as one format and holding another is copied as what it holds is not:
-        // what it is named, which is what it is written as.
-        let keep = whole.format == Some(format);
-        let (exif, icc) = if keep { (whole.exif, whole.icc) } else { (None, whole.icc) };
-        let bytes = encode(&image, format, exif, icc)?;
+        // Its camera's account and its colours' profile go with it, whatever it is written as:
+        // a HEIC's to its JPEG, its orientation made upright.
+        let bytes = encode(&image, format, whole.exif, whole.icc)?;
         let folder = crate::place::parent(&saving.source).ok_or("it is in no folder")?;
         let copy = copy_name(&name, extension, |candidate| crate::place::exists(&crate::place::join(&folder, candidate)));
         let path = crate::place::join(&folder, &copy);
@@ -443,6 +441,137 @@ mod tests {
         assert!(blue(10, latin) > 100, "Latin");
         assert!(blue(latin, both) > 100, "Cyrillic");
         assert!(blue(both, 400) > 100, "Chinese");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Pictures FFmpeg reads, made on deepmagpie with what it has (testdata/pictures/make.py: x265,
+/// libaom, libjxl and OpenJPEG through ffmpeg, the HEIF container written by hand around x265's
+/// HEVC, there being no HEIF encoder there), of one pattern stored 480 by 360: four quarters --
+/// red, green, blue, light grey -- over a grey ramp 40 tall along the foot.
+#[cfg(test)]
+pub(crate) mod pictures {
+    use std::path::{Path, PathBuf};
+
+    pub const QUARTERS: [[u8; 3]; 4] = [[200, 40, 40], [40, 180, 60], [40, 60, 200], [220, 220, 220]];
+
+    /// The pattern's colour at (x, y) as stored.
+    pub fn stored(x: u32, y: u32) -> [u8; 3] {
+        if y >= 320 {
+            let v = (x as f32 * 255.0 / 479.0).round() as u8;
+            return [v, v, v];
+        }
+        QUARTERS[(x >= 240) as usize + 2 * (y >= 160) as usize]
+    }
+
+    /// The fixture `name`, written into `dir`.
+    pub fn put(dir: &Path, name: &str) -> PathBuf {
+        let bytes: &[u8] = match name {
+            "iphone.heic" => include_bytes!("../testdata/pictures/iphone.heic"),
+            "plain.heic" => include_bytes!("../testdata/pictures/plain.heic"),
+            "pattern.avif" => include_bytes!("../testdata/pictures/pattern.avif"),
+            "pattern.jxl" => include_bytes!("../testdata/pictures/pattern.jxl"),
+            "pattern.jp2" => include_bytes!("../testdata/pictures/pattern.jp2"),
+            "ramp10.heic" => include_bytes!("../testdata/pictures/ramp10.heic"),
+            "ramp10.avif" => include_bytes!("../testdata/pictures/ramp10.avif"),
+            "ramp16.jxl" => include_bytes!("../testdata/pictures/ramp16.jxl"),
+            _ => panic!("no fixture {name}"),
+        };
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    pub fn near(a: [u8; 3], b: [u8; 3], by: i32) -> bool {
+        (0..3).all(|c| (a[c] as i32 - b[c] as i32).abs() <= by)
+    }
+}
+
+#[cfg(test)]
+mod copies {
+    use super::pictures::{near, put, stored};
+    use super::*;
+    use crate::markup::{Area, Ink, Note, Shape, Weight};
+
+    fn folder(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("spatiloupe-copies-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_heic_and_its_kin_are_copied_as_jpegs_that_open_as_they_were_shown() {
+        let dir = folder("heic");
+        // Each, as shown -- the iPhone's turned upright by its irot -- with where its grey quarter
+        // is to draw a box in, and where its pixels as shown were stored.
+        type Stored = fn(u32, u32) -> (u32, u32);
+        let upright: Stored = |x, y| (x, y);
+        // An iPhone's, stored on its side and turned a quarter clockwise to be shown.
+        let iphone: Stored = |x, y| (y, 359 - x);
+        // Which part of the pattern a stored pixel is in: a quarter, or the ramp.
+        let part = |(x, y): (u32, u32)| if y >= 320 { 4 } else { (x >= 240) as u32 + 2 * (y >= 160) as u32 };
+        let cases: [(&str, (u32, u32), Area, Stored); 5] = [
+            ("iphone.heic", (360, 480), Area::new(30.0, 370.0, 120.0, 440.0), iphone),
+            ("plain.heic", (480, 360), Area::new(280.0, 190.0, 440.0, 290.0), upright),
+            ("pattern.avif", (480, 360), Area::new(280.0, 190.0, 440.0, 290.0), upright),
+            ("pattern.jxl", (480, 360), Area::new(280.0, 190.0, 440.0, 290.0), upright),
+            ("pattern.jp2", (480, 360), Area::new(280.0, 190.0, 440.0, 290.0), upright),
+        ];
+        for (name, (w, h), area, was) in cases {
+            // Each in a folder of its own: pattern.avif and pattern.jxl would both be "pattern (edited).jpg".
+            let own = dir.join(name.replace('.', "-"));
+            std::fs::create_dir_all(&own).unwrap();
+            let path = put(&own, name);
+            let marks = Marks { notes: vec![Note { page: 0, shape: Shape::Box(area), ink: Ink::Red, weight: Weight::Medium, size: 6.0 }], ..Marks::default() };
+            // Not written over: only copied.
+            let refused = save(&Saving { source: path.clone(), marks: marks.clone(), frame: (w as f32, h as f32), copy: false });
+            assert!(refused.unwrap_err().contains("Save a copy"), "{name}");
+            let copy = save(&Saving { source: path.clone(), marks, frame: (w as f32, h as f32), copy: true }).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let stem = name.rsplit_once('.').unwrap().0;
+            assert_eq!(copy, own.join(format!("{stem} (edited).jpg")), "{name}");
+            let read = image::open(&copy).unwrap().to_rgb8();
+            assert_eq!(read.dimensions(), (w, h), "{name}: written as shown");
+            // Its colours as they were shown, at points well inside each part -- the quarters and
+            // the ramp -- through HEVC, AV1 and the rest and then JPEG.
+            let mut checked = 0;
+            for y in (12..h - 12).step_by(23) {
+                for x in (12..w - 12).step_by(23) {
+                    let inside = |px: u32, py: u32| (area.x0 - 6.0..area.x1 + 6.0).contains(&(px as f32)) && (area.y0 - 6.0..area.y1 + 6.0).contains(&(py as f32));
+                    let around = [(x - 10, y - 10), (x + 10, y + 10), (x - 10, y + 10), (x + 10, y - 10)];
+                    // Away from where the parts meet, and from the box.
+                    if inside(x, y) || around.iter().any(|&(ax, ay)| part(was(ax, ay)) != part(was(x, y))) {
+                        continue;
+                    }
+                    let (sx, sy) = was(x, y);
+                    let got = read.get_pixel(x, y).0;
+                    assert!(near(got, stored(sx, sy), 12), "{name} at ({x}, {y}): {got:?}, was {:?}", stored(sx, sy));
+                    checked += 1;
+                }
+            }
+            assert!(checked > 100, "{name}: {checked}");
+            // The box: red on its left edge, the grey inside it untouched.
+            let mid = ((area.y0 + area.y1) * 0.5) as u32;
+            let edge = read.get_pixel(area.x0 as u32, mid).0;
+            assert!(edge[0] > 180 && edge[1] < 110 && edge[2] < 110, "{name}: {edge:?}");
+            let centre = read.get_pixel(((area.x0 + area.x1) * 0.5) as u32, mid).0;
+            assert!(near(centre, [220, 220, 220], 12), "{name}: {centre:?}");
+        }
+        // The iPhone's: its Display P3 profile and its camera's account kept, upright and its size
+        // as written.
+        let original = crate::picture::heif_icc(&mut std::fs::File::open(dir.join("iphone-heic/iphone.heic")).unwrap()).expect("the HEIC's own profile");
+        // An ICC profile ("acsp"), named Display P3 in UTF-16 as its description is.
+        let described: Vec<u8> = "Display P3".encode_utf16().flat_map(u16::to_be_bytes).collect();
+        assert!(&original[36..40] == b"acsp" && original.windows(described.len()).any(|w| w == described));
+        let copy = dir.join("iphone-heic/iphone (edited).jpg");
+        let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::BufReader::new(std::fs::File::open(&copy).unwrap())).unwrap();
+        assert_eq!(image::ImageDecoder::icc_profile(&mut decoder).unwrap(), Some(original), "the profile carried to the JPEG");
+        let exif = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(std::fs::File::open(&copy).unwrap())).unwrap();
+        let get = |tag| exif.get_field(tag, exif::In::PRIMARY).map(|f| f.display_value().to_string());
+        assert_eq!(get(exif::Tag::Orientation).as_deref(), Some("row 0 at top and column 0 at left"), "upright");
+        assert_eq!(get(exif::Tag::Make).as_deref(), Some("\"Apple\""));
+        assert_eq!(get(exif::Tag::DateTimeOriginal).as_deref(), Some("2026-11-19 10:00:00"));
+        assert_eq!((get(exif::Tag::PixelXDimension), get(exif::Tag::PixelYDimension)), (Some("360".into()), Some("480".into())));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
