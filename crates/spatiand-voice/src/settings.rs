@@ -1,12 +1,11 @@
-//! What the wearer chose for speech: kept with the applications' settings, so every linked
-//! machine has the same (`~/.config/spatiand/apps/voice.json`, synchronised by spatiand-sync).
+//! What speech needs of the wearer's choices: hemera, the languages and words dictation hears
+//! with, and its two models. Taken from the AI settings (`spatiand_ai`, `ai.json` in the folder
+//! every paired machine shares, changed on the room's AI card); this has no file of its own.
+//! It had one, `voice.json`, until 2026-11-19, which the AI settings were carried over from.
 
-use std::path::Path;
+use spatiand_ai::AiSettings;
 
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VoiceSettings {
     /// hemera's address.
     pub hemera: String,
@@ -25,39 +24,26 @@ pub struct VoiceSettings {
 
 impl Default for VoiceSettings {
     fn default() -> Self {
-        VoiceSettings {
-            hemera: "http://deepmagpie:12434".into(),
-            languages: vec!["en".into(), "id".into()],
-            transcription_model: "whisper-large-v3-turbo".into(),
-            cleanup_model: "neohorse-1:4b".into(),
-            words: [
-                "Spatiand", "SpatiQuill", "SpatiShelf", "SpatiReel", "SpatiLoupe", "SpatiMesh", "SpatiWorld", "Steam Deck",
-                "Beam Pro", "deepmagpie", "hemera",
-            ]
-            .iter()
-            .map(|w| w.to_string())
-            .collect(),
-            pause_ms: 700,
-        }
+        VoiceSettings::of(&AiSettings::default())
     }
 }
 
 impl VoiceSettings {
-    pub const FILE: &'static str = "voice.json";
-
-    /// The settings in `folder`, or the defaults when there are none (or they do not read).
-    pub fn load(folder: &Path) -> VoiceSettings {
-        std::fs::read(folder.join(Self::FILE))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+    /// What speech needs of the AI settings.
+    pub fn of(ai: &AiSettings) -> VoiceSettings {
+        VoiceSettings {
+            hemera: ai.hemera.clone(),
+            languages: ai.dictation.languages.clone(),
+            transcription_model: ai.models.transcription.clone(),
+            cleanup_model: ai.models.cleanup.clone(),
+            words: ai.dictation.words.clone(),
+            pause_ms: ai.dictation.pause_ms,
+        }
     }
 
-    pub fn save(&self, folder: &Path) -> Result<(), String> {
-        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        let path = folder.join(Self::FILE);
-        let partial = folder.join(format!(".{}.part", Self::FILE));
-        std::fs::write(&partial, text).and_then(|_| std::fs::rename(&partial, &path)).map_err(|e| format!("{}: {e}", path.display()))
+    /// The AI settings kept in `folder` (the shared folder), as speech needs them.
+    pub fn load(folder: &std::path::Path) -> VoiceSettings {
+        VoiceSettings::of(&AiSettings::load(folder))
     }
 
     /// A sentence in the way the wearer speaks, for Whisper's prompt before they have said

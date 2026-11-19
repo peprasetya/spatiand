@@ -1,11 +1,11 @@
 //! SpatiPal's window: its chats down the left, the conversation in the middle, a field to type
-//! in at the foot -- and its settings, dictation's among them, behind the cog.
+//! in at the foot -- and its own settings behind the cog. hemera, the models and dictation are
+//! the room's AI settings, which more than one app uses: its settings say so, in one line.
 //!
 //! Drawn with the room's own widgets (`spatiand_app::ui`), so it looks like the rest of Spatiand.
 
 use spatiand_app::ui::{look, theme, Button, Confirm, Field, Icon, Input, List, Painter, Rect, Row, Typed};
 use spatiand_app::Gl;
-use spatiand_voice::VoiceSettings;
 
 use crate::store::{Chat, Said, Settings};
 
@@ -33,13 +33,11 @@ pub struct View<'a> {
     /// Its voice is speaking, or has something still to say: Stop stops it.
     pub speaking: bool,
     pub settings: &'a Settings,
-    pub speech: &'a VoiceSettings,
     pub listening: bool,
     pub look: bool,
     pub status: &'a str,
     pub trouble: Option<&'a str>,
-    /// Choices fetched from hemera: text models, voices.
-    pub models: &'a [String],
+    /// Voices fetched from hemera's library, for the choice of one.
     pub voices: &'a [String],
     pub characters: &'a [String],
 }
@@ -58,7 +56,7 @@ pub enum Want {
     Settings,
     Chat,
     /// The settings, changed: to keep.
-    Keep(Settings, VoiceSettings),
+    Keep(Settings),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -81,20 +79,17 @@ enum Line {
     Listening,
     Thinking,
     Continue,
-    Model,
-    Large,
-    Languages,
-    Words,
-    Cleanup,
-    Hemera,
 }
 
 const LINES: &[(&str, &[Line])] = &[
     ("Assistant", &[Line::On, Line::Name, Line::Persona, Line::Figure, Line::Shown]),
     ("Voice and ears", &[Line::Voice, Line::Described, Line::Spoken, Line::Listening, Line::Thinking]),
-    ("Models and chats", &[Line::Model, Line::Large, Line::Continue]),
-    ("Dictation", &[Line::Languages, Line::Words, Line::Cleanup, Line::Hemera]),
+    ("Chats", &[Line::Continue]),
 ];
+
+/// Where what was moved out of these settings is now (the owner, 2026-11-19: "move shared
+/// setting from spatipal to this card ... but keep setting specific spatipal in spatipal").
+pub const ELSEWHERE: &str = "hemera, the models and dictation are in Spatiand's settings, under AI.";
 
 pub struct Window {
     pub page: Page,
@@ -298,6 +293,10 @@ impl Window {
         } else {
             p.label(gl, "Choose a line to change it.", foot, theme::FOOTER_EM, theme::ink_hint(), 0.0);
         }
+        // What is the room's now, said once, under the list.
+        let elsewhere = all.take_bottom(theme::FOOTER_EM * 1.8);
+        p.label(gl, ELSEWHERE, elsewhere, theme::FOOTER_EM, theme::ink_detail(), 0.0);
+        all.take_bottom(8.0);
         let mut rows = Vec::new();
         for (heading, lines) in LINES {
             rows.push(Row::heading(*heading));
@@ -442,13 +441,13 @@ impl Window {
         if let (Some(line), true) = (self.editing, leaving) {
             let text = self.edit.text.trim().to_string();
             self.editing = None;
-            let (mut s, mut v) = (view.settings.clone(), view.speech.clone());
-            set_text(line, &text, &mut s, &mut v);
+            let mut s = view.settings.clone();
+            set_text(line, &text, &mut s);
             // The press is also the start of what it was aimed at (Back, another line): the
             // field gives it up now and the release does the rest, as before.
             self.back.input(&input);
             self.lines.input(&input);
-            return Some(Want::Keep(s, v));
+            return Some(Want::Keep(s));
         }
         if self.back.input(&input) {
             self.editing = None;
@@ -459,9 +458,9 @@ impl Window {
                 Some(Typed::Entered) => {
                     let text = self.edit.text.trim().to_string();
                     self.editing = None;
-                    let (mut s, mut v) = (view.settings.clone(), view.speech.clone());
-                    set_text(line, &text, &mut s, &mut v);
-                    return Some(Want::Keep(s, v));
+                    let mut s = view.settings.clone();
+                    set_text(line, &text, &mut s);
+                    return Some(Want::Keep(s));
                 }
                 Some(Typed::Changed) => return None,
                 None => {}
@@ -475,9 +474,9 @@ impl Window {
         }
         let row = self.lines.input(&input)?;
         let line = Self::line_at(row)?;
-        let (mut s, mut v) = (view.settings.clone(), view.speech.clone());
+        let mut s = view.settings.clone();
         match line {
-            Line::Name | Line::Persona | Line::Described | Line::Words | Line::Hemera => {
+            Line::Name | Line::Persona | Line::Described => {
                 self.editing = Some(line);
                 self.edit.set(text_of(line, view));
                 self.edit.select_all();
@@ -485,58 +484,39 @@ impl Window {
             }
             Line::On => {
                 s.on = !s.on;
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
             Line::Spoken => {
                 s.spoken = !s.spoken;
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
             Line::Shown => {
                 s.shown = !s.shown;
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
             Line::Listening => {
                 s.listening = !s.listening;
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
             Line::Thinking => {
                 s.thinking = next(&["quiet", "tone", "read"], &s.thinking);
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
             Line::Continue => {
                 let choices = [0u32, 1, 4, 12, 24, 168, 100_000];
                 let at = choices.iter().position(|c| *c == s.continue_hours).map(|i| (i + 1) % choices.len()).unwrap_or(2);
                 s.continue_hours = choices[at];
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
             Line::Figure => {
                 s.character = next(view.characters, &s.character);
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
             Line::Voice => {
                 let mut choices = vec![String::new()];
                 choices.extend(view.voices.iter().cloned());
                 s.voice = next(&choices, &s.voice);
-                Some(Want::Keep(s, v))
-            }
-            Line::Model => {
-                s.model = next(view.models, &s.model);
-                Some(Want::Keep(s, v))
-            }
-            Line::Large => {
-                s.large_model = next(view.models, &s.large_model);
-                Some(Want::Keep(s, v))
-            }
-            Line::Cleanup => {
-                v.cleanup_model = next(view.models, &v.cleanup_model);
-                Some(Want::Keep(s, v))
-            }
-            Line::Languages => {
-                let presets: [&[&str]; 4] = [&["en", "id"], &["en"], &["id"], &[]];
-                let now: Vec<&str> = v.languages.iter().map(String::as_str).collect();
-                let at = presets.iter().position(|p| *p == now.as_slice()).map(|i| (i + 1) % presets.len()).unwrap_or(0);
-                v.languages = presets[at].iter().map(|l| l.to_string()).collect();
-                Some(Want::Keep(s, v))
+                Some(Want::Keep(s))
             }
         }
     }
@@ -564,12 +544,6 @@ fn label(line: Line) -> &'static str {
         Line::Listening => "Listen for its name",
         Line::Thinking => "While the larger model thinks",
         Line::Continue => "Go on in the last chat",
-        Line::Model => "Everyday model",
-        Line::Large => "Larger model",
-        Line::Languages => "Languages spoken",
-        Line::Words => "Your own words",
-        Line::Cleanup => "Terminal clean-up model",
-        Line::Hemera => "hemera",
     }
 }
 
@@ -578,7 +552,7 @@ fn on(b: bool) -> String {
 }
 
 fn value(line: Line, view: &View) -> String {
-    let (s, v) = (view.settings, view.speech);
+    let s = view.settings;
     match line {
         Line::On => on(s.on),
         Line::Shown => if s.shown { "Shown".into() } else { "Hidden (still listening)".into() },
@@ -599,40 +573,24 @@ fn value(line: Line, view: &View) -> String {
             h if h >= 100_000 => "Always".into(),
             h => format!("If within {h} h"),
         },
-        Line::Model => s.model.clone(),
-        Line::Large => s.large_model.clone(),
-        Line::Languages => match v.languages.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-            ["en", "id"] => "English and Indonesian, mixed".into(),
-            ["en"] => "English".into(),
-            ["id"] => "Indonesian".into(),
-            [] => "Any (Whisper decides)".into(),
-            other => other.join(", "),
-        },
-        Line::Words => short(&v.words.join(", ")),
-        Line::Cleanup => v.cleanup_model.clone(),
-        Line::Hemera => v.hemera.clone(),
     }
 }
 
 fn text_of(line: Line, view: &View) -> String {
-    let (s, v) = (view.settings, view.speech);
+    let s = view.settings;
     match line {
         Line::Name => s.name.clone(),
         Line::Persona => s.persona.clone(),
         Line::Described => s.described.clone(),
-        Line::Words => v.words.join(", "),
-        Line::Hemera => v.hemera.clone(),
         _ => String::new(),
     }
 }
 
-fn set_text(line: Line, text: &str, s: &mut Settings, v: &mut VoiceSettings) {
+fn set_text(line: Line, text: &str, s: &mut Settings) {
     match line {
         Line::Name if !text.is_empty() => s.name = text.to_string(),
         Line::Persona => s.persona = text.to_string(),
         Line::Described => s.described = text.to_string(),
-        Line::Words => v.words = text.split(',').map(str::trim).filter(|w| !w.is_empty()).map(str::to_string).collect(),
-        Line::Hemera if !text.is_empty() => v.hemera = text.to_string(),
         _ => {}
     }
 }
@@ -749,19 +707,17 @@ mod tests {
     #[test]
     fn control_delete_forgets_the_open_chat_only_pressed_twice_and_with_nothing_typed() {
         let chats: Vec<Chat> = ["a", "b"].iter().map(|id| Chat { id: id.to_string(), ..Default::default() }).collect();
-        let (settings, speech) = (Settings::default(), VoiceSettings::default());
+        let settings = Settings::default();
         let view = View {
             chats: &chats,
             current: Some(1),
             answering: None,
             speaking: false,
             settings: &settings,
-            speech: &speech,
             listening: false,
             look: false,
             status: "",
             trouble: None,
-            models: &[],
             voices: &[],
             characters: &[],
         };
@@ -787,9 +743,35 @@ mod tests {
     fn the_bin_asks_first_and_escape_is_cancel() {
         let mut w = Window::new();
         assert!(w.ask_to_forget("a".into()).is_none());
-        let (settings, speech) = (Settings::default(), VoiceSettings::default());
-        let view = View { chats: &[], current: None, answering: None, speaking: false, settings: &settings, speech: &speech, listening: false, look: false, status: "", trouble: None, models: &[], voices: &[], characters: &[] };
+        let settings = Settings::default();
+        let view = View { chats: &[], current: None, answering: None, speaking: false, settings: &settings, listening: false, look: false, status: "", trouble: None, voices: &[], characters: &[] };
         assert!(w.input(key(Key::Escape), &view).is_none());
         assert!(w.asking.is_none());
+    }
+
+    #[test]
+    fn its_settings_keep_its_own_and_say_where_the_rest_went() {
+        // The assistant's own lines stay; hemera, the models and dictation are the room's now.
+        let labels: Vec<&str> = LINES.iter().flat_map(|(_, lines)| lines.iter().map(|l| label(*l))).collect();
+        assert_eq!(
+            labels,
+            [
+                "Start with the room",
+                "Name (what it answers to)",
+                "Personality",
+                "Figure",
+                "Show its figure",
+                "Voice",
+                "Voice described",
+                "Speak answers",
+                "Listen for its name",
+                "While the larger model thinks",
+                "Go on in the last chat",
+            ]
+        );
+        let headings: Vec<&str> = LINES.iter().map(|(h, _)| *h).collect();
+        assert_eq!(headings, ["Assistant", "Voice and ears", "Chats"]);
+        assert!(ELSEWHERE.contains("Spatiand's settings, under AI"));
+        assert!(ELSEWHERE.ends_with('.'));
     }
 }

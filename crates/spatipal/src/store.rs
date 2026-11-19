@@ -51,8 +51,15 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 
 // --- settings ---
 
-/// What the wearer chose. `assistant.json`; the room reads `on` to start the assistant with the
-/// session (`crate::assist` in the compositor).
+/// What the wearer chose of SpatiPal's own: who it is, its voice and ears, its chats.
+/// `assistant.json`; the room reads `on` to start the assistant with the session (`crate::assist`
+/// in the compositor).
+///
+/// **hemera, the models and dictation are not here**: they are the room's AI settings, which
+/// more than one app uses (`spatiand_app::ai`, changed on the room's AI card). The everyday and
+/// the larger model were here, as `model` and `large_model`, until 2026-11-19, and were carried
+/// over from here once; they stay in the file, untouched, among what is [`Settings::kept`], for a
+/// machine still running an older SpatiPal.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
@@ -68,10 +75,7 @@ pub struct Settings {
     pub voice: String,
     /// A voice described in words, for hemera to make up.
     pub described: String,
-    /// The small model: every request goes to it first.
-    pub model: String,
-    /// The larger model, for what the small one hands over.
-    pub large_model: String,
+    /// hemera's model that speaks its answers.
     pub speech_model: String,
     /// While the larger model thinks: `quiet` (the figure shows it), `tone` (and a soft sound),
     /// `read` (its thinking read aloud as it comes).
@@ -85,6 +89,10 @@ pub struct Settings {
     pub spoken: bool,
     /// Its figure in the room; hidden, it still hears and answers.
     pub shown: bool,
+    /// What is in the file and not above, written back as it was: an older build's models (see
+    /// above), and whatever a newer build puts there. Saving drops nothing.
+    #[serde(flatten)]
+    pub kept: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for Settings {
@@ -96,14 +104,13 @@ impl Default for Settings {
             character: "robot".into(),
             voice: String::new(),
             described: "A friendly young voice, light and warm, speaking at an easy pace.".into(),
-            model: "neohorse-1:4b".into(),
-            large_model: "Qwen3.8:27b-q3".into(),
             speech_model: "voxcpm2".into(),
             thinking: "tone".into(),
             continue_hours: 4,
             listening: true,
             spoken: true,
             shown: true,
+            kept: serde_json::Map::new(),
         }
     }
 }
@@ -250,6 +257,22 @@ mod tests {
         assert!(here.older_than(&Chat { said: said(4), updated: 90, ..here.clone() }));
         assert!(here.older_than(&Chat { updated: 101, ..here.clone() }));
         assert!(!here.older_than(&here.clone()));
+    }
+
+    #[test]
+    fn an_older_build_s_models_stay_in_the_file_when_it_is_saved() {
+        // An older SpatiPal on another machine still reads its models from here, and a machine
+        // that has not carried them over yet still takes them from here.
+        let older = r#"{"on": true, "name": "Pixel", "model": "gemma4:e4b", "large_model": "Ornith-1.5:35b", "spoken": false}"#;
+        let mut s: Settings = serde_json::from_str(older).unwrap();
+        assert_eq!((s.on, s.name.as_str(), s.spoken), (true, "Pixel", false));
+        s.spoken = true;
+        let written: serde_json::Value = serde_json::from_str(&serde_json::to_string_pretty(&s).unwrap()).unwrap();
+        assert_eq!(written["model"], "gemma4:e4b");
+        assert_eq!(written["large_model"], "Ornith-1.5:35b");
+        assert_eq!(written["spoken"], true);
+        let ai = spatiand_app::ai::AiSettings::from_older(None, Some(&written));
+        assert_eq!((ai.models.everyday.as_str(), ai.models.larger.as_str()), ("gemma4:e4b", "Ornith-1.5:35b"));
     }
 
     #[test]

@@ -40,6 +40,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+pub mod ai;
 pub mod clipboard;
 pub mod config;
 pub mod describe;
@@ -158,6 +159,9 @@ pub enum Event {
     /// The platform went between dark and light ([`ui::theme::dark`] already says which):
     /// whatever is drawn in the theme's colours is to be drawn again.
     Look { dark: bool },
+    /// The AI settings changed -- on the room's AI card, or on another machine and synchronised
+    /// here: [`ai::settings`] has them as they are now. Looked for each second, as the look is.
+    AiSettings,
     /// The wearer's hands did something -- a pad, a mouse, a button, a key -- and not the head:
     /// what controls an application fades itself are to wake on. Pointer motion over a window
     /// is not this, since the pointer sweeps with the head.
@@ -232,6 +236,7 @@ impl Event {
             Event::Mode(_)
             | Event::Hands
             | Event::Look { .. }
+            | Event::AiSettings
             | Event::DragEnded { .. }
             | Event::Room { .. }
             | Event::Poses { .. }
@@ -271,6 +276,8 @@ pub struct App {
     watched: Vec<i32>,
     /// When the platform's dark or light was last looked at.
     look_checked: Instant,
+    /// The AI settings' file, looked at as the look is: [`Event::AiSettings`].
+    ai: ai::Watch,
 }
 
 impl App {
@@ -289,7 +296,8 @@ impl App {
             app_id.to_string()
         };
         std::env::set_var("SPATIAND_APP_ID", &app_id);
-        let mut app = App { app_id, wire, queue, gl: None, windows: HashMap::new(), watched: Vec::new(), look_checked: Instant::now() };
+        let ai = ai::Watch::new(&config::shared());
+        let mut app = App { app_id, wire, queue, gl: None, windows: HashMap::new(), watched: Vec::new(), look_checked: Instant::now(), ai };
         ui::theme::set_dark(look::platform_dark());
         // Once round, so the mode is the compositor's word and not this crate's guess by the
         // time anything is decided on it.
@@ -726,6 +734,9 @@ impl App {
             let dark = look::platform_dark();
             if ui::theme::set_dark(dark) {
                 events.push(Event::Look { dark });
+            }
+            if self.ai.changed() {
+                events.push(Event::AiSettings);
             }
         }
         Ok(events)

@@ -31,6 +31,8 @@ khronos-egl = { version = "6", features = ["dynamic"] }
 libloading = "0.8"
 # A Mac's pictures handed to Spatiand in private (not as global surfaces).
 spatiand-surfaces = { path = "../spatiand-surfaces" }
+# The AI settings every application shares, as the room's AI card keeps them (`ai`).
+spatiand-ai = { path = "../spatiand-ai" }
 
 [dev-dependencies]
 env_logger.workspace = true

@@ -32,6 +32,7 @@ members = [
     "crates/spatipal",
     "crates/spatiand-sync",
     "crates/spatiand-voice",
+    "crates/spatiand-ai",
     "crates/spatikey-core",
     "crates/spatikey",
     "crates/spatiand-choose",

@@ -35,8 +35,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use spatiand_voice::chat::{converse, Ask, Piece};
+use spatiand_app::ai::AiSettings;
 use spatiand_voice::speech::sentence_end;
-use spatiand_voice::{Hemera, VoiceSettings};
+use spatiand_voice::Hemera;
 
 use crate::store::{Said, Settings};
 use crate::tools::{self, Held, Room};
@@ -51,6 +52,8 @@ pub struct Turn {
     pub history: Vec<Said>,
     pub look: bool,
     pub settings: Settings,
+    /// The room's AI settings as the turn was asked: hemera, and the everyday and larger models.
+    pub ai: AiSettings,
     /// When the wearer stopped speaking, when it was said aloud: how long the answer took is
     /// counted from then.
     pub ended: Option<Instant>,
@@ -128,7 +131,7 @@ fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<(u64, Tol
                 log::info!("brain: {} let go: the wearer stopped it", h.what);
             }
         }
-        let address = VoiceSettings::load(&crate::store::shared()).hemera;
+        let address = turn.ai.hemera.clone();
         let hemera = match &client {
             Some((at, h)) if *at == address => h.clone(),
             _ => {
@@ -196,6 +199,7 @@ const REMEMBERED: usize = 16;
 
 fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn(Told), stopped: &dyn Fn() -> bool, held: &mut Option<(Held, std::time::Instant)>) -> Result<Said, String> {
     let s = &turn.settings;
+    let models = &turn.ai.models;
     let started = Instant::now();
     if let Some(ended) = turn.ended {
         voice.mark(ended);
@@ -203,7 +207,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     // **The small model decides who answers**, in one word -- left to a tool the small model
     // might call, it was seen to write a long program itself instead. Asked beside its answer:
     // asked first, it put a round trip and a second before every answer.
-    let decision = if turn.look { None } else { decide(hemera, s, turn) };
+    let decision = if turn.look { None } else { decide(hemera, turn) };
     let windows = room.ask(json!({"do": "windows"}));
     // What the wearer sees: the window looked at and the others in view -- with its picture, or
     // the whole view's, when what they ask is about it.
@@ -257,7 +261,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     messages.push(user);
 
     let mut large = false;
-    let mut model = s.model.clone();
+    let mut model = models.everyday.clone();
     let mut said = Said { role: "assistant".into(), model: model.clone(), at: crate::store::now(), ..Default::default() };
     // Until the decision comes, what the small model writes is held back: shown and said only
     // once the answer is its to give.
@@ -346,10 +350,10 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
             // Decided, and done with: the larger model's answer is its own, not held or cut.
             decided = Some(false);
             large = true;
-            model = s.large_model.clone();
+            model = models.larger.clone();
             said.model = model.clone();
             messages[0] = json!({"role": "system", "content": system(s, true)});
-            log::info!("brain: {} decided the larger model answers", s.model);
+            log::info!("brain: {} decided the larger model answers", models.everyday);
             say(Told::HandedOver(model.clone()));
             voice.set_thinking(s.thinking == "tone");
             continue;
@@ -377,7 +381,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         // The small model hands it over: the same conversation, to the larger, thinking.
         if !large && answer.calls.iter().any(|c| c.name == "hand_over") {
             large = true;
-            model = s.large_model.clone();
+            model = models.larger.clone();
             said.model = model.clone();
             messages[0] = json!({"role": "system", "content": system(s, true)});
             log::info!("brain: handed over to {model}");
@@ -461,9 +465,9 @@ fn system(s: &Settings, larger: bool) -> String {
 /// A request that begins as every one of a model's does, for it to read before it is needed
 /// (`crate::warm`): its tools and its system message, and a word from no one. The larger
 /// model's when `larger`.
-pub fn prime(s: &Settings, larger: bool) -> Value {
+pub fn prime(s: &Settings, ai: &AiSettings, larger: bool) -> Value {
     json!({
-        "model": if larger { &s.large_model } else { &s.model },
+        "model": if larger { &ai.models.larger } else { &ai.models.everyday },
         "messages": [
             {"role": "system", "content": system(s, larger)},
             {"role": "user", "content": "[Getting ready: nothing is asked yet.]\nHi."},
@@ -815,12 +819,13 @@ mod tests {
 
 /// The small model's decision whether the larger one answers, asked on a thread of its own while
 /// the small one starts answering. `None` when there is no larger model to hand to.
-fn decide(hemera: &Hemera, s: &Settings, turn: &Turn) -> Option<Receiver<bool>> {
-    if s.large_model.is_empty() || s.large_model == s.model {
+fn decide(hemera: &Hemera, turn: &Turn) -> Option<Receiver<bool>> {
+    let models = &turn.ai.models;
+    if models.larger.is_empty() || models.larger == models.everyday {
         return None;
     }
     let last = turn.history.iter().rev().find(|said| said.role == "assistant").map(|said| said.text.chars().take(300).collect::<String>()).unwrap_or_default();
-    let (hemera, model, text) = (hemera.clone(), s.model.clone(), turn.text.clone());
+    let (hemera, model, text) = (hemera.clone(), models.everyday.clone(), turn.text.clone());
     let (tx, rx) = channel();
     std::thread::Builder::new()
         .name("decide".into())

@@ -4946,6 +4946,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-ai"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "spatiand-android"
 version = "0.1.0"
 dependencies = [
@@ -4999,6 +5007,7 @@ dependencies = [
  "memmap2",
  "png",
  "resvg",
+ "spatiand-ai",
  "spatiand-proto",
  "spatiand-render",
  "spatiand-surfaces",
@@ -5295,6 +5304,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "spatiand-ai",
  "ureq",
 ]
 
