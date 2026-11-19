@@ -688,6 +688,8 @@ pub(crate) mod tests {
         use crate::markup::{Area, Ink, Marks, Note, Shape, Weight};
         let dir = std::path::PathBuf::from(std::env::var("SPATILOUPE_OUT").expect("SPATILOUPE_OUT"));
         std::fs::write(dir.join("ultra-hdr.jpg"), ultra_hdr(640, 480, None)).unwrap();
+        // And one with Apple's own kind of gain map, which is not carried.
+        std::fs::write(dir.join("apple-hdr.jpg"), made(640, 480, None, true)).unwrap();
         std::fs::copy(dir.join("ultra-hdr.jpg"), dir.join("ultra-hdr-marked.jpg")).unwrap();
         let marks = Marks {
             notes: vec![Note { page: 0, shape: Shape::Box(Area::new(200.0, 100.0, 500.0, 300.0)), ink: Ink::Red, weight: Weight::Medium, size: 8.0 }],
