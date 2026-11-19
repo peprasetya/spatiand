@@ -87,8 +87,9 @@ static LISTENERS: Mutex<Vec<SpatiandAssistV1>> = Mutex::new(Vec::new());
 /// The assistant's own connection: its windows are its own, never what it acts on unasked.
 static ASSISTANT: Mutex<Option<smithay::reexports::wayland_server::backend::ClientId>> = Mutex::new(None);
 
-/// Whether a window is the assistant's own (its chat window).
-fn is_own(window: &smithay::desktop::Window) -> bool {
+/// Whether a window is the assistant's own (its chat window): what its figure stands beside
+/// (`crate::avatar`).
+pub fn is_own(window: &smithay::desktop::Window) -> bool {
     let Some(assistant) = ASSISTANT.lock().unwrap().clone() else { return false };
     window.toplevel().and_then(|t| t.wl_surface().client()).is_some_and(|c| c.id() == assistant)
 }

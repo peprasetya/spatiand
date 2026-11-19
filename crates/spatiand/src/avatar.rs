@@ -1,9 +1,13 @@
 //! The assistant's figure in the room (`docs/ai-integrations.md`).
 //!
-//! **Where**: fixed to the view, low in the corner on the other side from the pinned windows, a
-//! metre and a third away -- and following the head lazily rather than rigidly, so it drifts
-//! after a turn of the head the way something that floats would, instead of being painted on
-//! the glass.
+//! **Where** ([`place`]): beside the assistant's own window while that is on show in the view
+//! and the place beside it in sight, in the room with it -- on the side away from the middle of
+//! the view and the other windows, its feet at the window's bottom edge, a share of the window's
+//! height, never over it. Otherwise low in a corner of the view, on the other side from the
+//! pinned windows, a metre and a third away, drawn smaller rather than further in when it does
+//! not fit -- and following the head lazily rather than rigidly, so it drifts after a turn of the
+//! head the way something that floats would, instead of being painted on the glass. Wherever the
+//! wearer drags it, for each pal; a double press on it puts it back.
 //!
 //! **What**: by default a small robot drawn from a few shapes -- a head with a visor and two
 //! eyes, a body, two arms, an antenna -- made here rather than loaded, so the default needs no
@@ -29,9 +33,14 @@
 use std::cell::RefCell;
 use std::time::Instant;
 
-use glam::{DQuat, DVec3, Mat3, Mat4, Vec3, Vec4};
+use glam::{DQuat, DVec2, DVec3, Mat3, Mat4, Vec3, Vec4};
 use smithay::backend::renderer::gles::ffi;
 use spatiand_render::{Eye, EyeSide};
+
+// Declared here rather than in each program's list of modules: this file is the Deck's, the Beam
+// Pro's and the Mac's alike, and where the figure stands goes wherever it does.
+#[path = "figure_place.rs"]
+pub mod place;
 
 /// The figure's picture, per eye, in pixels square, at its usual size; a figure made larger
 /// (`size`) gets a larger one, up to [`PICTURE_MOST`].
@@ -57,6 +66,9 @@ const REACH_M: f32 = 0.175 * SIZE;
 const MIDDLE_M: f64 = 0.08 * SIZE as f64;
 /// Its height, metres, for keeping all of it in view.
 const TALL_M: f64 = 0.33 * SIZE as f64;
+/// How far the robot's lights reach over a wearer's figure's head (`signs_over`), metres at
+/// size 1: counted in its height where it is placed, so that they are not cut off by the view.
+const SIGNS_M: f32 = 0.03;
 
 const VERT: &str = r#"
 layout(location = 0) in vec3 a_pos;
@@ -293,11 +305,67 @@ struct Live {
     pose: Pose,
     /// How loud what it hears is, 0 to 1, quick to rise and slow to fall.
     level: f32,
-    /// How large it is, against its usual size: `size`, as the assistant asks (0.5 to 3).
+    /// How large it is drawn, against its usual size, chasing what its place makes it: `size`,
+    /// as the assistant asks (0.5 to 3), in a corner of the view, smaller where that does not
+    /// fit; beside the window, the window's share.
     size: f32,
     /// Turned from facing the wearer, radians: a test's `turn` (degrees), to see a pose from the
     /// side.
     turn: f32,
+    /// The box it stands in as last drawn, for a press to find it: none while it is not shown.
+    stand: Option<place::Stand>,
+    /// The assistant's own window on show in the view.
+    on_show: bool,
+    /// Standing beside that window (the place beside it in sight), and the window as seen then.
+    beside: bool,
+    window: Option<place::Window>,
+    /// The side it took by itself, and the window as it was when it took it: chosen again only
+    /// once the window has been moved or resized, and is still again.
+    side: Option<(place::Window, place::Side)>,
+    /// The window as last seen, and since when it has been so.
+    window_since: Option<(place::Window, Instant)>,
+    /// Who it is (the avatar's `character`), and where the wearer has put it, as last given.
+    key: String,
+    put: place::Put,
+    /// The head this frame: a figure let go in the view goes to the corner nearest as it sees it.
+    head: DQuat,
+    /// The wearer's hand on it.
+    grip: place::Grip,
+}
+
+/// What the figure is placed by, besides the head and the eyes.
+pub struct Around<'a> {
+    /// The windows drawn: the assistant's own among them, which it stands beside while on show.
+    pub windows: &'a [crate::scene::WindowQuad],
+    /// The corner pinned windows keep to: the figure keeps to the other side.
+    pub pinned: spatiand_render::pip::Corner,
+    /// Where the wearer put each pal's figure, by its `character` (`prefs.toml`).
+    pub put: &'a std::collections::BTreeMap<String, place::Put>,
+}
+
+/// The window a figure stands beside, as `place` measures it.
+fn window_of(w: &crate::scene::WindowQuad) -> place::Window {
+    let aspect = w.pixels.0 as f64 / w.pixels.1.max(1) as f64;
+    place::Window { quad: crate::pointer::quad_of(w.pixels, &w.placement), content_height: w.placement.width / aspect.max(0.01) }
+}
+
+/// The side of the assistant's window the figure takes by itself: the one it took, for the
+/// window where it was then; for a window moved or resized, the same until the window has been
+/// still a moment, then chosen again (not while it is dragged, which would have the figure jump
+/// from side to side).
+fn side_by_itself(live: &mut Live, w: &place::Window, (tall, wide): (f64, f64), around: &Around, now: Instant) -> place::Side {
+    let still = live.window_since.is_some_and(|(_, since)| now.duration_since(since) >= place::STILL);
+    match live.side {
+        Some((at, side)) if at.same_as(w) => side,
+        Some((_, side)) if !still => side,
+        _ => {
+            let others: Vec<spatiand_render::Quad> =
+                around.windows.iter().filter(|q| !q.placement.pip && !crate::assist::is_own(&q.window)).map(|q| crate::pointer::quad_of(q.pixels, &q.placement)).collect();
+            let side = place::side_for(w, tall, wide, live.head, &others, place::side_away_from(around.pinned));
+            live.side = Some((*w, side));
+            side
+        }
+    }
 }
 
 pub struct Avatar {
@@ -385,6 +453,16 @@ impl Avatar {
                 level: 0.0,
                 size: 1.0,
                 turn: 0.0,
+                stand: None,
+                on_show: false,
+                beside: false,
+                window: None,
+                side: None,
+                window_since: None,
+                key: String::new(),
+                put: place::Put::default(),
+                head: DQuat::IDENTITY,
+                grip: place::Grip::default(),
             }),
         })
     }
@@ -394,7 +472,7 @@ impl Avatar {
     ///
     /// # Safety
     /// The GL context must be current.
-    pub unsafe fn prepare(&self, gl: &ffi::Gles2, head: DQuat, eyes: &[Eye], fov_deg: (f64, f64), pinned_corner: spatiand_render::pip::Corner) {
+    pub unsafe fn prepare(&self, gl: &ffi::Gles2, head: DQuat, eyes: &[Eye], fov_deg: (f64, f64), around: &Around) {
         let mut live = self.live.borrow_mut();
         let now = Instant::now();
         let dt = now.duration_since(live.last).as_secs_f32().min(0.1);
@@ -430,67 +508,93 @@ impl Avatar {
         if live.shown <= 0.0 {
             live.rects = [None, None];
             live.at = None;
+            live.stand = None;
+            live.grip.cancel();
             return;
         }
 
-        // How large, and which figure: read first, so that it is placed by its own height.
-        live.size = figure.get("size").and_then(|s| s.as_f64()).map(|s| (s as f32).clamp(0.5, 3.0)).unwrap_or(1.0);
+        // How large it is asked to be, and which figure: read first, so that it is placed by its
+        // own height.
+        let asked = figure.get("size").and_then(|s| s.as_f64()).map(|s| (s as f32).clamp(0.5, 3.0)).unwrap_or(1.0);
         live.turn = figure.get("turn").and_then(|t| t.as_f64()).map(|t| (t as f32).to_radians()).unwrap_or(0.0);
-        let k = live.size;
         let path = figure.get("path").and_then(|p| p.as_str()).map(str::to_string);
         self.choose(gl, path);
-        // Its middle above where it floats, how far it reaches from there, and how tall it is.
-        let (middle_m, reach_m, tall_m) = match &*self.chosen.borrow() {
+        // Its middle above where it floats, how far it reaches from there, and how tall and how
+        // wide it is, at its usual size.
+        let (middle_1, reach_1, tall_1, wide_1) = match &*self.chosen.borrow() {
             Chosen::Ready { gpu, .. } => {
                 let tall = gpu.top + FIGURE_FEET_M;
                 // A figure that moves -- by its animations, or posed -- may raise its arms over its head.
                 let reach = if gpu.skeleton.clips.is_empty() && gpu.skeleton.bodies.is_empty() { REACH_M } else { REACH_M.max(0.75 * tall) };
-                (((gpu.top - FIGURE_FEET_M) * 0.5) as f64, reach, tall as f64)
+                // Placed by its height with the lights over its head, where it has them.
+                let signs = if figure.get("signs").and_then(|s| s.as_bool()) == Some(false) { 0.0 } else { SIGNS_M };
+                (((gpu.top - FIGURE_FEET_M) * 0.5) as f64, reach, (tall + signs) as f64, (gpu.wide as f64).max(tall as f64 * place::WIDE))
             }
-            _ => (MIDDLE_M, REACH_M, TALL_M),
+            _ => (MIDDLE_M, REACH_M, TALL_M, TALL_M * place::WIDE),
         };
-        let (middle_m, reach_m, tall_m) = (middle_m * k as f64, reach_m * k, tall_m * k as f64);
 
-        // Where it should be: low on the side away from the pinned windows.
-        let (left, _) = pinned_corner.signs();
-        let side = -left;
-        let half = (tall_m * 0.5 / DISTANCE_M).atan().to_degrees();
-        let mut yaw = side * (fov_deg.0 * 0.5 - 2.5 - half).max(3.0);
-        let mut pitch = -(fov_deg.1 * 0.5 - 1.5 - half).max(1.0);
-        let place = |yaw: f64, pitch: f64| {
-            let (y, p) = (yaw.to_radians(), pitch.to_radians());
-            head * DVec3::new(p.cos() * y.cos(), p.cos() * y.sin(), p.sin()) * DISTANCE_M
+        // Who it is, and where the wearer put it: each pal's own (`prefs.toml`).
+        live.key = figure.get("character").and_then(|c| c.as_str()).unwrap_or_default().to_string();
+        live.put = around.put.get(&live.key).copied().unwrap_or_default();
+        live.head = head;
+        let vp = eyes.first().map(|eye| eye.view_projection());
+        let project = |p: DVec3| -> Option<DVec2> {
+            let c = vp? * p.as_vec3().extend(1.0);
+            (c.w > 0.01).then(|| DVec2::new((c.x / c.w) as f64, (c.y / c.w) as f64))
         };
-        // **In the corner of the view**, measured through the eye itself rather than trusted to the
-        // field of view's numbers -- which left it a third of the way out from the middle on the
-        // Mac (2026-10-30). Moved out or in until its edges are at the view's.
-        if let Some(eye) = eyes.first() {
-            let vp = eye.view_projection();
-            for _ in 0..4 {
-                let middle = (place(yaw, pitch) + head * DVec3::new(0.0, 0.0, middle_m)).as_vec3();
-                let Some([x0, x1, y0, y1]) = extent_of(&vp, middle, reach_m * 0.85) else { break };
-                // Which way is down in this eye's coordinates: the Deck draws its eyes flipped.
-                let below = middle - (head * DVec3::Z).as_vec3() * 0.1;
-                let ndc = |p: Vec3| {
-                    let c = vp * p.extend(1.0);
-                    c.y / c.w
-                };
-                let down_is_negative = ndc(below) < ndc(middle);
-                let over_x = if side > 0.0 { -0.97 - x0 } else { x1 - 0.97 };
-                let over_y = if down_is_negative { -0.95 - y0 } else { y1 - 0.95 };
-                if over_x.abs() < 0.01 && over_y.abs() < 0.01 {
-                    break;
-                }
-                yaw -= side * over_x as f64 * fov_deg.0 * 0.5;
-                pitch += over_y as f64 * fov_deg.1 * 0.5;
-            }
+        // **Beside the assistant's own window**, while it is on show in the view: the room's, not
+        // the head's. A window pinned to the glass is not where the figure can stand beside it.
+        let window = around.windows.iter().find(|w| !w.placement.pip && crate::assist::is_own(&w.window)).map(window_of);
+        let part = window.map_or(0.0, |w| place::on_show(&w.quad, &project));
+        live.on_show = window.is_some() && (part >= place::ON_SHOW || (live.on_show && part > 0.0));
+        match window {
+            Some(w) if live.window_since.is_some_and(|(was, _)| was.same_as(&w)) => {}
+            Some(w) => live.window_since = Some((w, now)),
+            None => live.window_since = None,
         }
-        let target = place(yaw, pitch);
-        let at = match live.at {
-            Some(at) => at + (target - at) * (1.0 - (-dt / FOLLOW_S).exp()) as f64,
-            None => target,
+        // Where it would stand beside the window -- and there only while that place is in sight:
+        // beside a window that fills the view it would stand out of sight, and keeps to a corner.
+        let on_show = live.on_show;
+        let beside = window.filter(|_| on_show).map(|w| {
+            let tall = place::tall_beside(&w, asked as f64);
+            let wide = tall * wide_1 / tall_1;
+            let beside = match live.put.beside {
+                Some(beside) => beside,
+                None => place::Beside::by_itself(side_by_itself(&mut live, &w, (tall, wide), around, now)),
+            };
+            (w, place::beside(&w, &beside, tall, wide))
+        });
+        let seen = beside.map_or(0.0, |(_, stand)| place::seen(&stand, &project));
+        live.beside = beside.is_some() && (seen >= place::SEEN || (live.beside && seen > place::SEEN_KEEP));
+        let beside = beside.filter(|_| live.beside);
+        live.window = beside.map(|(w, _)| w);
+        let (middle, k) = match (live.grip.holding(), beside) {
+            // Held: where the hand has it, as large as it was when taken.
+            (Some(stand), _) => (stand.middle, (stand.tall / tall_1) as f32),
+            (None, Some((_, stand))) => (stand.middle, (stand.tall / tall_1) as f32),
+            // **In a corner of the view**: smaller there rather than further in.
+            (None, None) => {
+                let corner = live.put.corner.unwrap_or_else(|| place::corner_away_from(around.pinned));
+                let (stand, share) = place::in_corner(corner, head, tall_1 * asked as f64, wide_1 * asked as f64, DISTANCE_M, fov_deg, &project);
+                (stand.middle, asked * share as f32)
+            }
         };
+        // Where it floats, its feet a little below and its box's middle above; going there lazily,
+        // and growing or shrinking as lazily, unless the wearer's hand has it.
+        let feet_up = |k: f32| tall_1 * k as f64 * 0.5 - FIGURE_FEET_M as f64 * k as f64;
+        let target = middle - DVec3::Z * feet_up(k);
+        let held = live.grip.holding().is_some();
+        let ease = 1.0 - (-dt / FOLLOW_S).exp();
+        let at = match live.at {
+            Some(at) if !held => at + (target - at) * ease as f64,
+            _ => target,
+        };
+        live.size = if live.at.is_some() && !held { live.size + (k - live.size) * ease } else { k };
         live.at = Some(at);
+        let k = live.size;
+        let (middle_m, reach_m) = (middle_1 * k as f64, reach_1 * k);
+        // The box it stands in, as drawn: what a press on it finds.
+        live.stand = Some(place::Stand { middle: at + DVec3::Z * feet_up(k), wide: wide_1 * k as f64, tall: tall_1 * k as f64 });
 
         let t = now.duration_since(self.started).as_secs_f32();
         // A figure of the wearer's, placed as the robot would be, with only the robot's signs of
@@ -516,10 +620,12 @@ impl Avatar {
             }
             _ => None,
         };
-        // Drawn finer when it is larger: as many pixels to a degree of the view.
-        let px = if k <= 1.25 {
+        // Drawn finer when it is larger in the view: as many pixels to a degree of it. Beside a
+        // window it is larger, and as much further away.
+        let seen = k as f64 * DISTANCE_M / at.length().max(0.3);
+        let px = if seen <= 1.25 {
             PICTURE
-        } else if k <= 1.75 {
+        } else if seen <= 1.75 {
             PICTURE * 3 / 2
         } else {
             PICTURE_MOST
@@ -543,7 +649,8 @@ impl Avatar {
         gl.UseProgram(self.program);
         let light = Vec3::new(0.55, 0.6, 0.58).normalize();
         gl.Uniform3f(self.loc[5], light.x, light.y, light.z);
-        let middle = (at + head * DVec3::new(0.0, 0.0, middle_m)).as_vec3();
+        // Upright in the room, as it is drawn.
+        let middle = (at + DVec3::new(0.0, 0.0, middle_m)).as_vec3();
         for (index, eye) in eyes.iter().enumerate().take(2) {
             let slot = match eye.side {
                 EyeSide::Left => 0,
@@ -619,6 +726,61 @@ impl Avatar {
     pub fn position(&self) -> Option<DVec3> {
         let live = self.live.borrow();
         live.at.filter(|_| live.shown > 0.0)
+    }
+
+    /// Whether `ray` is on the figure, shown: a press there is the figure's, before any window's
+    /// -- it is drawn in front of them.
+    pub fn hit(&self, ray: &spatiand_render::Ray) -> bool {
+        let live = self.live.borrow();
+        live.shown > 0.5 && live.stand.is_some_and(|stand| place::hit(&stand, ray))
+    }
+
+    /// Pressed along `ray`, on it ([`Self::hit`]): taken hold of, to be put somewhere else -- or,
+    /// pressed again soon after a press that went nowhere, put back where it stands by itself.
+    /// Then what is to be kept of where the wearer put it: `(character, put)`.
+    pub fn press(&self, ray: &spatiand_render::Ray) -> Option<(String, place::Put)> {
+        let mut live = self.live.borrow_mut();
+        let stand = live.stand?;
+        let (beside, put) = (live.beside, live.put);
+        let back = live.grip.press(ray, stand, beside, put, Instant::now())?;
+        if beside {
+            live.side = None;
+        }
+        live.put = back;
+        log::info!("avatar: {} put back where it stands by itself", if live.key.is_empty() { "the figure" } else { &live.key });
+        Some((live.key.clone(), back))
+    }
+
+    /// The pointer, moved along `ray` while the figure is held: it goes with it.
+    pub fn drag(&self, ray: &spatiand_render::Ray) {
+        self.live.borrow_mut().grip.drag(ray);
+    }
+
+    /// Let go of: where the wearer has put it now, `(character, put)`, if they moved it.
+    pub fn let_go(&self) -> Option<(String, place::Put)> {
+        let mut live = self.live.borrow_mut();
+        let (window, head, put) = (live.window, live.head, live.put);
+        let now = live.grip.let_go(window.as_ref(), head, put)?;
+        live.put = now;
+        log::info!("avatar: {} put {:?}", if live.key.is_empty() { "the figure" } else { &live.key }, if live.beside { now.beside.map(|b| format!("{b:?}")) } else { now.corner.map(|c| format!("{c:?}")) });
+        Some((live.key.clone(), now))
+    }
+
+    /// Not held any more: the room's pointer went to something else (a menu opened).
+    pub fn let_go_unplaced(&self) {
+        self.live.borrow_mut().grip.cancel();
+    }
+
+    /// The box it stands in as last drawn, while it is shown: for a test to press on it.
+    pub fn stand(&self) -> Option<place::Stand> {
+        let live = self.live.borrow();
+        live.stand.filter(|_| live.shown > 0.0)
+    }
+
+    /// At once where it is going rather than on its way there, at the next [`Self::prepare`]: for
+    /// a test's single picture of where it stands.
+    pub fn arrive(&self) {
+        self.live.borrow_mut().at = None;
     }
 
     /// Lay the figure's picture into this eye, after the windows: it floats nearer than they do.
@@ -1124,6 +1286,9 @@ struct ModelGpu {
     fit: Mat4,
     /// How far above where it floats its head is once fitted, metres at size 1.
     top: f32,
+    /// How wide it is once fitted, its widest way round with its arms as they are at rest,
+    /// metres at size 1: what a window it stands beside is kept clear of.
+    wide: f32,
     /// The weights its targets were last moved to, by (part, target).
     weights: std::collections::HashMap<(usize, usize), f32>,
     skeleton: crate::figure::Skeleton,
@@ -1267,6 +1432,7 @@ impl ModelGpu {
         let middle = (figure.low + figure.high) * 0.5;
         let fit = Mat4::from_translation(Vec3::new(0.0, 0.0, -FIGURE_FEET_M)) * Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(Vec3::new(-middle.x, -middle.y, -figure.low.z));
         let top = fit.transform_point3(figure.high).z;
+        let wide = size.x.max(size.y) * scale;
         let rest = figure.skeleton.rest();
         let tints = vec![None; figure.materials.len()];
         ModelGpu {
@@ -1276,6 +1442,7 @@ impl ModelGpu {
             expressions: figure.expressions,
             fit,
             top,
+            wide,
             weights: Default::default(),
             skeleton: figure.skeleton,
             groups: figure.groups,

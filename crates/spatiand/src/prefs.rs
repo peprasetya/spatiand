@@ -96,6 +96,13 @@ pub struct Prefs {
     /// is a host that has been paired with — see `docs/remote.md`.
     #[serde(default, rename = "remote")]
     pub remotes: Vec<RemoteHost>,
+
+    /// Where the wearer put the assistant's figure, for each pal (by the `character` its
+    /// assistant names it by: `pixel`, `pal:<folder>`): beside the assistant's window, and in a
+    /// corner of the view. One not here stands where the room puts it by itself. Kept on this
+    /// machine, with the rest of its room. See `crate::avatar::place`.
+    #[serde(default, rename = "figure", skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub figure_places: std::collections::BTreeMap<String, crate::avatar::place::Put>,
 }
 
 /// One machine serving remote applications.
@@ -181,6 +188,7 @@ impl Default for Prefs {
             pointer_hold_degrees: None,
             pointer_hold_mouse_degrees: None,
             remotes: Vec::new(),
+            figure_places: Default::default(),
         }
     }
 }
@@ -190,6 +198,22 @@ pub fn path() -> PathBuf {
 }
 
 impl Prefs {
+    /// Where the wearer has put a pal's figure, as the figure says it (`Scene::avatar_press`,
+    /// `Scene::avatar_let_go`): kept, and saved. Put back where it stands by itself both ways, it
+    /// is forgotten.
+    pub fn put_figure(&mut self, put: (String, crate::avatar::place::Put)) {
+        self.place_figure(put);
+        self.save();
+    }
+
+    fn place_figure(&mut self, (character, put): (String, crate::avatar::place::Put)) {
+        if put == Default::default() {
+            self.figure_places.remove(&character);
+        } else {
+            self.figure_places.insert(character, put);
+        }
+    }
+
     /// Where pinned windows go and how big, as the compositor holds them.
     pub fn pip(&self) -> crate::pip::Settings {
         crate::pip::Settings {
@@ -461,6 +485,7 @@ mod toml_files {
                     on_demand: true,
                 },
             ],
+            figure_places: Default::default(),
         }
     }
 
@@ -504,5 +529,27 @@ mod toml_files {
         // `spatiand_app` reads `look` from this file line by line, without a TOML parser.
         let text = toml::to_string_pretty(&chosen()).unwrap();
         assert!(text.lines().any(|l| l == "look = \"dark\""), "{text}");
+    }
+
+    #[test]
+    fn where_each_pals_figure_was_put_is_kept_and_forgotten_when_put_back() {
+        use crate::avatar::place::{Beside, Put, Side};
+        use spatiand_render::pip::Corner;
+        let mut prefs = Prefs { remotes: chosen().remotes, ..Prefs::default() };
+        let mira = Put { beside: Some(Beside { side: Side::Above, along: 0.25, gap: 0.05 }), corner: None };
+        prefs.figure_places.insert("pal:mira".into(), mira);
+        prefs.figure_places.insert("pixel".into(), Put { beside: None, corner: Some(Corner::TopRight) });
+        let text = toml::to_string_pretty(&prefs).unwrap();
+        assert!(text.contains("[figure.\"pal:mira\".beside]") && text.contains("corner = \"top-right\""), "{text}");
+        let read: Prefs = toml::from_str(&text).unwrap();
+        assert_eq!(read, prefs);
+        // A file from before has none, and every pal stands where the room puts it.
+        assert!(toml::from_str::<Prefs>("look = \"dark\"\n").unwrap().figure_places.is_empty());
+        // Put back both ways, a pal's is forgotten; put somewhere, kept.
+        let mut kept = read;
+        kept.place_figure(("pixel".into(), Put::default()));
+        assert_eq!(kept.figure_places.keys().collect::<Vec<_>>(), ["pal:mira"]);
+        kept.place_figure(("pal:ada".into(), Put { beside: None, corner: Some(Corner::BottomRight) }));
+        assert_eq!(kept.figure_places.len(), 2);
     }
 }

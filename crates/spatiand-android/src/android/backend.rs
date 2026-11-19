@@ -1628,6 +1628,11 @@ pub fn run(
                 }
             }
 
+            // The assistant's figure is held only while the room's drag is its own: a menu that
+            // took the pointer away let go of it too, as on the Deck.
+            if !matches!(pointers.drag, Some(Drag::Figure)) {
+                scene.avatar_let_go_unplaced();
+            }
             if shell.menu_is_open() && !shell.wants_text() {
                 pointers.release_all(&mut runtime.state, time_ms);
             } else {
@@ -1681,6 +1686,12 @@ pub fn run(
                                     crate::mac::resizing(window, (out.pixels.0 as u32, out.pixels.1 as u32));
                                 }
                             }
+                        }
+                    }
+                    // The assistant's figure, held: it goes with the pointer (`crate::avatar`).
+                    Some(Drag::Figure) => {
+                        if let Some(a) = right_aim.as_ref() {
+                            scene.avatar_drag(&a.ray);
                         }
                     }
                     None => {
@@ -1932,6 +1943,15 @@ pub fn run(
                             pointers.dismiss_popups(&mut runtime.state);
                         }
                         match right_aim.as_ref() {
+                            // The assistant's figure, drawn in front of every window: taken hold
+                            // of to be put somewhere else, or put back by a double press
+                            // (`crate::avatar::place`), as on the Deck.
+                            Some(a) if scene.avatar_hit(&a.ray) => {
+                                if let Some(put) = scene.avatar_press(&a.ray) {
+                                    prefs.put_figure(put);
+                                }
+                                pointers.drag = Some(Drag::Figure);
+                            }
                             Some(a) if a.zone == Some(Zone::Mute) => {
                                 if let Some(quad) = a.hit.and_then(|(i, _)| windows.get(i)) {
                                     if let Some(id) = runtime.state.layout.id_of(&quad.window) {
@@ -2041,7 +2061,13 @@ pub fn run(
                             None => {}
                         }
                     } else if !right_click && right_was_down {
-                        if matches!(pointers.drag, Some(Drag::Move { .. } | Drag::Resize { .. })) {
+                        if matches!(pointers.drag, Some(Drag::Figure)) {
+                            // Put where it was let go, and kept for that pal.
+                            if let Some(put) = scene.avatar_let_go() {
+                                prefs.put_figure(put);
+                            }
+                            pointers.drag = None;
+                        } else if matches!(pointers.drag, Some(Drag::Move { .. } | Drag::Resize { .. })) {
                             pointers.drag = None;
                         } else {
                             pointers.button(&mut runtime.state, BTN_LEFT, false, time_ms);
@@ -2126,6 +2152,7 @@ pub fn run(
                 let shell = &shell;
                 let windows = &windows;
                 let pinned_corner = prefs.pip_corner;
+                let figure_places = &prefs.figure_places;
                 let right_aim = &right_aim;
                 let menu_aim = &menu_aim;
                 let keyboard_open = keyboard.open;
@@ -2169,7 +2196,7 @@ pub fn run(
                     if !waiting {
                         let eyes: Vec<spatiand_render::Eye> =
                             views.iter().map(|(side, _, _)| spatiand_render::eye_for(*side, orientation, DVec3::ZERO, &stereo)).collect();
-                        scene.prepare_avatar(gl, orientation, &eyes, (stereo.h_fov_deg, stereo.v_fov_deg()), pinned_corner);
+                        scene.prepare_avatar(gl, orientation, &eyes, (stereo.h_fov_deg, stereo.v_fov_deg()), pinned_corner, windows, figure_places);
                     }
                     // Straight into a window, which GL presents with its own convention: no flip,
                     // as the nested winit backend on the Deck.

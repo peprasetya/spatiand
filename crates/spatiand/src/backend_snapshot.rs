@@ -756,6 +756,9 @@ pub fn run(
         .set_display_stereo(std::env::var("SPATIAND_SNAPSHOT_MODE").as_deref() != Ok("flat"));
     // Dictation's card as the steps leave it, for the frame's card.
     let mut dictation_card = String::new();
+    // Where the wearer put the assistant's figure, as a session keeps it: read, changed by a
+    // `figure` step, and drawn by.
+    let mut figure_prefs = crate::prefs::Prefs::load();
     stand_in_touch();
     if let Ok(command) = std::env::var("SPATIAND_CLIENT") {
         let seconds: f32 = std::env::var("SPATIAND_CLIENT_WAIT")
@@ -946,6 +949,11 @@ pub fn run(
                             }
                             if let Scripted::Window(title) = &step {
                                 std::env::set_var("SPATIAND_WINDOW", title);
+                            }
+                            if matches!(step, Scripted::Figure { .. } | Scripted::FigureBack) {
+                                let head = DQuat::from_axis_angle(DVec3::Z, yaw_deg.to_radians()) * DQuat::from_axis_angle(DVec3::Y, pitch_deg.to_radians());
+                                let stereo = StereoConfig { per_eye: (width, height), ..Default::default() };
+                                figure_step(&mut renderer, &scene, &windows, head, &stereo, &mut figure_prefs, &step);
                             }
                             if let Scripted::Dump(path) = &step {
                                 if let Some(first) = chosen_window(&runtime.state, &windows) {
@@ -1402,10 +1410,18 @@ pub fn run(
             crate::assist::show_for_test(figure);
         }
         if view != View::Waiting {
-            // Once to see which figure, then, after waiting for its file, to draw it.
-            scene_ref.prepare_avatar(gl, orientation, &[eye], (stereo.h_fov_deg, stereo.v_fov_deg()), spatiand_render::pip::Corner::default());
+            // Once to see which figure, then, after waiting for its file, to draw it -- where it
+            // is going, beside the assistant's window or in the view, rather than on its way.
+            let fov = (stereo.h_fov_deg, stereo.v_fov_deg());
+            let corner = spatiand_render::pip::Corner::default();
+            scene_ref.avatar_arrive();
+            scene_ref.prepare_avatar(gl, orientation, &[eye], fov, corner, &windows, &figure_prefs.figure_places);
             scene_ref.settle_avatar(std::time::Duration::from_secs(30));
-            scene_ref.prepare_avatar(gl, orientation, &[eye], (stereo.h_fov_deg, stereo.v_fov_deg()), spatiand_render::pip::Corner::default());
+            scene_ref.avatar_arrive();
+            scene_ref.prepare_avatar(gl, orientation, &[eye], fov, corner, &windows, &figure_prefs.figure_places);
+            if let Some(stand) = scene_ref.avatar_stand() {
+                log::info!("figure: drawn {:.2} m away, {:.3} m tall, its middle at {:.2?}", stand.middle.length(), stand.tall, stand.middle);
+            }
         }
         // The waiting screen is not a place, so it gets the same bare backdrop the DRM backend
         // gives it. Drawing a world behind it here would make this view a picture of something
@@ -1924,6 +1940,7 @@ fn swipe_on_the_window(state: &mut Spatiand, windows: &[crate::scene::WindowQuad
 /// click:u,v  rclick:u,v  back:u,v  forward:u,v  move:u,v  down:u,v  up:u,v  drag:u,v,u,v
 /// scroll:dx,dy  thumbs:dy,seconds,hover[,stop]  axisstop  pinch:1.5  key:28  key:ctrl+shift+20  keydown:42  keyup:42  type:hello world  wait:2  dump:/tmp/a.png  window:<title>
 /// roomup  notice  dictate:/tmp/said.wav  pad:3,1  clipboard  key:rctrl+46
+/// figure:-0.2,-0.4  figure:0.1,0.7,0.8,0.1  figureback
 /// ```
 ///
 /// `clipboard` reads the room's clipboard as a pasting window would and logs it
@@ -1996,6 +2013,14 @@ enum Scripted {
     /// `resize:w0,h0,w1,h1,seconds`: the window asked for a new size on every frame, from the
     /// first to the second over that time, as the room's edge drag asks for it.
     Resize(f64, f64, f64, f64, f64),
+    /// `figure:du,dv`: the assistant's figure pressed where it stands, dragged that far across
+    /// and down the view (fractions of it) and let go -- through the room's own calls, as each
+    /// backend makes them (`Scene::avatar_hit`, `avatar_press`, `avatar_drag`, `avatar_let_go`),
+    /// and kept in `prefs.toml` as a session keeps it. `figure:u0,v0,u1,v1` from one place in the
+    /// view to another (fractions from its top left). See [`figure_step`].
+    Figure { from: Option<(f64, f64)>, by: (f64, f64) },
+    /// `figureback`: a double press on the figure where it stands, which puts it back.
+    FigureBack,
 }
 
 fn scripted_steps() -> Vec<Scripted> {
@@ -2057,6 +2082,9 @@ fn scripted_steps() -> Vec<Scripted> {
                 ("dictate", _) => Scripted::Dictate(rest.to_string()),
                 ("describe", _) => Scripted::Describe,
                 ("clipboard", _) => Scripted::Clipboard,
+                ("figure", [du, dv]) => Scripted::Figure { from: None, by: (*du, *dv) },
+                ("figure", [u0, v0, u1, v1]) => Scripted::Figure { from: Some((*u0, *v0)), by: (u1 - u0, v1 - v0) },
+                ("figureback", []) => Scripted::FigureBack,
                 ("pad", [fingers, deep]) if (1.0..=5.0).contains(fingers) => Scripted::Pad(*fingers as u8, *deep != 0.0),
                 ("window", _) => Scripted::Window(rest.to_string()),
                 _ => {
@@ -2330,6 +2358,96 @@ fn notification_pressed() {
     crate::notifications::pressed();
 }
 
+/// A `figure` step ([`Scripted::Figure`], [`Scripted::FigureBack`]): the assistant's figure
+/// placed for the frame as a session places it, then pressed, dragged and let go through the
+/// room's own calls -- what each backend does with its pointer -- and where the wearer put it
+/// kept in `prefs` as a session keeps it.
+fn figure_step(
+    renderer: &mut GlesRenderer,
+    scene: &Scene,
+    windows: &[crate::scene::WindowQuad],
+    head: DQuat,
+    stereo: &StereoConfig,
+    prefs: &mut crate::prefs::Prefs,
+    step: &Scripted,
+) {
+    use glam::DVec4;
+    let eye = spatiand_render::eye_for(EyeSide::Left, head, DVec3::ZERO, stereo);
+    let fov = (stereo.h_fov_deg, stereo.v_fov_deg());
+    let place = |renderer: &mut GlesRenderer, prefs: &crate::prefs::Prefs| {
+        let _ = renderer.with_context(|gl| unsafe {
+            scene.prepare_avatar(gl, head, &[eye], fov, spatiand_render::pip::Corner::default(), windows, &prefs.figure_places)
+        });
+    };
+    scene.avatar_arrive();
+    place(renderer, prefs);
+    scene.settle_avatar(std::time::Duration::from_secs(30));
+    scene.avatar_arrive();
+    place(renderer, prefs);
+    let vp = eye.view_projection().as_dmat4();
+    let inverse = vp.inverse();
+    // A ray from the eye through the view at `(u, v)`, fractions of it from its top left.
+    let ray_at = |(u, v): (f64, f64)| {
+        let (x, y) = (2.0 * u - 1.0, 1.0 - 2.0 * v);
+        let (near, far) = (inverse * DVec4::new(x, y, -1.0, 1.0), inverse * DVec4::new(x, y, 1.0, 1.0));
+        spatiand_render::Ray { origin: eye.position, direction: (far.truncate() / far.w - near.truncate() / near.w).normalize() }
+    };
+    let Some(stand) = scene.avatar_stand() else {
+        log::warn!("figure: there is no figure to press");
+        return;
+    };
+    let c = vp * stand.middle.extend(1.0);
+    let middle = ((c.x / c.w + 1.0) * 0.5, (1.0 - c.y / c.w) * 0.5);
+    log::info!("figure: stands at {:.3}, {:.3} of the view, {:.2} m away, {:.3} m tall", middle.0, middle.1, stand.middle.length(), stand.tall);
+    match step {
+        Scripted::FigureBack => {
+            for _ in 0..2 {
+                let ray = ray_at(middle);
+                if !scene.avatar_hit(&ray) {
+                    log::warn!("figure: the press missed it");
+                    return;
+                }
+                if let Some(put) = scene.avatar_press(&ray) {
+                    log::info!("figure: put back: {put:?}");
+                    prefs.put_figure(put);
+                }
+                if let Some(put) = scene.avatar_let_go() {
+                    prefs.put_figure(put);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+        }
+        Scripted::Figure { from, by } => {
+            let from = from.unwrap_or(middle);
+            let to = (from.0 + by.0, from.1 + by.1);
+            let ray = ray_at(from);
+            if !scene.avatar_hit(&ray) {
+                log::warn!("figure: a press at {from:?} is not on it");
+                return;
+            }
+            if let Some(put) = scene.avatar_press(&ray) {
+                prefs.put_figure(put);
+            }
+            for k in 1..=24 {
+                let f = k as f64 / 24.0;
+                scene.avatar_drag(&ray_at((from.0 + (to.0 - from.0) * f, from.1 + (to.1 - from.1) * f)));
+                place(renderer, prefs);
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+            match scene.avatar_let_go() {
+                Some(put) => {
+                    log::info!("figure: let go at {:.3}, {:.3}: {put:?}", to.0, to.1);
+                    prefs.put_figure(put);
+                }
+                None => log::info!("figure: let go where it was taken"),
+            }
+        }
+        _ => {}
+    }
+    scene.avatar_arrive();
+    place(renderer, prefs);
+}
+
 fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step: &Scripted, at: &mut (f64, f64)) {
     use smithay::backend::input::{Axis, AxisSource};
     use smithay::input::pointer::AxisFrame;
@@ -2340,8 +2458,9 @@ fn act_scripted(state: &mut Spatiand, windows: &[crate::scene::WindowQuad], step
             pointer_event_on(state, windows, *at, None, true);
             pointer_event_on(state, windows, *at, Some((crate::pointer::BTN_LEFT, false)), true);
         }
-        // Done by the steps' loop, which has to keep the room going while the file plays.
-        Scripted::Dictate(_) | Scripted::Describe => {}
+        // Done by the steps' loop, which has to keep the room going while the file plays; and the
+        // figure there too, which wants the renderer.
+        Scripted::Dictate(_) | Scripted::Describe | Scripted::Figure { .. } | Scripted::FigureBack => {}
         Scripted::Notice => {
             if crate::install::asking() {
                 crate::install::accept();

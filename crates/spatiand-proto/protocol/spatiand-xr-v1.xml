@@ -604,11 +604,19 @@
         `{"left_upper_arm": "down, out, a little back", "head": "tilt left"}`,
         held over its animation), `move` with `moves` (an animation
         played once, each time `moves` counts up), `expression` (a face held:
-        a VRM expression, or a morph target by its name) and `colors`
-        (`{"material": "#rrggbb"}`). An animation named after the state plays
-        by itself, `idle` standing in for any the figure lacks. A figure's
-        skeleton is posed by the room the same way on every platform
-        (docs/spatipal-pals.md).
+        a VRM expression, or a morph target by its name), `colors`
+        (`{"material": "#rrggbb"}`), `motions` (`{"name": file}`: motions made
+        from words, played as its animations of those names) and `character`
+        (who the figure is: `pixel`, or `pal:` and the pal's folder). An animation named
+        after the state plays by itself, `idle` standing in for any the figure
+        lacks. A figure's skeleton is posed by the room the same way on every
+        platform (docs/spatipal-pals.md).
+
+        Where the figure stands is the room's: beside the assistant's own
+        window while that is on show in the view and the place beside it is in
+        sight, else in a corner of the view, drawn smaller there rather than
+        further in. The wearer may press and drag it elsewhere -- remembered
+        for each `character` -- and a double press puts it back.
 
         Only the room and the assistant use this interface: a copy of this
         file in a client (Chromium's) needs no change for what is added here,

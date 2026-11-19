@@ -2781,6 +2781,11 @@ pub fn run(
                 }
             }
 
+            // The assistant's figure is held only while the room's drag is its own: a menu that
+            // took the pointer away let go of it too.
+            if !matches!(pointers.drag, Some(Drag::Figure)) {
+                scene.avatar_let_go_unplaced();
+            }
             // A menu takes the pointer away -- except a menu asking for text, which needs it to
             // reach the keyboard. Windows still get nothing from it then; see below.
             if shell.menu_is_open() && !shell.wants_text() {
@@ -2851,6 +2856,12 @@ pub fn run(
                                     (out.pixels.0 as i32, out.pixels.1 as i32).into(),
                                 );
                             }
+                        }
+                    }
+                    // The assistant's figure, held: it goes with the pointer (`crate::avatar`).
+                    Some(Drag::Figure) => {
+                        if let Some(a) = right_aim.as_ref() {
+                            scene.avatar_drag(&a.ray);
                         }
                     }
                     // Both pads pressed together: a gesture of the window under the pointer,
@@ -3426,6 +3437,15 @@ pub fn run(
                             {
                                 remotes.notice_pressed();
                             }
+                            // The assistant's figure, drawn in front of every window: taken hold
+                            // of to be put somewhere else, or put back by a double press
+                            // (`crate::avatar::place`) -- nothing of it reaches a window.
+                            Some(a) if scene.avatar_hit(&a.ray) => {
+                                if let Some(put) = scene.avatar_press(&a.ray) {
+                                    prefs.put_figure(put);
+                                }
+                                pointers.drag = Some(Drag::Figure);
+                            }
                             // Before the title bar: the button sits inside the bar, so testing
                             // the bar first would start a drag and never reach this.
                             Some(a) if a.zone == Some(Zone::Mute) => {
@@ -3552,7 +3572,13 @@ pub fn run(
                             None => {}
                         }
                     } else if !right_click && right_was_down {
-                        if matches!(pointers.drag, Some(Drag::Move { .. } | Drag::Resize { .. })) {
+                        if matches!(pointers.drag, Some(Drag::Figure)) {
+                            // Put where it was let go, and kept for that pal.
+                            if let Some(put) = scene.avatar_let_go() {
+                                prefs.put_figure(put);
+                            }
+                            pointers.drag = None;
+                        } else if matches!(pointers.drag, Some(Drag::Move { .. } | Drag::Resize { .. })) {
                             pointers.drag = None;
                         } else {
                             pointers.button(&mut runtime.state, BTN_LEFT, false, time_ms);
@@ -3662,6 +3688,7 @@ pub fn run(
                 let pressed_now: Vec<&'static Key> =
                     keyboard_struck.iter().map(|(key, _)| *key).collect();
                 let keyboard_down = &pressed_now;
+                let figure_places = &prefs.figure_places;
                 renderer.with_context(|gl| unsafe {
                     gl.BindFramebuffer(ffi::FRAMEBUFFER, target_fbo);
                     gl.Disable(ffi::SCISSOR_TEST);
@@ -3728,7 +3755,7 @@ pub fn run(
                                 eye
                             })
                             .collect();
-                        scene.prepare_avatar(gl, orientation, &eyes, (stereo.h_fov_deg, stereo.v_fov_deg()), prefs.pip_corner);
+                        scene.prepare_avatar(gl, orientation, &eyes, (stereo.h_fov_deg, stereo.v_fov_deg()), prefs.pip_corner, windows, figure_places);
                     }
 
                     for (side, x, vw) in views {

@@ -559,6 +559,10 @@ pub enum Drag {
         start_placement: crate::window::Placement,
         start_pixels: (u32, u32),
     },
+    /// The assistant's figure, taken hold of to be put somewhere else. Where it is and where it
+    /// goes are the figure's own (`crate::avatar::place::Grip`): this says only that the press
+    /// is its, so that no window is told of the button, its motion or its letting go.
+    Figure,
 }
 
 impl Drag {

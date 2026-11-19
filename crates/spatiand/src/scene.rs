@@ -1248,14 +1248,71 @@ impl Scene {
     }
 
     /// Draw the assistant's figure for each eye into its own picture: before the eyes are drawn
-    /// (see `crate::avatar`). `pinned` is the corner pinned windows keep to; the figure keeps to
-    /// the other side.
+    /// (see `crate::avatar`). It stands beside the assistant's own window among `windows` while
+    /// that is on show, else in a corner of the view; `pinned` is the corner pinned windows keep
+    /// to, and the figure keeps to the other side; `put` is where the wearer put each pal's
+    /// (`Prefs::figure_places`).
     ///
     /// # Safety
     /// The GL context must be current.
-    pub unsafe fn prepare_avatar(&self, gl: &ffi::Gles2, head: glam::DQuat, eyes: &[Eye], fov_deg: (f64, f64), pinned: spatiand_render::pip::Corner) {
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn prepare_avatar(
+        &self,
+        gl: &ffi::Gles2,
+        head: glam::DQuat,
+        eyes: &[Eye],
+        fov_deg: (f64, f64),
+        pinned: spatiand_render::pip::Corner,
+        windows: &[WindowQuad],
+        put: &std::collections::BTreeMap<String, crate::avatar::place::Put>,
+    ) {
         if let Some(a) = &self.avatar {
-            a.prepare(gl, head, eyes, fov_deg, pinned);
+            a.prepare(gl, head, eyes, fov_deg, &crate::avatar::Around { windows, pinned, put });
+        }
+    }
+
+    /// Whether a press along `ray` is on the assistant's figure: it is the figure's, before any
+    /// window's, as it is drawn in front of them. The same on every platform: the backends ask
+    /// this, then [`Self::avatar_press`], [`Self::avatar_drag`] and [`Self::avatar_let_go`], as
+    /// for a window's title bar.
+    pub fn avatar_hit(&self, ray: &spatiand_render::Ray) -> bool {
+        self.avatar.as_ref().is_some_and(|a| a.hit(ray))
+    }
+
+    /// The figure pressed along `ray`: held, or (a double press) put back. What is to be kept of
+    /// where the wearer put it, for `Prefs::put_figure`.
+    pub fn avatar_press(&self, ray: &spatiand_render::Ray) -> Option<(String, crate::avatar::place::Put)> {
+        self.avatar.as_ref().and_then(|a| a.press(ray))
+    }
+
+    /// The figure held, the pointer along `ray` now.
+    pub fn avatar_drag(&self, ray: &spatiand_render::Ray) {
+        if let Some(a) = &self.avatar {
+            a.drag(ray);
+        }
+    }
+
+    /// The figure let go of: where the wearer has put it, for `Prefs::put_figure`, if they moved it.
+    pub fn avatar_let_go(&self) -> Option<(String, crate::avatar::place::Put)> {
+        self.avatar.as_ref().and_then(|a| a.let_go())
+    }
+
+    /// The figure not held any more, wherever it is: the room's drag is something else's now.
+    pub fn avatar_let_go_unplaced(&self) {
+        if let Some(a) = &self.avatar {
+            a.let_go_unplaced();
+        }
+    }
+
+    /// The box the figure stands in, while it is shown: for a test to press on it.
+    pub fn avatar_stand(&self) -> Option<crate::avatar::place::Stand> {
+        self.avatar.as_ref().and_then(|a| a.stand())
+    }
+
+    /// The figure at once where it is going, for a test's single picture.
+    pub fn avatar_arrive(&self) {
+        if let Some(a) = &self.avatar {
+            a.arrive();
         }
     }
 
