@@ -44,6 +44,17 @@ security fixes every month, and ours to patch -- first, creating `Line` annotati
 (`FPDFPage_CreateAnnot(FPDF_ANNOT_LINE)` is refused today, so SpatiLoupe's arrows are made as `Ink` and
 rewritten as `Line` by a second update of its own). Then `tools/fetch-pdfium.sh` goes.
 
+**And the rule for the rest (the owner, 2026-11-19: "the chromium may already have more media handling...
+reuse what is there, except ours is wider like the ffmpeg, then direct spatimesh to use ours"):** where
+Chromium's tree builds a library Spatiand's own programs also use, build it once from that tree and use it
+for both (PDFium, above, is the one today; check the others SpatiLoupe, SpatiReel and the room load beside the
+programs). Where Spatiand's own is the wider one, the other way round: **SpatiMesh uses Spatiand's FFmpeg**
+(`third_party/ffmpeg`: every demuxer and decoder, each platform's hardware decoders) in place of Chromium's
+cut-down copy, so the browser plays what SpatiReel plays (patch 0023's TS, VOB and MP2 fixes were to Chromium's
+copy). Check before: the FFmpeg API version Chromium's `media/ffmpeg` glue expects against ours (Chromium
+follows FFmpeg's main line), the security patches Chromium carries on its copy, and the licence of our FFmpeg's
+configuration (GPL parts are fine beside the GPL-3.0 patches; nothing `--enable-nonfree`).
+
 **Looked into, and nothing to change (2026-11-18):**
 
 - *The log line `Message 1 rejected by interface blink.mojom.WidgetHost`* (`mojo/public/cpp/bindings/lib/interface_endpoint_client.cc:652`). Message 1 of `WidgetHost` (`third_party/blink/public/mojom/widget/platform_widget.mojom`) is `UpdateTooltipUnderCursor`. It is logged when a page that has a tooltip showing is replaced by one in another process (a link or an address to another site while the pointer rests on something with a `title`): the old page's widget sends its last tooltip update as it is torn down, and the browser's end of that widget's pipe has by then seen the other end close (`HandleValidatedMessage`'s `encountered_error_`, "a message is received for an interface after it has been disconnected"), so the message is dropped and the line written. Not a validation failure (no "bad Mojo message", no renderer killed), not the Mac's (the Deck's log has it 36 times, and messages 0 `SetCursor` and 5 `SelectionBoundsChanged` a few times, taken to be the same race) and not ours: no patch of ours touches it. Reproduced in the Mac's snapshot room, 157.0.8103.78: the pointer on a `title`d element, the tooltip up, then a navigation from `127.0.0.1` to `localhost` over DevTools -- the line once, the tooltip gone, the new page whole. Tooltips themselves are shown and placed rightly (an `xdg_popup` at the pointer). Nothing visible breaks; a patch to quiet it would be a patch to carry for a log line.
