@@ -108,6 +108,10 @@ pub enum Icon {
     LineThin,
     LineMedium,
     LineThick,
+    /// Text put into another language: a character and a letter.
+    Translate,
+    /// All of it chosen: a frame of dashes.
+    SelectAll,
 }
 
 impl Icon {
@@ -181,6 +185,8 @@ impl Icon {
             Icon::LineThin => r#"<path d="M4.5 12h15" stroke-width="1.2"/>"#,
             Icon::LineMedium => r#"<path d="M4.5 12h15" stroke-width="2.8"/>"#,
             Icon::LineThick => r#"<path d="M5.5 12h13" stroke-width="5"/>"#,
+            Icon::Translate => r#"<path d="M3.5 5.5h9M8 3.5v2M10.8 5.5c-.7 4.2-3.2 7.6-6.8 9.6M5.8 9.4c1.4 2.4 3.4 4.2 5.6 5.2M12.6 20.5l3.9-9 3.9 9M14 17.4h5"/>"#,
+            Icon::SelectAll => r#"<rect x="4.5" y="4.5" width="15" height="15" rx="2" stroke-dasharray="3 2.6"/><path d="M8.5 9.5h7M8.5 12.5h7M8.5 15.5h4"/>"#,
         }
     }
 }
@@ -241,7 +247,7 @@ mod tests {
             Back, Forward, Up, Down, Play, Pause, Options, Info, Close, Plus, Grid, List, Search, Home, Folder, Desktop, Document, Download, Picture, Film, Music, Drive,
             Cloud, Trash, Rotate, Cube, Terminal, Link, Import, Server, Refresh, Eye, Back10, Forward10, Lock, SortName, SortRecent, Shuffle, Speaker, Muted,
             Star, Pin, Puzzle, Copy, Globe, Warning, Cut, Pencil, Paste, Disclose, Disclosed, Markup, Pointer, Crop, Text, Square, Oval, Arrow, Undo, Redo, Save,
-            LineThin, LineMedium, LineThick,
+            LineThin, LineMedium, LineThick, Translate, SelectAll,
         ];
         for icon in all {
             let (_, _, rgba) = render(icon, 48).unwrap_or_else(|| panic!("{icon:?} does not render"));

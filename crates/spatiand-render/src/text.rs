@@ -255,6 +255,30 @@ impl TextRenderer {
         self.render_inner(text, size_px, max_width, color, true, align)
     }
 
+    /// Where each glyph of one line of `text` is set at `size_px`, as it is drawn: its bytes in
+    /// `text`, and its left and right in pixels from the line's start, in the order they are drawn
+    /// (left to right, whatever the text's direction). Shaped only, nothing painted: for choosing
+    /// words drawn as a line (a film's subtitles, `spatiand_app::live_text`).
+    pub fn places(&mut self, text: &str, size_px: f32) -> Vec<(std::ops::Range<usize>, f32, f32)> {
+        let line = text.lines().next().unwrap_or("");
+        let metrics = Metrics::new(size_px.max(1.0), size_px.max(1.0) * 1.4);
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        let attrs = Attrs::new().family(Family::SansSerif);
+        {
+            let mut b = buffer.borrow_with(&mut self.font_system);
+            b.set_size(None, None);
+            b.set_text(line, &attrs, Shaping::Advanced, Some(Align::Left));
+            b.shape_until_scroll(false);
+        }
+        let mut out = Vec::new();
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs.iter() {
+                out.push((glyph.start..glyph.end, glyph.x, glyph.x + glyph.w));
+            }
+        }
+        out
+    }
+
     fn render_inner(
         &mut self,
         text: &str,

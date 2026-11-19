@@ -33,7 +33,13 @@ libloading = "0.8"
 spatiand-surfaces = { path = "../spatiand-surfaces" }
 # The AI settings every application shares, as the room's AI card keeps them (`ai`).
 spatiand-ai = { path = "../spatiand-ai" }
+# Live Text (`live_text`): hemera's reading of a picture's text and its translation, the client
+# beside dictation's; a picture's characters as a reader counts them (extended grapheme clusters);
+# a film's frame or a page sent as a PNG.
+spatiand-voice = { path = "../spatiand-voice" }
+unicode-segmentation = "1"
+png = "0.18"
 
 [dev-dependencies]
 env_logger.workspace = true
-png = "0.18"
+serde_json.workspace = true

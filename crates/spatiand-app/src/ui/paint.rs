@@ -23,12 +23,21 @@ uniform vec2 u_scale;
 uniform vec2 u_origin;
 uniform vec2 u_view;
 uniform vec4 u_uv;
+// 1: the four corners of a quadrilateral instead of the rectangle's (a line of text in a picture
+// taken askew), from its top left clockwise; `u_rect.zw` is then how long its top and left sides
+// are, for its edge and corners to be drawn in its own frame.
+uniform int u_shape;
+uniform vec2 u_quad[4];
 out vec2 v_at;
 out vec2 v_uv;
 void main() {
     v_at = a_corner * u_rect.zw;
     v_uv = mix(u_uv.xy, u_uv.zw, a_corner);
-    vec2 pixel = u_origin + (u_rect.xy + v_at) * u_scale;
+    vec2 at = u_rect.xy + v_at;
+    if (u_shape == 1) {
+        at = mix(mix(u_quad[0], u_quad[1], a_corner.x), mix(u_quad[3], u_quad[2], a_corner.x), a_corner.y);
+    }
+    vec2 pixel = u_origin + at * u_scale;
     // Not flipped: row 0 of the picture is its top, and GL's y = -1 is row 0.
     gl_Position = vec4(pixel / u_view * 2.0 - 1.0, 0.0, 1.0);
 }
@@ -112,7 +121,7 @@ pub struct Painter {
     program: glow::Program,
     vao: glow::VertexArray,
     _corners: glow::Buffer,
-    at: [Option<glow::UniformLocation>; 11],
+    at: [Option<glow::UniformLocation>; 13],
     text: TextRenderer,
     set: HashMap<TextKey, Set>,
     frame: u64,
@@ -161,7 +170,7 @@ impl Painter {
             g.enable_vertex_attrib_array(0);
             g.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, 0, 0);
             g.bind_vertex_array(None);
-            let at = ["u_rect", "u_view", "u_uv", "u_color", "u_radius", "u_kind", "u_texture", "u_scale", "u_origin", "u_color2", "u_soft"]
+            let at = ["u_rect", "u_view", "u_uv", "u_color", "u_radius", "u_kind", "u_texture", "u_scale", "u_origin", "u_color2", "u_soft", "u_shape", "u_quad"]
                 .map(|name| g.get_uniform_location(program, name));
             Ok(Painter {
                 program,
@@ -221,6 +230,7 @@ impl Painter {
             g.uniform_1_i32(self.at[6].as_ref(), 0);
             g.uniform_2_f32(self.at[7].as_ref(), self.scale.0, self.scale.1);
             g.uniform_2_f32(self.at[8].as_ref(), self.origin.0, self.origin.1);
+            g.uniform_1_i32(self.at[11].as_ref(), 0);
             g.active_texture(glow::TEXTURE0);
         }
         // Text not drawn for a while is let go of, so a long list scrolled through does not
@@ -294,6 +304,25 @@ impl Painter {
     /// A rectangle with rounded corners.
     pub fn fill(&mut self, gl: &Gl, rect: Rect, radius: f32, color: Color) {
         self.quad(gl, rect, radius, color, 0, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    /// A quadrilateral with rounded corners: `corners` in logical pixels, from its own top left
+    /// clockwise (top left, top right, bottom right, bottom left) -- a line of text in a picture
+    /// that is turned, or taken askew. Convex, as any such line is.
+    pub fn fill_quad(&mut self, gl: &Gl, corners: [(f32, f32); 4], radius: f32, color: Color) {
+        let side = |a: (f32, f32), b: (f32, f32)| (b.0 - a.0).hypot(b.1 - a.1);
+        let (top, left) = (side(corners[0], corners[1]).max(side(corners[3], corners[2])), side(corners[0], corners[3]).max(side(corners[1], corners[2])));
+        if top <= 0.0 || left <= 0.0 || color[3] <= 0.0 {
+            return;
+        }
+        let g = gl.api();
+        let flat: [f32; 8] = [corners[0].0, corners[0].1, corners[1].0, corners[1].1, corners[2].0, corners[2].1, corners[3].0, corners[3].1];
+        unsafe {
+            g.uniform_1_i32(self.at[11].as_ref(), 1);
+            g.uniform_2_f32_slice(self.at[12].as_ref(), &flat);
+        }
+        self.quad(gl, Rect::new(0.0, 0.0, top, left), radius, color, 0, [0.0, 0.0, 1.0, 1.0]);
+        unsafe { g.uniform_1_i32(self.at[11].as_ref(), 0) };
     }
 
     /// A rectangle whose colour runs from `top` at its head to `foot` at its foot.
@@ -383,6 +412,16 @@ impl Painter {
         let texture = self.texture(gl, &image.rgba, image.width, image.height).ok()?;
         self.set.insert(key, Set { texture, used: self.frame });
         Some(texture)
+    }
+
+    /// Where each glyph of `text` falls when it is drawn as one line at `em` (as [`Painter::label`]
+    /// draws it): its bytes in `text`, and its left and right in logical pixels from where the
+    /// line's first glyph begins, in the order drawn. For choosing words drawn as a label.
+    pub fn places(&mut self, text: &str, em: f32) -> Vec<(std::ops::Range<usize>, f32, f32)> {
+        let scale = self.scale.1.max(1e-3);
+        let placed = self.text.places(text, em * scale);
+        let first = placed.iter().map(|g| g.1).fold(f32::MAX, f32::min);
+        placed.into_iter().map(|(bytes, a, b)| (bytes, (a - first) / scale, (b - first) / scale)).collect()
     }
 
     /// How much room `text` takes at `em`, wrapped to `width`: (width, height) in logical pixels.

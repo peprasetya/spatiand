@@ -35,7 +35,8 @@
 //! and says which it drew from ([`App::set_frame_pose`]): see [`pose`].
 //!
 //! [`ui`] is the room's own look as widgets: what the launcher and the settings are drawn
-//! with, for an application's lists, grids and fields.
+//! with, for an application's lists, grids and fields. [`live_text`] is the text in a picture,
+//! read by hemera, chosen, copied and translated as text.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -46,6 +47,7 @@ pub mod config;
 pub mod describe;
 pub mod gl;
 mod keys;
+pub mod live_text;
 pub mod pose;
 pub mod ui;
 mod wire;
