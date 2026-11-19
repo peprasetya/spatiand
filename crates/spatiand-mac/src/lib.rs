@@ -70,6 +70,8 @@ mod dmabuf;
 mod environment;
 #[path = "../../spatiand/src/figure.rs"]
 mod figure;
+#[path = "../../spatiand/src/motion.rs"]
+mod motion;
 #[path = "../../spatiand/src/posing.rs"]
 mod posing;
 #[path = "../../spatiand/src/gl.rs"]

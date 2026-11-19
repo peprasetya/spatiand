@@ -1131,6 +1131,8 @@ struct ModelGpu {
     motion: Motion,
     /// The colour asked for each material, if one was.
     tints: Vec<Option<[f32; 4]>>,
+    /// The motions the assistant made from words, played as its animations (`crate::motion`).
+    motions: crate::motion::Motions,
 }
 
 /// What the figure's body is doing: the animation playing, and the one it is leaving.
@@ -1279,6 +1281,7 @@ impl ModelGpu {
             groups: figure.groups,
             motion: Motion { key: None, since: Instant::now(), moves_seen: 0, moving: None, from: None, last: rest, made: (0, Vec::new()), drawn: false },
             tints,
+            motions: Default::default(),
         }
     }
 
@@ -1298,6 +1301,12 @@ impl ModelGpu {
     /// when nothing moves it, or -- a figure with no animations -- nothing changed since it was
     /// last posed.
     fn body(&mut self, mood: Mood, said: &serde_json::Value) -> Option<Vec<Mat4>> {
+        // The motions the assistant made from words (`motions`), as clips after the figure's own:
+        // a move playing among them is let go when they change.
+        if crate::motion::take(&mut self.skeleton, said, &mut self.motions) {
+            self.motion.moving = None;
+            self.motion.drawn = false;
+        }
         let skeleton = &self.skeleton;
         let animated = !skeleton.clips.is_empty();
         if !animated && skeleton.bodies.is_empty() {

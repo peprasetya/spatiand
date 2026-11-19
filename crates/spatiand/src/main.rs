@@ -53,6 +53,7 @@ mod notices;
 mod own;
 mod pip;
 mod pointer;
+mod motion;
 mod pose;
 mod posing;
 mod prefs;

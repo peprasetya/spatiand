@@ -193,14 +193,16 @@ impl Skeleton {
         self.nodes.iter().map(|n| n.rest).collect()
     }
 
-    /// An animation by its name, in any case. An exporter's `Armature|wave` is `wave` too.
+    /// An animation by its name, in any case. An exporter's `Armature|wave` is `wave` too. Of two
+    /// of one name the later is the one: a motion the assistant made (`crate::motion`, after the
+    /// figure's own) over the figure's own move of that name.
     pub fn clip(&self, name: &str) -> Option<usize> {
         let name = name.trim();
         if name.is_empty() {
             return None;
         }
         let same = |a: &str| a.eq_ignore_ascii_case(name);
-        self.clips.iter().position(|c| same(&c.name)).or_else(|| self.clips.iter().position(|c| c.name.rsplit('|').next().is_some_and(same)))
+        self.clips.iter().rposition(|c| same(&c.name)).or_else(|| self.clips.iter().rposition(|c| c.name.rsplit('|').next().is_some_and(same)))
     }
 
     /// Lay animation `clip` at `time` seconds over `local` (each node's own place).

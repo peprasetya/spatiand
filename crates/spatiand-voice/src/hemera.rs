@@ -150,6 +150,28 @@ impl Hemera {
         self.post(path, "application/json", request.to_string().as_bytes(), timeout)
     }
 
+    /// A POST of JSON, asked again while hemera says it is still getting its model ready (503),
+    /// after the wait its `Retry-After` gives -- `tries` times in all.
+    pub fn post_json_waiting(&self, path: &str, request: &Value, timeout: Duration, tries: u32) -> Result<Value, String> {
+        let mut tried = 0;
+        loop {
+            tried += 1;
+            let asked = self.agent.post(&format!("{}{path}", self.base)).header("Content-Type", "application/json");
+            match within(asked, timeout).send(request.to_string().as_bytes()) {
+                Ok(reply) if reply.status().as_u16() == 503 && tried < tries => {
+                    let wait = reply.headers().get("Retry-After").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(10);
+                    std::thread::sleep(Duration::from_secs(wait.clamp(1, 60)));
+                }
+                reply => return answered(reply, &self.base).and_then(|r| json_of(r).map_err(|e| format!("hemera's answer was not readable: {e}"))),
+            }
+        }
+    }
+
+    /// A DELETE of hemera's: what it holds of something made, let go.
+    pub fn delete(&self, path: &str) -> Result<(), String> {
+        answered(within(self.agent.delete(&format!("{}{path}", self.base)), Duration::from_secs(5)).call(), &self.base).map(|_| ())
+    }
+
     /// A POST of a form (`multipart/form-data`): text fields, and one file as `file`. Answered in
     /// JSON.
     pub fn post_form(&self, path: &str, fields: &[(&str, &str)], file: (&str, &str, &[u8]), timeout: Duration) -> Result<Value, String> {

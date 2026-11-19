@@ -14,6 +14,7 @@ pub mod dictation;
 pub mod echo;
 pub mod figure;
 pub mod hemera;
+pub mod motion;
 pub mod phrases;
 pub mod settings;
 pub mod speech;
