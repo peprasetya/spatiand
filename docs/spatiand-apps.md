@@ -1121,13 +1121,17 @@ painting at the window's size, laid over the picture at its zoom and pan and red
 marks or where the pages are change; a saved picture is the same painting at its own size. So what
 is saved is what was seen, with no GPU size limit, on every system.
 
-**Saving a picture** (`save.rs`). Read again whole from its file, turned, drawn on, cropped, then:
+**Saving a picture** (`save.rs`, `depth.rs`, `gainmap.rs`). Read again whole from its file at its
+own depth, turned, drawn on, cropped, then (as of the second round, below):
 
 | The file | Save | Save a copy |
 |---|---|---|
-| JPEG | over it, JPEG at quality 92; its Exif kept with the orientation set upright (the pixels are written upright), its thumbnail dropped (it showed the picture as it was) and its pixel size made true; its colour profile kept | "<stem> (edited).jpg" beside it, the same way |
-| PNG, WebP, BMP | over it in its format (WebP without loss: the image crate writes no other); a PNG's or WebP's profile and Exif kept | "<stem> (edited).<ext>" |
-| HEIC, AVIF, JPEG XL, JPEG 2000, TIFF, GIF, OpenEXR, Radiance HDR, TGA, a drawing | not offered; the foot says "SpatiLoupe does not write HEIC pictures: Save a copy writes a JPEG beside it, or a PNG if it has see-through parts." | "<stem> (edited).jpg", or .png for a picture with see-through parts |
+| JPEG | over it, JPEG at quality 92; its Exif kept with the orientation set upright (the pixels are written upright), its thumbnail dropped (it showed the picture as it was) and its pixel size made true; its colour profile and XMP kept; an HDR gain map kept (below) | "<stem> (edited).jpg" beside it, the same way |
+| PNG | over it at its own depth, eight or sixteen bits; its profile and Exif kept | "<stem> (edited).png" |
+| WebP, BMP | over it in its format (WebP without loss: the image crate writes no other); a WebP's profile and Exif kept | "<stem> (edited).<ext>" |
+| TIFF, OpenEXR, Radiance HDR | over it as it was read, where SpatiLoupe can (below); otherwise not offered, the foot saying why | its own format where written as read; else a 16-bit PNG, or floats (a TIFF's, an OpenEXR) |
+| HEIC, AVIF, JPEG XL, JPEG 2000 | not offered; the foot says "SpatiLoupe does not write HEIC pictures: Save a copy writes a JPEG beside it, or a PNG if it has see-through parts." -- or, deeper than eight bits, "a 16-bit PNG beside it, which keeps its depth" | "<stem> (edited).jpg" (.png with see-through parts), its profile and Exif kept; a 16-bit PNG for 10 bits and more |
+| GIF, TGA, a drawing | not offered | "<stem> (edited).jpg", or .png for a picture with see-through parts |
 
 Save asks "Replace <name> with the edited picture? This cannot be undone." (`Confirm::careful`,
 Cancel lit, "Replace") and writes a new file in the same folder, hidden, synced, given the
@@ -1135,8 +1139,8 @@ original's permissions, then renamed over it; a copy is written the same way und
 and not over anything there ("(edited 2)" and on if the name is taken). Either is then opened as
 it now is, and the foot says "Saved <name>." or "Saved a copy as <name>." for five seconds; what
 went wrong is said for eight ("SpatiLoupe could not save <name>: …."), the marks kept. A file
-whose bytes are not the format its name says is only copied. Ten-bit and sixteen-bit pictures are
-written at eight bits.
+whose bytes are not the format its name says is only copied. (Until the second round, ten-bit and
+sixteen-bit pictures were written at eight bits.)
 
 **Saving a PDF** (`annotate.rs`, on the PDF's own thread). PDFium writes an incremental update --
 the file as it was, then what changed -- with each mark a real annotation, so that Preview or
@@ -1186,4 +1190,105 @@ read back whole. **Not done or not seen:** the Mac -- its build and tests are pr
 `~/Developer/Spatiand-markup` on littleotter (`markup-test.sh`) and were not run, the owner being
 at that Mac in the day (CLAUDE.md: it compiles at night or when he says so); the Deck and the Beam
 Pro themselves, and the glasses; a HEIC or AVIF copied (the code path is FFmpeg's, as their
-viewing is); an encrypted PDF (its arrows stay Ink by design, not tried).
+viewing is); an encrypted PDF (its arrows stay Ink by design, not tried). Both were taken up in the
+second round, below.
+
+## 2026-11-19: SpatiLoupe's markup, second round
+
+The owner, of encrypted PDFs and a HEIC copy: "test it"; of pictures deeper than eight bits: "can
+it be preserve?"; of a JPEG's HDR gain map: "can it preserve too?". The same code everywhere.
+
+**Encrypted PDFs** (`pdf.rs`, `view.rs`, `annotate.rs`). A PDF that needs a password to open asks,
+in the middle of the window: "<name> is locked", "Enter its password to open it.", a field of dots
+(the SDK's `Field`, secret); Enter opens, Escape gives up ("<name> is locked with a password."), a
+wrong one says "That password does not open it. Try again." and empties the field. A PDF locked
+by a certificate says SpatiLoupe cannot open it. The password goes to the PDF's own thread
+(`Ask::Unlock`), which alone keeps it while the document is open -- to open the file again when
+markup is written -- in a `Secret` wiped from memory (zeroize) when let go of; it is wiped from the
+field at Enter, never logged, and `describe` says only "This PDF is locked with a password, which
+it asks for." A document saved, or its copy, is opened again with it, handed on once. Its
+permissions are kept to as Preview keeps them, read from PDFium itself (`FPDF_GetDocPermissions`,
+the security handler's revision; pdfium-render gives neither for AES-256): notes not allowed (bit
+6) -- the Markup button and Command-Shift-A say "The owner of <name> does not allow marking it up:
+its permissions keep notes out." and the tools do not come out; notes allowed and the pages not to
+be changed (bit 4) -- markup without Crop. Opened with the owner's password, all is allowed. Info
+shows the security. Saved, it stays encrypted the same way, with the same password and
+permissions: PDFium's incremental update writes what it adds through the document's own crypto
+handler (RC4, AES-128, AES-256) and keeps its /Encrypt and both halves of its /ID (read in its
+source, `core/fpdfapi/edit/cpdf_creator.cpp`); an arrow stays Ink there, as before. Test PDFs:
+`crates/spatiloupe/testdata/encrypted` (qpdf; `make.sh`): RC4-128, AES-128, AES-256, owner's
+password only -- one with notes not allowed, one with the pages not to be changed -- and with a
+password to open, one not ASCII.
+
+**HEIC, AVIF, JPEG XL and JPEG 2000 copies.** Tried with pictures made on deepmagpie
+(`crates/spatiloupe/testdata/pictures`, `make.py`): it has no HEIF encoder (libheif has only its AV1
+plugins, ffmpeg writes no HEIF), so the HEIC's container is written by hand around x265's HEVC
+(`heif.py`, to ISO/IEC 23008-12) -- including an iPhone-like one: a grid of four tiles, stored on its
+side and turned by `irot`, Display P3 as an ICC profile and as nclx (BT.601, full range), Apple's
+Exif with orientation 6. What failed, and was put right: the colours -- the scaler took every YUV
+picture for BT.601 at studio range, so a BT.709 HEIC's and a full-range AVIF's colours were off in
+the window, its tile and its copy (spatiand-media's stills now give it the frame's matrix and
+range, and make sixteen-bit RGB themselves by H.273's matrices, the scaler's own being wrong at
+sixteen bits); the iPhone's Display P3 profile, which FFmpeg does not keep (read now from the
+HEIF's own `colr` box); and its Exif, dropped from a copy in another format (kept now, upright).
+Not tried: a HEIC from a real iPhone or a Samsung phone (none here).
+
+**Depth** (`depth.rs`). The marks are painted at eight bits (tiny-skia's) into a layer of their own
+at the picture's size and laid over the picture at its depth: where the layer is clear, the
+picture's samples are kept to the last bit; where it is not, the mark's colour is first put on the
+picture's curve -- as it is for sRGB, as light for floats, as PQ or HLG at paper white (203 nits,
+HLG's 75 per cent) for HDR -- so a red box is the same red in each. A grey picture marked becomes a
+coloured one of its depth. Written: PNG at eight or sixteen bits; TIFF over itself as it was read,
+by the tiff crate (the image crate's own TIFF library; the image crate's encoder writes only
+uncompressed TIFF and none of its tags): its compression (none, LZW, Deflate, PackBits) and
+predictor, resolution, ICC profile, XMP and descriptive words. A TIFF holding more (pages, Exif or
+GPS, IPTC, Photoshop's layers, CMYK, planes apart, JPEG compression) is only copied: a 16-bit PNG,
+or a TIFF of its floats. OpenEXR over itself as it was read, by the exr crate: every channel of its
+layer (Z and the rest) turned and cropped alike, their types (half, float, uint), compression,
+blocks and attributes kept; one of several layers, deep, mip-mapped, sub-sampled or with a display
+window not its data's is copied as the image crate writes one (a layer of floats). Radiance HDR
+over itself with its own header's lines (exposure, primaries, software); one in XYZ only copied. A
+copy of a 10-, 12- or 16-bit HEIC, AVIF, JPEG XL or JPEG 2000 is a 16-bit PNG without loss, its ICC
+profile kept -- or, where it names its colours instead (nclx), their code points in a cICP chunk,
+which keeps an HDR10 picture HDR. Profiles are kept wherever the format carries one. The marks are
+put in the picture's own primaries, as the window shows them (a red box on a Display P3 or BT.2020
+picture is that space's red); converting them by the profile is a later job.
+
+**HDR gain maps** (`gainmap.rs`, written by hand to the specs: no maintained Rust crate for it is
+in the tree, and none was added). An Ultra HDR JPEG (Android's) or an ISO 21496-1 one carries after
+the picture a smaller JPEG -- how much brighter each part is on an HDR screen -- named in the MPF
+index, its meaning in its own XMP (`hdrgm`) and/or ISO 21496-1 block. Saved, it goes through the
+same turn and crop at its own scale, after the camera's orientation; where marks are drawn it is
+set to no boost (log2 gain 0, from its least and most gain and gamma, per channel) and a pixel
+further, which a reader's smoothing reaches, so the marks look as drawn rather than blown out; the
+JPEG is written as libultrahdr lays one out -- the picture with its Exif, profile and XMP (the gain
+map's new length in its container, the orientation upright), its ISO version block, a new MPF
+index, then the gain map with its own XMP and ISO block. A gain map of another kind (Apple's own
+before ISO 21496-1, its meaning in the maker notes), one whose description or picture does not
+read, or a JPEG that says HDR with no index, is not carried: the picture is saved SDR and the
+question says so -- "Replace <name> with the edited picture? Its HDR layer will be lost:
+SpatiLoupe cannot carry it over. This cannot be undone." -- and Save a copy, otherwise never asked,
+asks "Save a copy of <name> without its HDR layer? SpatiLoupe cannot carry it over." (Cancel lit).
+A HEIC or AVIF with a gain map (Apple's auxiliary picture, ISO 21496-1's `tmap`), whose copy is a
+JPEG or PNG, asks the same. An ordinary JPEG saved now keeps its XMP (rating, keywords), upright.
+
+**Checked** (deepmagpie): SpatiLoupe's tests, 135 (the first round's 115 and 20 new); spatiand-media's
+74; `cargo check --workspace`; `cargo ndk -t arm64-v8a -P 34 check` of SpatiLoupe. The locked PDF's
+question and permissions in the view's tests (its thread played); the six encrypted PDFs checked
+with qpdf (`--show-encryption`, `--check`) and poppler. Five copies (the iPhone-like HEIC, a BT.709
+HEIC, an AVIF, a JPEG XL, a JPEG 2000) opened as shown, colours within 12 at a hundred points, the
+iPhone's profile and Exif carried. A 16-bit PNG's low bits, a 16-bit grey PNG, an OpenEXR's light
+above 1 and its Z, a Radiance HDR's header, a 16-bit LZW TIFF as read and one of two pages copied,
+10-bit HEIC and AVIF, 16-bit JPEG XL and HDR10 AVIF copies to 16-bit PNG (cICP for HDR10). An Ultra
+HDR JPEG made in the test (libultrahdr's layout), turned, marked and cropped: the gain map turned
+and cropped with it, 0 under the marks, the index and metadata reading again; read independently by
+Pillow's MPF reader. The headless room, dark and light: the two HDR questions, a 10-bit HEIC's
+foot and its 16-bit PNG copy opened, an Ultra HDR JPEG saved over itself (two images still).
+**Not done or not seen:** the tests that need PDFium (each encrypted PDF opened with and without
+its password, marked up, written, opened again: the same /Encrypt and permissions, no note's
+string in the clear, the notes read back; the thread asked, told wrong, opened, saving, the copy
+opened with the password handed back) were written and not run, and the locked PDF's question not
+pictured in the room -- fetching PDFium (`tools/fetch-pdfium.sh`) was refused on deepmagpie that
+day; they pass over without it, and are to be run where it is. A real phone's Ultra HDR or iPhone
+HEIC, and an Android phone, Chrome or macOS showing a saved one as HDR (none here); the Mac, the
+Deck, the Beam Pro and the glasses.
