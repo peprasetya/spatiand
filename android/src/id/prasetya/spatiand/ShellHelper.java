@@ -53,7 +53,7 @@ import java.util.Map;
  */
 public final class ShellHelper extends Binder {
     /** Told to the app on attaching; the app starts a new helper when its own is newer. */
-    static final int VERSION = 3;
+    static final int VERSION = 4;
     static final String TAG = "spatiand-shell";
     static final String PACKAGE = "id.prasetya.spatiand";
     static final String AUTHORITY = PACKAGE + ".shell";
@@ -143,6 +143,12 @@ public final class ShellHelper extends Binder {
         }
         ShellHelper helper = new ShellHelper();
         log("running as uid " + android.os.Process.myUid() + ", version " + VERSION);
+        // The system's context made here, on the main thread, before any Binder call can want it.
+        try {
+            helper.context();
+        } catch (Exception e) {
+            log("no system context yet: " + e);
+        }
         Thread keeper = new Thread(helper::keepAttached, "attach");
         keeper.setDaemon(true);
         keeper.start();
@@ -587,12 +593,40 @@ public final class ShellHelper extends Binder {
 
     // --- sound ---
 
-    Context context;
-    AudioManager audio;
+    volatile Context context;
+    volatile AudioManager audio;
+    /** The context's own lock, not the helper's: see {@link #context()}. */
+    private final Object contextLock = new Object();
 
-    /** The system's context, as the shell's: what an AudioManager and an AudioPolicy need. */
-    synchronized Context context() throws Exception {
-        if (context != null) return context;
+    /**
+     * The system's context, as the shell's: what an AudioManager, an AudioPolicy and the clipboard
+     * need. Made on the main thread, from any thread asking: the ActivityThread it comes from makes
+     * a Handler as it is made, which wants a Looper, and a Binder thread has none -- the clipboard's
+     * first call (CLIP_STAMP, on a Binder thread, before any sound had made the context on the main
+     * thread) failed so, every second, from the install of 2026-11-19. Under a lock of its own, so
+     * that a caller holding the helper waits on nothing the main thread needs. {@link #main} makes it
+     * at the start; this is for a start that could not.
+     */
+    Context context() throws Exception {
+        Context made = context;
+        if (made != null) return made;
+        if (Looper.myLooper() == Looper.getMainLooper()) return makeContext();
+        java.util.concurrent.FutureTask<Context> task = new java.util.concurrent.FutureTask<>(this::makeContext);
+        new android.os.Handler(Looper.getMainLooper()).post(task);
+        return task.get(5, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    private Context makeContext() throws Exception {
+        synchronized (contextLock) {
+            if (context != null) return context;
+            Context made = systemContext();
+            audio = made.getSystemService(AudioManager.class);
+            context = made;
+            return made;
+        }
+    }
+
+    private Context systemContext() throws Exception {
         Class<?> threads = Class.forName("android.app.ActivityThread");
         java.lang.reflect.Constructor<?> make = threads.getDeclaredConstructor();
         make.setAccessible(true);
@@ -603,7 +637,7 @@ public final class ShellHelper extends Binder {
         Method system = threads.getDeclaredMethod("getSystemContext");
         system.setAccessible(true);
         Context base = (Context) system.invoke(thread);
-        context = new ContextWrapper(base) {
+        return new ContextWrapper(base) {
             @Override
             public String getPackageName() {
                 return "com.android.shell";
@@ -624,8 +658,6 @@ public final class ShellHelper extends Binder {
                 return this;
             }
         };
-        audio = context.getSystemService(AudioManager.class);
-        return context;
     }
 
     /**

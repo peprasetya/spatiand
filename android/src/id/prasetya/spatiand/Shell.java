@@ -90,8 +90,10 @@ final class Shell {
      */
     static boolean attached(IBinder binder, int version, String apk) {
         Context c = context;
-        if (apk != null && c != null && !apk.equals(c.getApplicationInfo().sourceDir)) {
-            Log.i(TAG, "a shell helper from before Spatiand was updated: replacing it");
+        boolean otherApk = apk != null && c != null && !apk.equals(c.getApplicationInfo().sourceDir);
+        // Older than this APK's helper (ShellHelper.VERSION): replaced too, wherever it came from.
+        if (c != null && (otherApk || version < ShellHelper.VERSION)) {
+            Log.i(TAG, "a shell helper from before Spatiand was updated (" + version + "): replacing it");
             new android.os.Handler(android.os.Looper.getMainLooper())
                     .postDelayed(() -> AdbStarter.start(c, true), 1500);
             return false;

@@ -35,6 +35,11 @@ public final class ShellProvider extends ContentProvider {
         if (!"attach".equals(method) || extras == null) return null;
         IBinder helper = extras.getBinder("helper");
         if (helper == null) return null;
+        // A helper left running across an update is what starts the updated app's process, by
+        // this call, before any activity has given Shell its context: given here, or the check
+        // for a helper from before the update has nothing to compare with and keeps the old one
+        // (2026-11-19: the helper was not replaced after an install).
+        Shell.init(getContext());
         boolean kept = Shell.attached(helper, extras.getInt("version", 0), extras.getString("apk"));
         Bundle reply = new Bundle();
         // A helper from before an update is told to go: a new one is on its way.
