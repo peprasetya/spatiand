@@ -77,8 +77,29 @@ Turning things off
     pointer_hold_mouse_degrees  the same for a mouse's own movement (0.1)
     steadiness                how still the room is held while the head sways:
                               off, light, medium (the default) or strong; the
-                              settings' Steadiness row writes it, and
+                              Look and feel card's Steadiness row writes it, and
                               SPATIAND_STEADY=0|light|medium|strong overrides it
+    look                      system, light or dark: the Look and feel card's
+                              Look row
+    pip_corner, pip_size      where pinned windows sit and how big: the Look and
+                              feel card's Pinned windows list
+
+The settings in the glasses group these. *Look and feel* holds the look,
+steadiness, the environment and pinned windows (the lines above, as before).
+*AI* holds what more than one app uses: hemera's address, the models (the
+everyday one, the larger one, the terminal clean-up one and the one that reads
+text in pictures, each chosen from hemera's own list), dictation's languages
+and words, and the two languages text in pictures is translated between. They
+are kept in
+
+    ~/.config/spatiand/apps/ai.json
+
+the folder every paired machine shares, so they are the same on all of them;
+the room's dictation and SpatiPal read them there, and any app through the SDK.
+Where SpatiPal's older `voice.json` and `assistant.json` are in that folder,
+`ai.json` is made from them the first time the room or SpatiPal reads it; they
+are then left as they are, and a change made in an older SpatiPal afterwards is
+not carried over.
 
 `~/.config/spatiand/session.env` is read into the session's environment if it
 exists. `RUST_LOG=debug` there is the way to get more out of the log on a
