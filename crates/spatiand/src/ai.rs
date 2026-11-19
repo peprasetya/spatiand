@@ -192,4 +192,11 @@ mod tests {
         assert_eq!((v.hemera.as_str(), v.larger.as_str(), v.reading.as_str()), ("http://elsewhere:12434", "Ornith-1.5:35b", "pp-ocrv6"));
         assert_eq!(v.first_language, "id");
     }
+
+    #[test]
+    fn the_card_offers_the_languages_the_apps_translate_between() {
+        // The shell depends on nothing and keeps its own list; the apps name a language to the
+        // model from spatiand_ai's. The two are one list.
+        assert_eq!(spatiand_shell::ai::LANGUAGES, spatiand_ai::LANGUAGES);
+    }
 }

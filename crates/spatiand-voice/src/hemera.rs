@@ -11,6 +11,11 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+/// The text in pictures: read (`POST /v1/ocr`), each line, word and character with where it is.
+pub mod ocr;
+/// A picture's text, translated between the wearer's two languages.
+pub mod translate;
+
 /// One hemera server.
 #[derive(Clone)]
 pub struct Hemera {
@@ -38,22 +43,9 @@ impl Message {
 impl Hemera {
     /// `base` is the server's address, `http://deepmagpie:12434`; a trailing slash is fine.
     pub fn new(base: &str) -> Hemera {
-        let agent = ureq::Agent::config_builder()
-            // Not reachable in this long is not reachable: away from home without Tailscale.
-            .timeout_connect(Some(Duration::from_secs(3)))
-            // Connections kept for the next request: over Wi-Fi each new one costs a round trip,
-            // and a turn of the assistant's asks for a few at once.
-            .max_idle_connections_per_host(4)
-            // hemera's refusals say why in their body (`failure`), which ureq 3 drops from the
-            // error it makes of a 4xx or 5xx; so those are answers, read by `answered`.
-            .http_status_as_error(false)
-            // As ureq 2 did, which ureq 3 does not by itself: no proxy from the environment,
-            // and four redirects followed and an error at the fifth (ureq 3: ten).
-            .proxy(None)
-            .max_redirects(4)
-            .build()
-            .into();
-        Hemera { base: base.trim_end_matches('/').to_string(), agent }
+        // Connections kept for the next request: over Wi-Fi each new one costs a round trip, and a
+        // turn of the assistant's asks for a few at once.
+        Hemera { base: base.trim_end_matches('/').to_string(), agent: agent(4) }
     }
 
     pub fn base(&self) -> &str {
@@ -189,6 +181,25 @@ impl Hemera {
         let reply = answered(within(request, timeout).send(body), &self.base)?;
         json_of(reply).map_err(|e| format!("hemera's answer was not readable: {e}"))
     }
+}
+
+/// A client of hemera's, keeping `idle` connections for the next request. A request that may be
+/// called off has one of its own, keeping none ([`ocr::Cancel`]): shutting it down closes that
+/// request's connection, and hemera stops its work when its connection closes.
+fn agent(idle: usize) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        // Not reachable in this long is not reachable: away from home without Tailscale.
+        .timeout_connect(Some(Duration::from_secs(3)))
+        .max_idle_connections_per_host(idle)
+        // hemera's refusals say why in their body (`failure`), which ureq 3 drops from the
+        // error it makes of a 4xx or 5xx; so those are answers, read by `answered`.
+        .http_status_as_error(false)
+        // As ureq 2 did, which ureq 3 does not by itself: no proxy from the environment,
+        // and four redirects followed and an error at the fifth (ureq 3: ten).
+        .proxy(None)
+        .max_redirects(4)
+        .build()
+        .into()
 }
 
 /// The request given `timeout` for all of it, from connecting to the answer's last byte: what

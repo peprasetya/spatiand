@@ -72,11 +72,13 @@ pub struct Dictation {
 }
 
 /// For choosing text in pictures (the owner, 2026-11-19: "the selection in primary, translate to
-/// secondary. other, translate to primary"). **Nothing reads text yet**: kept for that work.
+/// secondary. other, translate to primary"): Live Text in SpatiLoupe and SpatiReel
+/// (`spatiand_app::live_text`).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TextInPictures {
-    /// A picture's words are read as soon as it is shown, ready to be chosen; else only when asked.
+    /// A picture's words are read as soon as it is shown, ready to be chosen; else only when asked
+    /// (the picture's menu: "Read the text").
     pub read_by_itself: bool,
     /// Text in this language is translated into the second; anything else into this one. A
     /// language's two-letter name (`en`).
@@ -84,6 +86,42 @@ pub struct TextInPictures {
     pub second_language: String,
     #[serde(flatten)]
     pub kept: Map<String, Value>,
+}
+
+/// The languages a picture's text may be translated between, by their two-letter names and as they
+/// are called in English: what the AI card offers for the first and the second language
+/// (`spatiand_shell::ai::LANGUAGES`, the same list: the shell depends on nothing, and the room's
+/// test keeps the two alike), and what a translation names them by to the model.
+pub const LANGUAGES: &[(&str, &str)] = &[
+    ("en", "English"),
+    ("id", "Indonesian"),
+    ("ms", "Malay"),
+    ("jv", "Javanese"),
+    ("su", "Sundanese"),
+    ("zh", "Chinese"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("th", "Thai"),
+    ("vi", "Vietnamese"),
+    ("tl", "Tagalog"),
+    ("hi", "Hindi"),
+    ("ta", "Tamil"),
+    ("te", "Telugu"),
+    ("ar", "Arabic"),
+    ("tr", "Turkish"),
+    ("ru", "Russian"),
+    ("el", "Greek"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("nl", "Dutch"),
+    ("pt", "Portuguese"),
+    ("it", "Italian"),
+];
+
+/// A language's name in English, or its code where it has none here.
+pub fn language_name(code: &str) -> String {
+    LANGUAGES.iter().find(|(c, _)| c.eq_ignore_ascii_case(code)).map(|(_, n)| n.to_string()).unwrap_or_else(|| code.to_string())
 }
 
 impl Default for AiSettings {

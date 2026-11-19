@@ -146,8 +146,8 @@ pub fn language_name(code: &str) -> String {
 const SPOKEN: [&[&str]; 4] = [&["en", "id"], &["en"], &["id"], &[]];
 
 /// What every row about text in pictures says under the list.
-const TEXT_NOTE: &str = "Text in the first language is translated into the second; anything else into the first. Nothing \
-                         reads text in pictures yet: these are kept for when it does.";
+const TEXT_NOTE: &str = "Text in the first language is translated into the second; anything else into the first. For \
+                         the text in pictures and paused films in SpatiLoupe and SpatiReel.";
 
 /// The row that adds a word, after the words.
 pub const ADD_WORD: &str = "Add a word";
@@ -916,7 +916,7 @@ mod tests {
         assert_eq!(ai.activate(), Some(AiAction::TextLanguages("en".into(), "ja".into())));
         // What they do is said under each of the three.
         to_row(&mut ai, "Read text in pictures by itself");
-        assert!(ai.detail().contains("Nothing reads text in pictures yet"));
+        assert!(ai.detail().contains("SpatiLoupe and SpatiReel"));
         assert_eq!(ai.activate(), Some(AiAction::ReadByItself(false)));
     }
 
