@@ -321,6 +321,15 @@ impl App {
         self.wire.in_the_room()
     }
 
+    /// Whether the room says when the wearer's hands stir ([`Event::Hands`], `spatiand_xr_v1`
+    /// version 7 on). Where it does, pointer motion is not the hands' -- the pointer is cast
+    /// from the head and sweeps whenever the wearer looks about -- and controls that hide
+    /// themselves are woken by the hands, a press, a key or a scroll, never by motion: from the
+    /// start, not only once the room has first said the hands.
+    pub fn says_hands(&self) -> bool {
+        self.wire.says_hands()
+    }
+
     /// Open a window whose picture is `size` pixels. It may be drawn once it is [`Event::Ready`].
     pub fn open(&mut self, title: &str, size: (u32, u32)) -> WindowId {
         let id = self.wire.open(&self.app_id, title);

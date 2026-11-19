@@ -422,6 +422,12 @@ impl Playing {
 
     /// The room says the wearer's hands did something (`Event::Hands`): the controls come back.
     /// From then on, pointer motion alone no longer brings them, since it sweeps with the head.
+    /// The room says the hands (`App::says_hands`): pointer motion never wakes the controls,
+    /// from the film's first frame.
+    pub fn hands_said(&mut self, said: bool) {
+        self.hands_heard |= said;
+    }
+
     pub fn hands(&mut self) {
         self.hands_heard = true;
         // Hands on some other window are not this one's business, and typing into another

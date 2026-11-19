@@ -263,7 +263,8 @@ impl Reel {
     }
 
     fn begin(&mut self, ticket: u64, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, play: &source::Play) -> Result<(), String> {
-        let playing = Playing::new(self.app.gl()?, player, play, &item.name, &item.title, item.layout)?;
+        let mut playing = Playing::new(self.app.gl()?, player, play, &item.name, &item.title, item.layout)?;
+        playing.hands_said(self.app.says_hands());
         self.app.set_title(self.window, &item.title);
         log::info!("{}: playing, from {:.0} s", item.title, item.resume);
         let (told, started) = (source.clone(), item.clone());

@@ -253,6 +253,10 @@ impl Wire {
         self.xr.is_some()
     }
 
+    pub(crate) fn says_hands(&self) -> bool {
+        self.xr.as_ref().is_some_and(|xr| xr.version() >= 7)
+    }
+
     pub(crate) fn open(&mut self, app_id: &str, title: &str) -> WindowId {
         let id = WindowId(self.next_window);
         self.next_window += 1;

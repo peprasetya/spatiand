@@ -249,6 +249,10 @@ impl Loupe {
             self.left.push(old);
         }
         let mut view = View::new(entry.clone(), index, ticket, files);
+        // The owner, 2026-11-19: "sometimes the list not go away, even I wait long enough".
+        // Each file's view began not knowing that the room says the hands, and took the head's
+        // sweep of the pointer for them until the wearer next touched something.
+        view.hands_said(self.app.says_hands());
         view.set_size(self.size);
         view.handed(glide);
         let path = entry.path.clone();

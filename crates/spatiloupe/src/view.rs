@@ -1212,6 +1212,12 @@ impl View {
         self.clock.stir(Instant::now());
     }
 
+    /// The room says the hands (`App::says_hands`): pointer motion never wakes the controls,
+    /// for this file as for the ones before it.
+    pub fn hands_said(&mut self, said: bool) {
+        self.hands_heard |= said;
+    }
+
     pub fn input(&mut self, input: &Input) -> Want {
         let motion = matches!(input, Input::Pointer { .. } | Input::PointerLeft);
         // Whether the controls were there to be scrolled before this woke them.
@@ -2450,6 +2456,26 @@ mod tests {
         // I, by its place, for the picture's account.
         view.input(&Input::Key { key: Key::Char('ш'), text: Some("ш".into()), modifiers: Default::default(), letter: Some('i') });
         assert!(view.info);
+    }
+
+    #[test]
+    fn a_new_file_in_a_room_that_says_the_hands_is_not_woken_by_the_head() {
+        // The owner, 2026-11-19: the strip "not go away, even I wait long enough". Each file's
+        // view began taking pointer motion -- the head's sweep -- for the hands.
+        let mut view = viewing(3, 1);
+        view.hands_said(true);
+        view.clock = AutoHide::new(Instant::now() - CONTROLS_SHOWN - Duration::from_secs(2));
+        assert_eq!(view.chrome(), 0.0);
+        for step in 0..20 {
+            view.input(&Input::Pointer { x: 400.0 + step as f32, y: 300.0 });
+        }
+        assert_eq!(view.chrome(), 0.0, "the head looking about leaves the controls away");
+        // A room too old to say the hands: motion is all there is to go by.
+        let mut old = viewing(3, 1);
+        old.hands_said(false);
+        old.clock = AutoHide::new(Instant::now() - CONTROLS_SHOWN - Duration::from_secs(2));
+        old.input(&Input::Pointer { x: 400.0, y: 300.0 });
+        assert_eq!(old.chrome(), 1.0);
     }
 
     #[test]
