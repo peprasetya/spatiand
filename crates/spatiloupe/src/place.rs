@@ -58,6 +58,105 @@ pub fn read(path: &Path) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Whether there is something at `path`.
+pub fn exists(path: &Path) -> bool {
+    match remote(path) {
+        Some((r, p)) => storage().and_then(|s| s.exists(&r, &p)).unwrap_or(false),
+        None => path.symlink_metadata().is_ok(),
+    }
+}
+
+/// A name for a file being written beside `path`, before it takes its place: hidden, and this
+/// program's.
+fn beside(path: &Path) -> PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+    let name = format!(".{}.spatiloupe-{}-{}.part", name(path), std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed));
+    match parent(path) {
+        Some(folder) => join(&folder, &name),
+        None => PathBuf::from(name),
+    }
+}
+
+/// Write `bytes` into a new file beside `path`, whole and on the disk, with `like`'s permissions
+/// if it is given: the first step of writing a file that is not seen half-written.
+fn write_beside(path: &Path, bytes: &[u8], like: Option<&Path>) -> Result<PathBuf, String> {
+    use std::io::Write;
+    let part = beside(path);
+    let written = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&part)?;
+        file.write_all(bytes)?;
+        if let Some(meta) = like.and_then(|like| std::fs::metadata(like).ok()) {
+            file.set_permissions(meta.permissions())?;
+        }
+        file.sync_all()
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&part);
+        return Err(e.to_string());
+    }
+    Ok(part)
+}
+
+/// The folder `path` is in, told that what is in it changed for good.
+fn sync_folder(path: &Path) {
+    if let Some(folder) = path.parent().and_then(|f| std::fs::File::open(f).ok()) {
+        let _ = folder.sync_all();
+    }
+}
+
+/// Write `bytes` over the file at `path`, whole or not at all: into a new file in the same
+/// folder, which is then renamed over it -- with its permissions. A remote's, through the storage
+/// service: written beside it under another name, then moved over it.
+pub fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    match remote(path) {
+        Some((r, p)) => {
+            let storage = storage()?;
+            let part = remote(&beside(path)).map(|(_, p)| p).ok_or("not a remote's")?;
+            storage.write(&r, &part, bytes)?;
+            storage.rename(&r, &part, &p).inspect_err(|_| {
+                let _ = storage.delete(&r, &part);
+            })
+        }
+        None => {
+            let part = write_beside(path, bytes, Some(path))?;
+            std::fs::rename(&part, path).map_err(|e| {
+                let _ = std::fs::remove_file(&part);
+                e.to_string()
+            })?;
+            sync_folder(path);
+            Ok(())
+        }
+    }
+}
+
+/// Write `bytes` as a new file at `path`, not over anything there: whole, or not at all.
+pub fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let taken = || format!("{} is there already", name(path));
+    match remote(path) {
+        Some((r, p)) => {
+            let storage = storage()?;
+            if storage.exists(&r, &p)? {
+                return Err(taken());
+            }
+            storage.write(&r, &p, bytes)
+        }
+        None => {
+            let part = write_beside(path, bytes, None)?;
+            if path.symlink_metadata().is_ok() {
+                let _ = std::fs::remove_file(&part);
+                return Err(taken());
+            }
+            std::fs::rename(&part, path).map_err(|e| {
+                let _ = std::fs::remove_file(&part);
+                e.to_string()
+            })?;
+            sync_folder(path);
+            Ok(())
+        }
+    }
+}
+
 /// A remote file to be read about in -- its camera's account -- without fetching it whole: what
 /// is read is fetched a piece at a time, as far as it is wanted, by a range each. None for a
 /// place on this machine, which is read about in its file.

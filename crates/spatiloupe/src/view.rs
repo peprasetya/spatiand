@@ -16,15 +16,17 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use spatiand_app::glow::{self, HasContext};
-use spatiand_app::ui::{draw_icon, look, theme, AutoHide, Button, Color, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed, DOUBLE_CLICK, TILE_TINT};
+use spatiand_app::ui::{draw_icon, look, theme, AutoHide, Button, Color, Confirm, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed, DOUBLE_CLICK, TILE_TINT};
 use spatiand_app::{Gl, Key};
 
 use crate::folder::{Entry, Kind};
+use crate::markup::Area;
 use crate::model::{self, Eye, Orbit, Renderer};
 use crate::pdf::{self, Ask, Pdf};
 use crate::picture::Picture;
 use crate::stereo::Eyes;
 use crate::swipe::{Carousel, Glide, Reach, Scrolled};
+use crate::tools::{Desk, Placed, Said, BAR};
 
 /// The gap between the file looked at and the one beside it on the carousel, beyond the window's
 /// own width: with the room a fitted picture leaves around itself, about what a phone leaves
@@ -183,6 +185,15 @@ pub struct Shown {
     /// Whether the GPU's copies are drawn a pixel at a time, as a picture magnified more than
     /// twice is: its pixels crisp, not a blur.
     nearest: bool,
+    /// Quarter turns clockwise from how it was read, settled or not: markup saves a picture as
+    /// it is shown.
+    orientation: u8,
+    /// The part of the picture shown, as fractions of it as it is shown (left, top, right,
+    /// bottom): all of it, or what markup cropped it to.
+    cut: [f32; 4],
+    /// How far down the window the room for the picture begins: under the bar, and under the
+    /// markup tools too when they are out.
+    head: f32,
 }
 
 impl Shown {
@@ -203,7 +214,32 @@ impl Shown {
             centre: (0.5, 0.5),
             drawn_at: None,
             nearest: false,
+            orientation: 0,
+            cut: [0.0, 0.0, 1.0, 1.0],
+            head: HEAD,
         }
+    }
+
+    /// The picture's size as it is shown, turned as it is turned, in its own pixels: the units
+    /// markup draws in.
+    fn frame_size(&self) -> (f32, f32) {
+        let (w, h) = (self.picture.original.0 as f32, self.picture.original.1 as f32);
+        if self.turns % 2 == 1 { (h, w) } else { (w, h) }
+    }
+
+    /// How much of the shown picture the cut keeps, across and down.
+    fn cut_share(&self) -> (f32, f32) {
+        ((self.cut[2] - self.cut[0]).max(1e-4), (self.cut[3] - self.cut[1]).max(1e-4))
+    }
+
+    /// Whether markup can draw on it: one still picture, flat.
+    fn markable(&self) -> bool {
+        self.eyes() == Eyes::Mono && self.picture.frames.is_empty() && self.picture.right.is_none()
+    }
+
+    /// The room a picture is fitted to: the window, but for what floats along its top.
+    fn stage(&self, all: Rect) -> Rect {
+        stage_under(all, self.head)
     }
 
     /// How tall one eye's view is at the picture's own size, in logical pixels: the file's pixels
@@ -213,7 +249,7 @@ impl Shown {
         let (w, h) = (self.picture.width as f32, self.picture.height as f32);
         let squeeze = self.squeezed();
         let (w, h) = if self.turns % 2 == 1 { (h, w) } else { (w, h) };
-        eye_height_as(w, h, self.eyes(), squeeze) * ratio
+        eye_height_as(w, h, self.eyes(), squeeze) * ratio * self.cut_share().1
     }
 
     /// How wide it is fitted to `area`: filling it, or at its own size if that is smaller.
@@ -229,7 +265,8 @@ impl Shown {
     fn eye_aspect(&self) -> f32 {
         let (w, h) = (self.picture.width as f32, self.picture.height as f32);
         let (w, h) = if self.turns % 2 == 1 { (h, w) } else { (w, h) };
-        eye_aspect_as(w, h, self.eyes(), self.squeezed())
+        let (cw, ch) = self.cut_share();
+        eye_aspect_as(w, h, self.eyes(), self.squeezed()) * cw / ch
     }
 
     /// Whether a pair's views are squeezed to half: judged by the frame's shape as it was read,
@@ -250,17 +287,19 @@ impl Shown {
     fn eye_pixels(&self) -> (f32, f32) {
         let (w, h) = (self.picture.width as f32, self.picture.height as f32);
         let (w, h) = if self.turns % 2 == 1 { (h, w) } else { (w, h) };
+        let (cw, ch) = self.cut_share();
         match self.eyes() {
-            Eyes::Mono | Eyes::Pair => (w, h),
+            Eyes::Mono | Eyes::Pair => (w * cw, h * ch),
             Eyes::SideBySide | Eyes::Crossed => (w * 0.5, h),
             Eyes::TopBottom => (w, h * 0.5),
         }
     }
 
     /// Where the picture is drawn, to fill `area` as it is zoomed and moved: below the bar
-    /// along the top, so that a tall picture is not under it.
+    /// along the top, so that a tall picture is not under it. A picture cropped by markup: where
+    /// what is kept of it is drawn.
     fn placed(&self, area: Rect) -> Rect {
-        let area = stage(area);
+        let area = self.stage(area);
         let aspect = self.eye_aspect();
         let (pw, _) = self.eye_pixels();
         let fit_w = self.fitted_width(area);
@@ -275,13 +314,13 @@ impl Shown {
 
     /// So many of the GPU copy's pixels to a logical one, fitted.
     fn fit_scale(&self, area: Rect) -> f32 {
-        self.eye_pixels().0 / self.fitted_width(stage(area))
+        self.eye_pixels().0 / self.fitted_width(self.stage(area))
     }
 
     /// The same, filling the window: what a small picture is zoomed to, at most, beside eight
     /// times its own size.
     fn fill_scale(&self, area: Rect) -> f32 {
-        self.eye_pixels().0 / fit_width(stage(area), self.eye_aspect())
+        self.eye_pixels().0 / fit_width(self.stage(area), self.eye_aspect())
     }
 
     /// Zoom by `by` (more than one is nearer), keeping the point of the picture under
@@ -311,7 +350,7 @@ impl Shown {
     /// Keep the picture over the window: zoomed in, its edge never comes inside the window.
     fn clamp(&mut self, area: Rect) {
         let placed = self.placed(area);
-        let area = stage(area);
+        let area = self.stage(area);
         for (centre, size, room) in [(&mut self.centre.0, placed.w, area.w), (&mut self.centre.1, placed.h, area.h)] {
             if size <= room {
                 *centre = 0.5;
@@ -325,6 +364,12 @@ impl Shown {
     /// Texture coordinates for `eye`'s part of the picture, turned as it is turned.
     fn uv(&self, eye: Eye) -> [f32; 4] {
         let eyes = self.eyes();
+        // Cropped by markup (a flat picture only): what is kept of the picture as shown, which
+        // half a turn puts the other way round in the texture.
+        if self.cut != [0.0, 0.0, 1.0, 1.0] && eyes == Eyes::Mono {
+            let [l, t, r, b] = self.cut;
+            return if self.turns % 4 == 2 { [1.0 - r, 1.0 - b, 1.0 - l, 1.0 - t] } else { [l, t, r, b] };
+        }
         let (left, right) = eyes.halves();
         let mut uv = match (eye, self.swapped) {
             (Eye::Right, false) | (Eye::Left, true) => right,
@@ -340,9 +385,17 @@ impl Shown {
     }
 }
 
+/// How far down the window the room for a picture or a page begins: under the bar.
+const HEAD: f32 = 96.0;
+
 /// The part of the window a picture is fitted to: all of it but the bar along the top.
 fn stage(all: Rect) -> Rect {
-    Rect::new(all.x, all.y + 96.0, all.w, (all.h - 96.0 - 12.0).max(1.0))
+    stage_under(all, HEAD)
+}
+
+/// The same, beginning `head` down: under markup's tools too, while they are out.
+fn stage_under(all: Rect, head: f32) -> Rect {
+    Rect::new(all.x, all.y + head, all.w, (all.h - head - 12.0).max(1.0))
 }
 
 /// Whether a picture of this shape holding two views has squeezed each to half: a film's
@@ -385,6 +438,13 @@ pub struct Paper {
     /// Pages drawn by the PDF's thread, waiting for the GL thread to put them on the GPU: this
     /// document's own.
     pending: Vec<(usize, u32, u32, Vec<u8>)>,
+    /// Pages markup has cropped: what is kept of each, in its points as it is shown.
+    cuts: HashMap<usize, Area>,
+    /// How far down the column the first page begins: under the bar, and under markup's tools
+    /// while they are out.
+    head: f32,
+    /// Where each page near the window was drawn last, for markup to draw on.
+    placed: Vec<(usize, Rect)>,
 }
 
 const PAGE_GAP: f32 = 28.0;
@@ -412,7 +472,15 @@ impl Paper {
             stale: Vec::new(),
             words: HashMap::new(),
             pending: Vec::new(),
+            cuts: HashMap::new(),
+            head: HEAD,
+            placed: Vec::new(),
         }
+    }
+
+    /// What is shown of page `page`, in its points: all of it, or its crop.
+    fn region(&self, page: usize) -> Area {
+        self.cuts.get(&page).copied().unwrap_or_else(|| self.pages.get(page).map_or(Area::new(0.0, 0.0, 1.0, 1.0), |p| Area::new(0.0, 0.0, p.width, p.height)))
     }
 
     /// The words on `page`, if they have come; asked for, if they have not been.
@@ -428,14 +496,15 @@ impl Paper {
         (area.w * 0.62).min(1000.0) * self.zoom
     }
 
-    /// Where each page is down the column: top, height.
+    /// Where each page is down the column: top, height. A page cropped by markup is what is kept
+    /// of it, as wide as the others.
     fn layout(&self, area: Rect) -> Vec<(f32, f32)> {
         let width = self.width(area);
-        let mut y = 96.0;
-        self.pages
-            .iter()
+        let mut y = self.head;
+        (0..self.pages.len())
             .map(|page| {
-                let h = width * page.height / page.width.max(1.0);
+                let shown = self.region(page);
+                let h = width * shown.h() / shown.w().max(1.0);
                 let at = (y, h);
                 y += h + PAGE_GAP;
                 at
@@ -509,7 +578,30 @@ pub enum Want {
     Leave,
     /// Another of the folder's files, by its place in the folder.
     Open(usize),
+    /// SpatiLoupe to end: asked first where markup was not saved.
+    Quit,
+    /// A picture marked up, to be written (by a worker: it is read whole and drawn on).
+    Save(Box<crate::save::Saving>),
+    /// A file written -- the one looked at, or its copy beside it -- to be shown as it now is,
+    /// with what was done said.
+    Saved { path: PathBuf, said: String },
 }
+
+/// What follows the yes of a question.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Then {
+    /// Markup not saved: let go of, to go back to the folder, to slide on (by so many, or to a
+    /// file's place among the files), or to quit.
+    Leave,
+    Slide(i32),
+    SlideTo(usize),
+    Quit,
+    /// The file written over with its markup.
+    Replace,
+}
+
+/// All of a picture: no crop.
+const WHOLE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
 pub struct View {
     /// The file, and its place in the folder.
@@ -559,7 +651,26 @@ pub struct View {
     /// A press on the controls while they were faded out, which only brought them back: its
     /// release is not a click either.
     swallowing: bool,
+    /// Markup on this file -- the tools, and what is drawn with them -- once begun.
+    desk: Option<Box<Desk>>,
+    markup_button: Button,
+    save_button: Button,
+    copy_button: Button,
+    /// A question being asked, and what follows its yes.
+    asking: Option<(Confirm, Then)>,
+    /// A save going on (a copy, or over the file), since when: the foot says so, and nothing is
+    /// changed meanwhile.
+    saving: Option<(Instant, bool)>,
+    /// What was done, said at the foot for five seconds.
+    said: Option<(String, Instant)>,
+    /// Where the pages shown are on the window, as last drawn: what markup draws on.
+    placed: Vec<Placed>,
+    /// What the program is to do, come of something done between inputs (a save).
+    wanted: Option<Want>,
 }
+
+/// How long what was done stays on show.
+const SAID_SHOWN: Duration = Duration::from_secs(5);
 
 impl View {
     pub fn new(entry: Entry, index: usize, ticket: u64, files: Vec<usize>) -> View {
@@ -599,7 +710,253 @@ impl View {
             trouble: None,
             trouble_at: None,
             swallowing: false,
+            desk: None,
+            markup_button: Button::default(),
+            save_button: Button::default(),
+            copy_button: Button::default(),
+            asking: None,
+            saving: None,
+            said: None,
+            placed: Vec::new(),
+            wanted: None,
         }
+    }
+
+    // --- markup ---
+
+    /// Whether markup can draw on what is shown: a still flat picture, or a PDF's pages. Not an
+    /// object, a stereo pair or a moving picture, whose button is not there.
+    fn markable(&self) -> bool {
+        match &self.doc {
+            Doc::Picture(shown) => shown.markable(),
+            Doc::Pdf(paper) => !paper.pages.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Whether markup's tools are out.
+    fn marking(&self) -> bool {
+        self.desk.as_ref().is_some_and(|d| d.on)
+    }
+
+    /// Whether anything is drawn or cut that the file has not got.
+    pub fn unsaved(&self) -> bool {
+        self.desk.as_ref().is_some_and(|d| d.edited())
+    }
+
+    /// Whether this file can be written over in its own format (a PDF always; a picture in what
+    /// SpatiLoupe writes), or only copied.
+    fn can_save_in_place(&self) -> bool {
+        match &self.doc {
+            Doc::Pdf(_) => true,
+            _ => crate::save::in_place(&self.entry.name).is_some(),
+        }
+    }
+
+    /// The tools out, or put away; put away with nothing drawn, markup is let go of altogether.
+    fn toggle_markup(&mut self) {
+        if self.marking() {
+            if let Some(desk) = self.desk.as_mut() {
+                desk.put_away();
+            }
+            if !self.unsaved() {
+                self.desk = None;
+            }
+        } else if self.markable() {
+            let turns = match &self.doc {
+                Doc::Picture(shown) => shown.orientation,
+                _ => 0,
+            };
+            self.desk.get_or_insert_with(|| Box::new(Desk::new(turns))).on = true;
+            self.info = false;
+            // The room's fonts read now, beside the window's thread, rather than at the first
+            // word painted.
+            std::thread::spawn(|| drop(crate::ink::fonts()));
+        }
+        self.sync_markup();
+    }
+
+    /// What is shown made to agree with the marks: a picture turned and cropped as they say, a
+    /// PDF's pages cropped; and the room for it under the tools, while they are out.
+    fn sync_markup(&mut self) {
+        // Under the tools: the bar's foot (108), their 12 above and 12 below.
+        let head = if self.marking() { HEAD + BAR + 36.0 } else { HEAD };
+        let marks = self.desk.as_ref().map(|d| d.markup.marks());
+        match &mut self.doc {
+            Doc::Picture(shown) => {
+                shown.head = head;
+                let turns = marks.map_or(shown.orientation, |m| m.turns);
+                if turns != shown.orientation {
+                    // Undone or done again: the picture turned back, or on, with its marks.
+                    shown.turns = (shown.turns + (turns + 4 - shown.orientation)) % 4;
+                    shown.orientation = turns;
+                    shown.zoom = None;
+                    shown.centre = (0.5, 0.5);
+                }
+                let (w, h) = shown.frame_size();
+                let cut = marks.and_then(|m| m.crop(0)).map_or(WHOLE, |a| [a.x0 / w.max(1.0), a.y0 / h.max(1.0), a.x1 / w.max(1.0), a.y1 / h.max(1.0)]);
+                if cut != shown.cut {
+                    shown.cut = cut;
+                    shown.zoom = None;
+                    shown.centre = (0.5, 0.5);
+                }
+            }
+            Doc::Pdf(paper) => {
+                if head != paper.head {
+                    // The pages stay where they were on the window as the tools come and go -- but
+                    // for the first page's top, which comes out from under them.
+                    if paper.scroll > 0.0 {
+                        paper.scroll = (paper.scroll + head - paper.head).max(0.0);
+                    }
+                    paper.head = head;
+                }
+                let cuts: HashMap<usize, Area> = marks.map(|m| m.crops.iter().copied().collect()).unwrap_or_default();
+                if cuts != paper.cuts {
+                    paper.cuts = cuts;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Each page's part shown, in its units, by its number: what markup's weights are a share of.
+    fn regions(&self) -> Vec<Area> {
+        match &self.doc {
+            Doc::Picture(shown) => {
+                let (w, h) = shown.frame_size();
+                let c = shown.cut;
+                vec![Area::new(c[0] * w, c[1] * h, c[2] * w, c[3] * h)]
+            }
+            Doc::Pdf(paper) => (0..paper.pages.len()).map(|page| paper.region(page)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Where the pages shown are on the window `all`.
+    fn placements(&self, all: Rect) -> Vec<Placed> {
+        match &self.doc {
+            Doc::Picture(shown) if shown.markable() => {
+                let at = shown.placed(all);
+                let region = self.regions()[0];
+                vec![Placed { page: 0, rect: Rect { x: at.x + self.slid, ..at }, region }]
+            }
+            Doc::Pdf(paper) => paper.placed.iter().map(|&(page, rect)| Placed { page, rect, region: paper.region(page) }).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// A question asked, with what follows its yes. Both destroy something, and start on Cancel.
+    fn ask(&mut self, then: Then) {
+        let name = &self.entry.name;
+        let text = match then {
+            Then::Replace => {
+                let what = if matches!(self.doc, Doc::Pdf(_)) { "PDF" } else { "picture" };
+                format!("Replace {name} with the edited {what}? This cannot be undone.")
+            }
+            _ => format!("Discard your changes to {name}?"),
+        };
+        let yes = if then == Then::Replace { "Replace" } else { "Discard" };
+        if let Some(desk) = self.desk.as_mut() {
+            desk.finish_typing();
+        }
+        self.asking = Some((Confirm::careful(text, yes, "Cancel"), then));
+    }
+
+    /// The window closed, or SpatiLoupe quit, with markup not saved: asked first.
+    pub fn ask_quit(&mut self) {
+        self.ask(Then::Quit);
+    }
+
+    fn answered(&mut self, yes: bool, then: Then) -> Want {
+        if !yes {
+            return Want::Nothing;
+        }
+        if then == Then::Replace {
+            return self.save(false);
+        }
+        // The changes let go of, and on to what was asked.
+        self.desk = None;
+        self.sync_markup();
+        match then {
+            Then::Leave => Want::Leave,
+            Then::Slide(by) => self.go_by(by),
+            Then::SlideTo(place) => self.go_to_place(place),
+            Then::Quit => Want::Quit,
+            Then::Replace => Want::Nothing,
+        }
+    }
+
+    /// Back to the folder: asked first if markup would be lost.
+    fn leave(&mut self) -> Want {
+        if self.unsaved() {
+            self.ask(Then::Leave);
+            return Want::Nothing;
+        }
+        Want::Leave
+    }
+
+    /// Markup written: over the file (asked already), or as a copy beside it.
+    fn save(&mut self, copy: bool) -> Want {
+        let Some(desk) = self.desk.as_mut() else { return Want::Nothing };
+        desk.finish_typing();
+        desk.cropping = None;
+        let marks = desk.markup.marks().clone();
+        let want = match &self.doc {
+            Doc::Picture(shown) => Want::Save(Box::new(crate::save::Saving { source: self.entry.path.clone(), marks, frame: shown.frame_size(), copy })),
+            Doc::Pdf(paper) => {
+                paper.pdf.ask(Ask::Save { marks, copy });
+                Want::Nothing
+            }
+            _ => return Want::Nothing,
+        };
+        self.saving = Some((Instant::now(), copy));
+        want
+    }
+
+    /// What came of a save: the file shown again as it now is, or why it was not written.
+    pub fn saved(&mut self, result: Result<PathBuf, String>) {
+        let copy = self.saving.take().is_some_and(|(_, copy)| copy);
+        match result {
+            Ok(path) => {
+                let said = if copy { format!("Saved a copy as {}.", crate::place::name(&path)) } else { format!("Saved {}.", self.entry.name) };
+                if let Some(desk) = self.desk.as_mut() {
+                    desk.markup.saved();
+                }
+                self.wanted = Some(Want::Saved { path, said });
+            }
+            Err(e) => {
+                log::warn!("{}: not saved: {e}", self.entry.path.display());
+                self.trouble = Some(format!("SpatiLoupe could not save {}: {}.", self.entry.name, e.trim_end_matches('.')));
+                self.trouble_at = Some(Instant::now());
+            }
+        }
+    }
+
+    /// What the program is to do, if something done between inputs came to anything.
+    pub fn take_wanted(&mut self) -> Option<Want> {
+        self.wanted.take()
+    }
+
+    /// Something done, said at the foot.
+    pub fn say(&mut self, words: String) {
+        self.said = Some((words, Instant::now()));
+    }
+
+    /// A quarter turn: through markup's steps while there is markup, which turns the marks with
+    /// the picture and can be undone.
+    fn turn(&mut self, clockwise: bool) {
+        let Doc::Picture(shown) = &mut self.doc else { return };
+        if let Some(desk) = self.desk.as_mut() {
+            desk.finish_typing();
+            desk.cropping = None;
+            desk.markup.turn(shown.frame_size(), clockwise);
+            self.sync_markup();
+            return;
+        }
+        shown.turns = (shown.turns + if clockwise { 1 } else { 3 }) % 4;
+        shown.orientation = (shown.orientation + if clockwise { 1 } else { 3 }) % 4;
+        shown.zoom = None;
+        shown.centre = (0.5, 0.5);
     }
 
     pub fn open_pdf(&mut self) {
@@ -666,8 +1023,9 @@ impl View {
 
     /// How much of the controls is to be seen, 0 to 1.
     fn chrome(&self) -> f32 {
-        // A document is read, not looked at: its controls stay.
-        if matches!(self.doc, Doc::Pdf(_) | Doc::Loading(_) | Doc::Failed(_)) || self.info {
+        // A document is read, not looked at: its controls stay. So do they while there is markup,
+        // or a question.
+        if matches!(self.doc, Doc::Pdf(_) | Doc::Loading(_) | Doc::Failed(_)) || self.info || self.desk.is_some() || self.asking.is_some() || self.saving.is_some() || self.said.is_some() {
             return 1.0;
         }
         match self.clock.off_since(Instant::now()) {
@@ -704,7 +1062,8 @@ impl View {
         };
         let carousel = self.carousel.deadline().map(|at| at.saturating_duration_since(Instant::now()));
         let trouble = self.trouble_at.map(|at| TROUBLE_SHOWN.saturating_sub(at.elapsed()));
-        [doc, carousel, trouble].into_iter().flatten().min()
+        let said = self.said.as_ref().map(|(_, at)| SAID_SHOWN.saturating_sub(at.elapsed()));
+        [doc, carousel, trouble, said].into_iter().flatten().min()
     }
 
     /// What has come back from the PDF's thread.
@@ -763,6 +1122,10 @@ impl View {
                         paper.go_to = Some(first.page);
                     }
                 }
+                pdf::Answer::Saved(result) => {
+                    self.saved(result);
+                    return true;
+                }
             }
         }
         any
@@ -776,7 +1139,11 @@ impl View {
             self.trouble = None;
             self.trouble_at = None;
         }
-        self.frame_on() || slid || gone
+        let unsaid = self.said.as_ref().is_some_and(|(_, at)| at.elapsed() >= SAID_SHOWN);
+        if unsaid {
+            self.said = None;
+        }
+        self.frame_on() || slid || gone || unsaid
     }
 
     /// Move the carousel on to now, and say where it is for the frame about to be drawn.
@@ -842,6 +1209,11 @@ impl View {
     /// and one still being read or that would not open. A zoomed picture is moved about in, a
     /// document's pages scroll, and an object turns.
     fn slides(&self) -> bool {
+        // With markup -- its tools out, or something drawn not yet saved -- a drag draws, or moves
+        // about in the picture; leaving it is asked about first.
+        if self.desk.is_some() {
+            return false;
+        }
         match &self.doc {
             Doc::Picture(shown) => shown.zoom.is_none(),
             Doc::Loading(_) | Doc::Failed(_) => true,
@@ -873,6 +1245,7 @@ impl View {
 
     /// Draw one eye's picture -- `eye` -- into `part` of the window's picture of `size`.
     pub fn paint(&mut self, p: &mut Painter, gl: &Gl, size: (u32, u32), part: Rect, eye: Eye) {
+        self.sync_markup();
         let logical = (self.bounds.w, self.bounds.h);
         // An object is drawn first, into a picture of its own, since it needs depth.
         let mut drawn_object = None;
@@ -992,6 +1365,15 @@ impl View {
             Doc::Model(_) => {}
         }
         p.unclip(gl);
+        // Markup: where the pages are on the window, and what is drawn on them.
+        self.placed = self.placements(all);
+        if self.desk.is_some() {
+            let regions = self.regions();
+            if let Some(desk) = self.desk.as_mut() {
+                desk.regions = regions;
+                desk.paint(p, gl, all, &self.placed);
+            }
+        }
         self.draw_neighbours(p, gl, all);
         if chrome > 0.0 {
             self.controls(p, gl, all, chrome);
@@ -1026,7 +1408,9 @@ impl View {
         let mut detail = Vec::new();
         match &self.doc {
             Doc::Picture(shown) => {
-                let (w, h) = shown.picture.original;
+                // Cropped by markup: what is kept of it.
+                let (w, h) = shown.frame_size();
+                let (w, h) = ((w * (shown.cut[2] - shown.cut[0])).round() as u32, (h * (shown.cut[3] - shown.cut[1])).round() as u32);
                 detail.push(format!("{w} \u{d7} {h}"));
                 if let Some(zoom) = shown.zoom {
                     let ratio = shown.picture.original.0 as f32 / shown.picture.width.max(1) as f32;
@@ -1072,23 +1456,83 @@ impl View {
         let info_w = Button::HEIGHT;
         let mut right = Rect { x: inner.right() - info_w, w: info_w, ..inner };
         self.info_button.draw_icon(p, gl, right, Icon::Info, "");
-        if let Doc::Picture(shown) = &self.doc {
-            let label = if shown.eyes().is_stereo() { format!("3D  \u{b7}  {}", short(shown.eyes())) } else { "2D".to_string() };
-            let width = Button::icon_width(p, gl, &label);
-            right = Rect { x: right.x - width - 10.0, w: width, ..right };
-            self.layout.draw_icon(p, gl, right, if shown.eyes().is_stereo() { Icon::Cube } else { Icon::Eye }, &label);
+        // How a pair is packed: not while there is markup, which is drawn on it as it is.
+        match &self.doc {
+            Doc::Picture(shown) if self.desk.is_none() => {
+                let label = if shown.eyes().is_stereo() { format!("3D  \u{b7}  {}", short(shown.eyes())) } else { "2D".to_string() };
+                let width = Button::icon_width(p, gl, &label);
+                right = Rect { x: right.x - width - 10.0, w: width, ..right };
+                self.layout.draw_icon(p, gl, right, if shown.eyes().is_stereo() { Icon::Cube } else { Icon::Eye }, &label);
+            }
+            _ => self.layout = Button::default(),
+        }
+        // Markup's button, wherever there is something to draw on: lit while the tools are out.
+        if self.markable() {
+            right = Rect { x: right.x - Button::HEIGHT - 10.0, w: Button::HEIGHT, ..right };
+            self.markup_button.focused = self.marking();
+            self.markup_button.draw_icon(p, gl, right, Icon::Markup, "");
+            self.markup_button.focused = false;
+        } else {
+            self.markup_button = Button::default();
         }
         let place_rect = Rect { x: right.x - place_w - 22.0, w: place_w, ..inner };
         p.label(gl, &place, place_rect, theme::DETAIL_EM, ink(theme::ink_hint()), 1.0);
-        let words = Rect { w: (place_rect.x - inner.x - 20.0).max(0.0), ..inner };
+        // With markup not saved: Save (over the file, where SpatiLoupe writes its format) and
+        // Save a copy.
+        let mut end = place_rect.x - 20.0;
+        if self.unsaved() && self.saving.is_none() {
+            let copy_w = Button::icon_width(p, gl, "Save a copy");
+            let at = Rect { x: end - copy_w, w: copy_w, ..inner };
+            end = at.x - 10.0;
+            if self.can_save_in_place() {
+                let save_w = Button::icon_width(p, gl, "Save");
+                let save = Rect { x: at.x + copy_w - save_w, w: save_w, ..inner };
+                let copy = Rect { x: save.x - 10.0 - copy_w, ..at };
+                self.save_button.draw_icon(p, gl, save, Icon::Save, "Save");
+                self.copy_button.draw_icon(p, gl, copy, Icon::Copy, "Save a copy");
+                end = copy.x - 10.0;
+            } else {
+                self.save_button = Button::default();
+                self.copy_button.draw_icon(p, gl, at, Icon::Copy, "Save a copy");
+            }
+        } else {
+            self.save_button = Button::default();
+            self.copy_button = Button::default();
+        }
+        let words = Rect { w: (end - inner.x).max(0.0), ..inner };
         let taken = p.label(gl, &name, words, theme::ROW_EM, ink(theme::ink()), 0.0);
         let after = Rect { x: words.x + taken + 22.0, w: (words.w - taken - 22.0).max(0.0), y: words.y + 2.0, ..words };
         p.label(gl, &detail, after, theme::DETAIL_EM * 0.95, ink(theme::ink_hint()), 0.0);
         look::rule(p, gl, Rect::new(bar.x + 22.0, bar.bottom() - 2.0, bar.w - 44.0, 2.0));
 
-        // The folder's other files, along the foot.
+        // Markup's tools, under the bar, while they are out.
+        let marking = self.marking();
+        if let Some(desk) = self.desk.as_mut().filter(|d| d.on) {
+            let w = desk.bar_width(p, gl).min(all.w - 56.0);
+            desk.draw_bar(p, gl, Rect::new(all.x + (all.w - w) * 0.5, bar.bottom() + 12.0, w, BAR));
+        }
+
+        // The folder's other files, along the foot -- not while markup's tools are out, which keep
+        // to this file; then which keys do what, as on a document always.
         self.foot = Rect::default();
-        if self.files.len() > 1 && !matches!(self.doc, Doc::Pdf(_)) {
+        let hint = if self.saving.is_some() {
+            Some("Saving\u{2026}".to_string())
+        } else if marking {
+            self.desk.as_ref().map(|d| d.hint())
+        } else if let Doc::Pdf(paper) = &self.doc {
+            Some(paper_hint(paper).to_string())
+        } else {
+            None
+        };
+        if let Some(hint) = hint {
+            hint_pane(p, gl, all, &hint);
+            // A picture SpatiLoupe does not write in its own format: said, over the keys.
+            if self.unsaved() && !self.can_save_in_place() && self.saving.is_none() {
+                let kind = self.entry.name.rsplit_once('.').map_or(String::new(), |(_, e)| format!("{} ", e.to_uppercase()));
+                let words = format!("SpatiLoupe does not write {kind}pictures: Save a copy writes a JPEG beside it, or a PNG if it has see-through parts.");
+                hint_pane_over(p, gl, all, all.bottom() - 74.0, &words);
+            }
+        } else if self.files.len() > 1 && !matches!(self.doc, Doc::Pdf(_)) {
             let width = 118.0;
             let height = Strip::height(Shape::Square, width) - 34.0;
             let wanted = (self.files.len() as f32 * (width + theme::TILE_GAP) + 28.0).min(all.w - 200.0);
@@ -1124,6 +1568,17 @@ impl View {
             // Left, wrapped, as every foot line is: over the picture's foot, where it floats.
             let mut line = Rect::new(all.x + 40.0, all.bottom() - 100.0, all.w - 80.0, 80.0);
             look::foot(p, gl, &mut line, "", Some(trouble));
+        } else if let Some((said, _)) = &self.said {
+            // What was done: words only, on their pane, over whatever is at the foot.
+            let over = if self.foot.h > 0.0 { self.foot.y - 12.0 } else { all.bottom() - 74.0 };
+            hint_pane_over(p, gl, all, over, said);
+        }
+        // Over everything: markup's colours or weights, open; and a question.
+        if let Some(desk) = self.desk.as_mut().filter(|d| d.on) {
+            desk.draw_popup(p, gl, all);
+        }
+        if let Some((confirm, _)) = &mut self.asking {
+            confirm.draw(p, gl, all);
         }
     }
 
@@ -1149,6 +1604,14 @@ impl View {
                 }
             }
             _ => self.about().into_iter().map(|(what, value)| format!("{what}: {value}")).collect::<Vec<_>>().join("\n"),
+        };
+        // Markup: the words being typed onto the page, or that its tools are out, and which.
+        let text = match self.desk.as_ref().filter(|d| d.on) {
+            Some(desk) => match &desk.typing {
+                Some(typing) => typing.field.text.clone(),
+                None => format!("{}\n{text}", desk.words_for_speech()),
+            },
+            None => text,
         };
         (title, text)
     }
@@ -1188,16 +1651,40 @@ impl View {
     }
 
     /// Slide on `by` files, as the arrow keys do: pressed again on the way, one further. The file
-    /// is opened when the carousel arrives at it ([`View::arrival`]).
+    /// is opened when the carousel arrives at it ([`View::arrival`]). Asked first, if markup would
+    /// be lost; while markup's tools are out, nowhere.
     fn slide_by(&mut self, by: i32) -> Want {
+        if self.marking() {
+            return Want::Nothing;
+        }
+        if self.unsaved() {
+            self.ask(Then::Slide(by));
+            return Want::Nothing;
+        }
+        self.go_by(by)
+    }
+
+    fn go_by(&mut self, by: i32) -> Want {
         self.jump = None;
         self.carousel.slide(by, Instant::now(), self.page());
         Want::Nothing
     }
 
     /// Slide to the file at `place` among the files, as the strip and Home and End do: a
-    /// neighbour as the keys do, and any other in beside this one, from the side it is on.
+    /// neighbour as the keys do, and any other in beside this one, from the side it is on. Asked
+    /// first, as [`View::slide_by`] is.
     fn slide_to(&mut self, place: usize) -> Want {
+        if self.marking() {
+            return Want::Nothing;
+        }
+        if self.unsaved() && place != self.place {
+            self.ask(Then::SlideTo(place));
+            return Want::Nothing;
+        }
+        self.go_to_place(place)
+    }
+
+    fn go_to_place(&mut self, place: usize) -> Want {
         let by = place as i64 - self.place as i64;
         let page = by.clamp(-1, 1) as i32;
         self.jump = (by.abs() > 1).then_some((page, place));
@@ -1225,6 +1712,67 @@ impl View {
         if !motion || !self.hands_heard || self.pressed_at.is_some() {
             self.stir();
         }
+        // A question has everything until it is answered.
+        if let Some((confirm, _)) = &mut self.asking {
+            if let Input::Pointer { x, y } = input {
+                self.pointer = (*x, *y);
+            }
+            return match confirm.input(input) {
+                Some(yes) => {
+                    let then = self.asking.take().map_or(Then::Leave, |(_, then)| then);
+                    self.answered(yes, then)
+                }
+                None => Want::Nothing,
+            };
+        }
+        // Being written: nothing is changed meanwhile.
+        if self.saving.is_some() {
+            if let Input::Pointer { x, y } = input {
+                self.pointer = (*x, *y);
+            }
+            return Want::Nothing;
+        }
+        // Markup's own keys, whether its tools are out or not: Command (Control) and Shift and A
+        // as Preview has them, S to save, and with Shift a copy.
+        if let Input::Key { key: Key::Char(c @ ('a' | 's')), modifiers, .. } = input {
+            if modifiers.control || modifiers.logo {
+                match (*c, modifiers.shift) {
+                    ('a', true) => {
+                        self.toggle_markup();
+                        return Want::Nothing;
+                    }
+                    ('s', copy) if self.unsaved() => {
+                        if copy || !self.can_save_in_place() {
+                            return self.save(true);
+                        }
+                        self.ask(Then::Replace);
+                        return Want::Nothing;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // The tools, while they are out, before anything else on the window: but for a press on
+        // the window's own controls, which are theirs.
+        if self.marking() {
+            // (A press says nothing of where it is: the pointer as last told.)
+            let (x, y) = self.pointer;
+            let on_controls = matches!(input, Input::Press { pressed: true, .. }) && self.over_controls(x, y);
+            if !on_controls {
+                let placed = std::mem::take(&mut self.placed);
+                let said = self.desk.as_mut().map_or(Said::Pass, |desk| desk.input(input, &placed));
+                self.placed = placed;
+                self.sync_markup();
+                match said {
+                    Said::Taken => return Want::Nothing,
+                    Said::Done => {
+                        self.toggle_markup();
+                        return Want::Nothing;
+                    }
+                    Said::Pass => {}
+                }
+            }
+        }
         let all = self.bounds;
         if let Input::Pointer { x, y } = input {
             let (dx, dy) = (x - self.pointer.0, y - self.pointer.1);
@@ -1232,6 +1780,14 @@ impl View {
             if let Some((px, py, _)) = self.pressed_at {
                 if !self.dragging && ((x - px).abs() > 6.0 || (y - py).abs() > 6.0) {
                     self.dragging = true;
+                    // The same swipe with markup not saved, its tools put away: still to the next
+                    // file, asked about first.
+                    if self.swipes_with_markup() && (x - px).abs() > (y - py).abs() {
+                        self.pressed_at = None;
+                        self.dragging = false;
+                        self.ask(Then::Slide(if *x < px { 1 } else { -1 }));
+                        return Want::Nothing;
+                    }
                     // Mostly sideways over a fitted picture, the drag takes it to the next, from
                     // where the button went down; and any drag takes hold of a picture on its way.
                     self.drag_slides = (self.slides() && (x - px).abs() > (y - py).abs()) || !self.carousel.resting();
@@ -1341,7 +1897,7 @@ impl View {
             }
         }
         if self.back.input(input) {
-            return Want::Leave;
+            return self.leave();
         }
         if self.info_button.input(input) {
             self.info = !self.info;
@@ -1350,6 +1906,17 @@ impl View {
         if self.layout.input(input) {
             self.next_layout();
             return Want::Nothing;
+        }
+        if self.markup_button.input(input) {
+            self.toggle_markup();
+            return Want::Nothing;
+        }
+        if self.save_button.input(input) {
+            self.ask(Then::Replace);
+            return Want::Nothing;
+        }
+        if self.copy_button.input(input) {
+            return self.save(true);
         }
         if !self.foot.w.eq(&0.0) {
             if let Some(chosen) = self.strip.input(input) {
@@ -1424,8 +1991,18 @@ impl View {
         }
     }
 
+    /// Whether a sideways swipe over the picture would have gone to the next file, but for markup
+    /// not saved with its tools put away: it asks first.
+    fn swipes_with_markup(&self) -> bool {
+        !self.marking() && self.unsaved() && self.files.len() > 1 && matches!(&self.doc, Doc::Picture(shown) if shown.zoom.is_none())
+    }
+
     fn scrolled(&mut self, dx: f32, dy: f32, all: Rect) {
         let (x, y) = self.pointer;
+        if self.swipes_with_markup() && dx.abs() > 4.0 && dx.abs() > dy.abs() * 2.0 {
+            self.ask(Then::Slide(if dx > 0.0 { 1 } else { -1 }));
+            return;
+        }
         // A scroll the carousel has begun on stays the carousel's whatever comes under it -- a
         // swipe is not made a pan by the picture it brings in, nor a zoom begun fitted a slide
         // once it has zoomed in -- and a picture on its way is the carousel's to take hold of.
@@ -1529,7 +2106,7 @@ impl View {
                     self.info = false;
                     return Want::Nothing;
                 }
-                return Want::Leave;
+                return self.leave();
             }
             // A document zoomed wider than the window is moved about in by them.
             Key::Left | Key::Right if matches!(&self.doc, Doc::Pdf(paper) if paper.wide(all)) => {
@@ -1548,6 +2125,15 @@ impl View {
             self.info = !self.info;
             return Want::Nothing;
         }
+        // A quarter turn; with markup, its marks turned with it, and a step to undo.
+        if matches!(letter, Some('r' | 'R')) && matches!(self.doc, Doc::Picture(_)) {
+            self.turn(letter == Some('r'));
+            return Want::Nothing;
+        }
+        // The packing of a pair is not changed under markup drawn on the picture as it is.
+        if typed == "3" && self.desk.is_some() {
+            return Want::Nothing;
+        }
         let (x, y) = (all.x + all.w * 0.5, all.y + all.h * 0.5);
         match &mut self.doc {
             Doc::Picture(shown) => match (key, typed, letter) {
@@ -1561,16 +2147,6 @@ impl View {
                     let fit = shown.fit_scale(all);
                     shown.zoom = None;
                     shown.zoom_by(fit.max(1.0001), all, x, y);
-                }
-                (_, _, Some('r')) => {
-                    shown.turns = (shown.turns + 1) % 4;
-                    shown.zoom = None;
-                    shown.centre = (0.5, 0.5);
-                }
-                (_, _, Some('R')) => {
-                    shown.turns = (shown.turns + 3) % 4;
-                    shown.zoom = None;
-                    shown.centre = (0.5, 0.5);
                 }
                 (_, "3", _) => self.next_layout(),
                 (_, _, Some('x' | 'X')) => shown.swapped = !shown.swapped,
@@ -1752,8 +2328,9 @@ fn turned(uv: [f32; 4], turns: u8) -> [f32; 4] {
 }
 
 /// The document's pages laid out on `all`, its page of the carousel, and drawn no further out than
-/// `seen`, the part of that page in the window.
+/// `seen`, the part of that page in the window. Which keys do what is the controls'.
 fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect) {
+    paper.placed.clear();
     for texture in paper.stale.drain(..) {
         p.forget(gl, texture);
     }
@@ -1794,15 +2371,24 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
         if !near {
             continue;
         }
+        paper.placed.push((index, rect));
+        // What is shown of the page -- all of it, or what markup cropped it to -- as fractions.
+        let (pw, ph) = paper.pages.get(index).map_or((1.0, 1.0), |page| (page.width.max(1.0), page.height.max(1.0)));
+        let region = paper.region(index);
+        let uv = [region.x0 / pw, region.y0 / ph, region.x1 / pw, region.y1 / ph];
         p.glow(gl, rect, 4.0, [0.0, 0.0, 0.0, 0.5], 28.0);
         match paper.drawn.get(&index) {
-            Some((texture, _)) => p.image(gl, *texture, rect, [0.0, 0.0, 1.0, 1.0], 4.0, [1.0, 1.0, 1.0, 1.0], true),
+            Some((texture, _)) => p.image(gl, *texture, rect, uv, 4.0, [1.0, 1.0, 1.0, 1.0], true),
             None => p.fill(gl, rect, 4.0, [0.92, 0.92, 0.94, 1.0]),
         }
         // What a search found on this page, washed in the room's teal.
         for (n, found) in paper.found.iter().enumerate().filter(|(_, f)| f.page == index) {
             let current = n == paper.found_at;
             for r in &found.rects {
+                // Fractions of the page, as fractions of what is shown of it.
+                let fx = |f: f32| (f * pw - region.x0) / region.w().max(1e-3);
+                let fy = |f: f32| (f * ph - region.y0) / region.h().max(1e-3);
+                let r = [fx(r[0]), fy(r[1]), fx(r[2]), fy(r[3])];
                 let at = Rect::new(rect.x + r[0] * rect.w - 2.0, rect.y + r[1] * rect.h - 2.0, (r[2] - r[0]) * rect.w + 4.0, (r[3] - r[1]) * rect.h + 4.0);
                 let colour = if current { [look::TEAL[0], look::TEAL[1], look::TEAL[2], 0.45] } else { [look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.25] };
                 p.fill(gl, at, 3.0, colour);
@@ -1812,9 +2398,12 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
     p.unclip(gl);
     // Pages are drawn at the width they are shown, and drawn again when that changes much.
     for (index, near) in visible.iter().copied() {
+        // A cropped page is drawn whole, as wide as its kept part needs.
+        let whole = paper.pages.get(index).map_or(1.0, |page| page.width.max(1.0));
+        let pixels = (pixels as f32 * whole / paper.region(index).w().max(1.0)).round() as u32;
         let have = paper.drawn.get(&index).map(|(_, w)| *w);
         let asked = paper.asked.get(&index).copied();
-        let good = |w: u32| (w as f32) >= pixels as f32 * 0.9 && (w as f32) <= pixels as f32 * 1.6;
+        let good = |w: u32| (w as f32) >= pixels.min(6000) as f32 * 0.9 && (w as f32) <= pixels as f32 * 1.6;
         if !have.is_some_and(good) && !asked.is_some_and(good) && (near || have.is_none()) {
             paper.asked.insert(index, pixels);
             paper.pdf.ask(Ask::Draw { page: index, width: pixels.min(6000), most_height: crate::picture::LARGEST });
@@ -1871,15 +2460,28 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
             .collect();
         list.draw(p, gl, rect.inset(16.0), &rows);
     }
-    // Which keys do what, on a pane of its own: over a page it would be unreadable.
-    let hint = if paper.outline.is_empty() {
+}
+
+/// Which keys do what in a document.
+fn paper_hint(paper: &Paper) -> &'static str {
+    if paper.outline.is_empty() {
         "[/] Find  [+] [\u{2212}] Zoom  [P] Page  [PgUp] [PgDn] Turn"
     } else {
         "[/] Find  [+] [\u{2212}] Zoom  [O] Contents  [P] Page  [PgUp] [PgDn] Turn"
-    };
+    }
+}
+
+/// Which keys do what, on a pane of glass of its own at the foot of `all`: over a page or a
+/// picture it would be unreadable.
+fn hint_pane(p: &mut Painter, gl: &Gl, all: Rect, hint: &str) {
+    hint_pane_over(p, gl, all, all.bottom() - 18.0, hint);
+}
+
+/// The same, its foot at `bottom`: words over the keys, or over the strip.
+fn hint_pane_over(p: &mut Painter, gl: &Gl, all: Rect, bottom: f32, hint: &str) {
     // Measured where it cannot be seen, then drawn on its pane.
     let width = look::keys(p, gl, Rect::new(-10000.0, -10000.0, 4000.0, 40.0), hint, 0.0, 0.0) + 44.0;
-    let foot = Rect::new(all.x + (all.w - width).max(0.0) * 0.5, all.bottom() - 62.0, width.min(all.w), 44.0);
+    let foot = Rect::new(all.x + (all.w - width).max(0.0) * 0.5, bottom - 44.0, width.min(all.w), 44.0);
     look::glass(p, gl, foot, 22.0, 1.0);
     look::keys(p, gl, foot.inset(4.0), hint, 0.5, 1.0);
 }
@@ -2006,7 +2608,10 @@ impl View {
         }
     }
 
-    pub fn forget(self, gl: &Gl) {
+    pub fn forget(mut self, gl: &Gl) {
+        if let Some(desk) = self.desk.as_mut() {
+            desk.forget(gl);
+        }
         match self.doc {
             Doc::Picture(shown) => {
                 for texture in [shown.texture, shown.right].into_iter().flatten() {
@@ -2158,6 +2763,9 @@ mod tests {
             centre: (0.5, 0.5),
             drawn_at: None,
             nearest: false,
+            orientation: 0,
+            cut: WHOLE,
+            head: HEAD,
         };
         assert!((shown.eye_aspect() - 16.0 / 9.0).abs() < 0.01);
         shown.picture = picture(3840, 1080);
@@ -2185,6 +2793,9 @@ mod tests {
             centre: (0.5, 0.5),
             drawn_at: None,
             nearest: false,
+            orientation: 0,
+            cut: WHOLE,
+            head: HEAD,
         };
         let area = Rect::new(0.0, 0.0, 1440.0, 900.0);
         let before = shown.placed(area);
@@ -2202,7 +2813,7 @@ mod tests {
         for (w, h, eyes) in [(4032, 3024, Eyes::Mono), (3024, 4032, Eyes::Mono), (1920, 1080, Eyes::SideBySide), (3840, 1080, Eyes::Crossed), (1920, 2160, Eyes::TopBottom)] {
             let mut picture = picture(w / 8, h / 8);
             (picture.width, picture.height, picture.eyes, picture.original) = (w, h, eyes, (w, h));
-            let shown = Shown { picture, texture: None, right: None, turns: 0, sideways: false, frame: 0, frame_since: Instant::now(), uploaded: 0, eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None, nearest: false };
+            let shown = Shown { picture, texture: None, right: None, turns: 0, sideways: false, frame: 0, frame_since: Instant::now(), uploaded: 0, eyes: None, swapped: false, depth: 0.0, zoom: None, centre: (0.5, 0.5), drawn_at: None, nearest: false, orientation: 0, cut: WHOLE, head: HEAD };
             // What the tile's thread works out from the picture's own size, and where the view
             // puts the picture once it has it.
             let tile = fitted(all, eye_aspect(w as f32, h as f32, eyes), eye_height(w as f32, h as f32, eyes));
@@ -2521,5 +3132,294 @@ mod tests {
         first.input(&key(Key::Left, ""));
         first.tick();
         assert!(first.carousel.resting());
+    }
+
+    // --- markup ---
+
+    use crate::markup::{turn_area, Shape as Drawn};
+    use crate::tools::Tool;
+
+    /// Command (Control) with a letter, and Shift if `shift`.
+    fn chord(c: char, shift: bool) -> Input {
+        Input::Key { key: Key::Char(c), text: None, modifiers: spatiand_app::Modifiers { control: true, shift, ..Default::default() }, letter: Some(c) }
+    }
+
+    fn click(pressed: bool) -> Input {
+        Input::Press { pressed, modifiers: spatiand_app::Modifiers::default() }
+    }
+
+    /// A press at `from`, dragged to `to` and let go, as the window has it: where the pages are
+    /// worked out first, as drawing does.
+    fn drag(view: &mut View, from: (f32, f32), to: (f32, f32)) {
+        view.placed = view.placements(view.bounds);
+        view.input(&Input::Pointer { x: from.0, y: from.1 });
+        view.input(&click(true));
+        for step in 1..=4 {
+            let t = step as f32 / 4.0;
+            view.input(&Input::Pointer { x: from.0 + (to.0 - from.0) * t, y: from.1 + (to.1 - from.1) * t });
+        }
+        view.input(&click(false));
+    }
+
+    /// The picture at `at` of `files` with markup's tools out.
+    fn marking(files: usize, at: usize) -> View {
+        let mut view = viewing(files, at);
+        view.input(&chord('a', true));
+        assert!(view.marking(), "Command-Shift-A takes the tools out");
+        view.placed = view.placements(view.bounds);
+        view
+    }
+
+    fn desk(view: &mut View) -> &mut Desk {
+        view.desk.as_mut().expect("markup")
+    }
+
+    fn shown(view: &View) -> &Shown {
+        match &view.doc {
+            Doc::Picture(shown) => shown,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn what_is_drawn_lands_on_the_picture_where_it_was_drawn_through_zoom_and_pan() {
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Box);
+        let place = view.placements(view.bounds)[0];
+        // The tools' room is taken from the top: the picture is fitted under them.
+        assert!(place.rect.y >= HEAD + BAR + 36.0 - 0.01, "{:?}", place.rect);
+        assert_eq!(place.region, Area::new(0.0, 0.0, 2000.0, 1500.0));
+        drag(&mut view, (400.0, 300.0), (600.0, 500.0));
+        let first = Area::between(place.to_page((400.0, 300.0)), place.to_page((600.0, 500.0)));
+        assert_eq!(desk(&mut view).markup.marks().notes[0].shape, Drawn::Box(first));
+        assert_eq!(desk(&mut view).tool, Tool::Select, "what was drawn is chosen, as Preview does");
+        // A picture's point and the window's agree both ways.
+        let back = place.to_window(place.to_page((400.0, 300.0)));
+        assert!((back.0 - 400.0).abs() < 0.01 && (back.1 - 300.0).abs() < 0.01);
+        // Zoomed in about a point and moved: the next box is where it is drawn on the picture as
+        // it now is, and the first is still at its own place in the picture.
+        if let Doc::Picture(shown) = &mut view.doc {
+            shown.zoom_by(2.5, view.bounds, 700.0, 500.0);
+            shown.centre.0 += 0.05;
+            shown.clamp(view.bounds);
+        }
+        let zoomed = view.placements(view.bounds)[0];
+        assert!(zoomed.scale() > place.scale() * 2.0);
+        desk(&mut view).choose(Tool::Circle);
+        drag(&mut view, (500.0, 400.0), (700.0, 640.0));
+        let second = Area::between(zoomed.to_page((500.0, 400.0)), zoomed.to_page((700.0, 640.0)));
+        assert_eq!(desk(&mut view).markup.marks().notes[1].shape, Drawn::Oval(second));
+        assert_eq!(desk(&mut view).markup.marks().notes[0].shape, Drawn::Box(first));
+        // Turned a quarter: the marks go round with the picture, which is shown turned and is
+        // 1500 across now; and undone, back as they were.
+        view.input(&key(Key::Char('r'), "r"));
+        assert_eq!(shown(&view).frame_size(), (1500.0, 2000.0));
+        assert_eq!(desk(&mut view).markup.marks().notes[0].shape, Drawn::Box(turn_area(&first, (2000.0, 1500.0), true)));
+        assert_eq!(desk(&mut view).markup.marks().turns, 1);
+        if let Doc::Picture(shown) = &mut view.doc {
+            assert!(shown.settle_turn(), "the pixels turned as the picture is drawn");
+        }
+        desk(&mut view).undo();
+        view.sync_markup();
+        assert_eq!(shown(&view).frame_size(), (2000.0, 1500.0), "turned back");
+        assert_eq!(desk(&mut view).markup.marks().notes[0].shape, Drawn::Box(first));
+    }
+
+    #[test]
+    fn a_crop_is_shown_at_once_and_undone_like_the_rest() {
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Crop);
+        drag(&mut view, (500.0, 350.0), (900.0, 650.0));
+        let place = view.placed[0];
+        let kept = Area::between(place.to_page((500.0, 350.0)), place.to_page((900.0, 650.0)));
+        assert_eq!(desk(&mut view).cropping, Some((0, kept)), "drawn, not made yet");
+        assert_eq!(shown(&view).cut, WHOLE);
+        view.input(&key(Key::Enter, ""));
+        assert_eq!(desk(&mut view).markup.marks().crop(0), Some(kept));
+        // Fitted again, to what is kept, which the window's pages now say.
+        let c = shown(&view).cut;
+        assert!((c[0] - kept.x0 / 2000.0).abs() < 1e-6 && (c[3] - kept.y1 / 1500.0).abs() < 1e-6, "{c:?}");
+        assert_eq!(view.placements(view.bounds)[0].region, kept);
+        assert!(view.title_words().1.starts_with(&format!("{} \u{d7} {}", kept.w().round(), kept.h().round())), "{}", view.title_words().1);
+        // Undone and done again, as every change.
+        view.input(&chord('z', false));
+        assert_eq!(shown(&view).cut, WHOLE);
+        view.input(&chord('z', true));
+        assert_ne!(shown(&view).cut, WHOLE);
+    }
+
+    #[test]
+    fn leaving_or_sliding_on_with_markup_asks_first_and_cancel_is_lit() {
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Arrow);
+        drag(&mut view, (400.0, 400.0), (800.0, 500.0));
+        assert!(view.unsaved());
+        // The arrows stay on this file while the tools are out.
+        view.input(&key(Key::Right, ""));
+        assert!(view.carousel.resting() && view.asking.is_none());
+        // Put away (Escape lets go of what is chosen, then of the tools): the marks stay, to save.
+        view.input(&key(Key::Escape, ""));
+        view.input(&key(Key::Escape, ""));
+        assert!(!view.marking() && view.unsaved());
+        // Back to the folder: asked, Cancel lit -- Return keeps all.
+        assert!(matches!(view.input(&key(Key::Escape, "")), Want::Nothing));
+        assert!(matches!(view.asking, Some((_, Then::Leave))));
+        assert!(matches!(view.input(&key(Key::Enter, "")), Want::Nothing));
+        assert!(view.asking.is_none() && view.unsaved(), "Cancel: nothing lost");
+        // The next file: asked; Discard lets go and slides on.
+        view.input(&key(Key::Right, ""));
+        assert!(matches!(view.asking, Some((_, Then::Slide(1)))));
+        view.input(&key(Key::Left, ""));
+        view.input(&key(Key::Enter, ""));
+        assert!(!view.unsaved() && view.desk.is_none());
+        view.tick();
+        assert_eq!(view.heading(), Some(2), "on its way to the next");
+        // The window closed, or quit: asked, and then quit.
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 400.0), (800.0, 600.0));
+        view.ask_quit();
+        assert!(matches!(view.input(&key(Key::Escape, "")), Want::Nothing));
+        view.ask_quit();
+        view.input(&key(Key::Tab, ""));
+        assert!(matches!(view.input(&key(Key::Enter, "")), Want::Quit));
+    }
+
+    #[test]
+    fn a_swipe_with_markup_put_away_still_means_the_next_file_and_asks() {
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 400.0), (800.0, 600.0));
+        // While the tools are out, a drag draws: never the next file.
+        assert!(view.asking.is_none() && view.carousel.resting());
+        view.input(&chord('a', true));
+        // Put away: a sideways drag over the fitted picture is the next file's, asked about.
+        drag(&mut view, (900.0, 500.0), (500.0, 510.0));
+        assert!(matches!(view.asking, Some((_, Then::Slide(1)))));
+        view.input(&key(Key::Escape, ""));
+        // And a sideways scroll, the previous one's.
+        view.input(&Input::Scroll { dx: -12.0, dy: 1.0 });
+        assert!(matches!(view.asking, Some((_, Then::Slide(-1)))));
+        assert!(view.carousel.resting(), "nothing slid before the answer");
+    }
+
+    #[test]
+    fn save_asks_before_replacing_and_a_copy_does_not() {
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 400.0), (800.0, 600.0));
+        view.input(&chord('s', false));
+        let Some((confirm, Then::Replace)) = &view.asking else { panic!("asked") };
+        assert_eq!(confirm.text, "Replace b.jpg with the edited picture? This cannot be undone.");
+        assert!(matches!(view.input(&key(Key::Enter, "")), Want::Nothing), "Cancel lit");
+        view.input(&chord('s', false));
+        view.input(&key(Key::Right, ""));
+        match view.input(&key(Key::Enter, "")) {
+            Want::Save(saving) => {
+                assert!(!saving.copy && saving.source == PathBuf::from("/nowhere/b.jpg") && saving.frame == (2000.0, 1500.0));
+                assert_eq!(saving.marks.notes.len(), 1);
+            }
+            _ => panic!("saved"),
+        }
+        // While it is written nothing is changed; its end shows the file again as it now is.
+        assert!(view.saving.is_some());
+        assert!(matches!(view.input(&chord('z', false)), Want::Nothing));
+        assert_eq!(desk(&mut view).markup.marks().notes.len(), 1);
+        view.saved(Ok(PathBuf::from("/nowhere/b.jpg")));
+        assert!(matches!(view.take_wanted(), Some(Want::Saved { said, .. }) if said == "Saved b.jpg."));
+        // A copy is not asked about.
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 400.0), (800.0, 600.0));
+        assert!(matches!(view.input(&chord('s', true)), Want::Save(saving) if saving.copy));
+        view.saved(Err("the disk is full".into()));
+        assert_eq!(view.trouble.as_deref(), Some("SpatiLoupe could not save b.jpg: the disk is full."));
+        assert!(view.unsaved(), "nothing lost when it was not written");
+    }
+
+    #[test]
+    fn a_picture_in_a_format_not_written_is_only_copied() {
+        let mut view = viewing(3, 1);
+        view.entry.name = "b.heic".into();
+        view.input(&chord('a', true));
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 400.0), (800.0, 600.0));
+        assert!(!view.can_save_in_place());
+        assert!(matches!(view.input(&chord('s', false)), Want::Save(saving) if saving.copy), "Save is a copy, without a question");
+    }
+
+    #[test]
+    fn markup_is_offered_for_flat_still_pictures_and_pdfs_only() {
+        let mut stereo = viewing(3, 1);
+        if let Doc::Picture(shown) = &mut stereo.doc {
+            shown.eyes = Some(Eyes::SideBySide);
+        }
+        stereo.input(&chord('a', true));
+        assert!(stereo.desk.is_none());
+        let mut moving = viewing(3, 1);
+        if let Doc::Picture(shown) = &mut moving.doc {
+            shown.picture.frames = vec![(Vec::new(), Duration::from_millis(100))];
+        }
+        moving.input(&chord('a', true));
+        assert!(moving.desk.is_none());
+        let (mut pdf, _tell, _asked) = reading();
+        pdf.input(&chord('a', true));
+        assert!(pdf.marking());
+        // Taken out and put back with nothing drawn: nothing is kept, nothing asked.
+        pdf.input(&chord('a', true));
+        assert!(pdf.desk.is_none());
+    }
+
+    #[test]
+    fn words_are_typed_where_pressed_and_kept_by_a_press_elsewhere() {
+        let mut view = marking(3, 1);
+        desk(&mut view).choose(Tool::Text);
+        view.placed = view.placements(view.bounds);
+        let place = view.placed[0];
+        view.input(&Input::Pointer { x: 500.0, y: 400.0 });
+        view.input(&click(true));
+        view.input(&click(false));
+        assert!(desk(&mut view).typing.is_some());
+        for c in "Hi there".chars() {
+            view.input(&Input::Key { key: Key::Char(c), text: Some(c.to_string()), modifiers: Default::default(), letter: None });
+        }
+        // The room's speech is told the words being typed.
+        assert_eq!(view.describe().1, "Hi there");
+        // A press elsewhere keeps them (the look and feel's rule 9), as a note where it began.
+        view.input(&Input::Pointer { x: 900.0, y: 700.0 });
+        view.input(&click(true));
+        view.input(&click(false));
+        let note = desk(&mut view).markup.marks().notes[0].clone();
+        let Drawn::Text { at, words, extent } = &note.shape else { panic!("words") };
+        assert_eq!(words, "Hi there");
+        let start = place.to_page((500.0, 400.0));
+        assert!((at.0 - start.0).abs() < 0.01 && (at.1 - start.1).abs() < 0.01);
+        assert!(extent.0 > note.size && extent.1 > note.size, "measured: {extent:?}");
+        // What the room's speech is told while the tools are out.
+        assert!(view.describe().1.starts_with("Markup is on, with the select tool, in red."));
+    }
+
+    #[test]
+    fn a_pdf_page_is_drawn_on_in_its_points() {
+        let (mut view, _tell, asked) = reading();
+        view.input(&chord('a', true));
+        // Where drawing put the pages: the first 600 points wide shown 800 wide.
+        if let Doc::Pdf(paper) = &mut view.doc {
+            paper.placed = vec![(0, Rect::new(320.0, 216.0, 800.0, 1066.67)), (1, Rect::new(320.0, 1310.0, 800.0, 1066.67))];
+        }
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 300.0), (720.0, 456.0));
+        let note = desk(&mut view).markup.marks().notes[0].clone();
+        assert_eq!(note.page, 0);
+        let Drawn::Box(a) = note.shape else { panic!("a box") };
+        // (400 - 320) / 800 * 600 = 60 points in, (300 - 216) * 0.75 = 63 down.
+        assert!((a.x0 - 60.0).abs() < 0.01 && (a.y0 - 63.0).abs() < 0.01 && (a.x1 - 300.0).abs() < 0.01 && (a.y1 - 180.0).abs() < 0.01, "{a:?}");
+        // Saved: asked of the document's own thread, which writes it.
+        view.input(&chord('s', true));
+        let saved = std::iter::from_fn(|| asked.try_recv().ok()).find_map(|ask| match ask {
+            Ask::Save { marks, copy } => Some((marks.notes.len(), copy)),
+            _ => None,
+        });
+        assert_eq!(saved, Some((1, true)));
     }
 }

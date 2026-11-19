@@ -5340,6 +5340,7 @@ dependencies = [
 name = "spatiloupe"
 version = "0.1.0"
 dependencies = [
+ "cosmic-text",
  "env_logger",
  "glam",
  "gltf",
@@ -5352,6 +5353,7 @@ dependencies = [
  "resvg",
  "spatiand-app",
  "spatiand-media",
+ "spatiand-render",
  "spatiand-storage",
 ]
 

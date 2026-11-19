@@ -99,6 +99,60 @@ fn read_as(path: &Path, largest: u32, may_move: bool) -> Result<Picture, String>
     read_bytes_as(path, &bytes, largest, may_move)
 }
 
+/// A picture whole, at its own size, the right way up, as it is to be saved once marked up: with
+/// what its file said of it -- the camera's account and the colours' profile -- where the image
+/// crate reads them, and the format its bytes are in.
+pub struct Whole {
+    pub image: RgbaImage,
+    pub exif: Option<Vec<u8>>,
+    pub icc: Option<Vec<u8>>,
+    pub format: Option<image::ImageFormat>,
+}
+
+/// Read the picture at `path` whole, as [`read`] reads it for the window but not made smaller:
+/// what a saved picture is drawn on. A drawing (SVG) is drawn as large as it is shown.
+pub fn read_whole(path: &Path) -> Result<Whole, String> {
+    let kind = ending(path);
+    let plain = |picture: Picture| -> Result<Whole, String> {
+        let image = RgbaImage::from_raw(picture.width, picture.height, picture.rgba).ok_or("a picture of the wrong size")?;
+        Ok(Whole { image, exif: None, icc: None, format: None })
+    };
+    // FFmpeg's whole: as wide as a picture can be, which it then is not made smaller than.
+    let whole = i32::MAX as u32;
+    if ["heic", "heif", "hif", "avif", "jp2", "j2k", "jpf", "jpx", "j2c", "jxl"].contains(&kind.as_str()) {
+        return plain(by_ffmpeg(path, whole)?);
+    }
+    let bytes = crate::place::read(path)?;
+    if kind == "svg" {
+        return plain(drawn(&bytes, LARGEST, if crate::place::remote(path).is_some() { None } else { path.parent() })?);
+    }
+    let read = || -> Result<Whole, String> {
+        let mut reader = ImageReader::new(Cursor::new(&bytes)).with_guessed_format().map_err(|e| e.to_string())?;
+        // A format with no mark of its own at its start (TGA) is what its name says.
+        if reader.format().is_none() {
+            if let Some(named) = image::ImageFormat::from_extension(&kind) {
+                reader.set_format(named);
+            }
+        }
+        let format = reader.format();
+        let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+        if decoder.total_bytes() > STILL_BYTES {
+            let (w, h) = decoder.dimensions();
+            return Err(format!("it is {w} \u{d7} {h} pixels, too large to save"));
+        }
+        let icc = decoder.icc_profile().ok().flatten();
+        let exif = decoder.exif_metadata().ok().flatten();
+        let orientation = decoder.orientation().ok();
+        let mut image = DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+        if let Some(orientation) = orientation {
+            image.apply_orientation(orientation);
+        }
+        Ok(Whole { image: shown(image), exif, icc, format })
+    };
+    // Named wrongly, or not the image crate's: FFmpeg, as for the window.
+    read().or_else(|e| by_ffmpeg(path, whole).map_err(|_| e).and_then(plain))
+}
+
 /// The same, from what has already been read: a picture that came over the network.
 #[cfg(test)]
 pub fn read_bytes(path: &Path, bytes: &[u8], largest: u32) -> Result<Picture, String> {
@@ -111,7 +165,7 @@ fn read_bytes_as(path: &Path, bytes: &[u8], largest: u32, may_move: bool) -> Res
         // A drawing's pictures are its folder's, on this machine; a remote's has none.
         "svg" => drawn(bytes, largest, if crate::place::remote(path).is_some() { None } else { path.parent() })?,
         "heic" | "heif" | "hif" | "avif" | "jp2" | "j2k" | "jpf" | "jpx" | "j2c" | "jxl" => by_ffmpeg(path, largest)?,
-        _ => match by_image(bytes, largest, may_move && (kind == "gif" || kind == "png" || kind == "apng" || kind == "webp")) {
+        _ => match by_image(bytes, &kind, largest, may_move && (kind == "gif" || kind == "png" || kind == "apng" || kind == "webp")) {
             Ok(picture) => picture,
             // Named wrongly, or something the image crate does not know: FFmpeg reads most
             // things that are pictures at all.
@@ -139,8 +193,15 @@ fn read_bytes_as(path: &Path, bytes: &[u8], largest: u32, may_move: bool) -> Res
     Ok(picture)
 }
 
-fn by_image(bytes: &[u8], largest: u32, may_move: bool) -> Result<Picture, String> {
-    let reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
+/// A picture the image crate reads: by what its bytes begin with, or -- a format that has no mark
+/// of its own at its start (TGA) -- by its name's `ending`.
+fn by_image(bytes: &[u8], ending: &str, largest: u32, may_move: bool) -> Result<Picture, String> {
+    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
+    if reader.format().is_none() {
+        if let Some(named) = image::ImageFormat::from_extension(ending) {
+            reader.set_format(named);
+        }
+    }
     let format = reader.format();
     if may_move {
         if let Some(picture) = moving(bytes, format, largest) {
@@ -574,6 +635,15 @@ mod tests {
         let bytes = png(8, 8, |_, _| [1, 2, 3, 255]);
         let picture = read_bytes(Path::new("really-a-png.jpg"), &bytes, 100).unwrap();
         assert_eq!(&picture.rgba[..4], &[1, 2, 3, 255]);
+    }
+
+    #[test]
+    fn a_tga_is_read_by_its_name() {
+        // A TGA begins with nothing that says so: it was listed, and never shown.
+        let mut bytes = Vec::new();
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(4, 2, image::Rgba([9, 80, 200, 255]))).write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Tga).unwrap();
+        let picture = read_bytes(Path::new("scan.tga"), &bytes, 100).unwrap();
+        assert_eq!((picture.width, picture.height, &picture.rgba[..4]), (4, 2, &[9, 80, 200, 255][..]));
     }
 }
 

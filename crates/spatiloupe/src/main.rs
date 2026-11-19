@@ -11,13 +11,18 @@
 //! spatiloupe <file>          that file, with its folder behind it
 //! ```
 
+mod annotate;
 mod folder;
+mod ink;
+mod markup;
 mod model;
 mod pdf;
 mod picture;
 mod place;
+mod save;
 mod stereo;
 mod swipe;
+mod tools;
 mod view;
 
 use std::path::{Path, PathBuf};
@@ -40,6 +45,8 @@ enum Done {
     Tile { ticket: u64, tile: Arrived },
     Picture { ticket: u64, result: Result<picture::Picture, String> },
     Model { ticket: u64, result: Result<model::Scene, String> },
+    /// A picture marked up, written: where, or why not.
+    Saved { ticket: u64, result: Result<PathBuf, String> },
 }
 
 /// A picture read before it is looked at: the one the carousel is heading for.
@@ -182,6 +189,8 @@ struct Loupe {
     watched: Option<notify::RecommendedWatcher>,
     change_due: bool,
     relisted: std::time::Instant,
+    /// What was done, to be said by the next file's view: a save, whose file is shown afresh.
+    saying: Option<String>,
 }
 
 /// Something to say when the folder at `path`, on this machine, changes: what is in it, not what
@@ -253,6 +262,9 @@ impl Loupe {
         // Each file's view began not knowing that the room says the hands, and took the head's
         // sweep of the pointer for them until the wearer next touched something.
         view.hands_said(self.app.says_hands());
+        if let Some(said) = self.saying.take() {
+            view.say(said);
+        }
         view.set_size(self.size);
         view.handed(glide);
         let path = entry.path.clone();
@@ -377,18 +389,46 @@ impl Loupe {
                         view.modelled(result);
                     }
                 }
+                Done::Saved { ticket, result } => {
+                    if let Some(view) = self.view.as_mut().filter(|v| v.ticket == ticket) {
+                        view.saved(result);
+                    }
+                }
             }
         }
         if let Some(view) = self.view.as_mut() {
             self.dirty |= view.answers();
         }
+        // A file written -- the one looked at, or its copy -- shown afresh as it now is: listed
+        // again, the folder perhaps holding a new file, and opened as it comes.
+        if let Some(view::Want::Saved { path, said }) = self.view.as_mut().and_then(|v| v.take_wanted()) {
+            self.saying = Some(said);
+            self.opening = Some(path);
+            self.relist();
+            self.dirty = true;
+        }
+    }
+
+    /// A marked-up picture written by a worker: it is read again whole and drawn on, which is
+    /// not for the thread that draws the window.
+    fn save(&mut self, saving: Box<save::Saving>) {
+        let Some(ticket) = self.view.as_ref().map(|v| v.ticket) else { return };
+        let job = Job::new(move || Some(Done::Saved { ticket, result: save::save(&saving) }));
+        self.calls.send(job.or(move |e| Done::Saved { ticket, result: Err(e) })).ok();
     }
 
     fn handle(&mut self, event: Event) -> bool {
         match &event {
-            // Closed, or Command-Q or Control-Q (the SDK's `Event::Quit`): SpatiLoupe has nothing
-            // to keep, and goes.
-            Event::CloseRequested { .. } | Event::Quit { .. } => return false,
+            // Closed, or Command-Q or Control-Q (the SDK's `Event::Quit`): SpatiLoupe goes, but
+            // for markup not saved, which is asked about first, in the window.
+            Event::CloseRequested { .. } | Event::Quit { .. } => {
+                if let Some(view) = self.view.as_mut().filter(|v| v.unsaved()) {
+                    view.ask_quit();
+                    self.dirty = true;
+                    return true;
+                }
+                return false;
+            }
             Event::Ready { .. } => {
                 self.ready = true;
                 // A picture, a page or an object zooms when pinched; the window stays as it is.
@@ -430,6 +470,10 @@ impl Loupe {
                 Want::Nothing => {}
                 Want::Leave => self.leave(),
                 Want::Open(index) => self.open(index),
+                Want::Quit => return false,
+                Want::Save(saving) => self.save(saving),
+                // Only from what was done between inputs (`answers`).
+                Want::Saved { .. } => {}
             },
             None => match self.folder.input(&input) {
                 Chose::Nothing => {}
@@ -663,6 +707,7 @@ fn main() {
             watched: None,
             change_due: false,
             relisted: std::time::Instant::now(),
+            saying: None,
         };
         match asked {
             Some(Asked::Folder(path)) => loupe.list(path, None),

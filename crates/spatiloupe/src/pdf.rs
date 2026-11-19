@@ -39,6 +39,9 @@ pub enum Ask {
     Find { text: String, ticket: u64 },
     /// The words on page `page`, for the room's speech to know what is being read.
     Text { page: usize },
+    /// Markup written into the document as annotations and crop boxes (`annotate`): over the
+    /// file, or as a copy beside it.
+    Save { marks: crate::markup::Marks, copy: bool },
 }
 
 pub enum Answer {
@@ -49,6 +52,24 @@ pub enum Answer {
     Undrawn { page: usize },
     Found { found: Vec<Found>, ticket: u64 },
     Text { page: usize, text: String },
+    /// Where markup was written, or why it was not.
+    Saved(Result<PathBuf, String>),
+}
+
+/// The document at `path` written with `marks`: over itself (a new file beside it renamed over
+/// it), or as a copy beside it, "<name> (edited).pdf". Where it was written.
+fn save(pdfium: &Pdfium, path: &Path, marks: &crate::markup::Marks, copy: bool) -> Result<PathBuf, String> {
+    let bytes = crate::place::read(path)?;
+    let written = crate::annotate::annotate(pdfium, &bytes, marks)?;
+    if !copy {
+        crate::place::replace(path, &written)?;
+        return Ok(path.to_path_buf());
+    }
+    let folder = crate::place::parent(path).ok_or("it is in no folder")?;
+    let name = crate::save::copy_name(&crate::place::name(path), None, |candidate| crate::place::exists(&crate::place::join(&folder, candidate)));
+    let to = crate::place::join(&folder, &name);
+    crate::place::write_new(&to, &written)?;
+    Ok(to)
 }
 
 pub struct Pdf {
@@ -84,6 +105,16 @@ fn library() -> Option<PathBuf> {
     places.into_iter().find(|p| p.is_file())
 }
 
+/// PDFium, bound to its library: by the first thread to ask, for the whole process.
+pub fn bind() -> Result<Pdfium, String> {
+    let found = library().ok_or("PDFium is not installed beside SpatiLoupe")?;
+    match Pdfium::bind_to_library(&found) {
+        Ok(bindings) => Ok(Pdfium::new(bindings)),
+        Err(PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => Ok(Pdfium::default()),
+        Err(e) => Err(format!("PDFium would not load: {e}")),
+    }
+}
+
 fn outline(document: &PdfDocument) -> Vec<Heading> {
     fn walk(bookmark: PdfBookmark, depth: usize, out: &mut Vec<Heading>) {
         if out.len() > 2000 || depth > 8 {
@@ -112,16 +143,10 @@ impl Pdf {
         let (tell, answers) = channel();
         let path = path.to_path_buf();
         let _ = std::thread::Builder::new().name("pdf".into()).spawn(move || {
-            let Some(found) = library() else {
-                let _ = tell.send(Answer::Failed("PDFium is not installed beside SpatiLoupe".into()));
-                return;
-            };
-            let pdfium = match Pdfium::bind_to_library(&found) {
-                Ok(bindings) => Pdfium::new(bindings),
-                // Bound once for the whole process, by whichever thread came first.
-                Err(PdfiumError::PdfiumLibraryBindingsAlreadyInitialized) => Pdfium::default(),
+            let pdfium = match bind() {
+                Ok(pdfium) => pdfium,
                 Err(e) => {
-                    let _ = tell.send(Answer::Failed(format!("PDFium would not load: {e}")));
+                    let _ = tell.send(Answer::Failed(e));
                     return;
                 }
             };
@@ -185,6 +210,7 @@ impl Pdf {
                             let text = document.pages().get(page as PdfPageIndex).ok().and_then(|at| at.text().ok().map(|t| t.all())).unwrap_or_default();
                             Answer::Text { page, text }
                         }
+                        Ask::Save { marks, copy } => Answer::Saved(save(&pdfium, &path, &marks, copy)),
                         Ask::Find { text, ticket } => {
                             let mut found = Vec::new();
                             for (index, page) in document.pages().iter().enumerate() {
@@ -261,7 +287,7 @@ pub fn first_page(path: &Path, side: u32) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -276,13 +302,18 @@ mod tests {
     /// A PDF of these pages -- each its size in points and what is printed on it -- written to a
     /// file of its own.
     pub fn made(name: &str, pages: &[(f32, f32, &str)]) -> PathBuf {
+        made_turned(name, &pages.iter().map(|&(w, h, words)| (w, h, words, 0)).collect::<Vec<_>>())
+    }
+
+    /// The same, each page turned as its `/Rotate` says.
+    pub fn made_turned(name: &str, pages: &[(f32, f32, &str, u32)]) -> PathBuf {
         let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string(), String::new(), "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string()];
         let mut kids = Vec::new();
-        for (w, h, words) in pages {
+        for (w, h, words, rotate) in pages {
             let content = format!("BT /F1 12 Tf 10 10 Td ({words}) Tj ET");
             objects.push(format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()));
             let contents = objects.len();
-            objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents {contents} 0 R /Resources << /Font << /F1 3 0 R >> >> >>"));
+            objects.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Rotate {rotate} /Contents {contents} 0 R /Resources << /Font << /F1 3 0 R >> >> >>"));
             kids.push(format!("{} 0 R", objects.len()));
         }
         objects[1] = format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.join(" "), kids.len());
