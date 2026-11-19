@@ -98,9 +98,25 @@ cp -R icons "$app/Contents/Resources/icons"
 # SpatiMesh: the Deck's Chromium, its Linux UI built for this Mac (docs/spatimesh-mac-port.md,
 # out/mac-ozone; FFmpeg and OpenSSL already in its framework's Libraries, third_party/chromium/
 # mac/ozbuild.sh). Carried in Contents/Helpers, where the room finds it and starts it as the
-# Deck's room starts its own (crates/spatiand/src/own.rs). Without a build there, no SpatiMesh.
-spatimesh="${SPATIAND_SPATIMESH_APP:-$HOME/Developer/spatiand-chromium-mac/chromium/src/out/mac-ozone/SpatiMesh.app}"
-if [ -d "$spatimesh" ]; then
+# Deck's room starts its own (crates/spatiand/src/own.rs). Taken from SPATIAND_SPATIMESH_APP, else
+# the first there of: the build's output, ~/Developer/SpatiMesh.app, and the SpatiMesh of the app
+# installed now (so an update of the room keeps the browser it had). None found is an error, not an
+# app without a browser: twice on 2026-11-18/19 an app was built and installed without SpatiMesh
+# that way and the owner lost his browser. SPATIAND_SPATIMESH_APP=none builds without it on purpose.
+spatimesh=""
+if [ "${SPATIAND_SPATIMESH_APP:-}" = none ]; then
+  echo "SpatiMesh left out (SPATIAND_SPATIMESH_APP=none)"
+elif [ -n "${SPATIAND_SPATIMESH_APP:-}" ]; then
+  spatimesh="$SPATIAND_SPATIMESH_APP"
+  [ -d "$spatimesh" ] || { echo "no SpatiMesh at $spatimesh" >&2; exit 1; }
+else
+  for candidate in "$HOME/Developer/spatiand-chromium-mac/chromium/src/out/mac-ozone/SpatiMesh.app" \
+      "$HOME/Developer/SpatiMesh.app" "$HOME/Applications/Spatiand.app/Contents/Helpers/SpatiMesh.app"; do
+    if [ -d "$candidate" ]; then spatimesh="$candidate"; break; fi
+  done
+  [ -n "$spatimesh" ] || { echo "no SpatiMesh found: set SPATIAND_SPATIMESH_APP to a SpatiMesh.app, or to none to build without one" >&2; exit 1; }
+fi
+if [ -n "$spatimesh" ]; then
   mkdir -p "$app/Contents/Helpers"
   ditto --noextattr --norsrc "$spatimesh" "$app/Contents/Helpers/SpatiMesh.app"
   echo "SpatiMesh carried from $spatimesh"
