@@ -282,10 +282,10 @@ fn speak(lines: Receiver<Line>, sounds: Sender<Sound>, shared: Arc<Shared>) {
                 let said = spoken_form(&text);
                 sentences += 1;
                 log::info!(
-                    "voice: sentence {sentences} in {} ({}): {:?}",
+                    "voice: sentence {sentences} in {} ({}): {}",
                     voice.name.as_deref().map(|n| format!("the voice {n}")).unwrap_or_else(|| "a voice made up for it".into()),
                     voice.model,
-                    said.chars().take(60).collect::<String>()
+                    crate::store::quoted(&said.chars().take(60).collect::<String>())
                 );
                 let _ = sounds.send(Sound::Begin(said.chars().count() as f32 / 17.0, cut));
                 // `SPATIPAL_TEST_RECORD=<folder>`: each sentence's sound kept as a WAV file, for a
@@ -340,7 +340,33 @@ fn one_voice(shared: &Shared, hemera: &Hemera) -> Spoken {
 
 /// Text as it is to be said: what is only for reading -- code marks, bullets, links -- left out.
 fn spoken_form(text: &str) -> String {
-    text.replace(['*', '`', '#', '_'], "").replace("\u{2014}", ", ").split_whitespace().collect::<Vec<_>>().join(" ")
+    // A stage direction -- "*leans in, smiling*", as a model playing someone writes an action --
+    // is not said: a pal's figure acts (its `appearance`), and its voice reading the words out was
+    // the first answer heard in a pal's snapshot room test (2026-11-19). Doubled asterisks and a
+    // lone one are left for the line below to take out.
+    // A lone asterisk on each side -- not markdown's doubled ones -- with a few words between.
+    // ('*' is one byte that is never part of a longer character, so bytes are safe to step by.)
+    let b = text.as_bytes();
+    let lone = |i: usize| b[i] == b'*' && (i == 0 || b[i - 1] != b'*') && b.get(i + 1) != Some(&b'*');
+    let mut said = String::new();
+    let mut from = 0;
+    let mut i = 0;
+    while i < b.len() {
+        if lone(i) {
+            if let Some(j) = (i + 1..b.len()).find(|&j| b[j] == b'*') {
+                let between = &text[i + 1..j];
+                if lone(j) && !between.trim().is_empty() && between.split_whitespace().count() <= 12 {
+                    said.push_str(&text[from..i]);
+                    from = j + 1;
+                    i = j + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    said.push_str(&text[from..]);
+    said.replace(['*', '`', '#', '_'], "").replace("\u{2014}", ", ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn play(heard: Receiver<Sound>, shared: Arc<Shared>) {
@@ -474,6 +500,13 @@ fn thinking_tone() -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_stage_direction_is_acted_not_said() {
+        assert_eq!(super::spoken_form("There. *leans in, smiling* Now spin me around, darling."), "There. Now spin me around, darling.");
+        assert_eq!(super::spoken_form("It is **really** late."), "It is really late.");
+        assert_eq!(super::spoken_form("5 * 3 is 15."), "5 3 is 15.");
+    }
+
     use super::*;
 
     #[test]

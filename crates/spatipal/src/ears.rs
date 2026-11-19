@@ -532,7 +532,12 @@ impl Judge {
             return self.tell(Heard::Ear(now)) && self.tell(Heard::LetGo);
         };
         self.conversation.touch();
-        log::info!("ears: heard {meant:?}{}", if in_conversation { " (in the conversation)" } else { "" });
+        let what = match &meant {
+            Heard::Asked { text, .. } => crate::store::quoted(text),
+            Heard::Called => "its name".to_string(),
+            other => format!("{other:?}"),
+        };
+        log::info!("ears: heard {what}{}", if in_conversation { " (in the conversation)" } else { "" });
         let meant = match meant {
             Heard::Asked { text, .. } => Heard::Asked { text, ended, follow_up: in_conversation },
             other => other,

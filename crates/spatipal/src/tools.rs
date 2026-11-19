@@ -38,8 +38,9 @@ impl Room {
     }
 }
 
-/// The tools, for the small model (`hand_over` among them) or the large.
-pub fn all(small: bool) -> Vec<Value> {
+/// The tools, for the small model (`hand_over` among them) or the large -- and a pal's
+/// `appearance` (`crate::pack`), when its figure offers anything.
+pub fn all(small: bool, appearance: Option<&Value>) -> Vec<Value> {
     let window = json!({"type": "integer", "description": "The window's number, from the list of windows. Left out: the window the wearer is looking at."});
     let fraction = |what: &str| json!({"type": "number", "description": format!("{what}, as a fraction of the window from 0 to 1, from its top left")});
     let mut tools = vec![
@@ -111,6 +112,9 @@ pub fn all(small: bool) -> Vec<Value> {
         tool("list_reminders", "The reminders still to come.", json!({}), &[]),
         tool("cancel_reminder", "Cancel a reminder by its number.", json!({"id": {"type": "integer"}}), &["id"]),
     ];
+    if let Some(appearance) = appearance {
+        tools.push(appearance.clone());
+    }
     if small {
         tools.push(tool(
             "hand_over",
@@ -204,6 +208,15 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
             answer_of(answer, format!("opened {opened}"))
         }
         "list_apps" => done(room.ask(json!({"do": "apps"})).to_string(), None),
+        // A pal's look is SpatiPal's own (`crate::pack`): asked of its window's thread, which
+        // keeps it and tells the room.
+        "appearance" => {
+            let answer = room.ask(json!({"do": "appearance", "with": args}));
+            match (answer.get("error").and_then(Value::as_str), answer.get("did").and_then(Value::as_str)) {
+                (Some(e), _) => done(format!("That did not work: {e}"), None),
+                (None, did) => done("Done: the room shows it.".to_string(), did.map(|d| format!("changed: {d}"))),
+            }
+        }
         "dismiss" => done("You will leave once you have said goodbye.".to_string(), Some("left the room".to_string())),
         "list_windows" => {
             let mut answer = room.ask(json!({"do": "windows"}));

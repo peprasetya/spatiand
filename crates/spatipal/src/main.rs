@@ -15,6 +15,7 @@
 
 mod brain;
 mod ears;
+mod pack;
 mod store;
 mod time;
 mod tools;
@@ -80,7 +81,15 @@ struct Pal {
     ready: bool,
     dirty: bool,
     ui: Window,
+    /// The settings as used: the pal's (`pack`) over the wearer's own.
     settings: Settings,
+    /// The wearer's own, as kept in `assistant.json`.
+    saved: Settings,
+    /// The pal it is, when one is chosen, and the pals there are.
+    pack: Option<pack::Pack>,
+    pals: Vec<String>,
+    /// When the pal's files were last looked at for a change.
+    pack_looked: Instant,
     speech: VoiceSettings,
     chats: Vec<Chat>,
     /// The chat open, by its id: the list is sorted again whenever it is read.
@@ -148,6 +157,8 @@ macro_rules! view {
             models: &$pal.models,
             voices: &$pal.voices,
             characters: &$pal.characters,
+            pack: $pal.pack.as_ref(),
+            pals: &$pal.pals,
         }
     };
 }
@@ -189,7 +200,7 @@ impl Pal {
         self.window = Some(window);
         self.ready = false;
         self.dirty = true;
-        self.chats = store::chats();
+        self.chats = store::chats_with(&self.settings.pal);
         // The chat that was open stays open, wherever the list now puts it.
         let kept = self.current.take().filter(|id| self.chats.iter().any(|c| &c.id == id));
         self.current = kept.or_else(|| self.chats.first().map(|c| c.id.clone()));
@@ -284,7 +295,7 @@ impl Pal {
         let i = match chat_to_go_on(&self.chats, self.current_index(), spoken, self.settings.continue_hours, store::now()) {
             Some(i) => i,
             None => {
-                self.chats.insert(0, Chat::new());
+                self.chats.insert(0, Chat { pal: self.settings.pal.clone(), ..Chat::new() });
                 0
             }
         };
@@ -315,9 +326,9 @@ impl Pal {
         let wanted = warm::Wanted {
             models,
             small: self.settings.model.clone(),
-            prime: brain::prime(&self.settings, false),
+            prime: brain::prime(&self.settings, false, self.appearance().as_ref()),
             large: self.settings.large_model.clone(),
-            prime_large: brain::prime(&self.settings, true),
+            prime_large: brain::prime(&self.settings, true, self.appearance().as_ref()),
         };
         warm::warm(Hemera::new(&self.speech.hemera), wanted, now);
     }
@@ -390,7 +401,8 @@ impl Pal {
         if let Err(e) = chat.save() {
             log::warn!("the chat could not be kept: {e}");
         }
-        let turn = Turn { number: 0, text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), ended };
+        let looks = self.pack.as_ref().map(pack::Pack::note).unwrap_or_default();
+        let turn = Turn { number: 0, text, history, look: std::mem::take(&mut self.look), settings: self.settings.clone(), appearance: self.appearance(), looks, ended };
         self.answering = self.brain.ask(turn).map(|turn| Answering { turn, chat: chat_id, ..Default::default() });
         if self.answering.is_none() {
             self.say_trouble(BRAIN_GONE);
@@ -477,7 +489,7 @@ impl Pal {
             }
             // "Stop", "quiet", "diam": only that -- nothing is asked of the model.
             Heard::Asked { text, .. } if ears::is_hush(&text) => {
-                log::info!("told to be quiet ({text:?}): quiet");
+                log::info!("told to be quiet ({}): quiet", store::quoted(&text));
                 self.cut_answer();
                 self.voice.interrupt();
                 // What waited for a yes is not waiting any more.
@@ -492,7 +504,7 @@ impl Pal {
         match want {
             Want::Ask(text) => self.ask(text, None),
             Want::NewChat => {
-                let chat = Chat::new();
+                let chat = Chat { pal: self.settings.pal.clone(), ..Chat::new() };
                 self.current = Some(chat.id.clone());
                 self.chats.insert(0, chat);
             }
@@ -522,7 +534,9 @@ impl Pal {
             Want::Spoken => {
                 self.settings.spoken = !self.settings.spoken;
                 self.voice.set_spoken(self.settings.spoken);
-                let _ = self.settings.save();
+                // The wearer's own settings are what is kept, never a pal's over them.
+                self.saved.spoken = self.settings.spoken;
+                let _ = self.saved.save();
             }
             Want::Look => self.look = !self.look,
             Want::Stop => {
@@ -542,22 +556,44 @@ impl Pal {
                 }
             }
             Want::Keep(settings, speech) => self.keep(settings, speech),
+            Want::Note(note) => {
+                self.trouble = Some((note, Instant::now()));
+            }
         }
         self.dirty = true;
     }
 
     fn keep(&mut self, settings: Settings, speech: VoiceSettings) {
-        if let Err(e) = settings.save() {
+        // What the pal sets is the pal's: the wearer's own is what is kept.
+        let saved = match &self.pack {
+            Some(p) => p.under(&settings, &self.saved),
+            None => settings,
+        };
+        if let Err(e) = saved.save() {
             self.say_trouble(&e);
         }
         if let Err(e) = speech.save(&store::shared()) {
             self.say_trouble(&e);
         }
+        let pal_changed = saved.pal != self.saved.pal;
+        self.saved = saved;
+        let before = self.settings.clone();
+        if pal_changed {
+            self.load_pack();
+        }
+        let settings = self.over(&self.saved);
+        self.settings = before;
+        self.use_settings(settings, speech, pal_changed);
+    }
+
+    /// Settings as used from now on: its voice, ears, window, figure and models made to follow.
+    fn use_settings(&mut self, settings: Settings, speech: VoiceSettings, pal_changed: bool) {
         *self.name.lock().unwrap() = settings.name.clone();
         self.voice.set_spoken(settings.spoken);
         self.voice.set_voice(spoken_voice(&settings), Hemera::new(&speech.hemera));
         let listening_changed = settings.listening != self.settings.listening;
         let ears_changed = speech != self.speech;
+        let name_changed = settings.name != self.settings.name;
         // What hemera is asked to have ready, or where hemera is: only then is it asked again.
         let wanted = |s: &Settings, v: &VoiceSettings| (s.model.clone(), s.large_model.clone(), s.speech_model.clone(), s.spoken, v.hemera.clone(), v.transcription_model.clone());
         let models_changed = wanted(&settings, &speech) != wanted(&self.settings, &self.speech);
@@ -569,17 +605,110 @@ impl Pal {
         if listening_changed || ears_changed {
             self.tend_ears();
         }
+        if pal_changed {
+            // Another pal: its own chats are the ones shown.
+            self.chats = store::chats_with(&self.settings.pal);
+            self.current = self.chats.first().map(|c| c.id.clone());
+        }
+        if pal_changed || name_changed {
+            if let Some(w) = self.window {
+                self.app.set_title(w, &self.settings.name);
+            }
+        }
         self.tell_figure();
-        // Other models: have them ready, once the wearer has stopped stepping through them.
-        if models_changed {
+        // Other models, or another pal's system message: have them ready, once the wearer has
+        // stopped stepping through them.
+        if models_changed || pal_changed {
             self.warm_soon();
         }
     }
 
     /// The figure, as chosen: which, and whether it is shown.
     fn tell_figure(&mut self) {
-        let figure = json!({"do": "avatar", "character": self.settings.character, "path": store::character_path(&self.settings.character), "visible": self.settings.shown});
+        let figure = match &self.pack {
+            Some(p) if p.figure.is_some() => p.figure_request(self.settings.shown),
+            // A pal of no figure of its own has the one chosen in the settings.
+            _ => json!({"do": "avatar", "character": self.settings.character, "path": store::character_path(&self.settings.character), "visible": self.settings.shown, "options": {}, "pose": "", "expression": "", "colors": {}, "size": 1.0, "signs": true}),
+        };
         let _ = self.app.room_ask(&figure.to_string(), channel().0);
+    }
+
+    /// The settings as used: the pal's over `saved`.
+    fn over(&self, saved: &Settings) -> Settings {
+        match &self.pack {
+            Some(p) => p.over(saved),
+            None => saved.clone(),
+        }
+    }
+
+    /// The pal chosen in the settings, read; and with it what is said kept out of the log or not.
+    fn load_pack(&mut self) {
+        self.pack = match self.saved.pal.trim() {
+            "" => None,
+            folder => match pack::Pack::load(folder) {
+                Ok(p) => {
+                    log::info!(
+                        "pal {folder}: {} groups of options, {} animations, {} expressions{}",
+                        p.offers.groups.len(),
+                        p.offers.animations.len(),
+                        p.offers.expressions.len(),
+                        if p.about.private { ", private" } else { "" }
+                    );
+                    Some(p)
+                }
+                Err(why) => {
+                    self.say_trouble(&format!("The pal {folder} could not be read: {why}"));
+                    None
+                }
+            },
+        };
+        store::set_private(self.pack.as_ref().is_some_and(|p| p.about.private));
+        self.settings = self.over(&self.saved);
+        self.pack_looked = Instant::now();
+    }
+
+    /// The pal's files, edited (here, or on another machine): read again, and what changed told.
+    /// A pal that cannot be read now (a file half synchronised) stays as it was.
+    fn look_at_pack(&mut self) {
+        if self.pack_looked.elapsed() < Duration::from_secs(10) {
+            return;
+        }
+        self.pack_looked = Instant::now();
+        let Some(old) = self.pack.as_mut().filter(|p| p.changed()) else { return };
+        let folder = old.folder.clone();
+        match pack::Pack::load(&folder) {
+            Ok(_) => {
+                log::info!("pal {folder}: its files changed: read again");
+                let before = self.settings.clone();
+                self.load_pack();
+                let after = self.settings.clone();
+                self.settings = before;
+                self.use_settings(after, self.speech.clone(), false);
+                // Its persona may be new: the model reads it before it is needed.
+                self.warm_soon();
+            }
+            Err(why) => {
+                log::warn!("pal {folder}: its files changed but cannot be read ({why}): it stays as it was");
+                old.mark_read();
+            }
+        }
+    }
+
+    /// The pal's `appearance` tool, when its figure offers anything.
+    fn appearance(&self) -> Option<Value> {
+        self.pack.as_ref().and_then(pack::Pack::tool)
+    }
+
+    /// A pal's look changed by its model (`tools.rs`'s `appearance`): kept, and the room told.
+    fn appear(&mut self, with: &Value) -> Value {
+        let Some(p) = self.pack.as_mut() else { return json!({"error": "there is no figure to change"}) };
+        match p.apply(with) {
+            Ok((room, did)) => {
+                let _ = self.app.room_ask(&room.to_string(), channel().0);
+                json!({"did": did})
+            }
+            Err(why) => json!({"error": why}),
+        }
     }
 
     /// What the figure is doing, told to the room when it changes: by name (`state`), and as one
@@ -617,6 +746,7 @@ impl Pal {
     /// hemera's text models and voices, for the settings' choices.
     fn fetch_lists(&mut self) {
         self.characters = store::characters();
+        self.pals = pack::folders();
         let tx = self.lists_tx.clone();
         let waker = self.waker.clone();
         let hemera = Hemera::new(&self.speech.hemera);
@@ -654,7 +784,7 @@ impl Pal {
             }
         };
         for line in due {
-            log::info!("{line}");
+            log::info!("{}", store::quoted(&line));
             self.voice.say(&line);
             let _ = self.app.room_ask(&json!({"do": "notice", "text": format!("{}\n{}", self.settings.name, line)}).to_string(), channel().0);
             self.conversation.touch();
@@ -720,6 +850,10 @@ impl Pal {
                 // its window is how it is shut down.
                 return self.settings.on;
             }
+            Event::Describe { window } if store::private() => {
+                self.app.describe(*window, &spatiand_app::Description { kind: "chat".into(), app: "SpatiPal".into(), title: self.settings.name.clone(), ..Default::default() });
+                return true;
+            }
             Event::Describe { window } => {
                 let text = self.current_index().and_then(|i| self.chats.get(i)).map(|c| c.said.iter().rev().take(6).rev().map(|s| format!("{}: {}", s.role, s.text)).collect::<Vec<_>>().join("\n")).unwrap_or_default();
                 self.app.describe(*window, &spatiand_app::Description { kind: "chat".into(), app: "SpatiPal".into(), title: self.settings.name.clone(), text, ..Default::default() });
@@ -757,6 +891,12 @@ impl Pal {
             let mut drained = [0u8; 64];
             while (&self.woken).read(&mut drained).is_ok_and(|n| n > 0) {}
             for (json, reply) in self.room_asks.try_iter().collect::<Vec<_>>() {
+                let asked: Value = serde_json::from_str(&json).unwrap_or_default();
+                if asked.get("do").and_then(Value::as_str) == Some("appearance") {
+                    let answer = self.appear(asked.get("with").unwrap_or(&Value::Null));
+                    let _ = reply.send(answer.to_string());
+                    continue;
+                }
                 self.app.room_ask(&json, reply);
             }
             loop {
@@ -803,6 +943,7 @@ impl Pal {
                 self.warm(true);
             }
             self.look_at_reminders();
+            self.look_at_pack();
             self.tend_mood();
             self.draw()?;
         }
@@ -888,7 +1029,8 @@ fn main() {
         if !app.assisting() {
             log::warn!("not started by the room as its assistant: the room will refuse what it is asked");
         }
-        let settings = Settings::load();
+        let saved = Settings::load();
+        let settings = saved.clone();
         let speech = VoiceSettings::load(&store::shared());
         let (woken, wake_end) = pipe();
         let waker = Waker(Arc::new(wake_end));
@@ -910,8 +1052,12 @@ fn main() {
             dirty: true,
             ui: Window::new(),
             settings,
+            saved,
+            pack: None,
+            pals: pack::folders(),
+            pack_looked: Instant::now(),
             speech,
-            chats: store::chats(),
+            chats: Vec::new(),
             current: None,
             answering: None,
             look: false,
@@ -945,6 +1091,11 @@ fn main() {
             finished_at: None,
             interrupted: None,
         };
+        // The pal chosen, over the settings: its name, voice and chats from the start.
+        pal.load_pack();
+        *pal.name.lock().unwrap() = pal.settings.name.clone();
+        pal.voice.set_voice(spoken_voice(&pal.settings), Hemera::new(&pal.speech.hemera));
+        pal.chats = store::chats_with(&pal.settings.pal);
         if !background {
             pal.open_window();
         }

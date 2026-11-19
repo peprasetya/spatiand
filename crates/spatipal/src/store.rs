@@ -30,7 +30,7 @@ pub fn now() -> u64 {
 /// Written whole, through a temporary, and **the wearer's alone** (0600): chats and settings are
 /// what they said. A file left readable to others by an older SpatiPal is replaced by one that is
 /// not, as the temporary takes its place.
-fn write(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn write(path: &Path, text: &str) -> Result<(), String> {
     use std::io::Write;
     let partial = path.with_extension("part");
     let written = (|| {
@@ -58,6 +58,9 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
 pub struct Settings {
     /// Started with the room, in the background.
     pub on: bool,
+    /// The pal it is (`crate::pack`), by its folder in `assistant/pals/`: its name, persona,
+    /// figure, voice and models over these. Empty for none.
+    pub pal: String,
     /// What it answers to, and calls itself.
     pub name: String,
     /// Who it is, in its own words.
@@ -91,6 +94,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             on: false,
+            pal: String::new(),
             name: "Pixel".into(),
             persona: "A cheerful, quick little robot who likes helping and keeps it short.".into(),
             character: "robot".into(),
@@ -140,6 +144,8 @@ pub struct Said {
 #[serde(default)]
 pub struct Chat {
     pub id: String,
+    /// The pal it was had with, by folder; empty for none. Each pal's chats are its own.
+    pub pal: String,
     pub title: String,
     pub said: Vec<Said>,
     pub updated: u64,
@@ -153,7 +159,7 @@ impl Chat {
         let at = now();
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
         let n = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Chat { id: format!("{at}-{:04x}-{nanos:08x}{n:x}", std::process::id() & 0xffff), title: String::new(), said: Vec::new(), updated: at }
+        Chat { id: format!("{at}-{:04x}-{nanos:08x}{n:x}", std::process::id() & 0xffff), pal: String::new(), title: String::new(), said: Vec::new(), updated: at }
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -173,6 +179,27 @@ impl Chat {
     pub fn forget(&self) {
         let _ = std::fs::remove_file(folder().join("chats").join(format!("{}.json", self.id)));
     }
+}
+
+/// The chats had with the pal `pal` (empty: with none), the most recent first.
+pub fn chats_with(pal: &str) -> Vec<Chat> {
+    chats().into_iter().filter(|c| c.pal == pal).collect()
+}
+
+/// Whether what is said is kept out of the log: a private pal's (`crate::pack`).
+static PRIVATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_private(private: bool) {
+    PRIVATE.store(private, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn private() -> bool {
+    PRIVATE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Words for the log: quoted, or -- for a private pal -- only how many letters there were.
+pub fn quoted(text: &str) -> String {
+    if private() { format!("({} characters, private)", text.chars().count()) } else { format!("{text:?}") }
 }
 
 /// Every chat, the most recent first.

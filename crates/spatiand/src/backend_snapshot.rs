@@ -42,7 +42,11 @@
 //!
 //! `SPATIAND_FIGURE='{"state":"hearing","level":0.7}'` shows the assistant's figure as it asked
 //! for that, with no assistant: how each of its gestures is looked at, since each lasts only as
-//! long as a step of an answer does.
+//! long as a step of an answer does. It takes everything the assistant's `avatar` asks (the
+//! protocol's notes): a figure of the wearer's by its `path`, its `options`, a `pose` or a
+//! `move`, its `size` -- and `time`, which holds every animation at that many seconds into it,
+//! so that one picture shows one moment of one, and `turn` (degrees), which turns the figure from
+//! facing the wearer, to see a pose from the side.
 //!
 //! `SPATIAND_VIEW=sidecar SPATIAND_VIEW_PAGE=startup` draws the panel as it looks while a
 //! session is still coming up, with `SPATIAND_VIEW_STAGE=link|stereo|world` for which stage.

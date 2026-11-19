@@ -33,8 +33,16 @@ use glam::{DQuat, DVec3, Mat3, Mat4, Vec3, Vec4};
 use smithay::backend::renderer::gles::ffi;
 use spatiand_render::{Eye, EyeSide};
 
-/// The figure's picture, per eye, in pixels square.
+/// The figure's picture, per eye, in pixels square, at its usual size; a figure made larger
+/// (`size`) gets a larger one, up to [`PICTURE_MOST`].
 const PICTURE: i32 = 512;
+const PICTURE_MOST: i32 = 1024;
+/// How long a figure's animation takes to blend into the next one, seconds.
+const FADE_S: f32 = 0.3;
+/// A wearer's figure's height, metres at size 1 (as tall as the robot's body and head), and
+/// how far below where it floats its feet are.
+const FIGURE_TALL_M: f32 = 0.155;
+const FIGURE_FEET_M: f32 = 0.044;
 /// How far from the eyes it floats, metres.
 const DISTANCE_M: f64 = 1.35;
 /// How long it takes to catch up with the head, seconds (to about two thirds of the way).
@@ -285,6 +293,11 @@ struct Live {
     pose: Pose,
     /// How loud what it hears is, 0 to 1, quick to rise and slow to fall.
     level: f32,
+    /// How large it is, against its usual size: `size`, as the assistant asks (0.5 to 3).
+    size: f32,
+    /// Turned from facing the wearer, radians: a test's `turn` (degrees), to see a pose from the
+    /// side.
+    turn: f32,
 }
 
 pub struct Avatar {
@@ -303,6 +316,8 @@ pub struct Avatar {
     fbo: u32,
     depth: u32,
     pictures: [u32; 2],
+    /// The pictures' size now, pixels square.
+    picture: std::cell::Cell<i32>,
     started: Instant,
     live: RefCell<Live>,
 }
@@ -355,6 +370,7 @@ impl Avatar {
             fbo,
             depth,
             pictures,
+            picture: std::cell::Cell::new(PICTURE),
             started: Instant::now(),
             live: RefCell::new(Live {
                 at: None,
@@ -367,6 +383,8 @@ impl Avatar {
                 wave_since: None,
                 pose: Pose::of(Mood::Idle),
                 level: 0.0,
+                size: 1.0,
+                turn: 0.0,
             }),
         })
     }
@@ -415,10 +433,28 @@ impl Avatar {
             return;
         }
 
+        // How large, and which figure: read first, so that it is placed by its own height.
+        live.size = figure.get("size").and_then(|s| s.as_f64()).map(|s| (s as f32).clamp(0.5, 3.0)).unwrap_or(1.0);
+        live.turn = figure.get("turn").and_then(|t| t.as_f64()).map(|t| (t as f32).to_radians()).unwrap_or(0.0);
+        let k = live.size;
+        let path = figure.get("path").and_then(|p| p.as_str()).map(str::to_string);
+        self.choose(gl, path);
+        // Its middle above where it floats, how far it reaches from there, and how tall it is.
+        let (middle_m, reach_m, tall_m) = match &*self.chosen.borrow() {
+            Chosen::Ready { gpu, .. } => {
+                let tall = gpu.top + FIGURE_FEET_M;
+                // A figure that moves -- by its animations, or posed -- may raise its arms over its head.
+                let reach = if gpu.skeleton.clips.is_empty() && gpu.skeleton.bodies.is_empty() { REACH_M } else { REACH_M.max(0.75 * tall) };
+                (((gpu.top - FIGURE_FEET_M) * 0.5) as f64, reach, tall as f64)
+            }
+            _ => (MIDDLE_M, REACH_M, TALL_M),
+        };
+        let (middle_m, reach_m, tall_m) = (middle_m * k as f64, reach_m * k, tall_m * k as f64);
+
         // Where it should be: low on the side away from the pinned windows.
         let (left, _) = pinned_corner.signs();
         let side = -left;
-        let half = (TALL_M * 0.5 / DISTANCE_M).atan().to_degrees();
+        let half = (tall_m * 0.5 / DISTANCE_M).atan().to_degrees();
         let mut yaw = side * (fov_deg.0 * 0.5 - 2.5 - half).max(3.0);
         let mut pitch = -(fov_deg.1 * 0.5 - 1.5 - half).max(1.0);
         let place = |yaw: f64, pitch: f64| {
@@ -431,8 +467,8 @@ impl Avatar {
         if let Some(eye) = eyes.first() {
             let vp = eye.view_projection();
             for _ in 0..4 {
-                let middle = (place(yaw, pitch) + head * DVec3::new(0.0, 0.0, MIDDLE_M)).as_vec3();
-                let Some([x0, x1, y0, y1]) = extent_of(&vp, middle, REACH_M * 0.85) else { break };
+                let middle = (place(yaw, pitch) + head * DVec3::new(0.0, 0.0, middle_m)).as_vec3();
+                let Some([x0, x1, y0, y1]) = extent_of(&vp, middle, reach_m * 0.85) else { break };
                 // Which way is down in this eye's coordinates: the Deck draws its eyes flipped.
                 let below = middle - (head * DVec3::Z).as_vec3() * 0.1;
                 let ndc = |p: Vec3| {
@@ -457,23 +493,38 @@ impl Avatar {
         live.at = Some(at);
 
         let t = now.duration_since(self.started).as_secs_f32();
-        let path = figure.get("path").and_then(|p| p.as_str()).map(str::to_string);
-        self.choose(gl, path);
-        // A figure of the wearer's, placed and posed as the robot would be, with only the robot's
-        // signs of what it is doing over its head.
-        let parts = if matches!(&*self.chosen.borrow(), Chosen::Ready { .. }) { self.signs_over(at, t, &live) } else { self.figure_parts(at, t, &live) };
+        // A figure of the wearer's, placed as the robot would be, with only the robot's signs of
+        // what it is doing over its head -- or none, for a figure that shows it by itself.
+        let top = match &*self.chosen.borrow() {
+            Chosen::Ready { gpu, .. } => Some(gpu.top),
+            _ => None,
+        };
+        let parts = match top {
+            Some(_) if figure.get("signs").and_then(|s| s.as_bool()) == Some(false) => Vec::new(),
+            Some(top) => self.signs_over(at, t, &live, top * k),
+            None => self.figure_parts(at, t, &live),
+        };
         let mut chosen = self.chosen.borrow_mut();
         let model = match &mut *chosen {
             Chosen::Ready { gpu, .. } => {
                 let to_eye = (-at).as_vec3();
-                let face_yaw = to_eye.y.atan2(to_eye.x);
-                let bob = 0.006 * SIZE * (t * 1.6).sin();
-                let place = Mat4::from_translation(at.as_vec3() + Vec3::new(0.0, 0.0, bob)) * Mat4::from_rotation_z(face_yaw) * gpu.fit;
-                gpu.pose(gl, &live, t);
+                let face_yaw = to_eye.y.atan2(to_eye.x) + live.turn;
+                let bob = 0.006 * SIZE * k * (t * 1.6).sin();
+                let place = Mat4::from_translation(at.as_vec3() + Vec3::new(0.0, 0.0, bob)) * Mat4::from_rotation_z(face_yaw) * Mat4::from_scale(Vec3::splat(k)) * gpu.fit;
+                gpu.pose(gl, &live, t, &figure);
                 Some((place, &*gpu))
             }
             _ => None,
         };
+        // Drawn finer when it is larger: as many pixels to a degree of the view.
+        let px = if k <= 1.25 {
+            PICTURE
+        } else if k <= 1.75 {
+            PICTURE * 3 / 2
+        } else {
+            PICTURE_MOST
+        };
+        self.size_pictures(gl, px);
 
         // The room's target, to put back.
         let mut previous_fbo = 0;
@@ -483,7 +534,7 @@ impl Avatar {
 
         gl.BindFramebuffer(ffi::FRAMEBUFFER, self.fbo);
         gl.FramebufferRenderbuffer(ffi::FRAMEBUFFER, ffi::DEPTH_ATTACHMENT, ffi::RENDERBUFFER, self.depth);
-        gl.Viewport(0, 0, PICTURE, PICTURE);
+        gl.Viewport(0, 0, px, px);
         gl.Disable(ffi::BLEND);
         gl.Disable(ffi::SCISSOR_TEST);
         gl.Enable(ffi::DEPTH_TEST);
@@ -492,14 +543,14 @@ impl Avatar {
         gl.UseProgram(self.program);
         let light = Vec3::new(0.55, 0.6, 0.58).normalize();
         gl.Uniform3f(self.loc[5], light.x, light.y, light.z);
-        let middle = (at + head * DVec3::new(0.0, 0.0, MIDDLE_M)).as_vec3();
+        let middle = (at + head * DVec3::new(0.0, 0.0, middle_m)).as_vec3();
         for (index, eye) in eyes.iter().enumerate().take(2) {
             let slot = match eye.side {
                 EyeSide::Left => 0,
                 EyeSide::Right => 1,
             };
             let vp = eye.view_projection();
-            let Some(rect) = crop_of(&vp, middle, REACH_M) else {
+            let Some(rect) = crop_of(&vp, middle, reach_m) else {
                 live.rects[slot] = None;
                 continue;
             };
@@ -537,6 +588,20 @@ impl Avatar {
         gl.BindFramebuffer(ffi::FRAMEBUFFER, previous_fbo as u32);
         gl.Viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         gl.Enable(ffi::BLEND);
+    }
+
+    /// The pictures drawn into, at `px` pixels square: larger for a figure made larger.
+    unsafe fn size_pictures(&self, gl: &ffi::Gles2, px: i32) {
+        if self.picture.get() == px {
+            return;
+        }
+        self.picture.set(px);
+        for t in self.pictures {
+            gl.BindTexture(ffi::TEXTURE_2D, t);
+            gl.TexImage2D(ffi::TEXTURE_2D, 0, ffi::RGBA8 as i32, px, px, 0, ffi::RGBA, ffi::UNSIGNED_BYTE, std::ptr::null());
+        }
+        gl.BindRenderbuffer(ffi::RENDERBUFFER, self.depth);
+        gl.RenderbufferStorage(ffi::RENDERBUFFER, ffi::DEPTH_COMPONENT16, px, px);
     }
 
     /// Wait, up to `timeout`, for a figure being read: for a test's single picture, which would
@@ -623,7 +688,17 @@ impl Avatar {
             let path = path.clone();
             *chosen = match read {
                 Ok(figure) => {
-                    log::info!("avatar: {path} read: {} parts, {} pictures, expressions {:?}", figure.parts.len(), figure.pictures.len(), figure.expressions.keys().collect::<Vec<_>>());
+                    let clips: Vec<&str> = figure.skeleton.clips.iter().map(|c| c.name.as_str()).collect();
+                    log::info!(
+                        "avatar: {path} read: {} parts, {} pictures, {} joints in {} skins, {} bodies to pose, expressions {:?}, animations {clips:?}, options {:?}",
+                        figure.parts.len(),
+                        figure.pictures.len(),
+                        figure.skeleton.skins.iter().map(|s| s.joints.len()).sum::<usize>(),
+                        figure.skeleton.skins.len(),
+                        figure.skeleton.bodies.len(),
+                        figure.expressions.keys().collect::<Vec<_>>(),
+                        figure.groups
+                    );
                     Chosen::Ready { path, gpu: ModelGpu::upload(gl, figure) }
                 }
                 Err(why) => {
@@ -647,9 +722,11 @@ impl Avatar {
         gl.Uniform3f(self.model_loc[6], light.x, light.y, light.z);
         gl.Uniform3f(self.model_loc[7], eye.x, eye.y, eye.z);
         gl.ActiveTexture(ffi::TEXTURE0);
-        for part in &gpu.parts {
+        for part in gpu.parts.iter().filter(|p| p.shown) {
             let material = gpu.materials.get(part.material);
-            let color = material.map_or([1.0; 4], |m| m.color);
+            // A colour asked for the material takes the place of its own: a picture on it is
+            // tinted by it, as glTF's base colour tints its texture.
+            let color = gpu.tints.get(part.material).copied().flatten().or(material.map(|m| m.color)).unwrap_or([1.0; 4]);
             let texture = material.and_then(|m| m.texture).and_then(|t| gpu.textures.get(t)).copied().unwrap_or(self.white);
             gl.BindTexture(ffi::TEXTURE_2D, texture);
             gl.Uniform4f(self.model_loc[4], color[0], color[1], color[2], color[3]);
@@ -728,10 +805,15 @@ impl Avatar {
     }
 
     /// Over a wearer's own figure, the robot's signs of what it is doing, as if its head were
-    /// just under them: what the figure's face cannot say on its own.
-    fn signs_over(&self, at: DVec3, t: f32, live: &Live) -> Vec<Part> {
+    /// just under them: what the figure's face cannot say on its own. `top` is how far above where
+    /// it floats the figure's head is, metres: the antenna's light a little over it (it was drawn
+    /// at the robot's chin height before 2026-11-19, which is a figure's neck).
+    fn signs_over(&self, at: DVec3, t: f32, live: &Live, top: f32) -> Vec<Part> {
         let (base, _) = frames(at, t, live);
-        signs(base * Mat4::from_translation(Vec3::new(0.0, 0.0, 0.045)), t, live, false)
+        // `base` is in the robot's measure; the tip is 0.094 of it above the head.
+        let scale = SIZE * live.size;
+        let head = (top + 0.012 * live.size) / scale - 0.094;
+        signs(base * Mat4::from_translation(Vec3::new(0.0, 0.0, head)), t, live, false)
     }
 }
 
@@ -741,11 +823,12 @@ fn frames(at: DVec3, t: f32, live: &Live) -> (Mat4, Mat4) {
     let since = live.mood_since.elapsed().as_secs_f32();
     let pose = &live.pose;
     let to_eye = (-at).as_vec3();
-    let face_yaw = to_eye.y.atan2(to_eye.x);
+    let face_yaw = to_eye.y.atan2(to_eye.x) + live.turn;
     // A hop for joy, once.
     let hop = if live.mood == Mood::Happy && since < 0.5 { 0.012 * (since * std::f32::consts::TAU).sin().max(0.0) } else { 0.0 };
-    let bob = 0.006 * SIZE * (t * 1.6).sin() + hop * SIZE;
-    let base = Mat4::from_translation(at.as_vec3() + Vec3::new(0.0, 0.0, bob)) * Mat4::from_rotation_z(face_yaw) * Mat4::from_scale(Vec3::splat(SIZE)) * Mat4::from_rotation_y(pose.lean);
+    let size = SIZE * live.size;
+    let bob = 0.006 * size * (t * 1.6).sin() + hop * size;
+    let base = Mat4::from_translation(at.as_vec3() + Vec3::new(0.0, 0.0, bob)) * Mat4::from_rotation_z(face_yaw) * Mat4::from_scale(Vec3::splat(size)) * Mat4::from_rotation_y(pose.lean);
     // A little life in the head when the pose leaves it still; more for listening.
     let (nod, tilt) = match live.mood {
         Mood::Listening | Mood::Checking => (0.0, 0.10 * (t * 0.7).sin()),
@@ -1025,6 +1108,11 @@ struct GpuPart {
     /// For its face: where it stands, and how each target moves it.
     rest: Vec<[f32; 3]>,
     targets: Vec<Vec<[f32; 3]>>,
+    /// How a pose moves it, and which group's option it is.
+    moves: crate::figure::Moves,
+    option: Option<(String, String)>,
+    /// Shown with the options chosen now.
+    shown: bool,
 }
 
 struct ModelGpu {
@@ -1034,8 +1122,84 @@ struct ModelGpu {
     expressions: std::collections::HashMap<String, Vec<(usize, usize, f32)>>,
     /// From the figure's own size and place to the robot's.
     fit: Mat4,
+    /// How far above where it floats its head is once fitted, metres at size 1.
+    top: f32,
     /// The weights its targets were last moved to, by (part, target).
     weights: std::collections::HashMap<(usize, usize), f32>,
+    skeleton: crate::figure::Skeleton,
+    groups: Vec<(String, Vec<String>)>,
+    motion: Motion,
+    /// The colour asked for each material, if one was.
+    tints: Vec<Option<[f32; 4]>>,
+}
+
+/// What the figure's body is doing: the animation playing, and the one it is leaving.
+struct Motion {
+    /// What is playing -- the animation, and why: 0 the assistant's state, 1 a pose held, 2 a
+    /// move, with the move's count, so that the same move asked for again starts again; and the
+    /// pose of its own making held over it, by its words' hash.
+    key: Option<(Option<usize>, u8, u64, u64)>,
+    since: Instant,
+    /// The moves asked for so far (`moves`), and the one playing, from when.
+    moves_seen: u64,
+    moving: Option<(usize, Instant)>,
+    /// What a change blends from: the pose last drawn, from when, over how long.
+    from: Option<(Vec<crate::figure::Trs>, Instant, f32)>,
+    last: Vec<crate::figure::Trs>,
+    /// A pose of its own making, as last asked: its words' hash, and the parts it turns where.
+    made: (u64, Vec<(String, spatiand_voice::figure::Aim)>),
+    /// Drawn since its pose last changed: a figure with no animations is posed again only when
+    /// it changes.
+    drawn: bool,
+}
+
+/// How long a change into a pose of its own making takes: a person shifting how they stand.
+const MADE_FADE_S: f32 = 0.6;
+
+/// The animation for what the assistant is doing: the state's own, or one standing in for it,
+/// and `idle` for any the figure has none for.
+fn state_clip(skeleton: &crate::figure::Skeleton, mood: Mood) -> Option<usize> {
+    let names: &[&str] = match mood {
+        Mood::Idle => &["idle"],
+        Mood::Listening => &["listening", "idle"],
+        Mood::Checking => &["checking", "listening", "idle"],
+        Mood::Attentive => &["attentive", "listening", "idle"],
+        Mood::Hearing => &["hearing", "attentive", "listening", "idle"],
+        Mood::Transcribing => &["transcribing", "thinking", "idle"],
+        Mood::Thinking => &["thinking", "idle"],
+        Mood::Pondering => &["pondering", "thinking", "idle"],
+        Mood::Working => &["working", "thinking", "idle"],
+        Mood::Talking => &["talking", "idle"],
+        Mood::Happy => &["happy", "idle"],
+    };
+    names.iter().find_map(|n| skeleton.clip(n))
+}
+
+/// Which option of each group is chosen: as the assistant asked (`options`, by group), else each
+/// group's first.
+fn chosen_options(groups: &[(String, Vec<String>)], said: &serde_json::Value) -> std::collections::HashMap<String, String> {
+    let asked = said.get("options").and_then(|o| o.as_object());
+    groups
+        .iter()
+        .map(|(group, options)| {
+            let wanted = asked.and_then(|a| a.iter().find(|(g, _)| g.eq_ignore_ascii_case(group))).and_then(|(_, o)| o.as_str()).map(|o| o.trim().to_lowercase());
+            (group.clone(), wanted.unwrap_or_else(|| options.first().cloned().unwrap_or_default()))
+        })
+        .collect()
+}
+
+/// A colour as the assistant gives it: `[r, g, b]` or `[r, g, b, a]`, 0 to 1, or `"#rrggbb"`.
+fn colour_of(value: &serde_json::Value) -> Option<[f32; 4]> {
+    if let Some(hex) = value.as_str().map(|h| h.trim().trim_start_matches('#')).filter(|h| h.len() == 6) {
+        let n = u32::from_str_radix(hex, 16).ok()?;
+        return Some([((n >> 16) & 255) as f32 / 255.0, ((n >> 8) & 255) as f32 / 255.0, (n & 255) as f32 / 255.0, 1.0]);
+    }
+    let c: Vec<f32> = value.as_array()?.iter().filter_map(|x| x.as_f64()).map(|x| (x as f32).clamp(0.0, 1.0)).collect();
+    match c.len() {
+        3 => Some([c[0], c[1], c[2], 1.0]),
+        4 => Some([c[0], c[1], c[2], c[3]]),
+        _ => None,
+    }
 }
 
 impl ModelGpu {
@@ -1063,11 +1227,12 @@ impl ModelGpu {
                 gl.BufferData(ffi::ARRAY_BUFFER, (data.len() * 4) as isize, data.as_ptr() as *const _, usage);
             };
             let flat = |v: &[[f32; 3]]| v.iter().flatten().copied().collect::<Vec<f32>>();
-            let usage = if part.targets.is_empty() { ffi::STATIC_DRAW } else { ffi::DYNAMIC_DRAW };
+            let moving = !matches!(part.moves, crate::figure::Moves::Still);
+            let usage = if part.targets.is_empty() && !moving { ffi::STATIC_DRAW } else { ffi::DYNAMIC_DRAW };
             floats(gl, buffers[0], &flat(&part.positions), usage);
             gl.EnableVertexAttribArray(0);
             gl.VertexAttribPointer(0, 3, ffi::FLOAT, ffi::FALSE, 12, std::ptr::null());
-            floats(gl, buffers[1], &flat(&part.normals), ffi::STATIC_DRAW);
+            floats(gl, buffers[1], &flat(&part.normals), if moving { ffi::DYNAMIC_DRAW } else { ffi::STATIC_DRAW });
             gl.EnableVertexAttribArray(1);
             gl.VertexAttribPointer(1, 3, ffi::FLOAT, ffi::FALSE, 12, std::ptr::null());
             floats(gl, buffers[2], &part.uvs.iter().flatten().copied().collect::<Vec<f32>>(), ffi::STATIC_DRAW);
@@ -1089,14 +1254,32 @@ impl ModelGpu {
                 mesh: part.mesh,
                 rest: if part.targets.is_empty() { Vec::new() } else { part.positions },
                 targets: part.targets,
+                moves: part.moves,
+                option: part.option,
+                shown: true,
             });
         }
         // As tall as the robot, standing where it stands.
         let size = figure.high - figure.low;
-        let scale = (0.155 / size.z.max(0.01)).min(0.155 / size.x.max(size.y).max(0.01) * 2.0);
+        let scale = (FIGURE_TALL_M / size.z.max(0.01)).min(FIGURE_TALL_M / size.x.max(size.y).max(0.01) * 2.0);
         let middle = (figure.low + figure.high) * 0.5;
-        let fit = Mat4::from_translation(Vec3::new(0.0, 0.0, -0.044)) * Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(Vec3::new(-middle.x, -middle.y, -figure.low.z));
-        ModelGpu { parts, materials: figure.materials, textures, expressions: figure.expressions, fit, weights: Default::default() }
+        let fit = Mat4::from_translation(Vec3::new(0.0, 0.0, -FIGURE_FEET_M)) * Mat4::from_scale(Vec3::splat(scale)) * Mat4::from_translation(Vec3::new(-middle.x, -middle.y, -figure.low.z));
+        let top = fit.transform_point3(figure.high).z;
+        let rest = figure.skeleton.rest();
+        let tints = vec![None; figure.materials.len()];
+        ModelGpu {
+            parts,
+            materials: figure.materials,
+            textures,
+            expressions: figure.expressions,
+            fit,
+            top,
+            weights: Default::default(),
+            skeleton: figure.skeleton,
+            groups: figure.groups,
+            motion: Motion { key: None, since: Instant::now(), moves_seen: 0, moving: None, from: None, last: rest, made: (0, Vec::new()), drawn: false },
+            tints,
+        }
     }
 
     /// Give back its buffers and pictures.
@@ -1108,9 +1291,106 @@ impl ModelGpu {
         gl.DeleteTextures(self.textures.len() as i32, self.textures.as_ptr());
     }
 
-    /// Its face for the moment: blinking, smiling, the mouth moving while it talks. Only what
-    /// changed is moved, and only the parts it moves are sent again.
-    unsafe fn pose(&mut self, gl: &ffi::Gles2, live: &Live, t: f32) {
+    /// Where every node is for the moment, when the figure has animations or a body to pose: the
+    /// animation the assistant's state or its asking calls for, a pose of its own making held over
+    /// it, blended from the last for a moment after a change. `said` is what the assistant said
+    /// of its figure; its `time` (a test's) holds every animation at that many seconds. `None`
+    /// when nothing moves it, or -- a figure with no animations -- nothing changed since it was
+    /// last posed.
+    fn body(&mut self, mood: Mood, said: &serde_json::Value) -> Option<Vec<Mat4>> {
+        let skeleton = &self.skeleton;
+        let animated = !skeleton.clips.is_empty();
+        if !animated && skeleton.bodies.is_empty() {
+            return None;
+        }
+        let now = Instant::now();
+        let held_at = said.get("time").and_then(|t| t.as_f64()).map(|t| t as f32);
+        // A move is played once, each time the count of them goes up -- but not one asked for
+        // before this figure came (another pal's).
+        let moves = said.get("moves").and_then(|m| m.as_u64()).unwrap_or(0);
+        if self.motion.key.is_none() {
+            self.motion.moves_seen = moves;
+        }
+        if moves != self.motion.moves_seen {
+            self.motion.moves_seen = moves;
+            self.motion.moving = said.get("move").and_then(|m| m.as_str()).and_then(|m| skeleton.clip(m)).map(|c| (c, now));
+        }
+        if let Some((clip, from)) = self.motion.moving {
+            if held_at.is_none() && from.elapsed().as_secs_f32() >= skeleton.clips[clip].duration {
+                self.motion.moving = None;
+            }
+        }
+        // A pose by name is one of its animations; one of its own making is its parts' words,
+        // read again only when they change.
+        let made = said.get("pose").filter(|p| p.is_object() && !skeleton.bodies.is_empty());
+        let hash = made
+            .map(|p| {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                p.to_string().hash(&mut h);
+                h.finish()
+            })
+            .unwrap_or(0);
+        if hash != self.motion.made.0 {
+            self.motion.made = (hash, made.map(crate::posing::read).unwrap_or_default());
+        }
+        let pose = said.get("pose").and_then(|p| p.as_str()).and_then(|p| skeleton.clip(p));
+        let (clip, why, looping) = match (self.motion.moving, pose) {
+            (Some((clip, _)), _) => (Some(clip), 2u8, false),
+            (None, Some(clip)) => (Some(clip), 1, true),
+            (None, None) => (state_clip(skeleton, mood), 0, true),
+        };
+        // A move is played whole; the pose of its own is taken up again after it.
+        let made_now = if why == 2 { 0 } else { hash };
+        let key = (clip, why, if why == 2 { moves } else { 0 }, made_now);
+        let changed = self.motion.key != Some(key);
+        if changed {
+            if let Some(was) = self.motion.key.filter(|_| held_at.is_none()) {
+                let fade = if was.3 != made_now { MADE_FADE_S } else { FADE_S };
+                self.motion.from = Some((self.motion.last.clone(), now, fade));
+            }
+            // The animation under a pose goes on as it was when only the pose changes.
+            if self.motion.key.is_none_or(|k| (k.0, k.1, k.2) != (key.0, key.1, key.2)) {
+                self.motion.since = now;
+            }
+            self.motion.key = Some(key);
+            self.motion.drawn = false;
+        }
+        if !animated && self.motion.drawn && self.motion.from.is_none() {
+            return None;
+        }
+        let mut local = skeleton.rest();
+        if let Some(clip) = clip {
+            let duration = skeleton.clips[clip].duration.max(1e-3);
+            let elapsed = held_at.unwrap_or_else(|| self.motion.since.elapsed().as_secs_f32());
+            let time = if looping { elapsed % duration } else { elapsed.min(duration) };
+            skeleton.sample(clip, time, &mut local);
+        }
+        if made_now != 0 {
+            crate::posing::apply(skeleton, &self.motion.made.1, &mut local);
+        }
+        if let Some((from, at, fade)) = &self.motion.from {
+            let k = at.elapsed().as_secs_f32() / fade;
+            if k >= 1.0 {
+                self.motion.from = None;
+            } else {
+                let k = k * k * (3.0 - 2.0 * k);
+                for (to, from) in local.iter_mut().zip(from) {
+                    *to = from.towards(to, k);
+                }
+            }
+        }
+        let world = skeleton.world(&local);
+        self.motion.last = local;
+        self.motion.drawn = true;
+        Some(world)
+    }
+
+    /// Its face and body for the moment: blinking, smiling, the mouth moving while it talks, an
+    /// expression held as asked; the options chosen shown and the rest not; its animation. Of a
+    /// figure that does not move, only what changed is moved, and only the parts it moves are
+    /// sent again.
+    unsafe fn pose(&mut self, gl: &ffi::Gles2, live: &Live, t: f32, said: &serde_json::Value) {
         let since = live.mood_since.elapsed().as_secs_f32();
         let cycle = (t * 0.27).fract();
         let mut want: Vec<(&str, f32)> = vec![("blink", if cycle < 0.035 { 1.0 } else { 0.0 })];
@@ -1143,16 +1423,43 @@ impl ModelGpu {
             }
             _ => {}
         }
+        // A face held as the assistant asked (a pout, a smirk), under the blinking and the mouth.
+        if let Some(face) = said.get("expression").and_then(|e| e.as_str()).map(str::trim).filter(|e| !e.is_empty()) {
+            want.push((face, 1.0));
+        }
         let mut weights: std::collections::HashMap<(usize, usize), f32> = std::collections::HashMap::new();
         for (name, amount) in want {
             for (mesh, target, weight) in self.expressions.get(name).into_iter().flatten() {
-                for (p, part) in self.parts.iter().enumerate().filter(|(_, p)| p.mesh == *mesh && *target < p.targets.len()) {
+                for (p, _) in self.parts.iter().enumerate().filter(|(_, p)| p.mesh == *mesh && *target < p.targets.len()) {
                     *weights.entry((p, *target)).or_insert(0.0) += amount * weight;
-                    let _ = part;
                 }
             }
         }
-        // Targets that were moved and are no longer: back to rest.
+
+        // Which parts are shown, and the colours asked for.
+        let chosen = chosen_options(&self.groups, said);
+        for part in &mut self.parts {
+            part.shown = part.option.as_ref().is_none_or(|(group, option)| chosen.get(group) == Some(option));
+        }
+        let colours = said.get("colors").and_then(|c| c.as_object());
+        self.tints = self.materials.iter().map(|m| colours.and_then(|c| c.iter().find(|(name, _)| !m.name.is_empty() && name.trim().eq_ignore_ascii_case(&m.name))).and_then(|(_, c)| colour_of(c))).collect();
+
+        // The body: every part an animation moves, posed, with its face's targets moved first.
+        if let Some(world) = self.body(live.mood, said) {
+            for (p, part) in self.parts.iter().enumerate().filter(|(_, part)| part.shown) {
+                let morph: Vec<(usize, f32)> = weights.iter().filter(|((q, _), w)| *q == p && **w > 0.0).map(|((_, target), w)| (*target, *w)).collect();
+                let Some((positions, normals)) = self.skeleton.place(&part.moves, &world, &morph) else { continue };
+                let flat = |v: &[[f32; 3]]| v.iter().flatten().copied().collect::<Vec<f32>>();
+                let (positions, normals) = (flat(&positions), flat(&normals));
+                gl.BindBuffer(ffi::ARRAY_BUFFER, part.buffers[0]);
+                gl.BufferSubData(ffi::ARRAY_BUFFER, 0, (positions.len() * 4) as isize, positions.as_ptr() as *const _);
+                gl.BindBuffer(ffi::ARRAY_BUFFER, part.buffers[1]);
+                gl.BufferSubData(ffi::ARRAY_BUFFER, 0, (normals.len() * 4) as isize, normals.as_ptr() as *const _);
+            }
+        }
+
+        // What does not move: its face's targets, when they changed.
+        let still = |part: &GpuPart| matches!(part.moves, crate::figure::Moves::Still);
         let mut changed: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for (key, w) in &weights {
             if (self.weights.get(key).copied().unwrap_or(0.0) - w).abs() > 0.01 {
@@ -1164,7 +1471,7 @@ impl ModelGpu {
                 changed.insert(key.0);
             }
         }
-        for p in changed {
+        for p in changed.into_iter().filter(|p| still(&self.parts[*p])) {
             let part = &self.parts[p];
             let mut positions = part.rest.clone();
             for ((q, target), w) in &weights {
@@ -1182,5 +1489,29 @@ impl ModelGpu {
             gl.BufferSubData(ffi::ARRAY_BUFFER, 0, (flat.len() * 4) as isize, flat.as_ptr() as *const _);
         }
         self.weights = weights;
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_group_shows_its_first_option_until_another_is_asked_for() {
+        let groups = vec![("outfit".to_string(), vec!["casual".to_string(), "dress".to_string()]), ("hair".to_string(), vec!["long".to_string()])];
+        let chosen = chosen_options(&groups, &json!({}));
+        assert_eq!(chosen.get("outfit").map(String::as_str), Some("casual"));
+        let chosen = chosen_options(&groups, &json!({"options": {"Outfit": "Dress"}}));
+        assert_eq!(chosen.get("outfit").map(String::as_str), Some("dress"));
+        assert_eq!(chosen.get("hair").map(String::as_str), Some("long"));
+    }
+
+    #[test]
+    fn colours_are_read_as_numbers_or_as_hex() {
+        assert_eq!(colour_of(&json!([1.0, 0.5, 0.0])), Some([1.0, 0.5, 0.0, 1.0]));
+        assert_eq!(colour_of(&json!("#ff0000")), Some([1.0, 0.0, 0.0, 1.0]));
+        assert_eq!(colour_of(&json!("red")), None);
+        assert_eq!(colour_of(&json!([2.0, -1.0, 0.0, 0.5])), Some([1.0, 0.0, 0.0, 0.5]));
     }
 }

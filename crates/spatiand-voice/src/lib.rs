@@ -12,6 +12,7 @@ pub mod chat;
 pub mod context;
 pub mod dictation;
 pub mod echo;
+pub mod figure;
 pub mod hemera;
 pub mod phrases;
 pub mod settings;

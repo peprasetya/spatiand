@@ -588,6 +588,28 @@
         `{"do": "target"}`, the window a request with none named acts on, is
         likewise the one looked at when the room knows where the wearer looks.
 
+        `{"do": "avatar", ...}` is the assistant's figure, laid over what was
+        said of it before (a key left out stays as it was): `path` its file (a
+        GLB or a VRM; none for the room's own robot), `visible`, `state` (what
+        it is doing: idle, listening, checking, attentive, hearing,
+        transcribing, thinking, pondering, working, talking, happy; `mood` for
+        a room older than these), `wave: true` (a wave, each time it is said),
+        `size` (0.5 to 3 times its usual height), `signs` (the lights over its
+        head, shown unless false), `options` (`{"group": "option"}`: a node
+        named `group=option` is shown only while it is the one chosen, and a
+        group's first option until one is), `pose` (an animation held until
+        another is asked for, or none -- or, for a figure with a person's
+        skeleton, a pose of its own making: an object of its body's parts,
+        each with where it points from the figure's own point of view,
+        `{"left_upper_arm": "down, out, a little back", "head": "tilt left"}`,
+        held over its animation), `move` with `moves` (an animation
+        played once, each time `moves` counts up), `expression` (a face held:
+        a VRM expression, or a morph target by its name) and `colors`
+        (`{"material": "#rrggbb"}`). An animation named after the state plays
+        by itself, `idle` standing in for any the figure lacks. A figure's
+        skeleton is posed by the room the same way on every platform
+        (docs/spatipal-pals.md).
+
         Only the room and the assistant use this interface: a copy of this
         file in a client (Chromium's) needs no change for what is added here,
         and is brought up to date with that client's next monthly build.

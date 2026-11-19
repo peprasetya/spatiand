@@ -42,6 +42,9 @@ pub struct View<'a> {
     pub models: &'a [String],
     pub voices: &'a [String],
     pub characters: &'a [String],
+    /// The pal it is, if one is chosen, and the pals there are, by folder.
+    pub pack: Option<&'a crate::pack::Pack>,
+    pub pals: &'a [String],
 }
 
 /// What the wearer asked for.
@@ -59,6 +62,8 @@ pub enum Want {
     Chat,
     /// The settings, changed: to keep.
     Keep(Settings, VoiceSettings),
+    /// A word to the wearer: a line that cannot be changed here, and why.
+    Note(String),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -70,6 +75,7 @@ pub enum Page {
 /// One line of the settings page.
 #[derive(Clone, Copy, PartialEq)]
 enum Line {
+    Pal,
     On,
     Shown,
     Name,
@@ -90,7 +96,7 @@ enum Line {
 }
 
 const LINES: &[(&str, &[Line])] = &[
-    ("Assistant", &[Line::On, Line::Name, Line::Persona, Line::Figure, Line::Shown]),
+    ("Assistant", &[Line::Pal, Line::On, Line::Name, Line::Persona, Line::Figure, Line::Shown]),
     ("Voice and ears", &[Line::Voice, Line::Described, Line::Spoken, Line::Listening, Line::Thinking]),
     ("Models and chats", &[Line::Model, Line::Large, Line::Continue]),
     ("Dictation", &[Line::Languages, Line::Words, Line::Cleanup, Line::Hemera]),
@@ -476,7 +482,16 @@ impl Window {
         let row = self.lines.input(&input)?;
         let line = Self::line_at(row)?;
         let (mut s, mut v) = (view.settings.clone(), view.speech.clone());
+        if let Some(p) = view.pack.filter(|p| pal_sets(p, line)) {
+            return Some(Want::Note(format!("{} is set in the pal's own folder (assistant/pals/{}): change it there.", label(line), p.folder)));
+        }
         match line {
+            Line::Pal => {
+                let mut choices = vec![String::new()];
+                choices.extend(view.pals.iter().cloned());
+                s.pal = next(&choices, &s.pal);
+                Some(Want::Keep(s, v))
+            }
             Line::Name | Line::Persona | Line::Described | Line::Words | Line::Hemera => {
                 self.editing = Some(line);
                 self.edit.set(text_of(line, view));
@@ -551,8 +566,22 @@ fn next<S: AsRef<str>>(choices: &[S], now: &str) -> String {
     choices[at].as_ref().to_string()
 }
 
+/// Whether the pal sets this line itself, over the wearer's own.
+fn pal_sets(p: &crate::pack::Pack, line: Line) -> bool {
+    match line {
+        Line::Name => p.sets("name"),
+        Line::Persona => p.sets("persona"),
+        Line::Figure => p.sets("figure"),
+        Line::Voice | Line::Described => p.sets("voice"),
+        Line::Model => p.sets("model"),
+        Line::Large => p.sets("large_model"),
+        _ => false,
+    }
+}
+
 fn label(line: Line) -> &'static str {
     match line {
+        Line::Pal => "Pal (someone of your own)",
         Line::On => "Start with the room",
         Line::Shown => "Show its figure",
         Line::Name => "Name (what it answers to)",
@@ -579,7 +608,25 @@ fn on(b: bool) -> String {
 
 fn value(line: Line, view: &View) -> String {
     let (s, v) = (view.settings, view.speech);
+    // What a pal sets is shown as its own; who it is, never -- the window is in the room.
+    if let Some(p) = view.pack.filter(|p| pal_sets(p, line)) {
+        return match line {
+            Line::Persona => "The pal's own".into(),
+            Line::Name => format!("{} (the pal's)", s.name),
+            Line::Figure => format!("{} (the pal's)", p.about.figure),
+            Line::Voice | Line::Described => "The pal's own".into(),
+            Line::Model => format!("{} (the pal's)", s.model),
+            Line::Large => format!("{} (the pal's)", s.large_model),
+            _ => String::new(),
+        };
+    }
     match line {
+        Line::Pal => match view.pack {
+            Some(p) => format!("{} (pals/{})", s.name, p.folder),
+            None if !s.pal.is_empty() => format!("{} cannot be read", s.pal),
+            None if view.pals.is_empty() => "None (see docs/spatipal-pals.md)".into(),
+            None => "None".into(),
+        },
         Line::On => on(s.on),
         Line::Shown => if s.shown { "Shown".into() } else { "Hidden (still listening)".into() },
         Line::Name => s.name.clone(),
@@ -764,6 +811,8 @@ mod tests {
             models: &[],
             voices: &[],
             characters: &[],
+            pack: None,
+            pals: &[],
         };
         let delete = || Input::Key { key: Key::Delete, text: None, modifiers: Modifiers { control: true, ..Default::default() }, letter: None };
         let mut w = Window::new();
@@ -788,7 +837,7 @@ mod tests {
         let mut w = Window::new();
         assert!(w.ask_to_forget("a".into()).is_none());
         let (settings, speech) = (Settings::default(), VoiceSettings::default());
-        let view = View { chats: &[], current: None, answering: None, speaking: false, settings: &settings, speech: &speech, listening: false, look: false, status: "", trouble: None, models: &[], voices: &[], characters: &[] };
+        let view = View { chats: &[], current: None, answering: None, speaking: false, settings: &settings, speech: &speech, listening: false, look: false, status: "", trouble: None, models: &[], voices: &[], characters: &[], pack: None, pals: &[] };
         assert!(w.input(key(Key::Escape), &view).is_none());
         assert!(w.asking.is_none());
     }

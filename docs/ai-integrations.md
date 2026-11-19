@@ -449,6 +449,37 @@ back from the frame) on any glasses -- the snapshot room draws no frame to read;
 room's `seen` and the read-back are in the Beam Pro's and the Mac's shared backend, which checks
 for Android here); Mac windows and a host's in the room (the same texture path, not run).
 
+### Figures that move, and pals (2026-11-19)
+
+The owner asked for a SpatiPal of his own -- a figure that changes clothes, hair, pose and
+animation, a persona of his own -- kept out of Spatiand's source, the way to make one public. The
+plan's "moods, animations, outfits" had been built as far as a figure standing still with a face:
+"Skeletons are not posed" (`figure.rs`, until now).
+
+- **The room poses a figure** (`figure.rs`, `avatar.rs`): glTF skins on the CPU, the same on every
+  platform; animations by name (step, linear, cubic), one for each state played by itself (`idle`
+  standing in), and moves and poses asked for, blended over 0.3 s; **options**, a node named
+  `group=option` shown only while chosen; a plain GLB's morph targets as expressions by their
+  names; a face held; a material's colour; a figure's `size`, drawn into a larger picture when
+  larger. The lights over a wearer's figure are over its head now: they were drawn at the robot's
+  chin height, which is a figure's neck. `avatar`'s fields are in the protocol's notes now.
+- **Pals** (`crates/spatipal/src/pack.rs`): a folder in `assistant/pals/`, chosen in the settings,
+  with its name, persona, figure, voice and models over the settings'; its chats its own; a
+  private one's words out of the log. Its models get `appearance`, made from what its figure
+  offers (`spatiand_voice::figure`, read the same way by the room).
+- For every SpatiPal: the routing counts changing its figure as the quick model's (a change of
+  clothes had gone to the larger model, which had to load); a stage direction in an answer
+  (`*leans in*`) is not said, and the system message asks for none; a GLB's sparse accessors --
+  Blender's shape keys -- are read (they were zeroes: a mouth that never moved).
+
+Poses of its own (the owner, 2026-11-19: "if animation too complex, then pose"): a figure with a
+person's skeleton is posed by its model in words, part by part ("left upper arm down, out, a
+little back"), the room turning its joints as a body bends; thirteen poses by name are made of the
+same words. New movement -- animations made from words -- would need a text-to-motion model on
+hemera, which it has not.
+
+All of it, and how a figure was made on hemera: [spatipal-pals.md](spatipal-pals.md).
+
 ## Dictation with no room
 
 The same phrases and clean-up, with a switch instead of the mic key: while it is on the microphone

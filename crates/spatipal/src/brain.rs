@@ -51,6 +51,10 @@ pub struct Turn {
     pub history: Vec<Said>,
     pub look: bool,
     pub settings: Settings,
+    /// A pal's `appearance` tool, when its figure offers anything, and how it looks now in words
+    /// (`crate::pack`): the tool is the same every turn, the look goes with the wearer's words.
+    pub appearance: Option<Value>,
+    pub looks: String,
     /// When the wearer stopped speaking, when it was said aloud: how long the answer took is
     /// counted from then.
     pub ended: Option<Instant>,
@@ -217,15 +221,16 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     messages.extend(past);
     // The room as it is, with the wearer's words: the picture of what they see first, when the
     // request is about it; then the window's own text, when the request reaches past the screen.
-    let mut words = format!("{}\n{}", room_note(&windows, &seen), turn.text);
+    // A pal's look is part of the room as it is.
+    let note = if turn.looks.is_empty() { room_note(&windows, &seen) } else { format!("{}\n{}", room_note(&windows, &seen), turn.looks) };
+    let mut words = format!("{note}\n{}", turn.text);
     let looked = seen.pointer("/looking_at/window").and_then(Value::as_u64);
     if let (Some(window), true) = (looked, past_the_view(&turn.text)) {
         let own = room.ask(json!({"do": "describe", "window": window}));
         if let Some(text) = own.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
             let text: String = text.chars().take(3000).collect();
             words = format!(
-                "{}\n[Window {window}'s own text: all of it, much of it NOT on screen now. The picture is what the wearer sees; for what they ask about beyond it -- the rest of the page, what is above or below -- answer from this text:]\n{text}\n[End of window {window}'s text.]\n{}",
-                room_note(&windows, &seen),
+                "{note}\n[Window {window}'s own text: all of it, much of it NOT on screen now. The picture is what the wearer sees; for what they ask about beyond it -- the rest of the page, what is above or below -- answer from this text:]\n{text}\n[End of window {window}'s text.]\n{}",
                 turn.text
             );
             log::info!("brain: given window {window}'s own text too ({} characters): the request reaches past the screen", text.chars().count());
@@ -270,7 +275,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         let ask = Ask {
             model: model.clone(),
             messages: messages.clone(),
-            tools: tools::all(!large),
+            tools: tools::all(!large, turn.appearance.as_ref()),
             max_tokens: if large { 4096 } else { 700 },
             temperature: if large { 0.6 } else { 0.4 },
             thinking: large,
@@ -435,10 +440,12 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
 /// ([`room_note`]). The larger model is not told about handing over -- told, it spent its thinking
 /// on whether it should, and opened an application to be sure.
 fn system(s: &Settings, larger: bool) -> String {
+    // A pal's persona is pages of its own (`crate::pack`): a paragraph of its own, after who it is.
+    let persona = if s.persona.contains('\n') { format!("\n\n{}\n", s.persona.trim()) } else { s.persona.clone() };
     format!(
         "You are {name}, the wearer's assistant in Spatiand, a 3D desktop seen through glasses. {persona}\n\
          \n\
-         Talk like a person: short, natural sentences. Answer in the language of the wearer's last message: English to English, Indonesian to Indonesian; only when they mix the two in that message, mix them too. What you write is spoken aloud: no markdown, no lists unless asked, no emoji.\n\
+         Talk like a person: short, natural sentences. Answer in the language of the wearer's last message: English to English, Indonesian to Indonesian; only when they mix the two in that message, mix them too. What you write is spoken aloud: no markdown, no lists unless asked, no emoji, no actions or stage directions such as *smiles*.\n\
          \n\
          Each message from the wearer begins with a note in square brackets on the room as it is then: the time, the window they are looking at and how much of it is in view, the other windows on show, and the hidden ones. The wearer did not say it; use it when it helps.\n\
          What the wearer sees comes first. \"This\", \"here\", \"what I see\" mean the window they are looking at, and only the part of it in view. When they ask about it, a picture of exactly what they see comes with their message: describe and answer from that picture -- if it shows one image, it is that image -- not from what you know of the page or the application. Text marked as more than is on screen is there only for what the request needs beyond the view (the rest of an article, the other window); do not describe it as what they see.\n\
@@ -449,7 +456,6 @@ fn system(s: &Settings, larger: bool) -> String {
          Ask the wearer first before closing a window, deleting anything, sending a message, buying anything, or pressing Enter in a terminal.\n\
          {route}",
         name = s.name,
-        persona = s.persona,
         route = if larger {
             "You are the larger model: think it through, then answer. Use tools only when the request is about the room. Code goes in a code block; say the rest briefly."
         } else {
@@ -461,14 +467,14 @@ fn system(s: &Settings, larger: bool) -> String {
 /// A request that begins as every one of a model's does, for it to read before it is needed
 /// (`crate::warm`): its tools and its system message, and a word from no one. The larger
 /// model's when `larger`.
-pub fn prime(s: &Settings, larger: bool) -> Value {
+pub fn prime(s: &Settings, larger: bool, appearance: Option<&Value>) -> Value {
     json!({
         "model": if larger { &s.large_model } else { &s.model },
         "messages": [
             {"role": "system", "content": system(s, larger)},
             {"role": "user", "content": "[Getting ready: nothing is asked yet.]\nHi."},
         ],
-        "tools": tools::all(!larger),
+        "tools": tools::all(!larger, appearance),
         "max_tokens": 1,
         "temperature": 0,
         "stream": false,
@@ -695,6 +701,120 @@ fn looks_indonesian(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// **Against hemera**: a pal's model, asked in words, changes its clothes and twirls --
+    /// through `appearance`, with SpatiPal's own system message and tools. A made-up pal.
+    /// `cargo test -p spatipal -- --ignored --test-threads 1 appearance`
+    #[test]
+    #[ignore]
+    fn a_pals_model_changes_its_clothes_when_asked_appearance() {
+        use spatiand_voice::figure::Offers;
+        let offers = Offers {
+            groups: vec![("outfit".into(), vec!["casual".into(), "dress".into(), "pyjamas".into()])],
+            animations: vec!["idle".into(), "talking".into(), "spin".into(), "wave".into(), "hand_on_hip".into()],
+            expressions: vec![],
+            materials: vec![],
+            body: vec![],
+        };
+        let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({
+            "name": "Mira",
+            "options": {"outfit": {"casual": "jeans and a hoodie", "dress": "a red evening dress", "pyjamas": "striped pyjamas"}},
+            "moves": {"spin": "a twirl, to show off", "wave": "a wave"},
+            "poses": {"hand_on_hip": "a hand on your hip"}
+        }))
+        .unwrap();
+        let pack = crate::pack::Pack::made_up(about, "You are Mira, a cheerful woman who loves clothes and shows them off.", offers);
+        let s = pack.over(&Settings::default());
+        let hemera = Hemera::new(&VoiceSettings::default().hemera);
+        let tools = tools::all(true, pack.tool().as_ref());
+        for (asked, group, value, mv) in [("Put on your dress and give me a twirl!", "outfit", "dress", Some("spin")), ("Time for bed. Get into your pyjamas.", "outfit", "pyjamas", None)] {
+            let ask = Ask {
+                model: s.model.clone(),
+                messages: vec![json!({"role": "system", "content": system(&s, false)}), json!({"role": "user", "content": format!("[It is 22:10.]\n{}\n{asked}", pack.note())})],
+                tools: tools.clone(),
+                max_tokens: 300,
+                temperature: 0.2,
+                thinking: false,
+            };
+            // A change of clothes is the quick model's: handed to the larger one, it waited for
+            // the 27B to load (the snapshot room, 2026-11-19).
+            assert!(!wants_larger(&hemera, &s.model, asked, ""), "{asked:?} went to the larger model");
+            let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
+            let call = answer.calls.iter().find(|c| c.name == "appearance").unwrap_or_else(|| panic!("{asked:?}: no appearance call: {:?} {:?}", answer.text, answer.calls));
+            let args: Value = serde_json::from_str(&call.arguments).unwrap();
+            eprintln!("{asked:?} -> appearance({args})");
+            assert_eq!(args[group], value, "{asked:?}");
+            if let Some(mv) = mv {
+                assert_eq!(args["move"], mv, "{asked:?}");
+            }
+        }
+    }
+
+    /// **Against hemera**: a pal's model makes poses of its own as it is asked in words, through
+    /// `appearance`'s `own_pose`, each read as the room reads it. A made-up pal with a body and
+    /// no poses by name; `SPATIPAL_TEST_MODEL` asks another model than the settings' everyday one.
+    /// `cargo test -p spatipal -- --ignored --test-threads 1 own_pose`
+    #[test]
+    #[ignore]
+    fn a_pals_model_makes_a_pose_of_its_own_own_pose() {
+        use spatiand_voice::figure::{Offers, BODY_PARTS};
+        let offers = Offers { animations: vec!["idle".into(), "talking".into()], body: BODY_PARTS.iter().map(|p| p.to_string()).collect(), ..Default::default() };
+        let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
+        let mut pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
+        let s = pack.over(&Settings::default());
+        let model = std::env::var("SPATIPAL_TEST_MODEL").unwrap_or_else(|_| s.model.clone());
+        let hemera = Hemera::new(&VoiceSettings::default().hemera);
+        let tools = tools::all(true, pack.tool().as_ref());
+        let asks: [(&str, &[&str]); 8] = [
+            ("Put your hands on your hips.", &["left_upper_arm", "left_forearm", "right_upper_arm", "right_forearm"]),
+            ("Fold your arms.", &["left_forearm", "right_forearm"]),
+            ("Strike a thinking pose, your hand on your chin.", &[]),
+            ("Shrug.", &[]),
+            ("Look up at the sky.", &["head"]),
+            ("Raise your right arm, as if you had a question.", &["right_upper_arm"]),
+            ("Put your right hand on your heart.", &["right_forearm"]),
+            ("Turn your head and look at me over your right shoulder.", &["head"]),
+        ];
+        let mut misses = Vec::new();
+        for (asked, wants) in asks {
+            let ask = Ask {
+                model: model.clone(),
+                messages: vec![json!({"role": "system", "content": system(&s, false)}), json!({"role": "user", "content": format!("[It is 21:40.]\n{}\n{asked}", pack.note())})],
+                tools: tools.clone(),
+                max_tokens: 400,
+                temperature: 0.2,
+                thinking: false,
+            };
+            eprintln!("{asked:?}: to the larger model: {}", wants_larger(&hemera, &s.model, asked, ""));
+            let started = std::time::Instant::now();
+            let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
+            let Some(call) = answer.calls.iter().find(|c| c.name == "appearance") else {
+                misses.push(format!("{asked:?}: no appearance call: {:?} {:?}", answer.text, answer.calls));
+                continue;
+            };
+            let args: Value = serde_json::from_str(&call.arguments).unwrap_or_else(|e| {
+                eprintln!("{asked:?}: its call is not JSON ({e}): {:?}", call.arguments);
+                Value::Null
+            });
+            eprintln!("{asked:?} -> appearance({args}) in {:.1} s; said {:?}", started.elapsed().as_secs_f32(), answer.text);
+            pack.look = Default::default();
+            match pack.apply(&args) {
+                Ok((_, did)) => {
+                    let held = &pack.look.own_pose;
+                    eprintln!("    held: {did} -- {held:?}");
+                    if held.is_empty() {
+                        misses.push(format!("{asked:?}: no pose held"));
+                    }
+                    for part in wants.iter().filter(|p| !held.contains_key(**p)) {
+                        misses.push(format!("{asked:?}: no {part} in {held:?}"));
+                    }
+                }
+                Err(why) => misses.push(format!("{asked:?}: {why}")),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&pack.dir);
+        assert!(misses.is_empty(), "{} of {} missed:\n{}", misses.len(), asks.len(), misses.join("\n"));
+    }
+
     use super::*;
 
     #[test]
@@ -848,13 +968,15 @@ fn wants_larger(hemera: &Hemera, model: &str, request: &str, last: &str) -> bool
     // fifteen seconds over it (the test of 2026-10-29); with them 24 of 25 requests went where
     // they should.
     let system = "You decide who answers the wearer's request. The quick model answers chat, questions with a short answer, \
-                  and actions in the room: opening applications, working windows, clicking, typing, reminders, settings. \
+                  and actions in the room: opening applications, working windows, clicking, typing, reminders, settings, \
+                  and changing its own figure -- clothes, a pose, a move. \
                   The larger model answers what needs careful thought: writing or explaining code, calculations of several steps, \
                   analysis, planning, comparing, long or exact writing, translating long text. \
                   The quick model is told the time, the date and what is in the room, and sees what the wearer sees, so questions about them are quick. \
                   For example: \"what time is it?\" quick; \"what day is it tomorrow?\" quick; \"buka browser\" quick; \
                   \"describe what I see\" quick; \"apa ini?\" quick; \
-                  \"how many days until Friday?\" quick; \"write a script that backs up my photos\" larger; \
+                  \"how many days until Friday?\" quick; \"put on your dress and give me a twirl\" quick; \"show me how you sulk\" quick; \
+                  \"write a script that backs up my photos\" larger; \
                   \"explain how a VPN works\" larger; \"compare these two laptops\" larger. Reply with one word: quick or larger.";
     let user = if last.is_empty() { format!("Request: {request}") } else { format!("Your last answer: {last}\n\nRequest: {request}") };
     let started = std::time::Instant::now();

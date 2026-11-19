@@ -5292,6 +5292,7 @@ name = "spatiand-voice"
 version = "0.1.0"
 dependencies = [
  "env_logger",
+ "glam",
  "log",
  "serde",
  "serde_json",

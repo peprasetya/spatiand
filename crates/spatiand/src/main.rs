@@ -53,6 +53,7 @@ mod own;
 mod pip;
 mod pointer;
 mod pose;
+mod posing;
 mod prefs;
 #[cfg(not(target_os = "android"))]
 mod record;

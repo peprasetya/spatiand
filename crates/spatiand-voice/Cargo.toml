@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Speech for Spatiand: dictation and the assistant's ears and voice, through hemera"
 
 [dependencies]
+glam = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
