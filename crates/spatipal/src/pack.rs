@@ -81,12 +81,43 @@ const STOCK: &[(&str, &str, Words)] = &[
         &[("left_upper_arm", "out, up"), ("right_upper_arm", "out, up"), ("left_forearm", "in, a little back"), ("right_forearm", "in, a little back"), ("left_hand", "in, back"), ("right_hand", "in, back")],
     ),
     (
+        "hands_behind_back",
+        "your hands clasped behind your back",
+        &[("left_upper_arm", "down, a little back, a little out"), ("right_upper_arm", "down, a little back, a little out"), ("left_forearm", "in, a little back, a little down"), ("right_forearm", "in, a little back, a little down"), ("chest", "a little back")],
+    ),
+    (
         "lean_in",
         "leaning in, interested",
         &[("chest", "a little front"), ("head", "a little up, tilt left"), ("left_upper_arm", "down"), ("right_upper_arm", "down"), ("left_forearm", "down, a little front"), ("right_forearm", "down, a little front")],
     ),
     ("point", "pointing at the wearer", &[("right_upper_arm", "front"), ("right_forearm", "straight"), ("right_hand", "front"), ("left_upper_arm", "down, a little out"), ("left_forearm", "down, a little front")]),
     ("look_over_{side}_shoulder", "looking back over your {side} shoulder", &[("head", "left"), ("chest", "turn left"), ("left_upper_arm", "down"), ("right_upper_arm", "down")]),
+    // The heart is on her left: a right hand crosses to it, a left one rises in front of its own side.
+    (
+        "right_hand_on_heart",
+        "your right hand on your heart",
+        &[("right_upper_arm", "down, a little front, a little in"), ("right_forearm", "in, a little up"), ("left_upper_arm", "down, a little out"), ("left_forearm", "down, a little front")],
+    ),
+    (
+        "left_hand_on_heart",
+        "your left hand on your heart",
+        &[("left_upper_arm", "down, a little front"), ("left_forearm", "up, in"), ("right_upper_arm", "down, a little out"), ("right_forearm", "down, a little front")],
+    ),
+    (
+        "look_up",
+        "looking up",
+        &[("head", "up"), ("chest", "a little back"), ("left_upper_arm", "down, a little out"), ("right_upper_arm", "down, a little out"), ("left_forearm", "down, a little front"), ("right_forearm", "down, a little front")],
+    ),
+    (
+        "look_down",
+        "looking down, shy",
+        &[("head", "down"), ("chest", "a little front"), ("left_upper_arm", "down, a little out"), ("right_upper_arm", "down, a little out"), ("left_forearm", "down, a little front"), ("right_forearm", "down, a little front")],
+    ),
+    (
+        "head_tilt",
+        "your head tilted, curious",
+        &[("head", "tilt left, a little down"), ("left_upper_arm", "down, a little out"), ("right_upper_arm", "down, a little out"), ("left_forearm", "down, a little front"), ("right_forearm", "down, a little front")],
+    ),
 ];
 
 /// Names, each with its words for the model (empty when `pal.json` gives none).
@@ -156,6 +187,13 @@ pub struct Look {
     pub face: String,
     /// By material, `#rrggbb`.
     pub colours: BTreeMap<String, String>,
+}
+
+impl Look {
+    /// The pose it holds, by name or by its parts' words, as one string to tell one from another.
+    pub fn holding(&self) -> String {
+        format!("{}{:?}", self.pose, self.own_pose)
+    }
 }
 
 pub struct Pack {
@@ -311,9 +349,38 @@ impl Pack {
         self.offers.groups.iter().filter(|(g, _)| !OWN.contains(&g.as_str()))
     }
 
-    /// Its moves made from words (`crate::moves`), kept in its folder.
+    /// Its moves made from words (`crate::moves`), kept in its folder -- its idle made among them.
+    /// One of its moves (`pose`: false) or poses by this name, as it is named: its own or the
+    /// figure's, or one made of words.
+    pub fn known(&self, name: &str, pose: bool) -> Option<String> {
+        let (moves, poses) = self.moves_and_poses();
+        let name = name.trim();
+        let mut names: Vec<String> = if pose { poses.into_iter().map(|(n, _)| n).chain(self.stock().into_iter().map(|(n, _, _)| n)).collect() } else { moves.into_iter().map(|(n, _)| n).collect() };
+        names.retain(|n| n.eq_ignore_ascii_case(name));
+        names.into_iter().next()
+    }
+
     pub fn shelf(&self) -> spatiand_voice::motion::Shelf {
         spatiand_voice::motion::Shelf { dir: self.dir.join("moves") }
+    }
+
+    /// Its poses made from words, held as its poses by name are.
+    pub fn pose_shelf(&self) -> spatiand_voice::motion::Shelf {
+        spatiand_voice::motion::Shelf { dir: self.dir.join("poses") }
+    }
+
+    /// One of its moves or poses made from words, let go of -- or what it has made, when not.
+    pub fn forget(&mut self, name: &str) -> Result<(), String> {
+        let name = spatiand_voice::motion::name_of(name);
+        if self.shelf().forget(&name).is_ok() || self.pose_shelf().forget(&name).is_ok() {
+            if self.look.pose == name {
+                self.look.pose.clear();
+                self.keep_look();
+            }
+            return Ok(());
+        }
+        let made: Vec<String> = self.shelf().names().into_iter().chain(self.pose_shelf().names()).collect();
+        Err(if made.is_empty() { format!("you have made no move {name}") } else { format!("you have made no move {name}: yours are {}", made.join(", ")) })
     }
 
     /// Its animations played once, and those held: each with its words, if `pal.json` has them;
@@ -325,6 +392,9 @@ impl Pack {
                 moves.push((kept, "a move of your own, made from words".to_string()));
             }
         }
+        for kept in self.pose_shelf().names() {
+            poses.push((kept, "a pose of your own, made from words".to_string()));
+        }
         for name in &self.offers.animations {
             let bare = name.rsplit('|').next().unwrap_or(name);
             if STATES.iter().any(|s| s.eq_ignore_ascii_case(bare)) {
@@ -332,6 +402,8 @@ impl Pack {
             }
             let words = |map: &BTreeMap<String, String>| map.iter().find(|(k, _)| k.eq_ignore_ascii_case(bare)).map(|(_, v)| v.clone());
             match (words(&self.about.poses), words(&self.about.moves)) {
+                // One of its own made of the same name is the one held.
+                (Some(_), _) if poses.iter().any(|(n, _): &(String, String)| n.eq_ignore_ascii_case(bare)) => {}
                 (Some(w), _) => poses.push((bare.to_string(), w)),
                 // One of its own made of the same name is the one done.
                 (None, _) if moves.iter().any(|(n, _): &(String, String)| n.eq_ignore_ascii_case(bare)) => {}
@@ -455,6 +527,7 @@ impl Pack {
     /// A call of its tool: the look changed and kept, and what the room is to be told -- or why
     /// not, in words its model can mend its call by.
     pub fn apply(&mut self, args: &Value) -> Result<(Value, String), String> {
+        let args = &self.mended(args);
         let mut did = Vec::new();
         let mut look = self.look.clone();
         let mut moved = None;
@@ -486,7 +559,12 @@ impl Pack {
                         did.push(m.clone());
                         moved = Some(m);
                     }
-                    None => return Err(format!("there is no move {value}: choose one of {}", moves.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", "))),
+                    // A model given only the names wrote one of its own (a small one writes its
+                    // call as text at times, held to no list): told how to make it.
+                    None => {
+                        let made = if self.offers.body.is_empty() { "" } else { " -- or make it with make_move, kind move" };
+                        return Err(format!("there is no move {value}: choose one of {}{made}", moves.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")));
+                    }
                 },
                 "pose" if wanted == "none" => {
                     look.pose.clear();
@@ -507,7 +585,10 @@ impl Pack {
                     }
                     (None, None) => {
                         let all: Vec<String> = poses.iter().map(|(n, _)| n.clone()).chain(self.stock().into_iter().map(|(n, _, _)| n)).collect();
-                        return Err(format!("there is no pose {value}: choose one of {}, or none{}", all.join(", "), if self.offers.body.is_empty() { "" } else { " -- or make your own with own_pose" }));
+                        // As with a move: make_move, which both models have (own_pose is the
+                        // larger's alone), 2026-11-20.
+                        let made = if self.offers.body.is_empty() { "" } else { " -- or make it with make_move, kind pose" };
+                        return Err(format!("there is no pose {value}: choose one of {}, or none{made}", all.join(", ")));
                     }
                 },
                 "face" if wanted == "none" => {
@@ -551,6 +632,37 @@ impl Pack {
         Ok((room, did.join(", ")))
     }
 
+    /// A call as its model meant it: a pose by name written as one of `own_pose`'s parts (a
+    /// model's slip, 2026-11-19: `{"own_pose": {"arms_folded": "true"}}`) is that pose by name;
+    /// and a pose given as a move, or a move as a pose, is the one its name says (2026-11-20:
+    /// "Now fold your arms." was `{"move": "arms_folded"}` in three of three).
+    fn mended(&self, args: &Value) -> Value {
+        let (moves, poses) = self.moves_and_poses();
+        let stock = self.stock();
+        let pose_named = |k: &str| poses.iter().map(|(n, _)| n.clone()).chain(stock.iter().map(|(n, _, _)| n.clone())).find(|n| n.eq_ignore_ascii_case(k.trim()));
+        let move_named = |k: &str| moves.iter().map(|(n, _)| n.clone()).find(|n| n.eq_ignore_ascii_case(k.trim()));
+        let mut mended = args.clone();
+        let Some(o) = mended.as_object_mut() else { return mended };
+        if let Some(name) = o.get("own_pose").and_then(Value::as_object).and_then(|parts| parts.keys().find_map(|k| pose_named(k))) {
+            o.remove("own_pose");
+            o.insert("pose".into(), json!(name));
+        }
+        let given = |o: &serde_json::Map<String, Value>, key: &str| o.get(key).and_then(Value::as_str).map(str::to_string);
+        if let Some(m) = given(o, "move").filter(|m| move_named(m).is_none()) {
+            if let (Some(p), false) = (pose_named(&m), o.contains_key("pose")) {
+                o.remove("move");
+                o.insert("pose".into(), json!(p));
+            }
+        }
+        if let Some(p) = given(o, "pose").filter(|p| pose_named(p).is_none() && !p.eq_ignore_ascii_case("none")) {
+            if let (Some(m), false) = (move_named(&p), o.contains_key("move")) {
+                o.remove("pose");
+                o.insert("move".into(), json!(m));
+            }
+        }
+        mended
+    }
+
     /// A pose of its own making, from its tool's call: each part it names one its figure has,
     /// in words the room reads -- or why not, so that its model can mend them. A part left as it
     /// moves ("relaxed") is left out.
@@ -591,6 +703,11 @@ impl Pack {
 
     /// What the room is told of its figure: which file, how large, how it looks now.
     pub fn figure_request(&self, shown: bool) -> Value {
+        // Its moves and poses made from words, which the room plays as its animations.
+        let mut motions = self.shelf().room();
+        if let (Some(all), Value::Object(poses)) = (motions.as_object_mut(), self.pose_shelf().room()) {
+            all.extend(poses);
+        }
         let options: BTreeMap<&String, &String> = self.look.options.iter().filter(|(g, o)| self.offers.groups.iter().any(|(group, all)| group == *g && all.contains(o))).collect();
         let mut room = json!({
             "do": "avatar",
@@ -601,7 +718,7 @@ impl Pack {
             "pose": if self.look.own_pose.is_empty() { json!(self.look.pose) } else { json!(self.look.own_pose) },
             "expression": self.look.face,
             "colors": self.look.colours,
-            "motions": self.shelf().room(),
+            "motions": motions,
         });
         if self.about.size > 0.0 {
             room["size"] = json!(self.about.size);
@@ -635,10 +752,17 @@ impl Pack {
         for (material, hex) in &self.look.colours {
             parts.push(format!("{material} {hex}"));
         }
+        // A small model, asked for a move it had not, said it could not do it, or said it let one go
+        // without letting it go (neohorse-1:4b, 2026-11-19): said with every turn, where it weighs most.
+        let body = if self.offers.body.is_empty() {
+            ""
+        } else {
+            " [Your body can do anything asked of it: one of your moves or poses, or a new move with make_move -- never say you cannot; to let a move you made go, make_move with kind forget.]"
+        };
         if parts.is_empty() {
-            return String::new();
+            return body.trim().to_string();
         }
-        format!("[How you look now: {}.]", parts.join("; "))
+        format!("[How you look now: {}.]{body}", parts.join("; "))
     }
 }
 
@@ -799,7 +923,9 @@ mod tests {
         let mut p = pack(about(), offers());
         let why = p.apply(&json!({"outfit": "bikini"})).unwrap_err();
         assert!(why.contains("casual, dress"), "{why}");
-        assert!(p.apply(&json!({"pose": "dance"})).is_err());
+        // A figure without a body is not told to make one.
+        assert!(!p.apply(&json!({"pose": "dance"})).unwrap_err().contains("make_move"));
+        assert!(!p.apply(&json!({"move": "cartwheel"})).unwrap_err().contains("make_move"));
         assert!(p.apply(&json!({"skin_colour": "#000000"})).is_err());
         assert!(p.apply(&json!({})).is_err());
         assert_eq!(p.look, Look::default());
@@ -827,18 +953,35 @@ mod tests {
         assert!(did.contains("a pose of your own"), "{did}");
         assert_eq!(p.look.pose, "");
         assert!(p.note().contains("holding a pose of your own: left_forearm \"in, a little front\""), "{}", p.note());
+        // A pose by name put among own_pose's parts, as a small model did: held by its name.
+        let (room, _) = p.apply(&json!({"own_pose": {"arms_folded": "true"}})).unwrap();
+        assert_eq!(room["pose"]["left_forearm"], "in, a little up");
+        assert_eq!(p.look.pose, "arms_folded");
+        // A pose given as a move, and a move as a pose: the one its name says.
+        p.apply(&json!({"pose": "none"})).unwrap();
+        let (room, did) = p.apply(&json!({"move": "Arms_Folded"})).unwrap();
+        assert_eq!((p.look.pose.as_str(), room["pose"]["left_forearm"].as_str()), ("arms_folded", Some("in, a little up")));
+        assert!(did.contains("pose: arms_folded"), "{did}");
+        let (room, _) = p.apply(&json!({"pose": "wave"})).unwrap();
+        assert_eq!((room["move"].as_str(), p.look.pose.as_str()), (Some("wave"), "arms_folded"));
         // Written as a string of JSON, as a small model may.
         let (room, _) = p.apply(&json!({"own_pose": "{\"head\": \"a little down\"}"})).unwrap();
         assert_eq!(room["pose"], json!({"head": "a little down"}));
         // What it has not, and words that say nothing, are answered with what would do.
         assert!(p.apply(&json!({"own_pose": {"left_shoulder": "up"}})).unwrap_err().contains("your parts are"));
         assert!(p.apply(&json!({"own_pose": {"left_hand": "on my hip"}})).unwrap_err().contains("front, back, up"));
+        // One it has no name for, written by a small model in a call held to no list: told the
+        // way it has to make it (2026-11-20: "kneel on one knee", told of own_pose, which it lacks).
+        let why = p.apply(&json!({"pose": "kneel on one knee"})).unwrap_err();
+        assert!(why.contains("hands_behind_back") && why.ends_with("or make it with make_move, kind pose"), "{why}");
+        assert!(p.apply(&json!({"move": "cartwheel"})).unwrap_err().ends_with("make_move, kind move"));
         assert_eq!(p.look.own_pose.get("head").map(String::as_str), Some("a little down"));
         // One made of words, by its name: held as its words; one the figure has its own of is
         // its own; and one using a part it has not (shoulders) without it.
         let tool = p.tool().unwrap();
         let names = tool["function"]["parameters"]["properties"]["pose"]["enum"].clone();
         assert!(names.as_array().unwrap().iter().any(|n| n == "hands_on_hips"), "{names}");
+        assert_eq!(p.known("Hands_Behind_Back", true).as_deref(), Some("hands_behind_back"));
         assert_eq!(names.as_array().unwrap().iter().filter(|n| *n == "hand_on_hip").count(), 1);
         // Either side of one that has a side, the right mirrored from the left.
         let (room, _) = p.apply(&json!({"pose": "look_over_right_shoulder"})).unwrap();
@@ -848,7 +991,7 @@ mod tests {
         assert_eq!(room["pose"]["head"], "tilt left");
         let (room, _) = p.apply(&json!({"pose": "Hands_On_Hips"})).unwrap();
         assert_eq!(room["pose"]["left_forearm"], "in, a little down, a little front");
-        assert_eq!(p.note(), "[How you look now: outfit casual; hair long; holding the pose hands_on_hips.]");
+        assert!(p.note().starts_with("[How you look now: outfit casual; hair long; holding the pose hands_on_hips.] [Your body can do anything"), "{}", p.note());
         let (room, _) = p.apply(&json!({"pose": "shrug"})).unwrap();
         assert!(room["pose"].get("left_shoulder").is_none() && room["pose"].get("left_forearm").is_some());
         let (room, _) = p.apply(&json!({"pose": "hand_on_hip"})).unwrap();
@@ -880,6 +1023,20 @@ mod tests {
         assert!(room["motions"].get("idle").is_some());
         let (room, _) = p.apply(&json!({"move": "twirl"})).unwrap();
         assert_eq!((room["move"].as_str(), room["moves"].as_u64()), (Some("twirl"), Some(1)));
+        // A pose made is held by its name, told to the room with the moves, and let go of.
+        let one_leg = p.pose_shelf().keep("one_leg", &ask, &motion).unwrap();
+        let tool = p.tool().unwrap();
+        assert!(tool["function"]["parameters"]["properties"]["pose"]["enum"].as_array().unwrap().iter().any(|n| n == "one_leg"));
+        let (room, _) = p.apply(&json!({"pose": "one_leg"})).unwrap();
+        assert_eq!(room["pose"], "one_leg");
+        assert_eq!(room["motions"]["one_leg"], json!(one_leg));
+        // What it has by a name, as make_move asks it: a move as a move, a pose as a pose.
+        assert_eq!(p.known("One_Leg", true).as_deref(), Some("one_leg"));
+        assert_eq!(p.known("twirl", false).as_deref(), Some("twirl"));
+        assert_eq!((p.known("one_leg", false), p.known("twirl", true), p.known("cartwheel", false)), (None, None, None));
+        p.forget("one_leg").unwrap();
+        assert_eq!(p.look.pose, "");
+        assert!(p.forget("one_leg").unwrap_err().contains("yours are idle, twirl, wave"));
         let _ = std::fs::remove_dir_all(&p.dir);
     }
 

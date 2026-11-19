@@ -38,6 +38,31 @@ impl Room {
     }
 }
 
+/// A pal's `appearance` for the small model: without `own_pose`, a pose made part by part, which a
+/// 4B wrote wrongly five times in eight (neohorse-1:4b, 2026-11-19: a pose by name put among its
+/// parts, a tool description's example copied for another pose) -- it hands such a pose over to
+/// the larger model, which makes it. The rest as it is.
+fn for_the_small(tool: &Value) -> Value {
+    let mut t = tool.clone();
+    if t.pointer("/function/name").and_then(Value::as_str) != Some("appearance") {
+        return t;
+    }
+    let Some(props) = t.pointer_mut("/function/parameters/properties").and_then(Value::as_object_mut) else { return t };
+    if props.remove("own_pose").is_none() {
+        return t;
+    }
+    if let Some(d) = props.get_mut("pose").and_then(|p| p.get_mut("description")) {
+        let words = d.as_str().unwrap_or_default().replace(" (or make your own with own_pose)", "").replace(" (make one with own_pose)", "");
+        // Left to choose, it took the nearest by name: "look up at the sky" over its shoulder.
+        *d = json!(format!("{words}. Only one of these by name: for any other pose, make_move with kind pose."));
+    }
+    if let Some(d) = t.pointer_mut("/function/description") {
+        let words = d.as_str().unwrap_or_default().replace(", a pose of your own", "");
+        *d = json!(words);
+    }
+    t
+}
+
 /// The tools, for the small model (`hand_over` among them) or the large -- and a pal's
 /// `appearance` (`crate::pack`), when its figure offers anything.
 pub fn all(small: bool, appearance: Option<&Value>) -> Vec<Value> {
@@ -113,9 +138,10 @@ pub fn all(small: bool, appearance: Option<&Value>) -> Vec<Value> {
         tool("cancel_reminder", "Cancel a reminder by its number.", json!({"id": {"type": "integer"}}), &["id"]),
     ];
     // A pal's own: `appearance`, and with it `make_move` for a figure with a body (`crate::moves`).
+    let own = |t: &Value| if small { for_the_small(t) } else { t.clone() };
     match appearance {
-        Some(Value::Array(pal)) => tools.extend(pal.iter().cloned()),
-        Some(appearance) => tools.push(appearance.clone()),
+        Some(Value::Array(pal)) => tools.extend(pal.iter().map(own)),
+        Some(appearance) => tools.push(own(appearance)),
         None => {}
     }
     if small {
@@ -223,9 +249,17 @@ fn run_as(call: &ToolCall, room: &Room, agreed: bool) -> Done {
         // A move made from words (`crate::moves`): begun on SpatiPal's thread, done when made.
         "make_move" => {
             let answer = room.ask(json!({"do": "make_move", "with": args}));
+            let shown = match args.get("kind").and_then(Value::as_str).map(str::trim) {
+                Some("forget") => format!("let go of {}", args.get("name").and_then(Value::as_str).unwrap_or("a move")),
+                Some("pose") => "making a pose".to_string(),
+                Some("idle") => "making a new idle".to_string(),
+                _ => "making a move".to_string(),
+            };
+            // Done at once instead, being one it has: shown as what was done.
+            let shown = answer.get("shown").and_then(Value::as_str).map(str::to_string).unwrap_or(shown);
             match (answer.get("error").and_then(Value::as_str), answer.get("did").and_then(Value::as_str)) {
                 (Some(e), _) => done(format!("That did not work: {e}"), None),
-                (None, did) => done(did.unwrap_or("Making it.").to_string(), Some("making a move".to_string())),
+                (None, did) => done(did.unwrap_or("Making it.").to_string(), Some(shown)),
             }
         }
         "dismiss" => done("You will leave once you have said goodbye.".to_string(), Some("left the room".to_string())),
@@ -456,6 +490,28 @@ fn is_terminal(app: &str) -> bool {
     ];
     let app = app.to_lowercase();
     TERMINALS.iter().any(|t| app.contains(t))
+}
+
+#[cfg(test)]
+mod pal_tools {
+    use super::*;
+
+    #[test]
+    fn the_small_model_hands_a_pose_of_its_own_over() {
+        let appearance = spatiand_voice::chat::tool(
+            "appearance",
+            "Change how you look in the room, or do something with your body: outfit, a pose, a pose of your own. Give only what changes.",
+            json!({"pose": {"type": "string", "enum": ["shrug", "none"], "description": "A pose to hold until you choose another, or none (or make your own with own_pose): shrug"}, "own_pose": {"type": "object"}}),
+            &[],
+        );
+        let small = all(true, Some(&Value::Array(vec![appearance.clone()])));
+        let a = small.iter().find(|t| t["function"]["name"] == "appearance").unwrap();
+        assert!(a["function"]["parameters"]["properties"].get("own_pose").is_none());
+        assert!(!a.to_string().contains("own_pose") && !a.to_string().contains("a pose of your own"), "{a}");
+        assert!(a.to_string().contains("make_move with kind pose"), "{a}");
+        let large = all(false, Some(&Value::Array(vec![appearance])));
+        assert!(large.iter().any(|t| t["function"]["name"] == "appearance" && t["function"]["parameters"]["properties"].get("own_pose").is_some()));
+    }
 }
 
 #[cfg(test)]

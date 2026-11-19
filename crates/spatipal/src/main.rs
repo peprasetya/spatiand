@@ -350,6 +350,8 @@ impl Pal {
             text: a.text,
             thinking: a.thinking,
             did: a.did,
+            // Cut: what it did is told with its words, as a note (`brain::conversation`).
+            calls: Vec::new(),
             model: if a.handed_over { a.model } else { String::new() },
             at: store::now(),
         };
@@ -743,15 +745,53 @@ impl Pal {
     /// A move asked for in words (`tools.rs`'s `make_move`): begun, and answered at once.
     fn make_move(&mut self, with: &Value) -> Value {
         let Some(p) = self.pack.as_ref().filter(|p| !p.offers.body.is_empty()) else { return json!({"error": "your figure has no body to move"}) };
-        if let Some(m) = &self.making {
-            return json!({"error": format!("still making {} -- a moment", m.name)});
-        }
         match moves::asked(with) {
-            Ok((ask, name)) => {
-                log::info!("making the move {name}: {}", store::quoted(&ask.prompt));
-                let looping = ask.looping;
-                self.making = Some(moves::start(&self.ai.hemera, ask, name.clone(), p.shelf().dir));
-                json!({"did": moves::begun(&name, looping)})
+            // One it has already, by that name: done now, not made again -- after making a pose,
+            // the small model made the next one asked for, "fold your arms", one of its poses
+            // (2026-11-20), and would have waited seconds for what it had.
+            Ok(moves::Asked::Make { name, kind, .. }) if kind != moves::Kind::Idle && p.known(&name, kind == moves::Kind::Pose).is_some() => {
+                let (key, what) = if kind == moves::Kind::Pose { ("pose", "poses") } else { ("move", "moves") };
+                let Some(known) = p.known(&name, kind == moves::Kind::Pose) else { return json!({"error": "no such move"}) };
+                log::info!("make_move asked for {known}, one of its {what} already: done, not made");
+                match self.appear(&json!({key: known})).get("error").and_then(Value::as_str) {
+                    Some(why) => json!({"error": why}),
+                    None => json!({
+                        "did": format!("{known} is one of your {what} already: done now, not made again. (For a new one of your own, make_move with a new name.)"),
+                        "shown": format!("changed: {key}: {known}"),
+                    }),
+                }
+            }
+            Ok(moves::Asked::Make { .. }) if self.making.is_some() => {
+                let m = self.making.as_ref().map(|m| format!("the {} {}", m.kind.word(), m.name)).unwrap_or_default();
+                json!({"error": format!("still making {m} -- one at a time: ask again once it is done")})
+            }
+            Ok(moves::Asked::Make { ask, name, kind }) => {
+                log::info!("making the {} {name}: {}", kind.word(), store::quoted(&ask.prompt));
+                let shelf = if kind == moves::Kind::Pose { p.pose_shelf() } else { p.shelf() };
+                let mut making = moves::start(&self.ai.hemera, ask, name.clone(), kind, shelf.dir);
+                making.held_then = p.look.holding();
+                self.making = Some(making);
+                json!({"did": moves::begun(&name, kind)})
+            }
+            // The one being made: let go of once it is made, never done.
+            Ok(moves::Asked::Forget(name)) if self.making.as_ref().is_some_and(|m| m.name == name) => {
+                let Some(m) = self.making.as_mut() else { return json!({"error": "nothing is being made"}) };
+                m.forget = true;
+                log::info!("the {} {name} is let go of while it is made", m.kind.word());
+                json!({"did": format!("{name} will not be kept: it is let go of as soon as it is made, and not done.")})
+            }
+            // Let go of: the room is told, and plays the figure's own of that name, if it has one.
+            Ok(moves::Asked::Forget(name)) => {
+                let Some(p) = self.pack.as_mut() else { return json!({"error": "there is no figure"}) };
+                match p.forget(&name) {
+                    Ok(()) => {
+                        let mut room = p.figure_request(true);
+                        room.as_object_mut().map(|o| o.remove("visible"));
+                        self.app.room_ask(&room.to_string(), channel().0);
+                        json!({"did": format!("{name} is forgotten.")})
+                    }
+                    Err(why) => json!({"error": why}),
+                }
             }
             Err(why) => json!({"error": why}),
         }
@@ -761,26 +801,43 @@ impl Pal {
     fn look_at_moves(&mut self) {
         let Some(done) = self.making.as_ref().and_then(moves::Making::done) else { return };
         let Some(making) = self.making.take() else { return };
+        let (word, name) = (making.kind.word(), &making.name);
         match done {
-            Ok(_) => {
-                log::info!("the move {} made in {:.1} s", making.name, making.since.elapsed().as_secs_f32());
-                let Some(p) = self.pack.as_mut() else { return };
-                let room = match making.name.as_str() {
-                    "idle" => {
+            Ok(file) => {
+                log::info!("the {word} {name} made in {:.1} s", making.since.elapsed().as_secs_f32());
+                if making.forget {
+                    let _ = std::fs::remove_file(&file);
+                    log::info!("the {word} {name} let go of, as asked while it was made");
+                    return;
+                }
+                // Kept with the pal it was made for, and done only if that pal is still here.
+                let Some(p) = self.pack.as_mut().filter(|p| p.dir == making.pal) else {
+                    log::info!("the {word} {name} kept for {}, no longer in the room", making.pal.display());
+                    return;
+                };
+                let room = match making.kind {
+                    moves::Kind::Idle => {
                         let mut r = p.figure_request(true);
                         r.as_object_mut().map(|o| o.remove("visible"));
                         Ok(r)
                     }
-                    name => p.apply(&json!({"move": name})).map(|(r, _)| r),
+                    moves::Kind::Move => p.apply(&json!({"move": name})).map(|(r, _)| r),
+                    // Another pose taken while it was made stays: this one is kept, to take later.
+                    moves::Kind::Pose if p.look.holding() != making.held_then => {
+                        log::info!("the pose {name} kept, not taken: another was taken meanwhile");
+                        return;
+                    }
+                    // Held, as a pose by name is, and kept as how it looks.
+                    moves::Kind::Pose => p.apply(&json!({"pose": name})).map(|(r, _)| r),
                 };
                 match room {
                     Ok(r) => self.app.room_ask(&r.to_string(), channel().0),
-                    Err(why) => log::warn!("the move {} was made but cannot be done: {why}", making.name),
+                    Err(why) => log::warn!("the {word} {name} was made but cannot be done: {why}"),
                 }
             }
             Err(why) => {
-                log::warn!("the move {} could not be made: {why}", making.name);
-                self.say_trouble(&format!("The move {} could not be made: {why}", making.name));
+                log::warn!("the {word} {name} could not be made: {why}");
+                self.say_trouble(&format!("The {word} {name} could not be made: {why}"));
             }
         }
     }
@@ -816,6 +873,8 @@ impl Pal {
             (Some(a), _) if a.doing.is_some() => "working",
             (Some(a), _) if a.handed_over => "pondering",
             (Some(_), _) => "thinking",
+            // A move being made from words (`crate::moves`): thinking it up.
+            (None, _) if self.making.is_some() => "thinking",
             (None, Ear::Writing) => "checking",
             (None, _) if heard_out.is_some_and(|at| at.elapsed() < Duration::from_millis(1200)) => "happy",
             (None, _) if engaged => "attentive",

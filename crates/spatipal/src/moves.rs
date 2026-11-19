@@ -1,12 +1,14 @@
 //! A pal's moves made from words (the owner, 2026-11-19, of hemera's motion: "build the Spatiand
 //! side"; "make sure the function is polished"): its model asks for a move in English -- how the
-//! body moves, for how long, looped for an idle -- hemera makes it (`spatiand_voice::motion`), and
-//! the room plays it on the pal's own figure (`crates/spatiand/src/motion.rs`).
+//! body moves, for how long -- hemera makes it (`spatiand_voice::motion`), and the room plays it on
+//! the pal's own figure (`crates/spatiand/src/motion.rs`).
 //!
-//! Each move made is kept in the pal's folder (`moves/<name>.json`: the words, the seed, the
-//! motion), so that it is done again by its name with `appearance`'s `move`, not made again. One
-//! made as an idle loops, and is kept as `idle`: the room plays it whenever the pal is idle, over
-//! its figure's own.
+//! What it is made for (`kind`): a **move**, done once and kept with the pal's moves (`moves/`); a
+//! **pose**, a quiet loop held until another pose, kept with its poses (`poses/`) -- the small
+//! model's way to any pose its figure has no name for; an **idle**, a loop kept as `moves/idle`,
+//! which the room then plays whenever the pal is idle. Each is kept in the pal's folder with the
+//! words and seed it was made from, so that it is done again by its name with `appearance`, not
+//! made again; `forget` lets one go.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
@@ -20,26 +22,63 @@ use spatiand_voice::Hemera;
 pub fn tool() -> Value {
     spatiand_voice::chat::tool(
         "make_move",
-        "Make a new move of your own from words, and do it, whenever the wearer asks for a move you do not have -- anything a person's \
-         body can do: a dance, a cartwheel, a bow, a jump, a stretch, a stroll -- or you want one. A new idle -- how you stand and wait \
-         while nothing happens -- is kind idle. It takes a few seconds to make (longer the first time): say something meanwhile. Once made it \
-         is yours to do again by its name, with appearance's move.",
+        "Make a new move or pose of your own from words, and do it, whenever the wearer asks you to do something with your body that is not \
+         one of appearance's moves or poses -- anything a person's body can do: a dance, a cartwheel, a backflip, a bow, standing on one \
+         leg, a stretch -- or you want one. Never say you cannot do a move: make it. It takes a few seconds (up to a minute the first time). \
+         Once made it is yours to do again by its name, with appearance.",
         json!({
-            "words": {"type": "string", "description": "How your body moves, in English, as one would describe a person moving -- one or two actions \
-                (more are followed loosely), a sentence: \"a person does a cartwheel\", \"a person spins around once with the arms held out\", \"a person \
-                sways the hips slowly from side to side with both arms raised\". Only the movement: no feelings, clothes, objects or other people."},
-            "name": {"type": "string", "description": "A short name to keep it by: \"twirl\", \"slow_sway\""},
-            "seconds": {"type": "number", "description": "How long it lasts, 1 to 10 seconds; 3 or 4 suit most moves"},
-            "kind": {"type": "string", "enum": ["move", "idle"], "description": "move: done once, now; idle: a quiet loop -- how you stand while nothing \
-                else happens -- yours from now on whenever you are idle"}
+            "words": {"type": "string", "description": "How your body moves or stands, in English, as one would describe a person -- one or two actions \
+                (more are followed loosely), a sentence: \"a person does a cartwheel\", \"a person stands on one leg with the arms out for balance\", \
+                \"a person sways the hips slowly from side to side with both arms raised\". Only the body: no feelings, clothes, objects or other people."},
+            "name": {"type": "string", "description": "A short name to keep it by: \"cartwheel\", \"one_leg\""},
+            "seconds": {"type": "number", "description": "How long it lasts, 1 to 10 seconds; 3 or 4 suit most"},
+            "kind": {"type": "string", "enum": ["move", "pose", "idle", "forget"], "description": "move: done once, now, and then you stand as before \
+                (a dance, a jump, a bow); pose: a position you stay in until you choose another (\"kneel on one knee\", \"stand on one leg\", \"sit \
+                cross-legged\"), its words saying how you are while in it, not how you get there; idle: a quiet loop, how you stand while nothing else \
+                happens, yours from now on whenever you are idle; forget: let go of a move or pose you made, by its name (no words needed)"}
         }),
         &["words", "name", "kind"],
     )
 }
 
-/// A call of the tool checked: what hemera is asked, and the name it is kept by -- or why not, in
-/// words its model can mend the call by.
-pub fn asked(args: &Value) -> Result<(Ask, String), String> {
+/// What a move made is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// Done once, now; kept with its moves.
+    Move,
+    /// Held until another pose; kept with its poses.
+    Pose,
+    /// A quiet loop, the pal's idle from now on.
+    Idle,
+}
+
+impl Kind {
+    /// What it is called, in what is told and logged.
+    pub fn word(self) -> &'static str {
+        match self {
+            Kind::Move => "move",
+            Kind::Pose => "pose",
+            Kind::Idle => "idle",
+        }
+    }
+}
+
+/// What a call of the tool asks.
+#[derive(Debug, PartialEq)]
+pub enum Asked {
+    /// Something to make: what hemera is asked, the name it is kept by, what for.
+    Make { ask: Ask, name: String, kind: Kind },
+    /// One of its own to let go of, by its name.
+    Forget(String),
+}
+
+/// A call of the tool checked -- or why not, in words its model can mend the call by.
+pub fn asked(args: &Value) -> Result<Asked, String> {
+    let kind = args.get("kind").and_then(Value::as_str).map(|k| k.trim().to_lowercase()).unwrap_or_default();
+    if kind == "forget" {
+        let name = motion::name_of(args.get("name").and_then(Value::as_str).unwrap_or_default());
+        return if name.is_empty() { Err("say which move to forget, by its name".into()) } else { Ok(Asked::Forget(name)) };
+    }
     let words = args.get("words").and_then(Value::as_str).map(str::trim).unwrap_or_default();
     if words.is_empty() {
         return Err("say in English how your body moves: \"a person spins around once with the arms held out\"".into());
@@ -47,19 +86,37 @@ pub fn asked(args: &Value) -> Result<(Ask, String), String> {
     if words.split_whitespace().count() > 60 {
         return Err("say it in at most sixty words: one or two actions".into());
     }
-    let idle = args.get("kind").and_then(Value::as_str).is_some_and(|k| k.trim().eq_ignore_ascii_case("idle")) || args.get("idle").and_then(Value::as_bool).unwrap_or(false);
-    let name = if idle { "idle".to_string() } else { motion::name_of(args.get("name").and_then(Value::as_str).unwrap_or(words)) };
+    let kind = match kind.as_str() {
+        "idle" => Kind::Idle,
+        "pose" => Kind::Pose,
+        // An older call's `idle: true`.
+        _ if args.get("idle").and_then(Value::as_bool) == Some(true) => Kind::Idle,
+        _ => Kind::Move,
+    };
+    let name = match kind {
+        Kind::Idle => "idle".to_string(),
+        _ => motion::name_of(args.get("name").and_then(Value::as_str).unwrap_or(words)),
+    };
     if name.is_empty() {
-        return Err("give the move a short name to keep it by".into());
+        return Err("give it a short name to keep it by".into());
     }
-    let seconds = args.get("seconds").and_then(Value::as_f64).map(|s| s as f32).unwrap_or(if idle { 4.0 } else { 3.0 });
-    Ok((Ask { prompt: words.to_string(), duration: seconds.clamp(1.0, 10.0), looping: idle, seed: None }, name))
+    let seconds = args.get("seconds").and_then(Value::as_f64).map(|s| s as f32).unwrap_or(if kind == Kind::Move { 3.0 } else { 4.0 });
+    let ask = Ask { prompt: words.to_string(), duration: seconds.clamp(1.0, 10.0), looping: kind != Kind::Move, seed: None };
+    Ok(Asked::Make { ask, name, kind })
 }
 
 /// A move being made, on a thread of its own.
 pub struct Making {
     pub name: String,
+    pub kind: Kind,
     pub since: Instant,
+    /// The pal's folder it is kept in: another pal may be in the room by the time it is made.
+    pub pal: PathBuf,
+    /// What the pal held when it was asked for (`Look::holding`): a pose made is taken only if
+    /// it holds the same still, not over one taken meanwhile.
+    pub held_then: String,
+    /// Let go of while it was being made: not kept once made.
+    pub forget: bool,
     rx: Receiver<Result<PathBuf, String>>,
 }
 
@@ -74,10 +131,12 @@ impl Making {
     }
 }
 
-/// Start making a move: asked of hemera at `hemera`, kept on `shelf` (a pal's `moves/`) by `name`.
-pub fn start(hemera: &str, ask: Ask, name: String, shelf: PathBuf) -> Making {
+/// Start making it: asked of hemera at `hemera`, kept on `shelf` (a folder in the pal's) by
+/// `name`.
+pub fn start(hemera: &str, ask: Ask, name: String, kind: Kind, shelf: PathBuf) -> Making {
     let (tx, rx) = channel();
     let (base, kept_as) = (hemera.to_string(), name.clone());
+    let pal = shelf.parent().map(PathBuf::from).unwrap_or_default();
     std::thread::Builder::new()
         .name("move".into())
         .spawn(move || {
@@ -85,29 +144,41 @@ pub fn start(hemera: &str, ask: Ask, name: String, shelf: PathBuf) -> Making {
             let _ = tx.send(made);
         })
         .expect("a thread for a move");
-    Making { name, since: Instant::now(), rx }
+    Making { name, kind, since: Instant::now(), pal, held_then: String::new(), forget: false, rx }
 }
 
-/// What the tool answers at once, while the move is made: that it is not done yet -- a small
-/// model, told only to say something meanwhile, said "there you go" the moment it asked
-/// (2026-11-19), and the move came 45 s later, hemera having had to load its model first.
-pub fn begun(name: &str, looping: bool) -> String {
-    if looping {
-        format!(
-            "Your new idle ({name}) is being made: it is not done yet, and takes a few seconds -- up to a minute the first time. Say you are \
-             working it out; from when it is made you stand in it whenever you are idle."
-        )
-    } else {
-        format!(
-            "The move {name} is being made: it is not done yet. It takes a few seconds -- up to a minute the first time -- and then you do it. \
-             Say you are working it out, not that it is done. Afterwards it is yours to do again (appearance, move {name})."
-        )
-    }
+/// What the tool answers at once, while it is made: that it is not done yet, and that it will
+/// do it by itself -- a small model, told only to say something meanwhile, said "there you go"
+/// the moment it asked (2026-11-19), and the move came 45 s later, hemera having had to load its
+/// model first; told "Then you do it", both models still did it in words at once ("I'm standing
+/// on one leg now", "... there! Did you see that?", 2026-11-20).
+pub fn begun(name: &str, kind: Kind) -> String {
+    let (what, when) = match kind {
+        Kind::Move => (format!("the move {name}"), "you do it by yourself the moment it is ready"),
+        Kind::Pose => (format!("the pose {name}"), "you take it by yourself the moment it is ready"),
+        Kind::Idle => ("your new idle".to_string(), "from then on you stand in it whenever you are idle"),
+    };
+    let after = match kind {
+        Kind::Move => format!(" Once made it is yours to do again (appearance, move {name})."),
+        Kind::Pose => format!(" Once made it is yours to take again (appearance, pose {name})."),
+        Kind::Idle => String::new(),
+    };
+    format!(
+        "Not ready yet: {what} is being made. It comes in a few seconds -- up to a minute the first time -- and {when}. So it has not \
+         happened yet: answer in character that you are about to, without acting it out or saying you are doing it or did it.{after}"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn made(args: Value) -> (Ask, String, Kind) {
+        match asked(&args) {
+            Ok(Asked::Make { ask, name, kind }) => (ask, name, kind),
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn the_tool_says_what_hemera_understands() {
@@ -115,34 +186,41 @@ mod tests {
         assert_eq!(t["function"]["name"], "make_move");
         let props = &t["function"]["parameters"]["properties"];
         assert!(props["words"]["description"].as_str().unwrap().contains("English"));
+        assert_eq!(props["kind"]["enum"], json!(["move", "pose", "idle", "forget"]));
         assert_eq!(t["function"]["parameters"]["required"], json!(["words", "name", "kind"]));
     }
 
     #[test]
-    fn a_call_is_checked_and_named() {
-        let (ask, name) = asked(&json!({"words": "a person spins around once with the arms held out", "name": "Twirl!", "seconds": 30})).unwrap();
-        assert_eq!(name, "twirl");
-        assert_eq!(ask.duration, 10.0);
-        assert!(!ask.looping);
+    fn a_call_is_checked_named_and_kinded() {
+        let (ask, name, kind) = made(json!({"words": "a person spins around once with the arms held out", "name": "Twirl!", "seconds": 30, "kind": "move"}));
+        assert_eq!((name.as_str(), kind, ask.duration, ask.looping), ("twirl", Kind::Move, 10.0, false));
         // An idle is a loop, kept as `idle`: the room's own name for it.
-        let (ask, name) = asked(&json!({"words": "a person stands and sways gently", "name": "calm", "kind": "idle"})).unwrap();
-        assert_eq!((name.as_str(), ask.looping, ask.duration), ("idle", true, 4.0));
-        assert!(asked(&json!({"words": "a person stands and sways gently", "name": "calm", "idle": true})).unwrap().0.looping);
-        assert!(!asked(&json!({"words": "a person waves", "name": "w", "kind": "move"})).unwrap().0.looping);
+        let (ask, name, kind) = made(json!({"words": "a person stands and sways gently", "name": "calm", "kind": "idle"}));
+        assert_eq!((name.as_str(), kind, ask.looping, ask.duration), ("idle", Kind::Idle, true, 4.0));
+        assert_eq!(made(json!({"words": "a person sways", "name": "calm", "idle": true})).2, Kind::Idle);
+        // A pose is a loop too, held, by its own name.
+        let (ask, name, kind) = made(json!({"words": "a person stands on one leg", "name": "One Leg", "kind": "pose"}));
+        assert_eq!((name.as_str(), kind, ask.looping), ("one_leg", Kind::Pose, true));
+        // Let go of by its name; no words needed.
+        assert_eq!(asked(&json!({"kind": "forget", "name": "Twirl"})), Ok(Asked::Forget("twirl".into())));
+        assert!(asked(&json!({"kind": "forget"})).is_err());
         // No words, too many, or no name left: said how to mend it.
-        assert!(asked(&json!({"name": "x"})).unwrap_err().contains("English"));
+        assert!(asked(&json!({"name": "x", "kind": "move"})).unwrap_err().contains("English"));
         assert!(asked(&json!({"words": "move ".repeat(61), "name": "x"})).unwrap_err().contains("sixty"));
         assert!(asked(&json!({"words": "a person waves", "name": "!!!"})).unwrap_err().contains("name"));
-        // A name left out is made from the words.
-        assert_eq!(asked(&json!({"words": "a person waves"})).unwrap().1, "a_person_waves");
+        // A name left out is made from the words, and a kind left out is a move.
+        assert_eq!(made(json!({"words": "a person waves"})).1, "a_person_waves");
+        assert_eq!(made(json!({"words": "a person waves", "name": "w"})).2, Kind::Move);
     }
 
     #[test]
     fn a_move_that_cannot_be_made_says_why() {
         let dir = std::env::temp_dir().join(format!("spatipal-moves-test-{}", std::process::id()));
-        let (ask, name) = asked(&json!({"words": "a person waves", "name": "wave"})).unwrap();
+        let (ask, name, kind) = made(json!({"words": "a person waves", "name": "wave"}));
         // Nothing listens there.
-        let making = start("http://127.0.0.1:9", ask, name, dir.clone());
+        let making = start("http://127.0.0.1:9", ask, name, kind, dir.clone());
+        // Kept for the pal whose folder holds the shelf, and taken over nothing yet.
+        assert_eq!((making.pal.as_path(), making.held_then.as_str(), making.forget), (std::env::temp_dir().as_path(), "", false));
         let since = Instant::now();
         let done = loop {
             if let Some(d) = making.done() {
@@ -153,7 +231,7 @@ mod tests {
         };
         assert!(done.unwrap_err().contains("could not be reached"));
         assert!(!dir.join("wave.json").exists());
-        assert!(begun("twirl", false).contains("appearance, move twirl"));
-        assert!(begun("twirl", false).contains("not done yet"));
+        assert!(begun("twirl", Kind::Move).contains("appearance, move twirl") && begun("twirl", Kind::Move).contains("Not ready yet"));
+        assert!(begun("one_leg", Kind::Pose).contains("appearance, pose one_leg"));
     }
 }

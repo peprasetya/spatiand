@@ -283,6 +283,9 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     // once the answer is its to give.
     let mut decided: Option<bool> = if decision.is_some() { None } else { Some(false) };
     let mut first_words = false;
+    // Asked again once, when hemera failed before a word: an answer it broke off as it began, or
+    // a kept connection it had closed -- seen once in some sixty asks of a test (2026-11-20).
+    let mut asked_again = false;
     for _ in 0..ROUNDS {
         if stopped() {
             break;
@@ -303,12 +306,22 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         let asked_at = std::time::Instant::now();
         log::info!("brain: asking {model} ({} messages)", messages.len());
         voice.set_generating(true);
+        // Whether the small model is answering by acting -- in the room, or with its figure: an
+        // action is its own, whatever the decision. Decided the larger model's, "Actually no, fold
+        // your arms instead", after it said a pose was coming, was done 20 s later, and "Close
+        // SpatiQuill.", after it had answered something else, waited for the 27B (2026-11-20).
+        let mut with_body = false;
+        let mut heard_any = false;
         let answer = converse(hemera, &ask, |piece| {
+            heard_any = true;
             if stopped() {
                 return false;
             }
+            if let Piece::Calling(name) = piece {
+                with_body |= !large && ACTING_TOOLS.contains(&name.as_str());
+            }
             if decided.is_none() {
-                decided = poll(&decision);
+                decided = poll(&decision).map(|larger| larger && !kept_by_body(with_body));
             }
             match decided {
                 // The larger model's: this answer stops, unseen and unsaid.
@@ -350,7 +363,14 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
             true
         });
         voice.set_generating(false);
-        let answer = answer?;
+        let answer = match answer {
+            Err(why) if !heard_any && !asked_again && !stopped() => {
+                log::warn!("brain: {model} failed before a word ({why}): asking again");
+                asked_again = true;
+                continue;
+            }
+            answer => answer?,
+        };
         // Stopped -- spoken over, told to be quiet, Stop --: nothing more of it is said, not the
         // end of the sentence that was cut, nor what was held back or thought.
         if stopped() {
@@ -360,7 +380,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         }
         if decided.is_none() {
             // Answered before the decision came: it comes in a moment.
-            decided = Some(decision.as_ref().and_then(|rx| rx.recv_timeout(Duration::from_secs(3)).ok()).unwrap_or(false));
+            decided = Some(decision.as_ref().and_then(|rx| rx.recv_timeout(Duration::from_secs(3)).ok()).unwrap_or(false) && !kept_by_body(with_body));
         }
         if decided == Some(true) && !large {
             // Decided, and done with: the larger model's answer is its own, not held or cut.
@@ -431,6 +451,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
                 said.did.push(did.clone());
                 say(Told::Did(did.clone()));
             }
+            said.calls.push(crate::store::Call { name: call.name.clone(), arguments: call.arguments.clone(), answer: kept_answer(&call.name, &done.content) });
             messages.push(json!({"role": "tool", "tool_call_id": call.id, "content": done.content}));
             if let Some(picture) = done.picture {
                 pictures.push(picture);
@@ -674,12 +695,52 @@ fn remembered(history: &[Said]) -> &[Said] {
     &history[start..]
 }
 
-/// The chat as the model is given it: what was done in the room said with each answer, and
+/// Tools whose answers are what was read -- a window's text, what is on screen, the lists --:
+/// the wearer's, and long, so not kept with the chat.
+const READING_TOOLS: [&str; 5] = ["read_window", "look_at_window", "list_windows", "list_apps", "list_reminders"];
+
+/// What of a tool's answer is kept with the chat, to give back to its model: how an action went,
+/// at most a few lines of it; never what was read.
+fn kept_answer(name: &str, answer: &str) -> String {
+    if READING_TOOLS.contains(&name) {
+        return "(What it answered was read then, and is not kept.)".to_string();
+    }
+    match answer.char_indices().nth(240) {
+        Some((cut, _)) => format!("{}...", &answer[..cut]),
+        None => answer.to_string(),
+    }
+}
+
+/// The chat as the model is given it: what was done in the room with each answer, and
 /// neighbours of one role made one message -- a question whose answer failed or was stopped
 /// before a word, then the next, must not be two messages from the wearer in a row.
+///
+/// **What it did, it did with its tools**: an answer's calls are given back as the calls they
+/// were, with what they answered, and then its words. Told as a note after its words instead --
+/// "(Done in the room: changed: outfit: dress.)" -- the small model wrote the note itself and
+/// called nothing, or only said it did (2026-11-20: asked "No, the other outfit." after its
+/// dress, it answered "There, my dress!" and the note, word for word; it acted on 6 of 15 such
+/// requests, on 13 of 15 with its calls given back). An answer kept without its calls (one
+/// stopped, a yes to what was held, a chat from before) still has the note.
 fn conversation(history: &[Said]) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
-    for said in history {
+    for (i, said) in history.iter().enumerate() {
+        if said.role == "assistant" && !said.calls.is_empty() {
+            let id = |j: usize| format!("past_{i}_{j}");
+            let calls: Vec<Value> = said.calls.iter().enumerate().map(|(j, c)| json!({"id": id(j), "type": "function", "function": {"name": c.name, "arguments": c.arguments}})).collect();
+            match messages.last_mut() {
+                // Words of its own just before, with no calls: the calls go with them.
+                Some(last) if last["role"] == "assistant" && last.get("tool_calls").is_none() => last["tool_calls"] = Value::Array(calls),
+                _ => messages.push(json!({"role": "assistant", "content": "", "tool_calls": calls})),
+            }
+            for (j, c) in said.calls.iter().enumerate() {
+                messages.push(json!({"role": "tool", "tool_call_id": id(j), "content": c.answer}));
+            }
+            if !said.text.trim().is_empty() {
+                messages.push(json!({"role": "assistant", "content": said.text}));
+            }
+            continue;
+        }
         let mut text = said.text.clone();
         if !said.did.is_empty() {
             text.push_str(&format!("\n(Done in the room: {}.)", said.did.join("; ")));
@@ -790,6 +851,164 @@ mod tests {
         }
     }
 
+    /// **Against hemera**: having done something with a tool, asked for the next, the small
+    /// model does that with its tools too -- not only says it did, nor writes what it did as a
+    /// note after its words, as it did when its past was given with notes (2026-11-20: "There, my
+    /// dress!\n(Done in the room: changed: outfit: dress.)", word for word, and nothing done). Its
+    /// past as SpatiPal gives it (`conversation`); each asked three times, and done at least
+    /// twice. `cargo test -p spatipal -- --ignored --test-threads 1 does_the_next`
+    #[test]
+    #[ignore]
+    fn having_done_something_it_does_the_next_with_its_tools_does_the_next() {
+        use crate::store::Call;
+        use spatiand_voice::figure::{Offers, BODY_PARTS};
+        let offers = Offers {
+            groups: vec![("outfit".into(), vec!["casual".into(), "dress".into()])],
+            animations: vec!["idle".into(), "talking".into(), "wave".into()],
+            body: BODY_PARTS.iter().map(|p| p.to_string()).collect(),
+            ..Default::default()
+        };
+        let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
+        let pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
+        let s = pack.over(&Settings::default());
+        let ai = AiSettings::default();
+        let hemera = Hemera::new(&ai.hemera);
+        let own = Value::Array(vec![pack.tool().unwrap(), crate::moves::tool()]);
+        let tools = tools::all(true, Some(&own));
+        let kneel = crate::moves::begun("kneel", crate::moves::Kind::Pose);
+        let dance = crate::moves::begun("victory_dance", crate::moves::Kind::Move);
+        /// Asked before, the reply, what was done, the call, its answer, asked now, the tools that would do.
+        type Case<'a> = (&'a str, &'a str, &'a str, (&'a str, &'a str), &'a str, &'a str, &'a [&'a str]);
+        let cases: [Case; 5] = [
+            ("Put on your dress.", "There, my dress!", "changed: outfit: dress", ("appearance", r#"{"outfit":"dress"}"#), "Done: the room shows it.", "No, the other outfit.", &["appearance"]),
+            ("Kneel down on one knee.", "I'm getting ready to kneel on one knee! Hold on a few seconds.", "making a pose", ("make_move", r#"{"kind":"pose","name":"kneel","words":"a person kneels on one knee"}"#), &kneel, "Actually no, fold your arms instead.", &["appearance", "make_move"]),
+            ("Make up a little victory dance and show me.", "Here's my victory dance!", "making a move", ("make_move", r#"{"kind":"move","name":"victory_dance","words":"a person pumps both fists in the air and hops"}"#), &dance, "Now wave at me.", &["appearance", "make_move"]),
+            ("Wave at me.", "Hi there!", "changed: move: wave", ("appearance", r#"{"move":"wave"}"#), "Done: the room shows it.", "Now fold your arms.", &["appearance"]),
+            ("Open SpatiQuill.", "SpatiQuill is open.", "opened SpatiQuill", ("open_app", r#"{"name":"SpatiQuill"}"#), "opened SpatiQuill", "Now open SpatiReel too.", &["open_app"]),
+        ];
+        let mut misses = Vec::new();
+        for (before, reply, did, (tool, args), result, now, right) in cases {
+            let mut done = 0;
+            for _ in 0..3 {
+                let history = [
+                    Said { role: "user".into(), text: before.into(), ..Default::default() },
+                    Said { role: "assistant".into(), text: reply.into(), did: vec![did.into()], calls: vec![Call { name: tool.into(), arguments: args.into(), answer: result.into() }], ..Default::default() },
+                ];
+                let mut messages = vec![json!({"role": "system", "content": system(&s, false)})];
+                messages.extend(conversation(&history));
+                messages.push(json!({"role": "user", "content": format!("[It is 21:40.]\n{}\n{now}", pack.note())}));
+                let ask = Ask { model: ai.models.everyday.clone(), messages, tools: tools.clone(), max_tokens: 300, temperature: 0.4, thinking: false };
+                let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
+                eprintln!("{now:42} {:?} {:?}", answer.calls.iter().map(|c| format!("{}({})", c.name, c.arguments)).collect::<Vec<_>>(), answer.text);
+                if answer.text.contains("Done in the room") {
+                    misses.push(format!("{now:?}: wrote what it did as a note: {:?}", answer.text));
+                }
+                done += answer.calls.iter().any(|c| right.contains(&c.name.as_str())) as u32;
+            }
+            if done < 2 {
+                misses.push(format!("{now:?}: done with its tools {done} of 3 times"));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&pack.dir);
+        assert!(misses.is_empty(), "{}", misses.join("\n"));
+    }
+
+    /// **Against hemera**: what a pal is asked to do with its body is the quick model's, as a
+    /// change of clothes is -- "Actually no, fold your arms instead", after it said a pose was
+    /// coming, went to the 27B, and the arms were folded 20 s later (the snapshot room,
+    /// 2026-11-20) -- and what needs thought is still the larger's. A decision for the larger
+    /// model on what the small one answers with its body is let go of (`kept_by_body`), so a
+    /// request goes astray only if neither holds. Each asked three times.
+    /// `cargo test -p spatipal -- --ignored --test-threads 1 body_is_quick`
+    #[test]
+    #[ignore]
+    fn what_a_pal_does_with_its_body_is_quick_body_is_quick() {
+        use spatiand_voice::figure::{Offers, BODY_PARTS};
+        let offers = Offers {
+            groups: vec![("outfit".into(), vec!["casual".into(), "dress".into()])],
+            animations: vec!["idle".into(), "talking".into(), "wave".into()],
+            body: BODY_PARTS.iter().map(|p| p.to_string()).collect(),
+            ..Default::default()
+        };
+        let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
+        let pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
+        let s = pack.over(&Settings::default());
+        let ai = AiSettings::default();
+        let hemera = Hemera::new(&ai.hemera);
+        let own = Value::Array(vec![pack.tool().unwrap(), crate::moves::tool()]);
+        let tools = tools::all(true, Some(&own));
+        let coming = "I'm getting ready to kneel on one knee! Hold on a few seconds.";
+        let dress = "There, my dress!";
+        let danced = "Here's my victory dance!";
+        // What was asked before each reply, as the conversation had it.
+        let before = |last: &str| match last {
+            l if l == coming => "Kneel down on one knee.",
+            l if l == dress => "Put on your dress.",
+            l if l.starts_with("Done -- looking down") => "Look down.",
+            _ => "Make up a little victory dance and show me.",
+        };
+        let asks: [(&str, &str, bool); 16] = [
+            ("Actually no, fold your arms instead.", coming, false),
+            ("Never mind, just stand normally.", coming, false),
+            ("No, the other outfit.", dress, false),
+            ("Kneel down on one knee.", "", false),
+            ("Stand on one leg for me.", "", false),
+            ("Can you do a backflip?", "", false),
+            ("Forget that cartwheel you made, I didn't like it.", "", false),
+            ("Invent a new idle for yourself, something calm and swaying.", "", false),
+            ("Make up a little victory dance and show me.", "", false),
+            ("Put your hands behind your back.", "", false),
+            ("Stop dancing and stand still.", danced, false),
+            // Acting in the room, after a reply about something else (2026-11-20).
+            ("Close SpatiQuill.", "Done -- looking down now. What do you need?", false),
+            ("Scroll down a bit.", "Done -- looking down now. What do you need?", false),
+            ("Write a script that backs up my photos every night.", "", true),
+            ("Explain how a VPN works.", "", true),
+            ("Compare the Steam Deck and the ROG Ally for me.", "", true),
+        ];
+        let mut misses = Vec::new();
+        for (asked, last, larger) in asks {
+            for _ in 0..3 {
+                let went = wants_larger(&hemera, &ai.models.everyday, asked, last);
+                if went == larger {
+                    continue;
+                }
+                // Decided the larger model's: let go of if the small model answers with its body.
+                let mut messages = vec![json!({"role": "system", "content": system(&s, false)})];
+                if !last.is_empty() {
+                    // As SpatiPal gives its past (`conversation`): what was done said with the reply.
+                    let (did, tool, args) = match last {
+                        l if l == coming => ("making a pose", "make_move", r#"{"kind":"pose","name":"kneel","words":"a person kneels on one knee"}"#),
+                        l if l == dress => ("changed: outfit: dress", "appearance", r#"{"outfit":"dress"}"#),
+                        l if l.starts_with("Done -- looking down") => ("changed: pose: look_down", "appearance", r#"{"pose":"look_down"}"#),
+                        _ => ("making a move", "make_move", r#"{"kind":"move","name":"victory_dance","words":"a person pumps both fists in the air and hops"}"#),
+                    };
+                    let call = crate::store::Call { name: tool.into(), arguments: args.into(), answer: "Done.".into() };
+                    let history = [
+                        Said { role: "user".into(), text: before(last).into(), ..Default::default() },
+                        Said { role: "assistant".into(), text: last.into(), did: vec![did.into()], calls: vec![call], ..Default::default() },
+                    ];
+                    messages.extend(conversation(&history));
+                }
+                let windows = json!({"windows": [
+                    {"window": 3, "app": "id.prasetya.spatiand.spatiquill", "title": "notes.md", "focused": true},
+                    {"window": 5, "app": "id.prasetya.spatiand.spatipal", "title": "Mira", "own": true},
+                ]});
+                let note = room_note(&windows, &json!({"looking_at": {"window": 3}}));
+                messages.push(json!({"role": "user", "content": format!("{note}\n{}\n{asked}", pack.note())}));
+                let ask = Ask { model: ai.models.everyday.clone(), messages, tools: tools.clone(), max_tokens: 300, temperature: 0.4, thinking: false };
+                let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
+                let body = answer.calls.iter().any(|c| ACTING_TOOLS.contains(&c.name.as_str()));
+                eprintln!("{asked:?} (after {last:?}): decided {}, the small model's calls {:?}, said {:?}", if went { "larger" } else { "quick" }, answer.calls.iter().map(|c| &c.name).collect::<Vec<_>>(), answer.text);
+                if !(went && body) {
+                    misses.push(format!("{asked:?} (after {last:?}): {}", if went { "larger" } else { "quick" }));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&pack.dir);
+        assert!(misses.is_empty(), "{} of {} went astray:\n{}", misses.len(), asks.len() * 3, misses.join("\n"));
+    }
+
     /// **Against hemera**: a pal's model makes poses of its own as it is asked in words, through
     /// `appearance`'s `own_pose`, each read as the room reads it. A made-up pal with a body and
     /// no poses by name; `SPATIPAL_TEST_MODEL` asks another model than the settings' everyday one.
@@ -802,55 +1021,73 @@ mod tests {
         let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
         let mut pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
         let s = pack.over(&Settings::default());
-        let model = std::env::var("SPATIPAL_TEST_MODEL").unwrap_or_else(|_| AiSettings::default().models.everyday);
         let ai = AiSettings::default();
+        // The small model by default, which hands a pose of its own over; SPATIPAL_TEST_MODEL a
+        // larger one, which makes it (its tools without hand_over).
+        let large = std::env::var("SPATIPAL_TEST_MODEL").ok();
+        let model = large.clone().unwrap_or_else(|| ai.models.everyday.clone());
         let hemera = Hemera::new(&ai.hemera);
-        let tools = tools::all(true, pack.tool().as_ref());
-        let asks: [(&str, &[&str]); 8] = [
-            ("Put your hands on your hips.", &["left_upper_arm", "left_forearm", "right_upper_arm", "right_forearm"]),
-            ("Fold your arms.", &["left_forearm", "right_forearm"]),
-            ("Strike a thinking pose, your hand on your chin.", &[]),
-            ("Shrug.", &[]),
-            ("Look up at the sky.", &["head"]),
-            ("Raise your right arm, as if you had a question.", &["right_upper_arm"]),
-            ("Put your right hand on your heart.", &["right_forearm"]),
-            ("Turn your head and look at me over your right shoulder.", &["head"]),
+        let own = Value::Array(vec![pack.tool().unwrap(), crate::moves::tool()]);
+        let tools = tools::all(large.is_none(), Some(&own));
+        // Each ask, with the pose by name a model should choose (`None`: one of its own to make --
+        // part by part (the larger model) or from words (`make_move`, kind pose)).
+        let asks: [(&str, Option<&str>, &[&str]); 11] = [
+            ("Put your hands on your hips.", Some("hands_on_hips"), &[]),
+            ("Fold your arms.", Some("arms_folded"), &[]),
+            ("Strike a thinking pose, your hand on your chin.", Some("thinking"), &[]),
+            ("Shrug.", Some("shrug"), &[]),
+            ("Raise your right arm, as if you had a question.", Some("right_hand_raised"), &[]),
+            ("Turn your head and look at me over your right shoulder.", Some("look_over_right_shoulder"), &[]),
+            ("Look up at the sky.", Some("look_up"), &[]),
+            ("Put your right hand on your heart.", Some("right_hand_on_heart"), &[]),
+            ("Put both hands behind your back.", Some("hands_behind_back"), &[]),
+            // Either leg will do.
+            ("Stand on one leg.", None, &[]),
+            ("Kneel down on one knee.", None, &[]),
         ];
         let mut misses = Vec::new();
-        for (asked, wants) in asks {
-            let ask = Ask {
-                model: model.clone(),
-                messages: vec![json!({"role": "system", "content": system(&s, false)}), json!({"role": "user", "content": format!("[It is 21:40.]\n{}\n{asked}", pack.note())})],
-                tools: tools.clone(),
-                max_tokens: 400,
-                temperature: 0.2,
-                thinking: false,
-            };
-            eprintln!("{asked:?}: to the larger model: {}", wants_larger(&hemera, &ai.models.everyday, asked, ""));
-            let started = std::time::Instant::now();
-            let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
-            let Some(call) = answer.calls.iter().find(|c| c.name == "appearance") else {
-                misses.push(format!("{asked:?}: no appearance call: {:?} {:?}", answer.text, answer.calls));
-                continue;
-            };
-            let args: Value = serde_json::from_str(&call.arguments).unwrap_or_else(|e| {
-                eprintln!("{asked:?}: its call is not JSON ({e}): {:?}", call.arguments);
-                Value::Null
-            });
-            eprintln!("{asked:?} -> appearance({args}) in {:.1} s; said {:?}", started.elapsed().as_secs_f32(), answer.text);
-            pack.look = Default::default();
-            match pack.apply(&args) {
-                Ok((_, did)) => {
-                    let held = &pack.look.own_pose;
-                    eprintln!("    held: {did} -- {held:?}");
-                    if held.is_empty() {
-                        misses.push(format!("{asked:?}: no pose held"));
+        for (asked, named, wants) in asks {
+            let mut messages = vec![json!({"role": "system", "content": system(&s, large.is_some())}), json!({"role": "user", "content": format!("[It is 21:40.]\n{}\n{asked}", pack.note())})];
+            // As SpatiPal asks: a call refused is answered with why, and the model tries again
+            // in the next round (a small model writes its call as text at times, held to no list).
+            for round in 0..2 {
+                let ask = Ask { model: model.clone(), messages: messages.clone(), tools: tools.clone(), max_tokens: 600, temperature: 0.2, thinking: false };
+                let started = std::time::Instant::now();
+                let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
+                let calls: Vec<String> = answer.calls.iter().map(|c| format!("{}({})", c.name, c.arguments)).collect();
+                eprintln!("{asked:?} -> {calls:?} in {:.1} s", started.elapsed().as_secs_f32());
+                if let Some(c) = answer.calls.iter().find(|c| c.name == "make_move") {
+                    // Made from words: right for a pose of its own, as a pose to hold.
+                    match crate::moves::asked(&serde_json::from_str(&c.arguments).unwrap_or_default()) {
+                        Ok(crate::moves::Asked::Make { kind: crate::moves::Kind::Pose, .. }) if named.is_none() => {}
+                        other => misses.push(format!("{asked:?}: make_move {other:?}")),
                     }
-                    for part in wants.iter().filter(|p| !held.contains_key(**p)) {
-                        misses.push(format!("{asked:?}: no {part} in {held:?}"));
-                    }
+                    break;
                 }
-                Err(why) => misses.push(format!("{asked:?}: {why}")),
+                let Some(call) = answer.calls.iter().find(|c| c.name == "appearance") else {
+                    misses.push(format!("{asked:?}: no appearance call: {calls:?}, said {:?}", answer.text));
+                    break;
+                };
+                let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+                pack.look = Default::default();
+                match pack.apply(&args) {
+                    Ok(_) => {
+                        let (pose, parts) = (&pack.look.pose, &pack.look.own_pose);
+                        match named {
+                            Some(n) if pose != n => misses.push(format!("{asked:?}: pose {pose:?} {parts:?}, not {n}")),
+                            // One of its own: made part by part, not one by name that is near it.
+                            None if !pose.is_empty() || parts.is_empty() || wants.iter().any(|w| !parts.contains_key(*w)) => misses.push(format!("{asked:?}: {pose:?} {parts:?}")),
+                            _ => {}
+                        }
+                        break;
+                    }
+                    Err(why) if round == 0 => {
+                        eprintln!("    refused: {why}");
+                        messages.push(answer.message());
+                        messages.push(json!({"role": "tool", "tool_call_id": call.id, "content": format!("That did not work: {why}")}));
+                    }
+                    Err(why) => misses.push(format!("{asked:?}: {why}")),
+                }
             }
         }
         let _ = std::fs::remove_dir_all(&pack.dir);
@@ -869,6 +1106,9 @@ mod tests {
         let offers = Offers { animations: vec!["idle".into(), "talking".into(), "wave".into()], body: BODY_PARTS.iter().map(|p| p.to_string()).collect(), ..Default::default() };
         let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira", "moves": {"wave": "a wave"}})).unwrap();
         let pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who loves to dance.", offers);
+        // One made before, to be let go of.
+        let still: spatiand_voice::motion::Motion = serde_json::from_value(json!({"fps": 30, "skeleton": {"joints": ["Pelvis"], "parents": [-1], "offsets": [[0, 0.97, 0]]}, "frames": [{"translation": [0, 0.97, 0], "rotations": [[0, 0, 0, 1]]}]})).unwrap();
+        pack.shelf().keep("cartwheel", &spatiand_voice::motion::Ask { prompt: "a person does a cartwheel".into(), duration: 3.0, ..Default::default() }, &still).unwrap();
         let s = pack.over(&Settings::default());
         let ai = AiSettings::default();
         let model = std::env::var("SPATIPAL_TEST_MODEL").unwrap_or_else(|_| ai.models.everyday.clone());
@@ -878,9 +1118,11 @@ mod tests {
         let mut misses = Vec::new();
         for asked in [
             "Make up a little victory dance and show me.",
-            "Can you do a cartwheel?",
+            "Can you do a backflip?",
+            "Forget that cartwheel you made, I didn't like it.",
             "Invent a new idle for yourself, something calm and swaying.",
             "Spin around twice with your arms out.",
+            "Stand on one leg for me.",
             "Wave at me.",
         ] {
             let ask = Ask {
@@ -900,13 +1142,45 @@ mod tests {
                 // Its own wave is done, not made again.
                 ("Wave at me.", Some(_)) => misses.push(format!("{asked:?}: made a wave it has")),
                 ("Wave at me.", None) => {}
-                (_, None) => misses.push(format!("{asked:?}: no make_move: {calls:?}")),
+                (_, None) => misses.push(format!("{asked:?}: no make_move: {calls:?}, said {:?}", answer.text)),
                 (_, Some(c)) => match crate::moves::asked(&serde_json::from_str(&c.arguments).unwrap_or_default()) {
-                    Ok((a, name)) => {
-                        eprintln!("    {name}: {:?}, {} s, loop {}", a.prompt, a.duration, a.looping);
-                        // An idle asked for loops, as the figure's idle.
-                        if asked.contains("idle") != a.looping {
-                            misses.push(format!("{asked:?}: loop {}", a.looping));
+                    Ok(crate::moves::Asked::Forget(name)) => {
+                        eprintln!("    forget {name}");
+                        if !asked.starts_with("Forget") || name != "cartwheel" {
+                            misses.push(format!("{asked:?}: forgot {name}"));
+                        }
+                    }
+                    Ok(crate::moves::Asked::Make { ask: a, name, kind }) => {
+                        eprintln!("    {name}: {:?}, {} s, {kind:?}", a.prompt, a.duration);
+                        if asked.starts_with("Forget") {
+                            misses.push(format!("{asked:?}: made {name} instead of forgetting"));
+                        }
+                        // An idle asked for is the idle; a pose asked for, held.
+                        let wanted = if asked.contains("idle") {
+                            crate::moves::Kind::Idle
+                        } else if asked.contains("one leg") {
+                            crate::moves::Kind::Pose
+                        } else {
+                            crate::moves::Kind::Move
+                        };
+                        if kind != wanted {
+                            misses.push(format!("{asked:?}: {kind:?}, not {wanted:?}"));
+                        }
+                        // Told it is being made, it says so -- not that it is done: it is done
+                        // seconds later, up to a minute (2026-11-20, "I'm standing on one leg for
+                        // you now", 44 s before it was).
+                        let mut messages = ask.messages.clone();
+                        messages.push(answer.message());
+                        messages.push(json!({"role": "tool", "tool_call_id": c.id, "content": crate::moves::begun(&name, kind)}));
+                        let then = converse(&hemera, &Ask { messages, ..ask.clone() }, |_| true).expect("hemera answers");
+                        eprintln!("    then: {:?}", then.text);
+                        let said = then.text.to_lowercase().replace('\u{2019}', "'");
+                        let done = [
+                            "there you go", "here you go", "ta-da", "tada", "i'm standing", "i am standing", "i'm holding", "i am holding", "i'm doing", "how's that", "how was that",
+                            "did you like", "did you see", "here it is", "i did it", "all done", "there!", "i'm spinning", "spinning now", "i'm dancing", "*",
+                        ];
+                        if let Some(d) = done.iter().find(|d| said.contains(*d)) {
+                            misses.push(format!("{asked:?}: said it was done ({d:?}) while it was being made: {:?}", then.text));
                         }
                     }
                     Err(why) => misses.push(format!("{asked:?}: {why}")),
@@ -1018,6 +1292,54 @@ mod tests {
     }
 
     #[test]
+    fn what_it_did_is_given_back_as_the_calls_it_made() {
+        use crate::store::Call;
+        let said = |role: &str, text: &str| Said { role: role.into(), text: text.into(), ..Default::default() };
+        let mut dressed = said("assistant", "There, my dress!");
+        dressed.did = vec!["changed: outfit: dress".into()];
+        dressed.calls = vec![Call { name: "appearance".into(), arguments: r#"{"outfit":"dress"}"#.into(), answer: "Done: the room shows it.".into() }];
+        let mut quiet = said("assistant", "");
+        quiet.calls = vec![Call { name: "open_app".into(), arguments: r#"{"name":"SpatiQuill"}"#.into(), answer: "opened SpatiQuill".into() }];
+        // Stopped, or from before calls were kept: what it did is told with its words.
+        let mut cut = said("assistant", "Opening");
+        cut.did = vec!["opened SpatiReel".into()];
+        let chat = [said("user", "Put on your dress."), dressed, said("user", "Open SpatiQuill."), quiet, said("assistant", "It is open."), said("user", "And SpatiReel."), cut, said("user", "thanks")];
+        let m = conversation(&chat);
+        let roles: Vec<&str> = m.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "assistant", "user", "assistant", "tool", "assistant", "user", "assistant", "user"]);
+        assert_eq!(m[1]["tool_calls"][0]["function"], json!({"name": "appearance", "arguments": "{\"outfit\":\"dress\"}"}));
+        assert_eq!(m[2]["tool_call_id"], m[1]["tool_calls"][0]["id"]);
+        assert_eq!(m[2]["content"], "Done: the room shows it.");
+        // Its words alone: no note for the small model to write itself.
+        assert_eq!(m[3]["content"], "There, my dress!");
+        assert_ne!(m[5]["tool_calls"][0]["id"], m[1]["tool_calls"][0]["id"]);
+        assert_eq!(m[9]["content"], "Opening\n(Done in the room: opened SpatiReel.)");
+        // Words just before its calls, in one answer of two kept: the calls go with them.
+        let mut then = said("assistant", "");
+        then.calls = vec![Call { name: "make_move".into(), arguments: "{}".into(), answer: "Not ready yet".into() }];
+        let m = conversation(&[said("user", "Dance."), said("assistant", "Watch this."), then]);
+        let roles: Vec<&str> = m.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool"]);
+        assert_eq!((m[1]["content"].as_str(), m[1]["tool_calls"][0]["function"]["name"].as_str()), (Some("Watch this."), Some("make_move")));
+    }
+
+    #[test]
+    fn what_was_read_is_not_kept_with_the_chat() {
+        assert_eq!(kept_answer("appearance", "Done: the room shows it."), "Done: the room shows it.");
+        assert!(kept_answer("read_window", "Saldo: Rp 12.345.678").contains("not kept"));
+        assert!(kept_answer("look_at_window", "a picture").contains("not kept"));
+        let long = "\u{e9}".repeat(300);
+        let kept = kept_answer("click", &long);
+        assert_eq!(kept.chars().count(), 243);
+        assert!(kept.ends_with("..."));
+        // Kept in the chat's file only when there are some; chats from before read as none.
+        let plain = serde_json::to_value(Said { role: "user".into(), text: "hi".into(), ..Default::default() }).unwrap();
+        assert!(plain.get("calls").is_none());
+        let old: Said = serde_json::from_str(r#"{"role": "assistant", "text": "Done.", "did": ["opened SpatiQuill"]}"#).unwrap();
+        assert!(old.calls.is_empty());
+    }
+
+    #[test]
     fn code_ending_in_a_character_of_several_bytes_is_kept_whole() {
         let voice = Voice::silent();
         for code in ["```\u{65e5}", "```let s = \"\u{e9}", "```\u{1f600}", "```x\u{e9}"] {
@@ -1071,6 +1393,19 @@ fn decide(hemera: &Hemera, turn: &Turn) -> Option<Receiver<bool>> {
 }
 
 /// The decision, if it has come. One that never will (its thread went) is the small model's.
+/// The tools that act, each complete in itself: in the room, or with a pal's figure. Not those
+/// that read (what is read may be for the larger model to think about), nor opening an
+/// application or typing, which may begin a piece of writing that is the larger model's.
+const ACTING_TOOLS: [&str; 12] = ["appearance", "make_move", "window", "click", "scroll", "drag", "press_keys", "recentre", "room_control", "set_reminder", "cancel_reminder", "dismiss"];
+
+/// A decision for the larger model let go of, because the small one is answering by acting.
+fn kept_by_body(with_body: bool) -> bool {
+    if with_body {
+        log::info!("brain: decided the larger model's, but the small model is answering by acting: its answer stands");
+    }
+    with_body
+}
+
 fn poll(decision: &Option<Receiver<bool>>) -> Option<bool> {
     match decision.as_ref()?.try_recv() {
         Ok(larger) => Some(larger),
@@ -1088,16 +1423,21 @@ fn wants_larger(hemera: &Hemera, model: &str, request: &str, last: &str) -> bool
     // they should.
     let system = "You decide who answers the wearer's request. The quick model answers chat, questions with a short answer, \
                   and actions in the room: opening applications, working windows, clicking, typing, reminders, settings, \
-                  and changing its own figure -- clothes, a pose, a move. \
+                  and anything to do with its own figure -- clothes, a pose, a move, making up a move, a pose or an idle of its own, \
+                  letting one go, changing its mind about one. Whatever is asked of its body or its look is quick, however it is put: \
+                  a change of mind (\"no, instead...\"), a dislike (\"I don't like it, get rid of it\"), something it has never done. \
                   The larger model answers what needs careful thought: writing or explaining code, calculations of several steps, \
                   analysis, planning, comparing, long or exact writing, translating long text. \
                   The quick model is told the time, the date and what is in the room, and sees what the wearer sees, so questions about them are quick. \
                   For example: \"what time is it?\" quick; \"what day is it tomorrow?\" quick; \"buka browser\" quick; \
                   \"describe what I see\" quick; \"apa ini?\" quick; \
                   \"how many days until Friday?\" quick; \"put on your dress and give me a twirl\" quick; \"show me how you sulk\" quick; \
+                  \"no wait, sit down instead\" quick; \"come up with a new way to stand when you're idle\" quick; \"delete the dance you made\" quick; \
                   \"write a script that backs up my photos\" larger; \
                   \"explain how a VPN works\" larger; \"compare these two laptops\" larger. Reply with one word: quick or larger.";
-    let user = if last.is_empty() { format!("Request: {request}") } else { format!("Your last answer: {last}\n\nRequest: {request}") };
+    // "Your last answer", as it was, read to the small model as its own last decision: a change
+    // of mind after it ("No, the other dress.") went to the larger model (2026-11-20).
+    let user = if last.is_empty() { format!("Request: {request}") } else { format!("The pal's last reply to the wearer: {last}\n\nRequest: {request}") };
     let started = std::time::Instant::now();
     let decided = hemera.complete(model, &[spatiand_voice::hemera::Message::system(system), spatiand_voice::hemera::Message::user(user)], 4, std::time::Duration::from_secs(3));
     log::info!("brain: decided {:?} in {:.2} s", decided, started.elapsed().as_secs_f32());

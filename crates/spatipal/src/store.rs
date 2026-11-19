@@ -142,9 +142,22 @@ pub struct Said {
     pub thinking: String,
     /// What it did in the room, in a few words each: "opened SpatiQuill".
     pub did: Vec<String>,
+    /// The tools its model called for it, given back to the model with the chat as they were
+    /// called (`brain::conversation`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<Call>,
     /// Which model answered.
     pub model: String,
     pub at: u64,
+}
+
+/// A tool its model called: by name, with what it was given, and what of its answer is kept.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(default)]
+pub struct Call {
+    pub name: String,
+    pub arguments: String,
+    pub answer: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]

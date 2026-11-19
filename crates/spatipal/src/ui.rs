@@ -314,7 +314,7 @@ impl Window {
 
     fn draw_settings(&mut self, p: &mut Painter, gl: &Gl, mut all: Rect, view: &View) {
         look::top(p, gl, &mut all, &mut self.back, "Back", Icon::Back, "Settings", "");
-        let mut foot = all.take_bottom(Button::HEIGHT);
+        let foot = all.take_bottom(Button::HEIGHT);
         all.take_bottom(16.0);
         if let Some(line) = self.editing {
             self.edit.hint = label(line).to_string();
