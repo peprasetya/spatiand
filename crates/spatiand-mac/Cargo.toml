@@ -38,6 +38,7 @@ spatikey-core = { path = "../spatikey-core" }
 zeroize = "1"
 spatiand-sync = { path = "../spatiand-sync" }
 spatiand-voice = { path = "../spatiand-voice" }
+spatiand-ai = { path = "../spatiand-ai" }
 serde_json = "1"
 spatiand-video = { path = "../spatiand-video" }
 spatiand-surfaces = { path = "../spatiand-surfaces" }

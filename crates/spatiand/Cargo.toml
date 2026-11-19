@@ -11,6 +11,8 @@ spatiand-stream = { path = "../spatiand-stream" }
 spatikey-core = { path = "../spatikey-core" }
 spatiand-sync = { path = "../spatiand-sync" }
 spatiand-voice = { path = "../spatiand-voice" }
+# The AI settings the room's AI card keeps and dictation reads.
+spatiand-ai = { path = "../spatiand-ai" }
 serde_json.workspace = true
 spatiand-video = { path = "../spatiand-video" }
 wayland-client = "0.31"

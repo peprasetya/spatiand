@@ -14,8 +14,9 @@
 //! SPATIAND_BACKEND=snapshot SPATIAND_SNAPSHOT=/tmp/hud.png SPATIAND_VIEW=hud spatiand
 //! ```
 //!
-//! `SPATIAND_VIEW` is `world`, `hud`, `environment`, `files`, `launcher`, `keyboard`,
-//! `calibrate`, `controller` or `sidecar`; `SPATIAND_SNAPSHOT_SIZE` is
+//! `SPATIAND_VIEW` is `world`, `hud`, `lookfeel` (the look and feel card), `ai` (the AI card),
+//! `environment`, `files`, `launcher`, `keyboard`, `calibrate`, `controller` or `sidecar`;
+//! `SPATIAND_SNAPSHOT_SIZE` is
 //! `WIDTHxHEIGHT` and defaults to one eye of the glasses (1920x1080). `SPATIAND_SNAPSHOT_YAW`
 //! turns the head and `SPATIAND_SNAPSHOT_PITCH` tips it down, both in degrees -- which is how
 //! the arc's edges and anything hanging below the eye line get checked.
@@ -145,6 +146,14 @@ enum View {
     /// The settings' *Sound devices* list, with this machine's real outputs and microphones as
     /// PipeWire has them now (on Linux; the Mac's are the app's to say).
     Audio,
+    /// The *Look and feel* card, its rows as the wearer chose them. `SPATIAND_VIEW_PAGE=<row
+    /// label>` puts the cursor on that row.
+    LookAndFeel,
+    /// The *AI* card, with the settings as `ai.json` has them and hemera asked what it offers
+    /// (as the card is: point `hemera` in the scratch folder's `ai.json` at a stand-in).
+    /// `SPATIAND_VIEW_PAGE=<row label>` puts the cursor on that row, and a `>` after it opens
+    /// its page; `SPATIAND_VIEW_TYPE=text` types that into a page that asks for text.
+    Ai,
 }
 
 impl View {
@@ -162,9 +171,23 @@ impl View {
             Ok("hosts") => Self::Hosts,
             Ok("bluetooth") => Self::Bluetooth,
             Ok("audio") => Self::Audio,
+            Ok("lookfeel") => Self::LookAndFeel,
+            Ok("ai") => Self::Ai,
             _ => Self::World,
         }
     }
+}
+
+/// Walk the settings to the row that does `action` and press A, as a thumb would. Bounded by the
+/// list's own length, as navigating never reports anything back.
+fn open_hud_row(shell: &mut Shell, action: spatiand_shell::HudAction) {
+    for _ in 0..shell.hud().items().len() {
+        if shell.hud().activate() == action {
+            break;
+        }
+        shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
+    }
+    shell.handle(Intent::Accept);
 }
 
 fn size_from_env() -> (u32, u32) {
@@ -352,14 +375,62 @@ pub fn run(
         View::Launcher => {
             shell.handle(Intent::ToggleLauncher);
         }
+        View::LookAndFeel => {
+            shell.handle(Intent::ToggleHud);
+            let prefs = crate::prefs::Prefs::load();
+            shell.set_look(prefs.look_index());
+            shell.set_steadiness(spatiand_track::SteadyView::new(prefs.steadiness).level().index());
+            open_hud_row(&mut shell, spatiand_shell::HudAction::OpenLookAndFeel);
+            if let Ok(label) = std::env::var("SPATIAND_VIEW_PAGE") {
+                for _ in 0..shell.look_and_feel().items().len() {
+                    if shell.look_and_feel().focused().label.starts_with(label.as_str()) {
+                        break;
+                    }
+                    shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
+                }
+            }
+        }
+        // As the session opens it: the settings as kept, and hemera asked -- given a few seconds
+        // to answer, as a wearer would wait for the list.
+        View::Ai => {
+            shell.handle(Intent::ToggleHud);
+            open_hud_row(&mut shell, spatiand_shell::HudAction::OpenAi);
+            let mut card = crate::ai::Card::default();
+            card.open(&mut shell);
+            let asked = std::time::Instant::now();
+            while shell.ai().offered().asking && asked.elapsed() < std::time::Duration::from_secs(6) {
+                card.tick(&mut shell);
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            if let Ok(page) = std::env::var("SPATIAND_VIEW_PAGE") {
+                let (label, open) = match page.strip_suffix('>') {
+                    Some(label) => (label.to_string(), true),
+                    None => (page, false),
+                };
+                for _ in 0..shell.ai().rows().len() {
+                    if shell.ai().rows().get(shell.ai().cursor()).is_some_and(|r| r.label.starts_with(label.as_str())) {
+                        break;
+                    }
+                    shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));
+                }
+                if open {
+                    if let Some(spatiand_shell::ShellEvent::Ai(action)) = shell.handle(Intent::Accept) {
+                        card.act(action, &mut shell);
+                    }
+                }
+            }
+            if let Ok(typed) = std::env::var("SPATIAND_VIEW_TYPE") {
+                shell.type_text(&typed);
+            }
+        }
         // Both are reached by walking the real HUD rather than by setting a mode directly, so
-        // a snapshot cannot show a state the wearer could not get to.
+        // a snapshot cannot show a state the wearer could not get to: into the look and feel
+        // card, and from it to the picker.
         View::Environment | View::Files => {
             shell.handle(Intent::ToggleHud);
-            // Navigating never reports anything back, so the walk is bounded by the list's
-            // own length rather than by waiting for it to stop moving.
-            for _ in 0..shell.hud().items().len() {
-                if shell.hud().activate() == spatiand_shell::HudAction::OpenEnvironments {
+            open_hud_row(&mut shell, spatiand_shell::HudAction::OpenLookAndFeel);
+            for _ in 0..shell.look_and_feel().items().len() {
+                if shell.look_and_feel().activate() == spatiand_shell::HudAction::OpenEnvironments {
                     break;
                 }
                 shell.handle(Intent::Navigate(spatiand_shell::NavDirection::Down));

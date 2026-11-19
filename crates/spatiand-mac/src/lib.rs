@@ -31,6 +31,9 @@ mod backend_drm {
     pub use crate::mac::panel::{fit_panel, head_locked_panel_sized};
 }
 
+/// The room's AI card, behind the shell's: the same file and the same hemera as on the Deck.
+#[path = "../../spatiand/src/ai.rs"]
+mod ai;
 #[path = "../../spatiand/src/assist.rs"]
 mod assist;
 #[path = "../../spatiand/src/spatikey.rs"]

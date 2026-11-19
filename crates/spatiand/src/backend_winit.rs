@@ -215,6 +215,8 @@ pub fn run(
     crate::own::adopt(&mut shell);
     let mut environments = Environments::discover();
     shell.set_environments(environments.entries(), environments.choice());
+    // The AI card is a file and hemera, nothing of the headset's: it works here as on the Deck.
+    let mut ai_card = crate::ai::Card::default();
     let mut browser = crate::environment::Browser::new();
     let mut sky_image = environments.current();
     let mut sky_dirty = false;
@@ -310,8 +312,10 @@ pub fn run(
                 ));
             }
 
+            ai_card.tick(&mut shell);
             for event in events {
                 match event {
+                    ShellEvent::Ai(action) => ai_card.act(action, &mut shell),
                     // Remote computers are served by the headset backend, which holds the
                     // hosts; this one is for working on the shell at a desk.
                     ShellEvent::LaunchRemote { .. }
@@ -418,6 +422,8 @@ pub fn run(
                     }
                     ShellEvent::Hud(action) => match action {
                         HudAction::OpenHosts | HudAction::OpenBluetooth | HudAction::OpenAudio | HudAction::ChooseAudio(_) | HudAction::ChooseAppMenu(_) | HudAction::AppMenuBack => {}
+                        HudAction::OpenLookAndFeel => {}
+                        HudAction::OpenAi => ai_card.open(&mut shell),
                         HudAction::OpenSwitcher => {
                             shell.set_windows(runtime.state.open_windows())
                         }

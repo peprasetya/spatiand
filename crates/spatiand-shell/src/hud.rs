@@ -1,8 +1,13 @@
 //! The STEAM-button HUD — spatial settings and the things you need mid-session.
 //!
-//! Deliberately one flat list rather than a tree. You are reading it through optics with about
-//! 640 usable pixels across a panel, wearing something on your face, probably standing up.
-//! Nested menus are how you lose your place under those conditions.
+//! A short list, and under some of its rows one card of their own, never deeper. You are reading
+//! it through optics with about 640 usable pixels across a panel, wearing something on your face,
+//! probably standing up; nested menus are how you lose your place under those conditions. It was
+//! one flat list, and grew until it was a long one: the owner had what belongs together grouped
+//! (2026-11-19), so the look, steadiness, the environment and pinned windows are the *Look and
+//! feel* card's ([`Hud::look_and_feel`]) and what more than one app uses of hemera's is the *AI*
+//! card's (`crate::ai`). Each card is one level down and comes back with B, as the pinned
+//! windows' and the sound devices' lists always did.
 //!
 //! Recentre and calibrate live here because they are the two things that fix a session gone
 //! wrong, and both had to be reachable without a terminal — that was the requirement that
@@ -73,6 +78,13 @@ pub enum HudAction {
     /// Open the pinned windows' own list: where they sit and how big. The list stays open while
     /// either is changed, so a corner can be tried and tried again.
     OpenPinned,
+    /// Open the look and feel card: the look, steadiness, the environment and pinned windows,
+    /// grouped there out of the main list (the owner, 2026-11-19: "so the main menu of setting is
+    /// simplified"). See [`Hud::look_and_feel`].
+    OpenLookAndFeel,
+    /// Open the AI card: hemera, the models every app uses, dictation, text in pictures. The
+    /// compositor answers by handing the card the settings and asking hemera what it offers.
+    OpenAi,
     /// Open the sound devices' list: where sound comes out and which microphone listens.
     OpenAudio,
     /// Use the device on this row of that list.
@@ -323,18 +335,17 @@ impl Hud {
                 action: HudAction::OpenSwitcher,
             },
             HudItem {
-                label: "Pinned windows",
-                detail: "Where windows pinned to your view sit, and how big. Opens a list that \
-                         stays open while you try each",
-                action: HudAction::OpenPinned,
+                label: "Look and feel",
+                detail: "Light or dark, how still the room stays, what surrounds you, and where \
+                         pinned windows sit",
+                action: HudAction::OpenLookAndFeel,
             },
             HudItem {
-                label: "Environment",
-                detail: "Choose what surrounds you, or add an image",
-                action: HudAction::OpenEnvironments,
+                label: "AI",
+                detail: "hemera, the models every app uses, dictation, and reading text in \
+                         pictures",
+                action: HudAction::OpenAi,
             },
-            look_row(0),
-            steadiness_row(DEFAULT_STEADINESS),
             HudItem {
                 label: "Remote computers",
                 detail: "Apps running on your other computers: see which are online, or pair \
@@ -371,6 +382,30 @@ impl Hud {
     /// in place of the settings and leaves open as either changes.
     pub fn pinned() -> Self {
         Self { items: vec![pip_corner_row(0), pip_size_row(false)], cursor: 0 }
+    }
+
+    /// The look and feel card: the look and steadiness, which step where they are, as the pinned
+    /// windows' rows do; the environment and pinned windows, which open the lists they always
+    /// opened. The rows are the ones the main list had, with the same words and the same prefs.
+    pub fn look_and_feel() -> Self {
+        Self {
+            items: vec![
+                look_row(0),
+                steadiness_row(DEFAULT_STEADINESS),
+                HudItem {
+                    label: "Environment",
+                    detail: "Choose what surrounds you, or add an image",
+                    action: HudAction::OpenEnvironments,
+                },
+                HudItem {
+                    label: "Pinned windows",
+                    detail: "Where windows pinned to your view sit, and how big. Opens a list that \
+                             stays open while you try each",
+                    action: HudAction::OpenPinned,
+                },
+            ],
+            cursor: 0,
+        }
     }
 
     /// Show whether a recording is going, on the recording row.
@@ -446,13 +481,14 @@ impl Hud {
         Self { items: vec![NO_AUDIO], cursor: 0 }
     }
 
-    /// Offer the sound devices' list in the settings, after the pinned windows' row. For a
-    /// platform that can say what devices there are and switch between them.
+    /// Offer the sound devices' list in the settings, after the window list's row, where it was
+    /// when the pinned windows' row came between them. For a platform that can say what devices
+    /// there are and switch between them.
     pub fn offer_audio(&mut self) {
         if self.items.iter().any(|i| i.action == HudAction::OpenAudio) {
             return;
         }
-        let at = self.items.iter().position(|i| i.action == HudAction::OpenPinned).map_or(self.items.len(), |i| i + 1);
+        let at = self.items.iter().position(|i| i.action == HudAction::OpenSwitcher).map_or(self.items.len(), |i| i + 1);
         self.items.insert(
             at,
             HudItem {
@@ -704,7 +740,7 @@ mod tests {
 
     #[test]
     fn the_steadiness_row_says_which_is_chosen() {
-        let mut hud = Hud::new(DesktopPanels::ALL);
+        let mut hud = Hud::look_and_feel();
         let row = |hud: &Hud| hud.items().iter().find(|i| i.action == HudAction::Steadiness).unwrap().label;
         assert_eq!(row(&hud), "Steadiness: medium");
         for (level, label) in STEADINESS_ROWS.iter().enumerate() {
@@ -735,13 +771,11 @@ mod tests {
                 "Take a screenshot",
                 "Record a video",
                 "Windows",
-                // Next to the window list: a pinned window is a way of arranging windows.
-                "Pinned windows",
-                "Environment",
-                // Beside what surrounds you: how Spatiand's own windows look in it.
-                "Look: as the system",
-                // And how still it all stays round a head that is never still.
-                "Steadiness: medium",
+                // How the room looks and feels, in one card of its own: the look, steadiness,
+                // what surrounds you and where pinned windows sit (the owner, 2026-11-19).
+                "Look and feel",
+                // What more than one app uses of hemera's, beside it.
+                "AI",
                 // Spatiand's own pages before the desktop's panels: this one is where the
                 // launcher's remote tabs come from, and it is reached for more than Bluetooth.
                 "Remote computers",
@@ -751,6 +785,44 @@ mod tests {
                 "Leave Spatiand",
             ]
         );
+    }
+
+    #[test]
+    fn the_look_and_feel_card_holds_what_the_main_list_had_as_it_was() {
+        // Moved out of the main list in one piece: the same rows, words and actions, so the
+        // pages they open and the prefs they change are the ones they always were.
+        let mut card = Hud::look_and_feel();
+        let rows: Vec<(&str, HudAction)> = card.items().iter().map(|i| (i.label, i.action.clone())).collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("Look: as the system", HudAction::Look),
+                ("Steadiness: medium", HudAction::Steadiness),
+                ("Environment", HudAction::OpenEnvironments),
+                ("Pinned windows", HudAction::OpenPinned),
+            ]
+        );
+        card.set_look(2);
+        assert_eq!(card.items()[0].label, "Look: dark");
+        let main: Vec<HudAction> = Hud::new(DesktopPanels::ALL).items().iter().map(|i| i.action.clone()).collect();
+        for gone in [HudAction::Look, HudAction::Steadiness, HudAction::OpenEnvironments, HudAction::OpenPinned] {
+            assert!(!main.contains(&gone), "{gone:?} is the card's now");
+        }
+        for card in [HudAction::OpenLookAndFeel, HudAction::OpenAi] {
+            assert_eq!(main.iter().filter(|a| **a == card).count(), 1);
+        }
+    }
+
+    #[test]
+    fn sound_devices_sit_after_the_window_list() {
+        let mut hud = Hud::with_calibration(DesktopPanels::ALL, true);
+        hud.offer_audio();
+        hud.offer_audio();
+        let labels: Vec<&str> = hud.items().iter().map(|i| i.label).collect();
+        let at = labels.iter().position(|l| *l == "Sound devices").unwrap();
+        assert_eq!(labels[at - 1], "Windows");
+        assert_eq!(labels[at + 1], "Look and feel");
+        assert_eq!(labels.iter().filter(|l| **l == "Sound devices").count(), 1);
     }
 
     #[test]

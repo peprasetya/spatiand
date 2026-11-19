@@ -154,6 +154,37 @@ fn card(shell: &Shell) -> Option<MenuModel> {
                 footer: "[A] Change  [B] Back".into(),
             })
         }
+        Mode::LookAndFeel => {
+            let list = shell.look_and_feel();
+            Some(MenuModel {
+                title: "Look and feel".into(),
+                rows: list.items().iter().map(|i| MenuRow::plain(i.label)).collect(),
+                cursor: list.cursor(),
+                detail: list.focused().detail.into(),
+                footer: FOOTER_SELECT.into(),
+            })
+        }
+        Mode::Ai => {
+            let ai = shell.ai();
+            Some(MenuModel {
+                title: ai.title(),
+                rows: ai
+                    .rows()
+                    .into_iter()
+                    .map(|r| {
+                        // A group's name is drawn in capitals, as the window list's are.
+                        if r.heading {
+                            MenuRow::heading(r.label.to_uppercase())
+                        } else {
+                            MenuRow { label: r.label, trailing: r.value, heading: false }
+                        }
+                    })
+                    .collect(),
+                cursor: ai.cursor(),
+                detail: ai.detail(),
+                footer: ai.footer().into(),
+            })
+        }
         Mode::Environment => {
             let picker = shell.environments();
             Some(MenuModel {
@@ -545,19 +576,66 @@ mod tests {
         assert_eq!(footer_parts("[B] Clear what was typed"), vec![(0, true, "B"), (0, false, "Clear what was typed")]);
     }
 
-    /// Walk the settings list to the environment row and press A.
+    /// Walk the settings list to the look and feel card, and in it to the environment row, and
+    /// press A.
     ///
     /// By action rather than by position: the row moves whenever the HUD gains an entry, and a
     /// test that counts presses passes for a while and then silently opens something else.
     fn open_environments(shell: &mut Shell) {
         for _ in 0..shell.hud().items().len() {
-            if shell.hud().activate() == HudAction::OpenEnvironments {
+            if shell.hud().activate() == HudAction::OpenLookAndFeel {
                 break;
             }
             shell.handle(Intent::Navigate(Direction::Down));
         }
-        assert_eq!(shell.hud().activate(), HudAction::OpenEnvironments);
+        assert_eq!(shell.hud().activate(), HudAction::OpenLookAndFeel);
         shell.handle(Intent::Accept);
+        for _ in 0..shell.look_and_feel().items().len() {
+            if shell.look_and_feel().activate() == HudAction::OpenEnvironments {
+                break;
+            }
+            shell.handle(Intent::Navigate(Direction::Down));
+        }
+        assert_eq!(shell.look_and_feel().activate(), HudAction::OpenEnvironments);
+        shell.handle(Intent::Accept);
+    }
+
+    #[test]
+    fn the_two_cards_are_one_row_each_in_the_settings_and_a_card_of_their_own() {
+        let mut shell = hud_shell();
+        let m = model(&shell).unwrap();
+        for row in ["Look and feel", "AI"] {
+            assert_eq!(m.rows.iter().filter(|r| r.label == row).count(), 1, "{row}");
+        }
+        for gone in ["Environment", "Pinned windows"] {
+            assert!(!m.rows.iter().any(|r| r.label == gone), "{gone} is the look and feel card's");
+        }
+        assert!(!m.rows.iter().any(|r| r.label.starts_with("Look:") || r.label.starts_with("Steadiness:")));
+        // The look and feel card, with its title as the way back.
+        let at = shell.hud().items().iter().position(|i| i.action == HudAction::OpenLookAndFeel).unwrap();
+        assert!(shell.point(at));
+        shell.handle(Intent::Accept);
+        let card = model(&shell).unwrap();
+        assert_eq!(card.title, format!("{BACK_MARK}Look and feel"));
+        let labels: Vec<&str> = card.rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Look: as the system", "Steadiness: medium", "Environment", "Pinned windows"]);
+        assert_eq!(card.footer, FOOTER_SELECT);
+        // The AI card: its groups named in capitals and never chosen, each setting's value set
+        // to the right of it.
+        shell.handle(Intent::Back);
+        let at = shell.hud().items().iter().position(|i| i.action == HudAction::OpenAi).unwrap();
+        assert!(shell.point(at));
+        shell.handle(Intent::Accept);
+        shell.set_ai(spatiand_shell::AiView { hemera: "http://deepmagpie:12434".into(), everyday: "neohorse-1:4b".into(), ..Default::default() });
+        let card = model(&shell).unwrap();
+        assert_eq!(card.title, format!("{BACK_MARK}AI"));
+        let headings: Vec<&str> = card.rows.iter().filter(|r| r.heading).map(|r| r.label.as_str()).collect();
+        assert_eq!(headings, ["MODELS", "DICTATION", "TEXT IN PICTURES"]);
+        assert_eq!(card.rows[0].trailing.as_deref(), Some("http://deepmagpie:12434"));
+        assert!(card.rows.iter().any(|r| r.label == "Everyday model" && r.trailing.as_deref() == Some("neohorse-1:4b")));
+        assert!(!card.rows[card.cursor].heading);
+        assert_eq!(card.footer, "[A] Change  [B] Back");
+        assert_eq!(footer_parts(&card.footer), vec![(0, true, "A"), (0, false, "Change"), (1, true, "B"), (1, false, "Back")]);
     }
 
     fn hud_shell() -> Shell {
