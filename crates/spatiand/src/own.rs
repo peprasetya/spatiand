@@ -105,8 +105,10 @@ fn native_library_dir() -> Option<PathBuf> {
         .and_then(|path| std::path::Path::new(path).parent().map(PathBuf::from))
 }
 
-/// SpatiMesh on Linux is Chromium (`third_party/chromium`), installed beside Spatiand's tree at
-/// `~/spatiand-chromium`, or where `SPATIAND_CHROMIUM` says. On the Beam Pro it is the same
+/// SpatiMesh on Linux is Chromium (`third_party/chromium`): where `SPATIAND_CHROMIUM` says; in an
+/// installed release, in `lib/spatimesh` beside the `bin` this program is in (tools/make-release.sh),
+/// as the Mac's is in the bundle beside this program; else unpacked beside Spatiand's tree at
+/// `~/spatiand-chromium`, for development. On the Beam Pro it is the same
 /// browser built for Android's libc, carried in the APK as `libspatimesh_chromium.so`, its
 /// resources and launcher unpacked by the app into its files (android/build.sh) and run through
 /// sh, as nothing there may be run itself. On the Mac it is the same browser's Linux UI built for
@@ -146,8 +148,14 @@ fn chromium_spatimesh() -> Option<String> {
     if !cfg!(target_os = "linux") {
         return None;
     }
+    let released = || {
+        // <release>/bin/<this program> -> <release>/lib/spatimesh
+        let exe = std::env::current_exe().ok()?;
+        Some(exe.parent()?.parent()?.join("lib/spatimesh")).filter(|dir| dir.join("run.sh").is_file())
+    };
     let dir = std::env::var_os("SPATIAND_CHROMIUM")
         .map(PathBuf::from)
+        .or_else(released)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join("spatiand-chromium")))?;
     Some(dir.join("run.sh")).filter(|run| run.is_file()).map(|run| format!("\"{}\"", run.display()))
 }

@@ -6,12 +6,21 @@
 #
 # Needs no root: everything lands under $HOME. Entries are by app id, so that Plasma puts the right
 # icon on a window. The room's launcher skips their category (desktop_entry.rs): it has these
-# behind its own bubble.
+# behind its own bubble. An installed release runs this too, with its own bin (install-release.sh).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PROGRAMS="${1:-$REPO/target/release}"
-BROWSER="$HOME/spatiand-chromium/run.sh"
+PROGRAMS="$(cd "$PROGRAMS" && pwd)"
+# The browser where the room looks for it (own.rs): where SPATIAND_CHROMIUM says; in a release, in
+# lib/spatimesh beside the programs' folder; else unpacked for development at ~/spatiand-chromium.
+if [ -n "${SPATIAND_CHROMIUM:-}" ]; then
+    BROWSER="$SPATIAND_CHROMIUM/run.sh"
+elif [ -f "$PROGRAMS/../lib/spatimesh/run.sh" ]; then
+    BROWSER="$(cd "$PROGRAMS/../lib/spatimesh" && pwd)/run.sh"
+else
+    BROWSER="$HOME/spatiand-chromium/run.sh"
+fi
 ICONS="$HOME/.local/share/spatiand/desktop-icons"
 ENTRIES="$HOME/.local/share/applications"
 DIRECTORIES="$HOME/.local/share/desktop-directories"

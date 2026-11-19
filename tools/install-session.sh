@@ -8,6 +8,10 @@
 #
 #   sudo tools/install-session.sh
 #
+# SPATIAND_BIN names the program the session runs, where it is not the development build
+# (~/spatiand/target/release/spatiand): an installed release's (install-release.sh). DESTDIR writes
+# both files under that folder instead, with no root, to see what would be installed.
+#
 # Afterwards, no root is needed again. Switch into spatial mode with:
 #
 #   steamosctl switch-to-desktop-mode spatiand.desktop
@@ -30,7 +34,8 @@ set -euo pipefail
 # without it.
 ENTRY_REVISION=3
 
-if [[ $EUID -ne 0 ]]; then
+ROOT="${DESTDIR:-}"
+if [[ $EUID -ne 0 && -z "$ROOT" ]]; then
     echo "!! Run this with sudo:  sudo $0" >&2
     exit 1
 fi
@@ -45,19 +50,23 @@ fi
 REAL_USER="${REAL_USER:-deck}"
 echo "== installing for user: $REAL_USER =="
 HOME_DIR=$(getent passwd "$REAL_USER" | cut -d: -f6)
-BIN="$HOME_DIR/spatiand/target/release/spatiand"
+BIN="${SPATIAND_BIN:-$HOME_DIR/spatiand/target/release/spatiand}"
 LAUNCHER=/usr/local/bin/spatiand-session
 DESKTOP=/usr/share/wayland-sessions/spatiand.desktop
 
 if [[ ! -x "$BIN" ]]; then
     echo "!! $BIN not found or not executable." >&2
-    echo "   Build it first (as $REAL_USER):" >&2
-    echo "   distrobox enter --name spatiand -- bash -c 'cd ~/spatiand && cargo build --release -p spatiand'" >&2
+    if [[ -n "${SPATIAND_BIN:-}" ]]; then
+        echo "   Install Spatiand again: its install.sh puts it there." >&2
+    else
+        echo "   Build it first (as $REAL_USER):" >&2
+        echo "   distrobox enter --name spatiand -- bash -c 'cd ~/spatiand && cargo build --release -p spatiand'" >&2
+    fi
     exit 1
 fi
 
 readonly_was_disabled=false
-if command -v steamos-readonly >/dev/null && [[ "$(steamos-readonly status 2>/dev/null)" == "enabled" ]]; then
+if [[ -z "$ROOT" ]] && command -v steamos-readonly >/dev/null && [[ "$(steamos-readonly status 2>/dev/null)" == "enabled" ]]; then
     echo "== unlocking the read-only root =="
     steamos-readonly disable
     readonly_was_disabled=true
@@ -70,9 +79,9 @@ relock() {
 }
 trap relock EXIT
 
-echo "== installing launcher: $LAUNCHER =="
-install -d /usr/local/bin
-cat > "$LAUNCHER" <<EOF
+echo "== installing launcher: $ROOT$LAUNCHER =="
+install -d "$ROOT/usr/local/bin"
+cat > "$ROOT$LAUNCHER" <<EOF
 #!/usr/bin/env bash
 # Launched by SDDM.
 #
@@ -120,10 +129,10 @@ systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY XDG_SESSION_TYPE 2>/d
 
 exit \$status
 EOF
-chmod +x "$LAUNCHER"
+chmod +x "$ROOT$LAUNCHER"
 
-echo "== installing session entry: $DESKTOP =="
-install -d /usr/share/wayland-sessions
+echo "== installing session entry: $ROOT$DESKTOP =="
+install -d "$ROOT/usr/share/wayland-sessions"
 # Two names in DesktopNames, and the second one is insurance.
 #
 # XDG_CURRENT_DESKTOP is one of the things xdg-desktop-portal matches a backend against, and a
@@ -138,7 +147,7 @@ install -d /usr/share/wayland-sessions
 # every machine has that default; the thing that was actually broken is next door, in the
 # compositor: a portal service starting on demand had no WAYLAND_DISPLAY of ours to draw on.
 # See `publish_session_environment`.
-cat > "$DESKTOP" <<EOF
+cat > "$ROOT$DESKTOP" <<EOF
 [Desktop Entry]
 Name=Spatial Mode
 Comment=Spatiand — 3D spatial desktop for XR glasses

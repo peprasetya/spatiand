@@ -6,7 +6,7 @@ Deck, other Linux and the Beam Pro. Asked for on 2026-10-16.
 
 | Platform | Engine | Where it comes from |
 |---|---|---|
-| Linux, the Deck | **Chromium** with Spatiand's patches, Cromite's among them (`third_party/chromium`, "The monthly update" below) | `~/spatiand-chromium`, packaged on its own |
+| Linux, the Deck | **Chromium** with Spatiand's patches, Cromite's among them (`third_party/chromium`, "The monthly update" below) | `~/spatiand-chromium`, packaged on its own; in a release (`tools/make-release.sh`), `lib/spatimesh` beside the programs' `bin`, its FFmpeg found through `lib/spatimesh/ffmpeg` |
 | Android (Beam Pro) | **Chromium, the Deck's**, built for Android's libc (2026-11-08; "SpatiMesh for Android" below) | in the APK, `libspatimesh_chromium.so` and its resources |
 | Mac | **Chromium, the Deck's** (Linux UI, Ozone/Wayland, carried to macOS: docs/spatimesh-mac-port.md); in the room and on the Mac's desktop as a client of Spatiand. Hardware video decoding on Chromium 157 checked 2026-11-18 | `CHROMIUM_TARGET=mac`, built on littleotter |
 

@@ -1,7 +1,8 @@
 //! PDFs, by PDFium on a thread of their own.
 //!
-//! PDFium is loaded at run time from beside the program (or `SPATILOUPE_PDFIUM`, or the copy
-//! `tools/fetch-pdfium.sh` put in the tree, for a build being worked on). One thread holds it
+//! PDFium is loaded at run time from beside the program, or from the libraries' folder beside its
+//! own (a Mac bundle's Frameworks, an installed release's lib), or `SPATILOUPE_PDFIUM`, or the copy
+//! `tools/fetch-pdfium.sh` put in the tree, for a build being worked on. One thread holds it
 //! and the open document, and is asked for pages at a width, for the words on them, and to
 //! find text; it answers on a channel the viewer looks at between pictures. A document locked
 //! with a password says so, and is given one to try (`Ask::Unlock`); the thread alone keeps it,
@@ -227,8 +228,10 @@ fn library() -> Option<PathBuf> {
     }
     if let Some(dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
         places.push(name(&dir));
-        // A Mac bundle keeps libraries in Frameworks, beside MacOS.
+        // A Mac bundle keeps libraries in Frameworks, beside MacOS; an installed Linux release in
+        // lib, beside bin (tools/make-release.sh).
         places.push(name(&dir.join("../Frameworks")));
+        places.push(name(&dir.join("../lib")));
     }
     let platform = if cfg!(target_os = "android") {
         "android-arm64"

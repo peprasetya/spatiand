@@ -26,17 +26,27 @@
 #
 # /etc survives SteamOS updates (unlike /usr), so unlike the session entry this only needs
 # installing once.
+#
+# DESTDIR writes the rules under that folder instead, with no root and nothing reloaded, to see
+# what would be installed.
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
+ROOT="${DESTDIR:-}"
+if [[ $EUID -ne 0 && -z "$ROOT" ]]; then
     echo "!! Run with sudo:  sudo $0" >&2
     exit 1
 fi
 
-RULES=/etc/udev/rules.d/99-spatiand.rules
-OWNER="${SPATIAND_USER:-${SUDO_USER:-deck}}"
+RULES="$ROOT/etc/udev/rules.d/99-spatiand.rules"
+# pkexec sets PKEXEC_UID, not SUDO_USER (install-release.sh asks through pkexec).
+OWNER="${SPATIAND_USER:-${SUDO_USER:-}}"
+if [[ -z "$OWNER" && -n "${PKEXEC_UID:-}" ]]; then
+    OWNER=$(getent passwd "$PKEXEC_UID" | cut -d: -f1)
+fi
+OWNER="${OWNER:-deck}"
 echo "== granting access to user: $OWNER =="
 
+install -d "$(dirname "$RULES")"
 cat > "$RULES" <<EOF
 # XREAL / Nreal glasses - IMU (interface 3) and MCU (interface 4).
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3318", OWNER="$OWNER", GROUP="wheel", MODE="0660"
@@ -51,6 +61,7 @@ EOF
 
 echo "== installed $RULES =="
 cat "$RULES"
+[[ -z "$ROOT" ]] || exit 0
 
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=hidraw

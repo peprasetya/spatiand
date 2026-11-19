@@ -1,10 +1,11 @@
-Spatiand — installing
-=====================
+Spatiand — installing on a Steam Deck
+=====================================
 
-A 3D spatial desktop for XR glasses. This file is about installing a release on a
-Steam Deck, the first system it ran on and the only one with a packaged release.
-The XREAL Beam Pro and a Mac are built from the source: see "On the Beam Pro and
-on a Mac" at the end.
+A 3D spatial desktop for XR glasses: your windows and Spatiand's own
+applications around you in the glasses, driven from the Deck's controls. This
+file comes with the Steam Deck release (tools/make-release.sh makes it). The
+XREAL Beam Pro and a Mac have packages of their own; see "On the Beam Pro and on
+a Mac" at the end.
 
 What you need
 -------------
@@ -12,32 +13,93 @@ What you need
 This has only ever been run on one combination of hardware. It may well work on
 others; nobody has tried.
 
-  * Steam Deck (LCD or OLED — tested on an LCD, AMD Custom APU 0405)
-  * XREAL Air, first generation (USB 3318:0424). Air 2 uses the same protocol
-    on the same interfaces and is likely to work; it has not been tested.
-  * SteamOS 3.8.16 or thereabouts
-  * A USB-C cable that carries video. Many do not.
+  * Steam Deck (LCD or OLED — tested on an LCD, AMD Custom APU 0405), in
+    desktop mode, with SteamOS 3.8 (the release is built on 3.8.28)
+  * XREAL Air glasses, first generation (USB 3318:0424). Air 2 uses the same
+    protocol on the same interfaces and is likely to work; it has not been
+    tested.
+  * A USB-C cable that carries video. Many do not: one that charges perfectly
+    well can leave the glasses black.
+  * A password for the Deck's user, to add "Spatial Mode" to the login screen.
+    A Steam Deck has none until one is set: open Konsole and type `passwd`.
+
+What is in the folder
+---------------------
+
+    Install Spatiand      double-click: installs it, or updates the one installed
+    Uninstall Spatiand    double-click: removes it
+    install.sh            the same two, from a terminal (--help says their
+    uninstall.sh            options)
+    spatiand/             the programs
+    README.txt            this
+    LICENSE               Spatiand's own licence (MIT)
+    THIRD-PARTY.txt       what else is inside, and under which licence
+    SOURCE.txt            where every part's source is, and how it was built
+
+The programs are the room (`spatiand`), SpatiShelf (files), SpatiReel (video),
+SpatiLoupe (pictures, PDFs and 3D objects), SpatiQuill (terminal), SpatiMesh
+(the web browser: Chromium, in spatiand/lib/spatimesh), SpatiPal (the
+companion), SpatiKey (passwords and passkeys), the file chooser and the storage
+service, with the libraries they need that SteamOS does not have: FFmpeg's and
+PDFium.
 
 Installing
 ----------
 
-  1. Unpack the folder anywhere.
-  2. Double-click "Install Spatiand".
-     KDE will ask whether you trust it the first time — say yes.
+  1. In desktop mode, unpack the folder anywhere (in Dolphin: right-click the
+     download, Extract, Extract archive here).
+  2. Double-click "Install Spatiand". KDE asks the first time whether to run
+     it — say yes. A terminal window says what it does.
   3. Type your password when asked. It is needed once, to add "Spatial Mode"
-     to the list of sessions you can log into.
+     to the sessions at the login screen.
 
-Nothing is installed outside your home folder except that one session entry.
+The installer also offers udev rules for the glasses. Say no unless you start
+Spatiand over ssh: they let it open the glasses and the controller outside a
+login session, and Spatial Mode does not need them.
+
+What is installed:
+
+    ~/.local/share/spatiand/release          the programs
+    the application menu, under Spatiand     Spatiand's applications, to run on
+                                             the desktop without glasses
+    "Go To Spatiand"                         on the desktop, and in the menu
+                                             under System
+    /usr/local/bin/spatiand-session          Spatial Mode, at the login screen
+    /usr/share/wayland-sessions/spatiand.desktop
+    /etc/udev/rules.d/99-spatiand.rules      only if you said yes to the rules
+
+Nothing else outside your home folder. To update, unpack a newer release and
+double-click its "Install Spatiand": your settings stay as they are.
 
 Running it
 ----------
 
-Plug the glasses in *before* starting, then either double-click "Go To
-Spatiand" on the desktop, or log out and choose "Spatial Mode".
+Plug the glasses into the Deck's USB-C port *before* starting, then either
+double-click "Go To Spatiand" on the desktop, or log out and choose "Spatial
+Mode".
 
-To leave: hold any button on the panel's exit row. From a terminal:
+To leave: hold any button on the exit row of the Deck's screen. From a
+terminal:
 
     steamosctl switch-to-desktop-mode plasma.desktop
+
+Removing it
+-----------
+
+Double-click "Uninstall Spatiand" in the release folder, or run
+
+    ~/.local/share/spatiand/release/uninstall.sh
+
+It removes the programs, their menu and desktop entries, and — with your
+password — Spatial Mode's session entry, and the udev rules if you agree. What
+you made with it stays, as it does when any program is removed:
+
+    ~/.config/spatiand               settings, and SpatiKey's passwords
+                                     (apps/spatikey)
+    ~/.config/spatiand-chromium      SpatiMesh's profiles: bookmarks,
+                                     history, logins
+    ~/.local/share/spatiand          environments and applications added to
+                                     the room
 
 If something goes wrong
 -----------------------
@@ -46,6 +108,7 @@ The session writes everything it did to:
 
     ~/.local/share/spatiand-session.log        this session
     ~/.local/share/spatiand-session.log.1      the one before
+    ~/.local/share/spatiand-apps.log           Spatiand's applications
 
 The second one is where a crash will be, because a session that dies is
 restarted within seconds and the new one opens the first file fresh.
@@ -60,8 +123,13 @@ three things, in the order worth checking:
     says `disconnected` and `.../modes` is empty. Only a full shutdown clears
     this — not a restart.
 
-**Nothing starts at all.** SteamOS updates replace `/usr` and take the session
-registration with them. Run the installer again; everything else survives.
+**Spatial Mode is gone from the login screen.** SteamOS updates replace `/usr`
+and take the session entry with them. Double-click "Go To Spatiand": it notices,
+asks for your password and puts it back. Everything else survives an update.
+
+**The installer says libraries are missing.** The release is built for SteamOS
+3.8; a much newer or older SteamOS may lack a library it was built against, and
+the installer says which before it changes anything.
 
 Turning things off
 ------------------
@@ -108,8 +176,8 @@ machine whose only screen is the thing being debugged.
 On the Beam Pro and on a Mac
 ----------------------------
 
-Neither has a packaged release: each is built from the source and installed by
-the one who built it.
+Each has a package of its own, and each is also built from the source by the
+one who installs it:
 
   * XREAL Beam Pro (Android 14). `android/build.sh install` builds the APK and
     installs it on the device adb is talking to; it needs the Android SDK's
