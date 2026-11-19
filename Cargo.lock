@@ -5355,6 +5355,7 @@ dependencies = [
  "spatiand-media",
  "spatiand-render",
  "spatiand-storage",
+ "zeroize",
 ]
 
 [[package]]

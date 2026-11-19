@@ -181,6 +181,9 @@ struct Loupe {
     size: (u32, u32),
     /// What a file opened at the start is, to open once its folder is listed.
     opening: Option<PathBuf>,
+    /// A locked PDF just written (or its copy), and the password it was opened with: given to it
+    /// when it is opened again, and let go of then whatever is opened.
+    unlocking: Option<(PathBuf, pdf::Secret)>,
     left: Vec<View>,
     /// Which of the folder's tiles the viewer's strip was last made from (`Folder::generation`).
     strip: Option<u64>,
@@ -293,7 +296,10 @@ impl Loupe {
                 let job = Job::new(move || still_wanted().then(|| Done::Model { ticket, result: model::Scene::read(&path) }));
                 self.calls.send(job.or(move |e| Done::Model { ticket, result: Err(e) })).ok();
             }
-            Kind::Pdf => view.open_pdf(),
+            Kind::Pdf => {
+                let password = self.unlocking.take().filter(|(written, _)| *written == entry.path).map(|(_, password)| password);
+                view.open_pdf(password);
+            }
             Kind::Folder => return,
         }
         self.app.set_title(self.window, &format!("{} \u{2014} SpatiLoupe", entry.name));
@@ -369,6 +375,8 @@ impl Loupe {
                             }
                         }
                     }
+                    // Given to the file written if that is what opened; let go of either way.
+                    self.unlocking = None;
                 }
                 Done::Tile { ticket, tile } => self.folder.pictured(ticket, tile),
                 Done::Picture { ticket, result } => {
@@ -391,7 +399,7 @@ impl Loupe {
                 }
                 Done::Saved { ticket, result } => {
                     if let Some(view) = self.view.as_mut().filter(|v| v.ticket == ticket) {
-                        view.saved(result);
+                        view.saved(result, None);
                     }
                 }
             }
@@ -401,8 +409,9 @@ impl Loupe {
         }
         // A file written -- the one looked at, or its copy -- shown afresh as it now is: listed
         // again, the folder perhaps holding a new file, and opened as it comes.
-        if let Some(view::Want::Saved { path, said }) = self.view.as_mut().and_then(|v| v.take_wanted()) {
+        if let Some(view::Want::Saved { path, said, password }) = self.view.as_mut().and_then(|v| v.take_wanted()) {
             self.saying = Some(said);
+            self.unlocking = password.map(|password| (path.clone(), password));
             self.opening = Some(path);
             self.relist();
             self.dirty = true;
@@ -701,6 +710,7 @@ fn main() {
             clear: false,
             size: WINDOW,
             opening: None,
+            unlocking: None,
             left: Vec::new(),
             strip: None,
             changed: channel(),

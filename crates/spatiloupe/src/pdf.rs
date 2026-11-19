@@ -3,12 +3,87 @@
 //! PDFium is loaded at run time from beside the program (or `SPATILOUPE_PDFIUM`, or the copy
 //! `tools/fetch-pdfium.sh` put in the tree, for a build being worked on). One thread holds it
 //! and the open document, and is asked for pages at a width, for the words on them, and to
-//! find text; it answers on a channel the viewer looks at between pictures.
+//! find text; it answers on a channel the viewer looks at between pictures. A document locked
+//! with a password says so, and is given one to try (`Ask::Unlock`); the thread alone keeps it,
+//! while the document is open, to open the file again when markup is written into it.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use pdfium_render::prelude::*;
+use zeroize::Zeroizing;
+
+/// A document's password: never written anywhere, logged or said, held only while the document
+/// it opens is open (its thread has it, to open the file again when markup is written into it),
+/// and wiped from memory when let go of.
+pub struct Secret(Zeroizing<String>);
+
+impl Secret {
+    pub fn new(text: String) -> Secret {
+        Secret(Zeroizing::new(text))
+    }
+
+    pub(crate) fn expose(&self) -> &str {
+        &self.0
+    }
+
+    /// The same password, for the same document opened again: after it is saved, or its copy.
+    pub fn again(&self) -> Secret {
+        Secret::new(self.0.to_string())
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret")
+    }
+}
+
+/// What the document's owner allows done to it, as its security says -- all of it, unless it is
+/// encrypted with permissions, and opened with the password to open it rather than the owner's.
+/// What markup offers, as Preview does: annotating at all, and a crop (changing the pages).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rights {
+    pub encrypted: bool,
+    /// Notes may be added: the permissions' bit 6.
+    pub annotate: bool,
+    /// The pages may be changed: bit 4. A crop box changes a page.
+    pub modify: bool,
+}
+
+impl Rights {
+    pub const ALL: Rights = Rights { encrypted: false, annotate: true, modify: true };
+
+    /// From PDFium's security handler revision (-1, none) and the permissions it gives (all of them
+    /// for a document opened with its owner's password).
+    pub fn of(revision: i32, permissions: u32) -> Rights {
+        if revision < 0 {
+            return Rights::ALL;
+        }
+        Rights { encrypted: true, annotate: permissions & (1 << 5) != 0, modify: permissions & (1 << 3) != 0 }
+    }
+}
+
+/// The rights over the document at `path` (or of `bytes`, a remote's), opened with `password`:
+/// PDFium's own numbers, which pdfium-render does not give for AES-256 (revision 6).
+pub(crate) fn rights(pdfium: &Pdfium, path: &Path, bytes: Option<&[u8]>, password: Option<&str>) -> Rights {
+    let b = pdfium.bindings();
+    let doc = match (bytes, path.to_str()) {
+        (Some(bytes), _) => unsafe { b.FPDF_LoadMemDocument64(bytes, password) },
+        (None, Some(name)) => unsafe { b.FPDF_LoadDocument(name, password) },
+        (None, None) => match std::fs::read(path) {
+            Ok(bytes) => return rights(pdfium, path, Some(&bytes), password),
+            Err(_) => std::ptr::null_mut(),
+        },
+    };
+    if doc.is_null() {
+        // Opened by pdfium-render a moment ago: allowed nothing rather than guessed.
+        return Rights { encrypted: true, annotate: false, modify: false };
+    }
+    let rights = unsafe { Rights::of(b.FPDF_GetSecurityHandlerRevision(doc), b.FPDF_GetDocPermissions(doc) as u32) };
+    unsafe { b.FPDF_CloseDocument(doc) };
+    rights
+}
 
 /// A page's size in points, and its label if the document gives it one.
 #[derive(Debug, Clone)]
@@ -42,25 +117,33 @@ pub enum Ask {
     /// Markup written into the document as annotations and crop boxes (`annotate`): over the
     /// file, or as a copy beside it.
     Save { marks: crate::markup::Marks, copy: bool },
+    /// The password to open a locked document with.
+    Unlock(Secret),
 }
 
 pub enum Answer {
-    Opened { pages: Vec<Page>, outline: Vec<Heading>, title: Option<String> },
+    Opened { pages: Vec<Page>, outline: Vec<Heading>, title: Option<String>, rights: Rights },
+    /// It is locked with a password, which is asked for: again, if `wrong`, the one given not
+    /// opening it.
+    Locked { wrong: bool },
     Failed(String),
     Drawn { page: usize, width: u32, height: u32, rgba: Vec<u8> },
     /// The page could not be drawn: not there, or PDFium would not.
     Undrawn { page: usize },
     Found { found: Vec<Found>, ticket: u64 },
     Text { page: usize, text: String },
-    /// Where markup was written, or why it was not.
-    Saved(Result<PathBuf, String>),
+    /// Where markup was written, or why it was not; and the password it was opened with, for the
+    /// file written -- encrypted as it was, with the same password -- to be opened again with.
+    Saved { result: Result<PathBuf, String>, password: Option<Secret> },
 }
 
 /// The document at `path` written with `marks`: over itself (a new file beside it renamed over
-/// it), or as a copy beside it, "<name> (edited).pdf". Where it was written.
-fn save(pdfium: &Pdfium, path: &Path, marks: &crate::markup::Marks, copy: bool) -> Result<PathBuf, String> {
+/// it), or as a copy beside it, "<name> (edited).pdf". Where it was written. An encrypted one is
+/// opened with its `password` and stays encrypted as it was: PDFium's update encrypts what it adds
+/// with the document's own key, and keeps its security dictionary and file identifier.
+fn save(pdfium: &Pdfium, path: &Path, marks: &crate::markup::Marks, copy: bool, password: Option<&str>) -> Result<PathBuf, String> {
     let bytes = crate::place::read(path)?;
-    let written = crate::annotate::annotate(pdfium, &bytes, marks)?;
+    let written = crate::annotate::annotate(pdfium, &bytes, marks, password)?;
     if !copy {
         crate::place::replace(path, &written)?;
         return Ok(path.to_path_buf());
@@ -137,8 +220,10 @@ fn outline(document: &PdfDocument) -> Vec<Heading> {
 }
 
 impl Pdf {
-    /// Open the document at `path`; the first answer says whether it opened.
-    pub fn open(path: &Path) -> Pdf {
+    /// Open the document at `path`; the first answer says whether it opened, or that it is
+    /// locked and its password is wanted (`Ask::Unlock`). `password` is one it was opened with
+    /// before, tried first: the document saved, or its copy.
+    pub fn open(path: &Path, password: Option<Secret>) -> Pdf {
         let (asks, asked) = channel::<Ask>();
         let (tell, answers) = channel();
         let path = path.to_path_buf();
@@ -150,24 +235,63 @@ impl Pdf {
                     return;
                 }
             };
-            let loaded = match crate::place::remote(&path) {
-                Some(_) => crate::place::read(&path).map_err(|e| e).and_then(|bytes| pdfium.load_pdf_from_byte_vec(bytes, None).map_err(|e| e.to_string())),
-                None => pdfium.load_pdf_from_file(&path, None).map_err(|e| e.to_string()),
+            // A remote's file is read once, and opened from memory as often as a password is tried.
+            let remote = match crate::place::remote(&path) {
+                Some(_) => match crate::place::read(&path) {
+                    Ok(bytes) => Some(bytes),
+                    Err(e) => {
+                        let _ = tell.send(Answer::Failed(format!("This PDF would not open: {e}")));
+                        return;
+                    }
+                },
+                None => None,
             };
-            let document = match loaded {
-                Ok(document) => document,
-                Err(e) if e.contains("Password") => {
-                    let _ = tell.send(Answer::Failed("This PDF is locked with a password.".into()));
-                    return;
-                }
-                Err(e) => {
-                    let _ = tell.send(Answer::Failed(format!("This PDF would not open: {e}")));
-                    return;
+            let mut password = password;
+            // Whether the password tried was the wearer's, and so wrong if it does not open it.
+            let mut typed = false;
+            let document = loop {
+                let given = password.as_ref().map(Secret::expose);
+                let loaded = match &remote {
+                    Some(bytes) => pdfium.load_pdf_from_byte_vec(bytes.clone(), given),
+                    None => pdfium.load_pdf_from_file(&path, given),
+                };
+                match loaded {
+                    Ok(document) => break document,
+                    Err(PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError)) => {
+                        // Let go of at once: a password that does not open it is not kept.
+                        drop(password.take());
+                        if tell.send(Answer::Locked { wrong: typed }).is_err() {
+                            return;
+                        }
+                        // Nothing else is asked of a document not yet open.
+                        loop {
+                            match asked.recv() {
+                                Ok(Ask::Unlock(secret)) => {
+                                    password = Some(secret);
+                                    typed = true;
+                                    break;
+                                }
+                                Ok(_) => continue,
+                                Err(_) => return,
+                            }
+                        }
+                    }
+                    Err(PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::SecurityError)) => {
+                        let _ = tell.send(Answer::Failed("This PDF is locked in a way SpatiLoupe cannot open: by a certificate, not a password.".into()));
+                        return;
+                    }
+                    Err(e) => {
+                        let _ = tell.send(Answer::Failed(format!("This PDF would not open: {e}")));
+                        return;
+                    }
                 }
             };
+            let given = password.as_ref().map(Secret::expose);
+            let rights = rights(&pdfium, &path, remote.as_deref(), given);
+            drop(remote);
             let pages: Vec<Page> = document.pages().iter().map(|page| Page { width: page.width().value, height: page.height().value }).collect();
             let title = document.metadata().get(PdfDocumentMetadataTagType::Title).map(|t| t.value().trim().to_string()).filter(|t| !t.is_empty());
-            if tell.send(Answer::Opened { pages, outline: outline(&document), title }).is_err() {
+            if tell.send(Answer::Opened { pages, outline: outline(&document), title, rights }).is_err() {
                 return;
             }
             let mut queue: Vec<Ask> = Vec::new();
@@ -210,7 +334,14 @@ impl Pdf {
                             let text = document.pages().get(page as PdfPageIndex).ok().and_then(|at| at.text().ok().map(|t| t.all())).unwrap_or_default();
                             Answer::Text { page, text }
                         }
-                        Ask::Save { marks, copy } => Answer::Saved(save(&pdfium, &path, &marks, copy)),
+                        Ask::Save { marks, copy } => {
+                            let result = save(&pdfium, &path, &marks, copy, password.as_ref().map(Secret::expose));
+                            // The file written opens with the same password: given back for it.
+                            let again = result.is_ok().then(|| password.as_ref().map(Secret::again)).flatten();
+                            Answer::Saved { result, password: again }
+                        }
+                        // Open already.
+                        Ask::Unlock(_) => continue,
                         Ask::Find { text, ticket } => {
                             let mut found = Vec::new();
                             for (index, page) in document.pages().iter().enumerate() {
@@ -269,9 +400,9 @@ pub fn width_within(width: f32, height: f32, side: u32) -> u32 {
 }
 
 /// The first page of a PDF, fitted within a square `side` across, for a tile: on the thread that
-/// asks, since a tile's picture is made on a thread already.
+/// asks, since a tile's picture is made on a thread already. A locked one has none.
 pub fn first_page(path: &Path, side: u32) -> Option<(u32, u32, Vec<u8>)> {
-    let pdf = Pdf::open(path);
+    let pdf = Pdf::open(path, None);
     let width = match pdf.answers.recv().ok()? {
         Answer::Opened { pages, .. } => {
             let first = pages.first()?;
@@ -344,6 +475,72 @@ pub(crate) mod tests {
             let _ = tell.send(first_page(&path, side));
         });
         told.recv_timeout(std::time::Duration::from_secs(10)).ok()
+    }
+
+    /// The PDF's next answer, given ten seconds.
+    fn next(pdf: &Pdf) -> Answer {
+        pdf.answers.recv_timeout(std::time::Duration::from_secs(10)).expect("an answer")
+    }
+
+    #[test]
+    fn a_locked_pdf_opens_with_its_password_and_its_copy_opens_with_it_again() {
+        if library().is_none() {
+            eprintln!("PDFium is not here (tools/fetch-pdfium.sh): not tried");
+            return;
+        }
+        use crate::markup::{Area, Ink, Marks, Note, Shape, Weight};
+        let (name, bytes, password, ..) = crate::annotate::tests::LOCKED[5];
+        let dir = std::env::temp_dir().join(format!("spatiloupe-locked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let pdf = Pdf::open(&path, None);
+        assert!(matches!(next(&pdf), Answer::Locked { wrong: false }));
+        // Asked of it before it is open: let go of, not answered.
+        pdf.ask(Ask::Text { page: 0 });
+        pdf.ask(Ask::Unlock(Secret::new("wrong".into())));
+        assert!(matches!(next(&pdf), Answer::Locked { wrong: true }));
+        pdf.ask(Ask::Unlock(Secret::new(password.unwrap().into())));
+        match next(&pdf) {
+            Answer::Opened { pages, rights, .. } => {
+                assert_eq!(pages.len(), 2);
+                assert_eq!(rights, Rights { encrypted: true, annotate: true, modify: true });
+            }
+            _ => panic!("opened"),
+        }
+        // Marked up and saved as a copy: written beside it, and its password given back for it.
+        let marks = Marks { notes: vec![Note { page: 0, shape: Shape::Box(Area::new(100.0, 100.0, 300.0, 200.0)), ink: Ink::Red, weight: Weight::Medium, size: 4.0 }], ..Marks::default() };
+        pdf.ask(Ask::Save { marks: marks.clone(), copy: true });
+        let (copy, again) = loop {
+            if let Answer::Saved { result, password } = next(&pdf) {
+                break (result.unwrap(), password.expect("its password"));
+            }
+        };
+        assert_eq!(copy, dir.join("aes-256-user (edited).pdf"));
+        // The copy opens with it at once, nothing asked; without it, it is locked as the first is.
+        assert!(matches!(next(&Pdf::open(&copy, Some(again))), Answer::Opened { .. }));
+        assert!(matches!(next(&Pdf::open(&copy, None)), Answer::Locked { wrong: false }));
+        // Saved over itself: the same.
+        pdf.ask(Ask::Save { marks, copy: false });
+        let (over, again) = loop {
+            if let Answer::Saved { result, password } = next(&pdf) {
+                break (result.unwrap(), password.expect("its password"));
+            }
+        };
+        assert_eq!(over, path);
+        assert!(matches!(next(&Pdf::open(&path, Some(again))), Answer::Opened { .. }));
+        drop(pdf);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_a_pdf_s_owner_allows_is_read_from_its_permissions() {
+        // Not encrypted: everything. The permissions' bit 6 is notes, bit 4 changing the pages.
+        assert_eq!(Rights::of(-1, 0), Rights::ALL);
+        assert_eq!(Rights::of(4, 0xFFFF_FFFC), Rights { encrypted: true, annotate: true, modify: true });
+        assert_eq!(Rights::of(4, (-36i32) as u32), Rights { encrypted: true, annotate: false, modify: true });
+        assert_eq!(Rights::of(6, (-12i32) as u32), Rights { encrypted: true, annotate: true, modify: false });
     }
 
     #[test]

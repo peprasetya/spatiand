@@ -559,10 +559,12 @@ unsafe fn make(b: &dyn PdfiumLibraryBindings, page: FPDF_PAGE, kind: i32, at: &A
 /// The PDF of `bytes` with `marks` written into it as annotations and crop boxes, by PDFium as
 /// an incremental update (and the arrows made Line annotations after it, as the module says):
 /// the whole file to be written. What was written is opened again and its marks found before it
-/// is given back.
-pub fn annotate(pdfium: &Pdfium, bytes: &[u8], marks: &Marks) -> Result<Vec<u8>, String> {
+/// is given back. An encrypted PDF is opened with `password` (none for one that opens without
+/// asking) and written encrypted as it was: PDFium's update encrypts what it adds with the
+/// document's own key, under its own security dictionary and file identifier.
+pub fn annotate(pdfium: &Pdfium, bytes: &[u8], marks: &Marks, password: Option<&str>) -> Result<Vec<u8>, String> {
     let b = pdfium.bindings();
-    let doc = unsafe { b.FPDF_LoadMemDocument64(bytes, None) };
+    let doc = unsafe { b.FPDF_LoadMemDocument64(bytes, password) };
     if doc.is_null() {
         return Err("PDFium would not open it again".into());
     }
@@ -660,19 +662,19 @@ pub fn annotate(pdfium: &Pdfium, bytes: &[u8], marks: &Marks) -> Result<Vec<u8>,
     drop(fonts);
     let (saved, pages, encrypted) = written?;
     if !arrows.is_empty() && !encrypted {
-        match arrows_as_lines(&saved, bytes.len(), &arrows).and_then(|lined| found(pdfium, &lined, pages, &made, true).map(|_| lined)) {
+        match arrows_as_lines(&saved, bytes.len(), &arrows).and_then(|lined| found(pdfium, &lined, pages, &made, true, None).map(|_| lined)) {
             Ok(lined) => return Ok(lined),
             Err(e) => log::warn!("the arrows stay Ink annotations: {e}"),
         }
     }
-    found(pdfium, &saved, pages, &made, false)?;
+    found(pdfium, &saved, pages, &made, false, password)?;
     Ok(saved)
 }
 
-/// Whether the PDF `bytes` opens with its `pages` and every mark made in it, of the kind it was
-/// made: an arrow a Line annotation if `lines`, else Ink.
-fn found(pdfium: &Pdfium, bytes: &[u8], pages: usize, made: &[(usize, String, Made)], lines: bool) -> Result<(), String> {
-    let document = pdfium.load_pdf_from_byte_slice(bytes, None).map_err(|e| format!("what was written does not open: {e}"))?;
+/// Whether the PDF `bytes` opens -- with `password`, if it is locked -- with its `pages` and every
+/// mark made in it, of the kind it was made: an arrow a Line annotation if `lines`, else Ink.
+fn found(pdfium: &Pdfium, bytes: &[u8], pages: usize, made: &[(usize, String, Made)], lines: bool, password: Option<&str>) -> Result<(), String> {
+    let document = pdfium.load_pdf_from_byte_slice(bytes, password).map_err(|e| format!("what was written does not open: {e}"))?;
     if document.pages().len() as usize != pages {
         return Err("what was written has lost pages".into());
     }
@@ -694,7 +696,7 @@ fn found(pdfium: &Pdfium, bytes: &[u8], pages: usize, made: &[(usize, String, Ma
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::markup::{Ink, Weight};
 
@@ -730,7 +732,7 @@ mod tests {
             crops: vec![(1, Area::new(20.0, 20.0, 700.0, 500.0))],
             turns: 0,
         };
-        let bytes = annotate(&pdfium, &original, &marks).unwrap();
+        let bytes = annotate(&pdfium, &original, &marks, None).unwrap();
         assert!(bytes.starts_with(&original), "an incremental update: the file as it was, then what changed");
         // Beside the PDF it was made from, for another reader to be shown it.
         std::fs::write(path.with_file_name("marked (edited).pdf"), &bytes).unwrap();
@@ -777,6 +779,114 @@ mod tests {
         assert!(dark > 200, "{dark}");
         // And what was there before is there still.
         assert_eq!(document.pages().len(), 2);
+    }
+
+    /// The encrypted PDFs of testdata/encrypted (qpdf made them: make.sh there), each with the
+    /// password that opens it (none: an owner's password only), its security handler's revision,
+    /// and whether its owner allows notes and its pages changed.
+    pub(crate) type Locked = (&'static str, &'static [u8], Option<&'static str>, i32, bool, bool);
+    pub(crate) const LOCKED: [Locked; 6] = [
+        ("rc4-128.pdf", include_bytes!("../testdata/encrypted/rc4-128.pdf"), None, 3, true, true),
+        ("rc4-128-user.pdf", include_bytes!("../testdata/encrypted/rc4-128-user.pdf"), Some("user"), 3, true, true),
+        ("aes-128-noannot.pdf", include_bytes!("../testdata/encrypted/aes-128-noannot.pdf"), None, 4, false, true),
+        ("aes-128-user.pdf", include_bytes!("../testdata/encrypted/aes-128-user.pdf"), Some("user"), 4, true, true),
+        ("aes-256-nomodify.pdf", include_bytes!("../testdata/encrypted/aes-256-nomodify.pdf"), None, 6, true, false),
+        ("aes-256-user.pdf", include_bytes!("../testdata/encrypted/aes-256-user.pdf"), Some("p\u{e4}ssw\u{f6}rd"), 6, true, true),
+    ];
+
+    /// A page drawn as a reader sees it, opened with `password`.
+    fn drawn_locked(pdfium: &Pdfium, bytes: &[u8], password: Option<&str>, width: i32) -> (u32, Vec<u8>) {
+        let document = pdfium.load_pdf_from_byte_slice(bytes, password).unwrap();
+        let page = document.pages().get(0).unwrap();
+        let bitmap = page.render_with_config(&PdfRenderConfig::new().set_target_width(width).render_annotations(true)).unwrap();
+        (bitmap.width() as u32, bitmap.as_rgba_bytes())
+    }
+
+    /// What PDFium says of a document's security, opened with `password`: its revision, and the
+    /// permissions it gives (all, opened with the owner's password).
+    fn security(pdfium: &Pdfium, bytes: &[u8], password: Option<&str>) -> Option<(i32, u32)> {
+        let b = pdfium.bindings();
+        unsafe {
+            let doc = b.FPDF_LoadMemDocument64(bytes, password);
+            if doc.is_null() {
+                return None;
+            }
+            let said = (b.FPDF_GetSecurityHandlerRevision(doc), b.FPDF_GetDocPermissions(doc) as u32);
+            b.FPDF_CloseDocument(doc);
+            Some(said)
+        }
+    }
+
+    #[test]
+    fn an_encrypted_pdf_marked_up_stays_encrypted_as_it_was() {
+        let Some(pdfium) = pdfium() else { return };
+        let note = |shape, ink, size| Note { page: 0, shape, ink, weight: Weight::Medium, size };
+        let extent = ink::measure(&mut ink::fonts(), "Grüße 你好", 24.0);
+        for (name, original, password, revision, annotate_ok, modify_ok) in LOCKED {
+            // What its owner allows, as SpatiLoupe reads it.
+            let rights = crate::pdf::rights(&pdfium, std::path::Path::new(name), Some(original), password);
+            assert_eq!(rights, crate::pdf::Rights { encrypted: true, annotate: annotate_ok, modify: modify_ok }, "{name}");
+            if password.is_some() {
+                assert!(pdfium.load_pdf_from_byte_slice(original, None).is_err(), "{name} opened without its password");
+            }
+            // Not marked up: markup is not offered for it (the view's test).
+            if !annotate_ok {
+                continue;
+            }
+            let marks = Marks {
+                notes: vec![
+                    note(Shape::Box(Area::new(100.0, 100.0, 300.0, 200.0)), Ink::Red, 4.0),
+                    note(Shape::Oval(Area::new(100.0, 300.0, 300.0, 400.0)), Ink::Green, 4.0),
+                    note(Shape::Arrow { from: (100.0, 500.0), to: (400.0, 600.0) }, Ink::Blue, 4.0),
+                    note(Shape::Text { at: (100.0, 650.0), words: "Grüße 你好".into(), extent }, Ink::Black, 24.0),
+                ],
+                crops: if modify_ok { vec![(0, Area::new(20.0, 20.0, 580.0, 780.0))] } else { Vec::new() },
+                turns: 0,
+            };
+            let bytes = annotate(&pdfium, original, &marks, password).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(bytes.starts_with(original), "{name}: an incremental update");
+            // The same security dictionary, named again by the update's trailer, and the notes'
+            // strings encrypted with the document's key: no name of one is in the clear.
+            let tail = String::from_utf8_lossy(&bytes[original.len()..]).into_owned();
+            let encrypt = |text: &str| text.rfind("/Encrypt").map(|at| text[at + 8..].split_whitespace().next().unwrap_or_default().to_string());
+            assert_eq!(encrypt(&tail), encrypt(&String::from_utf8_lossy(original)), "{name}: {tail}");
+            assert!(!tail.contains("spatiloupe-"), "{name}: a note's name (a string) in the clear");
+            // Locked as it was: not opened without its password; opened with it, the same
+            // revision and the same permissions.
+            if password.is_some() {
+                assert!(pdfium.load_pdf_from_byte_slice(&bytes, None).is_err(), "{name}: the edited file opened without its password");
+            }
+            let before = security(&pdfium, original, password).unwrap();
+            assert_eq!(before.0, revision, "{name}");
+            assert_eq!(security(&pdfium, &bytes, password), Some(before), "{name}: its security changed");
+            // Its notes as they were made, the words read back through the encryption; an arrow an
+            // Ink annotation (SpatiLoupe's own update does not encrypt, so it is not made a Line).
+            let document = pdfium.load_pdf_from_byte_slice(&bytes, password).unwrap();
+            let page = document.pages().get(0).unwrap();
+            type Kind = PdfPageAnnotationType;
+            let kinds: Vec<Kind> = page.annotations().iter().map(|a| a.annotation_type()).collect();
+            assert_eq!(kinds, [Kind::Square, Kind::Circle, Kind::Ink, Kind::FreeText], "{name}");
+            let words = page.annotations().iter().find(|a| a.annotation_type() == Kind::FreeText).and_then(|a| a.contents());
+            assert_eq!(words.as_deref(), Some("Grüße 你好"), "{name}");
+            if modify_ok {
+                let crop = page.boundaries().crop().unwrap().bounds;
+                assert_eq!((crop.left().value, crop.bottom().value, crop.right().value, crop.top().value), (20.0, 20.0, 580.0, 780.0), "{name}");
+            }
+            drop(page);
+            drop(document);
+            // Drawn: the box's edge red where it was put, its inside not (cropped 20 in, or not).
+            let (w, rgba) = drawn_locked(&pdfium, &bytes, password, if modify_ok { 560 } else { 600 });
+            let shift = if modify_ok { 20 } else { 0 };
+            let red = |x: u32, y: u32| {
+                let i = (((y - shift) * w + x - shift) * 4) as usize;
+                rgba[i] > 180 && rgba[i + 1] < 110 && rgba[i + 2] < 110
+            };
+            assert!(red(100, 150) && red(200, 100) && !red(200, 150), "{name}: the box drawn");
+            // Beside the test's other PDFs, for poppler or another reader to be shown.
+            let dir = std::env::temp_dir().join(format!("spatiloupe-pdf-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(name.replace(".pdf", " (edited).pdf")), &bytes).unwrap();
+        }
     }
 
     #[test]
@@ -924,7 +1034,7 @@ mod a_pdf_here {
             crops: vec![(0, Area::new(w * 0.05, h * 0.05, w * 0.95, h * 0.8))],
             turns: 0,
         };
-        let out = annotate(&pdfium, &bytes, &marks).unwrap();
+        let out = annotate(&pdfium, &bytes, &marks, None).unwrap();
         let to = path.with_file_name(format!("{} (edited).pdf", path.file_stem().unwrap().to_string_lossy()));
         std::fs::write(&to, out).unwrap();
         println!("{}", to.display());

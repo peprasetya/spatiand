@@ -175,6 +175,8 @@ pub struct Desk {
     shift: bool,
     last_press: Option<(Instant, (f32, f32))>,
     overlay: Overlay,
+    /// Whether Crop is offered: not for a PDF whose owner does not allow its pages changed.
+    pub may_crop: bool,
 }
 
 impl Desk {
@@ -205,6 +207,7 @@ impl Desk {
             shift: false,
             last_press: None,
             overlay: Overlay::default(),
+            may_crop: true,
         }
     }
 
@@ -243,6 +246,9 @@ impl Desk {
 
     /// A tool chosen from the bar.
     pub fn choose(&mut self, tool: Tool) {
+        if tool == Tool::Crop && !self.may_crop {
+            return;
+        }
         self.finish_typing();
         if tool != Tool::Crop {
             self.cropping = None;
@@ -845,6 +851,11 @@ impl Desk {
         };
         for (i, tool) in Tool::ALL.iter().enumerate() {
             let r = next(if i + 1 == Tool::ALL.len() { 20.0 } else { 8.0 });
+            // Not offered: its place left empty, and nothing there to press.
+            if *tool == Tool::Crop && !self.may_crop {
+                self.tools[i] = Button::default();
+                continue;
+            }
             // Lit to show the tool in hand, as a state only: not left focused for Enter.
             let button = &mut self.tools[i];
             button.focused = *tool == self.tool;

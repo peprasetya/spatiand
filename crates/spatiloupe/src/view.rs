@@ -445,6 +445,43 @@ pub struct Paper {
     head: f32,
     /// Where each page near the window was drawn last, for markup to draw on.
     placed: Vec<(usize, Rect)>,
+    /// The question a locked document asks, until it opens.
+    lock: Option<Lock>,
+    /// What its owner allows done to it: what markup offers.
+    rights: pdf::Rights,
+}
+
+/// A locked PDF's question: its password, typed into a field that shows dots, given to the PDF's
+/// thread with Enter and not kept here after.
+struct Lock {
+    field: Field,
+    /// The password given did not open it.
+    wrong: bool,
+    /// One given, and being tried.
+    trying: bool,
+}
+
+impl Lock {
+    fn new(wrong: bool) -> Lock {
+        let mut field = Field::default();
+        field.secret = true;
+        field.focused = true;
+        field.hint = "Password".into();
+        Lock { field, wrong, trying: false }
+    }
+
+    /// What was typed, wiped from memory.
+    fn forget(&mut self) {
+        let mut typed = std::mem::take(&mut self.field.text);
+        zeroize::Zeroize::zeroize(&mut typed);
+        self.field.set("");
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        self.forget();
+    }
 }
 
 const PAGE_GAP: f32 = 28.0;
@@ -475,6 +512,8 @@ impl Paper {
             cuts: HashMap::new(),
             head: HEAD,
             placed: Vec::new(),
+            lock: None,
+            rights: pdf::Rights::ALL,
         }
     }
 
@@ -583,8 +622,8 @@ pub enum Want {
     /// A picture marked up, to be written (by a worker: it is read whole and drawn on).
     Save(Box<crate::save::Saving>),
     /// A file written -- the one looked at, or its copy beside it -- to be shown as it now is,
-    /// with what was done said.
-    Saved { path: PathBuf, said: String },
+    /// with what was done said; a locked PDF with the password it opens with.
+    Saved { path: PathBuf, said: String, password: Option<pdf::Secret> },
 }
 
 /// What follows the yes of a question.
@@ -753,6 +792,15 @@ impl View {
         }
     }
 
+    /// Why markup does not draw on this file, though there is something to draw on: a PDF whose
+    /// owner does not allow annotating it (its permissions, as Preview keeps to them).
+    fn forbidden(&self) -> Option<String> {
+        match &self.doc {
+            Doc::Pdf(paper) if !paper.rights.annotate => Some(format!("The owner of {} does not allow marking it up: its permissions keep notes out.", self.entry.name)),
+            _ => None,
+        }
+    }
+
     /// The tools out, or put away; put away with nothing drawn, markup is let go of altogether.
     fn toggle_markup(&mut self) {
         if self.marking() {
@@ -762,12 +810,21 @@ impl View {
             if !self.unsaved() {
                 self.desk = None;
             }
+        } else if let Some(why) = self.forbidden().filter(|_| self.markable()) {
+            // Not offered: said why, at the foot.
+            self.trouble = Some(why);
+            self.trouble_at = Some(Instant::now());
+            return;
         } else if self.markable() {
-            let turns = match &self.doc {
-                Doc::Picture(shown) => shown.orientation,
-                _ => 0,
+            let (turns, may_crop) = match &self.doc {
+                Doc::Picture(shown) => (shown.orientation, true),
+                Doc::Pdf(paper) => (0, paper.rights.modify),
+                _ => (0, true),
             };
-            self.desk.get_or_insert_with(|| Box::new(Desk::new(turns))).on = true;
+            let desk = self.desk.get_or_insert_with(|| Box::new(Desk::new(turns)));
+            desk.on = true;
+            // A PDF whose pages its owner does not allow changed is not cropped.
+            desk.may_crop = may_crop;
             self.info = false;
             // The room's fonts read now, beside the window's thread, rather than at the first
             // word painted.
@@ -913,8 +970,9 @@ impl View {
         want
     }
 
-    /// What came of a save: the file shown again as it now is, or why it was not written.
-    pub fn saved(&mut self, result: Result<PathBuf, String>) {
+    /// What came of a save: the file shown again as it now is -- a locked PDF opened with the
+    /// `password` it was opened with -- or why it was not written.
+    pub fn saved(&mut self, result: Result<PathBuf, String>, password: Option<pdf::Secret>) {
         let copy = self.saving.take().is_some_and(|(_, copy)| copy);
         match result {
             Ok(path) => {
@@ -922,7 +980,7 @@ impl View {
                 if let Some(desk) = self.desk.as_mut() {
                     desk.markup.saved();
                 }
-                self.wanted = Some(Want::Saved { path, said });
+                self.wanted = Some(Want::Saved { path, said, password });
             }
             Err(e) => {
                 log::warn!("{}: not saved: {e}", self.entry.path.display());
@@ -959,8 +1017,10 @@ impl View {
         shown.centre = (0.5, 0.5);
     }
 
-    pub fn open_pdf(&mut self) {
-        self.doc = Doc::Pdf(Box::new(Paper::new(Pdf::open(&self.entry.path))));
+    /// The PDF opened; `password` one it was opened with before (saved, or its copy written),
+    /// tried first.
+    pub fn open_pdf(&mut self, password: Option<pdf::Secret>) {
+        self.doc = Doc::Pdf(Box::new(Paper::new(Pdf::open(&self.entry.path, password))));
     }
 
     pub fn pictured(&mut self, result: Result<Picture, String>) {
@@ -1083,7 +1143,7 @@ impl View {
             };
             any = true;
             match answer {
-                pdf::Answer::Opened { pages, outline, title } => {
+                pdf::Answer::Opened { pages, outline, title, rights } => {
                     if pages.is_empty() {
                         self.doc = Doc::Failed("This PDF has no pages.".into());
                         return true;
@@ -1091,6 +1151,17 @@ impl View {
                     paper.pages = pages;
                     paper.outline = outline;
                     paper.title = title;
+                    paper.rights = rights;
+                    paper.lock = None;
+                }
+                // Its password asked for -- again, if the one given was wrong: what was typed is
+                // not kept either way.
+                pdf::Answer::Locked { wrong } => {
+                    let lock = paper.lock.get_or_insert_with(|| Lock::new(wrong));
+                    lock.forget();
+                    lock.wrong = wrong;
+                    lock.trying = false;
+                    lock.field.focused = true;
                 }
                 pdf::Answer::Failed(why) => {
                     self.doc = Doc::Failed(why);
@@ -1122,8 +1193,8 @@ impl View {
                         paper.go_to = Some(first.page);
                     }
                 }
-                pdf::Answer::Saved(result) => {
-                    self.saved(result);
+                pdf::Answer::Saved { result, password } => {
+                    self.saved(result, password);
                     return true;
                 }
             }
@@ -1361,7 +1432,7 @@ impl View {
                     p.image(gl, which, at, uv, if fitted { 6.0 } else { 0.0 }, [1.0, 1.0, 1.0, fade], false);
                 }
             }
-            Doc::Pdf(paper) => draw_paper(p, gl, paper, here, seen_here),
+            Doc::Pdf(paper) => draw_paper(p, gl, paper, here, seen_here, &self.entry.name),
             Doc::Model(_) => {}
         }
         p.unclip(gl);
@@ -1590,7 +1661,10 @@ impl View {
         let all = self.bounds;
         let text = match &mut self.doc {
             Doc::Pdf(paper) => {
-                if let Some(field) = paper.find.as_ref().or(paper.page_field.as_ref()) {
+                // Never what is typed into the password's field.
+                if paper.lock.is_some() {
+                    "This PDF is locked with a password, which it asks for.".to_string()
+                } else if let Some(field) = paper.find.as_ref().or(paper.page_field.as_ref()) {
                     field.text.clone()
                 } else if paper.pages.is_empty() {
                     String::new()
@@ -1636,6 +1710,15 @@ impl View {
                 rows.push(("Pages".to_string(), paper.pages.len().to_string()));
                 if let Some(page) = paper.pages.first() {
                     rows.push(("Page size".to_string(), format!("{:.0} \u{d7} {:.0} mm", page.width / 72.0 * 25.4, page.height / 72.0 * 25.4)));
+                }
+                let rights = paper.rights;
+                if rights.encrypted {
+                    let allowed = match (rights.annotate, rights.modify) {
+                        (true, true) => "Encrypted; marking up allowed",
+                        (true, false) => "Encrypted; notes allowed, its pages not to be changed (no crop)",
+                        (false, _) => "Encrypted; its owner does not allow marking it up",
+                    };
+                    rows.push(("Security".to_string(), allowed.to_string()));
                 }
             }
             Doc::Model(object) => {
@@ -1811,6 +1894,32 @@ impl View {
         // The pointer taken away mid-drag: the picture is let go of, not held for ever.
         if matches!(input, Input::PointerLeft) && std::mem::take(&mut self.drag_slides) {
             self.carousel.release(Instant::now(), self.page());
+        }
+        // A locked document's password field has the keys: Enter gives what was typed to the
+        // PDF's thread to try (and keeps none of it here), Escape gives up asking.
+        if let Doc::Pdf(paper) = &mut self.doc {
+            if let Some(lock) = paper.lock.as_mut() {
+                if let Input::Key { key: Key::Escape, .. } = input {
+                    let name = self.entry.name.clone();
+                    self.doc = Doc::Failed(format!("{name} is locked with a password."));
+                    return Want::Nothing;
+                }
+                if let Some(typed) = lock.field.input(input) {
+                    if typed == Typed::Entered && !lock.trying {
+                        let password = std::mem::take(&mut lock.field.text);
+                        lock.forget();
+                        if !password.is_empty() {
+                            lock.trying = true;
+                            lock.wrong = false;
+                            paper.pdf.ask(Ask::Unlock(pdf::Secret::new(password)));
+                        }
+                    }
+                    return Want::Nothing;
+                }
+                if matches!(input, Input::Key { .. }) {
+                    return Want::Nothing;
+                }
+            }
         }
         // The search field, while there is one, has the keys.
         if let Doc::Pdf(paper) = &mut self.doc {
@@ -2329,8 +2438,38 @@ fn turned(uv: [f32; 4], turns: u8) -> [f32; 4] {
 
 /// The document's pages laid out on `all`, its page of the carousel, and drawn no further out than
 /// `seen`, the part of that page in the window. Which keys do what is the controls'.
-fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect) {
+/// A locked document's question, in the middle of `all`: what it is, the field its password is
+/// typed into (dots), and whether the one given was wrong or is being tried.
+fn draw_lock(p: &mut Painter, gl: &Gl, lock: &mut Lock, all: Rect, name: &str) {
+    let w = 720.0f32.min(all.w - 80.0);
+    let h = 300.0;
+    let panel = Rect::new(all.x + (all.w - w) * 0.5, all.y + (all.h - h) * 0.5, w, h);
+    look::glass(p, gl, panel, 22.0, 1.0);
+    let mut inner = panel.inset(32.0);
+    let head = inner.take_top(44.0);
+    draw_icon(p, gl, Icon::Lock, Rect { w: 40.0, h: 40.0, ..head }, theme::ink());
+    p.label(gl, &format!("{name} is locked"), Rect { x: head.x + 56.0, w: head.w - 56.0, ..head }, theme::ROW_EM, theme::ink(), 0.0);
+    inner.take_top(6.0);
+    p.label(gl, "Enter its password to open it.", inner.take_top(34.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
+    inner.take_top(20.0);
+    lock.field.draw(p, gl, inner.take_top(Field::HEIGHT));
+    inner.take_top(16.0);
+    let (said, colour) = if lock.trying {
+        ("Opening\u{2026}", theme::ink_hint())
+    } else if lock.wrong {
+        ("That password does not open it. Try again.", look::trouble())
+    } else {
+        ("", theme::ink_hint())
+    };
+    p.label(gl, said, inner.take_top(34.0), theme::DETAIL_EM, colour, 0.0);
+}
+
+fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect, name: &str) {
     paper.placed.clear();
+    if let Some(lock) = paper.lock.as_mut() {
+        draw_lock(p, gl, lock, all, name);
+        return;
+    }
     for texture in paper.stale.drain(..) {
         p.forget(gl, texture);
     }
@@ -2464,7 +2603,9 @@ fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect
 
 /// Which keys do what in a document.
 fn paper_hint(paper: &Paper) -> &'static str {
-    if paper.outline.is_empty() {
+    if paper.lock.is_some() {
+        "[Enter] Open  [Esc] Give up"
+    } else if paper.outline.is_empty() {
         "[/] Find  [+] [\u{2212}] Zoom  [P] Page  [PgUp] [PgDn] Turn"
     } else {
         "[/] Find  [+] [\u{2212}] Zoom  [O] Contents  [P] Page  [PgUp] [PgDn] Turn"
@@ -2951,7 +3092,7 @@ mod tests {
         let (pdf, tell, asked) = Pdf::played();
         view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
         let page = pdf::Page { width: 600.0, height: 800.0 };
-        tell.send(pdf::Answer::Opened { pages: vec![page.clone(), page], outline: Vec::new(), title: None }).unwrap();
+        tell.send(pdf::Answer::Opened { pages: vec![page.clone(), page], outline: Vec::new(), title: None, rights: pdf::Rights::ALL }).unwrap();
         view.answers();
         (view, tell, asked)
     }
@@ -3325,14 +3466,14 @@ mod tests {
         assert!(view.saving.is_some());
         assert!(matches!(view.input(&chord('z', false)), Want::Nothing));
         assert_eq!(desk(&mut view).markup.marks().notes.len(), 1);
-        view.saved(Ok(PathBuf::from("/nowhere/b.jpg")));
+        view.saved(Ok(PathBuf::from("/nowhere/b.jpg")), None);
         assert!(matches!(view.take_wanted(), Some(Want::Saved { said, .. }) if said == "Saved b.jpg."));
         // A copy is not asked about.
         let mut view = marking(3, 1);
         desk(&mut view).choose(Tool::Box);
         drag(&mut view, (400.0, 400.0), (800.0, 600.0));
         assert!(matches!(view.input(&chord('s', true)), Want::Save(saving) if saving.copy));
-        view.saved(Err("the disk is full".into()));
+        view.saved(Err("the disk is full".into()), None);
         assert_eq!(view.trouble.as_deref(), Some("SpatiLoupe could not save b.jpg: the disk is full."));
         assert!(view.unsaved(), "nothing lost when it was not written");
     }
@@ -3421,5 +3562,119 @@ mod tests {
             _ => None,
         });
         assert_eq!(saved, Some((1, true)));
+    }
+
+    fn typed(view: &mut View, words: &str) {
+        for c in words.chars() {
+            view.input(&Input::Key { key: Key::Char(c), text: Some(c.to_string()), modifiers: Default::default(), letter: None });
+        }
+    }
+
+    fn lock(view: &mut View) -> Option<&mut Lock> {
+        paper(view).lock.as_mut()
+    }
+
+    #[test]
+    fn a_locked_pdf_asks_for_its_password_and_keeps_none_of_it() {
+        let entry = Entry { name: "locked.pdf".into(), path: PathBuf::from("/nowhere/locked.pdf"), kind: Kind::Pdf, size: 1, modified: String::new() };
+        let mut view = View::new(entry, 0, 1, vec![0]);
+        let (pdf, tell, asked) = Pdf::played();
+        view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
+        tell.send(pdf::Answer::Locked { wrong: false }).unwrap();
+        view.answers();
+        let field = &lock(&mut view).expect("asked").field;
+        assert!(field.secret && field.focused, "a field of dots, typed into at once");
+        assert_eq!(paper_hint(paper(&mut view)), "[Enter] Open  [Esc] Give up");
+        // Typed: never said to the room's speech, nor anywhere but the field.
+        typed(&mut view, "pässwörd");
+        assert_eq!(lock(&mut view).unwrap().field.text, "pässwörd");
+        let said = view.describe().1;
+        assert!(!said.contains("pässwörd") && said.contains("locked"), "{said}");
+        // The arrows are the field's, not the folder's.
+        assert!(matches!(view.input(&key(Key::Left, "")), Want::Nothing));
+        assert!(view.carousel.resting());
+        // Enter: given to the PDF's thread, the field emptied.
+        view.input(&key(Key::Enter, ""));
+        let given = std::iter::from_fn(|| asked.try_recv().ok()).find_map(|ask| match ask {
+            Ask::Unlock(secret) => Some(secret.expose().to_string()),
+            _ => None,
+        });
+        assert_eq!(given.as_deref(), Some("pässwörd"));
+        let lock_now = lock(&mut view).unwrap();
+        assert!(lock_now.field.text.is_empty() && lock_now.trying && !lock_now.wrong);
+        // A wrong one is said, and asked again.
+        tell.send(pdf::Answer::Locked { wrong: true }).unwrap();
+        view.answers();
+        let lock_now = lock(&mut view).unwrap();
+        assert!(lock_now.wrong && !lock_now.trying && lock_now.field.text.is_empty());
+        // Enter with nothing typed gives nothing.
+        view.input(&key(Key::Enter, ""));
+        assert!(asked.try_recv().is_err());
+        // The right one: the pages, and the question gone.
+        typed(&mut view, "user");
+        view.input(&key(Key::Enter, ""));
+        let page = pdf::Page { width: 600.0, height: 800.0 };
+        tell.send(pdf::Answer::Opened { pages: vec![page], outline: Vec::new(), title: None, rights: pdf::Rights { encrypted: true, annotate: true, modify: true } }).unwrap();
+        view.answers();
+        assert!(lock(&mut view).is_none() && paper(&mut view).pages.len() == 1);
+        assert!(view.about().iter().any(|(what, value)| what == "Security" && value == "Encrypted; marking up allowed"));
+        // Escape gives up asking: the file says it is locked.
+        let entry = Entry { name: "locked.pdf".into(), path: PathBuf::from("/nowhere/locked.pdf"), kind: Kind::Pdf, size: 1, modified: String::new() };
+        let mut view = View::new(entry, 0, 1, vec![0]);
+        let (pdf, tell, _asked) = Pdf::played();
+        view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
+        tell.send(pdf::Answer::Locked { wrong: false }).unwrap();
+        view.answers();
+        typed(&mut view, "half");
+        assert!(matches!(view.input(&key(Key::Escape, "")), Want::Nothing), "not back to the folder");
+        assert!(matches!(&view.doc, Doc::Failed(why) if why == "locked.pdf is locked with a password."));
+    }
+
+    #[test]
+    fn markup_keeps_to_what_a_pdf_s_owner_allows() {
+        // Notes not allowed: not offered, and said why.
+        let (mut view, tell, _asked) = reading();
+        tell.send(pdf::Answer::Opened { pages: vec![pdf::Page { width: 600.0, height: 800.0 }], outline: Vec::new(), title: None, rights: pdf::Rights { encrypted: true, annotate: false, modify: true } }).unwrap();
+        view.answers();
+        view.input(&chord('a', true));
+        assert!(view.desk.is_none() && !view.marking());
+        assert_eq!(view.trouble.as_deref(), Some("The owner of a.pdf does not allow marking it up: its permissions keep notes out."));
+        // Notes allowed, the pages not to be changed: markup, without Crop.
+        let (mut view, tell, _asked) = reading();
+        tell.send(pdf::Answer::Opened { pages: vec![pdf::Page { width: 600.0, height: 800.0 }], outline: Vec::new(), title: None, rights: pdf::Rights { encrypted: true, annotate: true, modify: false } }).unwrap();
+        view.answers();
+        view.input(&chord('a', true));
+        assert!(view.marking());
+        assert!(!desk(&mut view).may_crop);
+        desk(&mut view).choose(Tool::Crop);
+        assert_eq!(desk(&mut view).tool, Tool::Select, "Crop is not taken up");
+        desk(&mut view).choose(Tool::Box);
+        assert_eq!(desk(&mut view).tool, Tool::Box);
+        // Not encrypted, or opened with the owner's password: everything.
+        let (mut view, _tell, _asked) = reading();
+        view.input(&chord('a', true));
+        assert!(view.marking() && desk(&mut view).may_crop);
+    }
+
+    #[test]
+    fn a_locked_pdf_written_is_opened_again_with_its_password() {
+        let (mut view, tell, _asked) = reading();
+        view.input(&chord('a', true));
+        if let Doc::Pdf(paper) = &mut view.doc {
+            paper.placed = vec![(0, Rect::new(320.0, 216.0, 800.0, 1066.67))];
+        }
+        desk(&mut view).choose(Tool::Box);
+        drag(&mut view, (400.0, 300.0), (720.0, 456.0));
+        view.input(&chord('s', true));
+        tell.send(pdf::Answer::Saved { result: Ok(PathBuf::from("/nowhere/a (edited).pdf")), password: Some(pdf::Secret::new("user".into())) }).unwrap();
+        view.answers();
+        match view.take_wanted() {
+            Some(Want::Saved { path, password: Some(password), .. }) => {
+                assert_eq!(path, PathBuf::from("/nowhere/a (edited).pdf"));
+                assert_eq!(password.expose(), "user");
+                assert_eq!(format!("{password:?}"), "Secret", "never printed");
+            }
+            _ => panic!("written, with its password"),
+        }
     }
 }
