@@ -123,10 +123,11 @@ impl Drop for Reading {
     }
 }
 
-/// Text being translated, by the AI settings' rule and everyday model.
+/// Text being translated, by the AI settings' rule and everyday model: what comes is the language
+/// it went into (two letters) and the translation.
 pub struct Translating {
     cancel: Cancel,
-    told: Receiver<Result<String, String>>,
+    told: Receiver<Result<(String, String), String>>,
 }
 
 impl Translating {
@@ -139,7 +140,7 @@ impl Translating {
             let pictures = &ai.text_in_pictures;
             let done = Hemera::new(&ai.hemera).translate(&ai.models.everyday, &text, &pictures.first_language, &pictures.second_language, &called);
             let answer = match done {
-                Ok(text) => Ok(text),
+                Ok(done) => Ok(done),
                 Err(Failure::Cancelled) => return,
                 Err(failure) => Err(format!("It could not be translated: {}.", failure.words())),
             };
@@ -148,7 +149,7 @@ impl Translating {
         Translating { cancel, told }
     }
 
-    pub fn poll(&self) -> Option<Result<String, String>> {
+    pub fn poll(&self) -> Option<Result<(String, String), String>> {
         self.told.try_recv().ok()
     }
 }
@@ -166,7 +167,7 @@ mod tests {
     #[test]
     fn a_picture_is_sent_whole_unless_hemera_would_refuse_it() {
         assert_eq!(within_limit((3840, 2160)), (3840, 2160));
-        assert_eq!(within_limit((8192, 8192)).0 as u64 * within_limit((8192, 8192)).1 as u64 <= ocr::MOST_PIXELS, true);
+        assert!(within_limit((8192, 8192)).0 as u64 * within_limit((8192, 8192)).1 as u64 <= ocr::MOST_PIXELS);
         let (w, h) = within_limit((12000, 6000));
         assert!((w as f32 / h as f32 - 2.0).abs() < 0.01, "its shape kept");
         assert_eq!(within_limit((0, 0)), (0, 0));

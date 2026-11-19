@@ -325,6 +325,19 @@ impl ReadText {
         self.lines.is_empty()
     }
 
+    /// The same text with every place moved by `map`, into a picture `size` across and down: read
+    /// from a copy of a picture (smaller, turned, one eye of two), placed on the picture itself.
+    /// A grapheme's fraction of the way along its line stays what it was, an affine map keeping
+    /// fractions of a side.
+    pub fn mapped(&self, map: &super::Mapping, size: (f32, f32)) -> ReadText {
+        let lines = self
+            .lines
+            .iter()
+            .map(|line| Line { top: (map.apply(line.top.0), map.apply(line.top.1)), bottom: (map.apply(line.bottom.0), map.apply(line.bottom.1)), ..line.clone() })
+            .collect();
+        ReadText { size, lines }
+    }
+
     /// The very end of it.
     pub fn end(&self) -> Spot {
         self.lines.last().map_or(Spot::default(), |l| Spot { line: self.lines.len() - 1, at: l.len() })

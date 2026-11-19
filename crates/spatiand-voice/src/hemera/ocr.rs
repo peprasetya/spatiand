@@ -575,8 +575,7 @@ mod tests {
                 let mut got = Vec::new();
                 let mut chunk = [0u8; 65536];
                 stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-                loop {
-                    let Ok(read) = stream.read(&mut chunk) else { break };
+                while let Ok(read) = stream.read(&mut chunk) {
                     if read == 0 {
                         break;
                     }

@@ -36,6 +36,7 @@ mod truth;
 
 pub use place::{turned_size, upright_size, Mapping};
 pub use reader::{within_limit, Picture, Reading, Translating};
+pub use spatiand_voice::hemera::ocr::Kind;
 pub use text::{Direction, Grapheme, Line, Point, ReadText, Spot, Word, SURE};
 
 use std::time::{Duration, Instant};
@@ -54,8 +55,9 @@ pub const HEADING: &str = "Text in the picture, read from it exactly as it is pr
 /// How near the text a press counts as on it, in the window's pixels.
 const SLACK: f32 = 6.0;
 
-/// How long what was done (copied) is said.
+/// How long what was done (copied) is said, and what went wrong.
 const SAID_FOR: Duration = Duration::from_secs(5);
+const TROUBLE_FOR: Duration = Duration::from_secs(8);
 
 /// What became of an input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +100,8 @@ struct Pane {
     /// Where what was translated is on the window: the pane is put beside it.
     near: Rect,
     job: Option<Translating>,
-    result: Option<Result<String, String>>,
+    /// The language it went into, and the translation; or why it did not come.
+    result: Option<Result<(String, String), String>>,
     copy: Button,
     done: Button,
     area: Rect,
@@ -122,10 +125,18 @@ pub struct LiveText {
     hovered: Option<usize>,
     menu: Option<(Menu, Vec<(Row, Act)>)>,
     pane: Option<Pane>,
-    said: Option<(String, Instant)>,
+    /// What was done, or went wrong, said in a pill at the foot: its words, whether it went wrong,
+    /// and since when.
+    said: Option<(String, bool, Instant)>,
     /// The picture is read only when asked (the AI settings' "read by itself" off) and has not
     /// been: its menu offers to.
     pub can_read: bool,
+    /// The picture is being read: "Reading the text…" in the pill, for an application with no
+    /// foot line of its own to say it in (a film's player).
+    pub reading: bool,
+    /// Where the pill's foot is, in the window: over the application's own foot (its strip, its
+    /// controls). The window's foot, 52 up, if not said.
+    pub note_foot: Option<f32>,
 }
 
 impl Default for LiveText {
@@ -153,7 +164,15 @@ impl LiveText {
             pane: None,
             said: None,
             can_read: false,
+            reading: false,
+            note_foot: None,
         }
+    }
+
+    /// What went wrong reading or translating, said in the pill for eight seconds (the rule for
+    /// what went wrong), for an application with no foot line of its own.
+    pub fn tell(&mut self, trouble: impl Into<String>) {
+        self.said = Some((trouble.into(), true, Instant::now()));
     }
 
     /// The picture's text, as it has been read -- or none, for another picture: what was chosen,
@@ -186,8 +205,8 @@ impl LiveText {
         }
     }
 
-    /// A menu or a translation is open: it has the input first, and the application's controls
-    /// that hide themselves stay.
+    /// A menu or a translation is open: it has the input first (SpatiLoupe's controls stay
+    /// meanwhile; SpatiReel's are left as they are, as they would lift its subtitles).
     pub fn busy(&self) -> bool {
         self.menu.is_some() || self.pane.is_some()
     }
@@ -195,6 +214,18 @@ impl LiveText {
     /// A press on the text is going on.
     pub fn holding(&self) -> bool {
         self.grip.is_some()
+    }
+
+    /// A press on the text is going on, or went down lately enough for another to make two or
+    /// three of it: what is pressed on is to be kept where it is meanwhile (a subtitle the
+    /// controls coming up would lift).
+    pub fn pressed_lately(&self) -> bool {
+        self.grip.is_some() || self.last.is_some_and(|(when, _, _)| when.elapsed() < DOUBLE_CLICK)
+    }
+
+    /// Whether anything is chosen.
+    pub fn has_selection(&self) -> bool {
+        self.selection.is_some()
     }
 
     /// What is chosen, as it is copied.
@@ -213,7 +244,7 @@ impl LiveText {
     pub fn copy(&mut self) -> bool {
         let Some(text) = self.selected() else { return false };
         crate::clipboard::copy(text);
-        self.said = Some(("Copied.".into(), Instant::now()));
+        self.said = Some(("Copied.".into(), false, Instant::now()));
         true
     }
 
@@ -293,7 +324,7 @@ impl LiveText {
             self.context(x, y);
             changed = true;
         }
-        if self.said.as_ref().is_some_and(|(_, at)| now.saturating_duration_since(*at) >= SAID_FOR) {
+        if self.said.as_ref().is_some_and(|(_, trouble, at)| now.saturating_duration_since(*at) >= if *trouble { TROUBLE_FOR } else { SAID_FOR }) {
             self.said = None;
             changed = true;
         }
@@ -304,7 +335,7 @@ impl LiveText {
     pub fn next_wake(&self) -> Option<Duration> {
         let hold = self.grip.as_ref().filter(|g| !g.moved && !g.held).map(|g| HOLD_FOR_MENU.saturating_sub(g.when.elapsed()));
         let translating = self.pane.as_ref().filter(|p| p.job.is_some()).map(|_| Duration::from_millis(100));
-        let said = self.said.as_ref().map(|(_, at)| SAID_FOR.saturating_sub(at.elapsed()));
+        let said = self.said.as_ref().map(|(_, trouble, at)| if *trouble { TROUBLE_FOR } else { SAID_FOR }.saturating_sub(at.elapsed()));
         [hold, translating, said].into_iter().flatten().min()
     }
 
@@ -464,7 +495,7 @@ impl LiveText {
         let pointer = self.pointer;
         let Some(pane) = self.pane.as_mut() else { return Said::Pass };
         let translated = match &pane.result {
-            Some(Ok(text)) => Some(text.clone()),
+            Some(Ok((_, text))) => Some(text.clone()),
             _ => None,
         };
         match input {
@@ -475,7 +506,7 @@ impl LiveText {
             Input::Key { key: Key::Char('c'), modifiers, .. } if modifiers.control || modifiers.logo => {
                 if let Some(text) = translated {
                     crate::clipboard::copy(text);
-                    self.said = Some(("Copied.".into(), Instant::now()));
+                    self.said = Some(("Copied.".into(), false, Instant::now()));
                     return Said::Copied;
                 }
                 return Said::Taken;
@@ -494,7 +525,7 @@ impl LiveText {
         if pane.copy.input(input) {
             if let Some(text) = translated {
                 crate::clipboard::copy(text);
-                self.said = Some(("Copied.".into(), Instant::now()));
+                self.said = Some(("Copied.".into(), false, Instant::now()));
                 return Said::Copied;
             }
         }
@@ -585,13 +616,20 @@ impl LiveText {
         if let Some(pane) = self.pane.as_mut() {
             draw_pane(p, gl, pane, all);
         }
-        if let Some((said, _)) = &self.said {
+        // What was done, what went wrong, or that the picture is being read: one pill, at the foot.
+        let note = match &self.said {
+            Some((said, trouble, _)) => Some((said.as_str(), *trouble)),
+            None if self.reading => Some(("Reading the text\u{2026}", false)),
+            None => None,
+        };
+        if let Some((words, trouble)) = note {
             let em = theme::FOOTER_EM;
-            let w = p.measure(gl, said, em, 8192.0 / p.scale()).0 + 44.0;
-            let near = self.pane.as_ref().map_or(all.bottom() - 96.0, |pane| pane.area.bottom() + 12.0).min(all.bottom() - 60.0);
+            let w = (p.measure(gl, words, em, 8192.0 / p.scale()).0 + 44.0).min(all.w - 48.0);
+            let foot = self.note_foot.unwrap_or(all.bottom() - 52.0);
+            let near = self.pane.as_ref().map_or(foot - 44.0, |pane| (pane.area.bottom() + 12.0).min(foot - 44.0));
             let pill = Rect::new(all.x + (all.w - w) * 0.5, near, w, 44.0);
             look::glass(p, gl, pill, 22.0, 1.0);
-            p.label(gl, said, pill, em, theme::ink_hint(), 0.5);
+            p.label(gl, words, pill.inset(4.0), em, if trouble { look::trouble() } else { theme::ink_hint() }, 0.5);
         }
     }
 }
@@ -604,7 +642,7 @@ fn draw_pane(p: &mut Painter, gl: &Gl, pane: &mut Pane, all: Rect) {
     let inner_w = w - 56.0;
     let (body, ink) = match &pane.result {
         None => ("Translating\u{2026}".to_string(), theme::ink_hint()),
-        Some(Ok(text)) => (text.clone(), theme::ink()),
+        Some(Ok((_, text))) => (text.clone(), theme::ink()),
         Some(Err(why)) => (why.clone(), look::trouble()),
     };
     let tall = p.measure_left(gl, &body, em, inner_w).1;
@@ -628,7 +666,12 @@ fn draw_pane(p: &mut Painter, gl: &Gl, pane: &mut Pane, all: Rect) {
     p.fill(gl, area, 24.0, theme::ground());
     look::glass(p, gl, area, 24.0, 1.0);
     let mut inner = area.inset(28.0);
-    p.label(gl, "Translation", inner.take_top(title_h), theme::TITLE_EM * 0.8, theme::ink(), 0.0);
+    // Which way it went, as the rule decided it: "In English".
+    let title = match &pane.result {
+        Some(Ok((into, _))) => format!("In {}", spatiand_ai::language_name(into)),
+        _ => "Translation".to_string(),
+    };
+    p.label(gl, &title, inner.take_top(title_h), theme::TITLE_EM * 0.8, theme::ink(), 0.0);
     inner.take_top(10.0);
     let words = inner.take_top(shown);
     p.clip(gl, words);
