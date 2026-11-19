@@ -1,0 +1,15 @@
+[package]
+name = "spatiand-ai"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The AI settings more than one app uses: hemera, the models, dictation, text in pictures"
+
+# Read by the room (its AI card, dictation) and by every application through the SDK
+# (`spatiand_app::ai`), on the Deck, the Mac and the Beam Pro alike: nothing here but the
+# settings and their file, so that neither side carries the other's dependencies.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

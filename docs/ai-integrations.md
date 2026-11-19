@@ -21,7 +21,7 @@ and act.
 | The assistant | A setting, off by default. **Its own process** (a first-party app), with its chat window; Spatiand draws its avatar and plays its voice from where the avatar stands. |
 | Avatar | **VRM** (VRoid and the like: humanoid, expressions, spring bones) and **plain glTF/GLB** (robots, anything). Moods, animations, outfits, a voice of its own. Light: a small skinned mesh, nothing like a game character. In the corner **opposite the pinned windows**; it can be hidden and stay active. |
 | Hearing | Three states: **listening** (continuous), **not listening**, **muted** (answers in text only). In continuous listening, speech counts when it **starts with the character's name**, or comes **within a few seconds of its answer** (a follow-up). |
-| Models | Each role is a **setting**, picked from hemera's list: the assistant's model, dictation clean-up's, and a **larger one for heavy work**. Default small model: **`neohorse-1:4b`** (below). |
+| Models | Each role is a **setting**, picked from hemera's list: the assistant's model, dictation clean-up's, and a **larger one for heavy work**. Default small model: **`neohorse-1:4b`** (below). Since 2026-11-19 they are the room's, on the **AI card** of its settings, with hemera's address and dictation's languages and words: more than one app uses them (below, "The AI settings"). |
 | Handing over | **The small model decides, quickly and by itself, to hand a request to the larger one** (changed 2026-10-28 from "offered"). While the larger one thinks, the avatar shows it is thinking; a setting has **the thinking read aloud** as it comes. |
 | Working windows | The assistant does what the wearer does with a window: **reads it** (its description, or a picture for the model to look at), **scrolls, clicks and right-clicks at a point, drags, types, presses keys**. Through the room's own pointer and keyboard, so the same for Spatiand's apps, a Mac's windows and a host's. |
 | Chats and reminders | **Shared across devices**: kept in the folder Spatiand already syncs between linked machines (`~/.config/spatiand/apps`). A setting decides whether a conversation continues the last chat or starts a new one. |
@@ -152,8 +152,9 @@ Later the same day:
   the field being typed in, last) and from Mac windows (`MacDescribe.swift`, Accessibility, off
   the main thread, through `SP_DESCRIBE`).
 - **SpatiPal** (`crates/spatipal`), the assistant, with its chat window and settings (dictation's
-  among them). Chats, reminders and settings in the shared folder (`assistant/`,
-  `assistant.json`, `voice.json`). The small model decides in one word whether the larger one
+  among them, until 2026-11-19: they are the room's AI card's now). Chats, reminders and settings
+  in the shared folder (`assistant/`, `assistant.json`, `voice.json`, the last two's shared part
+  carried into `ai.json` since). The small model decides in one word whether the larger one
   answers (`brain.rs`, `wants_larger`); a `hand_over` tool remains as well. Tools in `tools.rs`.
   **Closing a window and Enter in a terminal are held by the app until the wearer says yes**:
   the model, given a `confirmed` flag, was seen to set it itself and press Enter. Speech a
@@ -479,6 +480,130 @@ same words. New movement -- animations made from words -- would need a text-to-m
 hemera, which it has not.
 
 All of it, and how a figure was made on hemera: [spatipal-pals.md](spatipal-pals.md).
+
+### The AI settings, in the room's settings (2026-11-19)
+
+The owner: "I do not see new setting/card for AI, and spatipal still hold the setting hemera,
+dictation, model selection *need to put in general for model selection, as it may impact other app
+too"; "move shared setting from spatipal to this card, like the hemera url, but keep setting
+specific spatipal in spatipal, like model, voice, etc" -- the models then to the general card too.
+The same day, for choosing text in pictures (built later): "2 language... primary and secondary...
+the selection in primary, translate to secondary. other, translate to primary" and "read automatic".
+
+**The AI card** (`crates/spatiand-shell/src/ai.rs`, behind it `crates/spatiand/src/ai.rs`), one
+row in the room's settings, the same on the Deck, the Beam Pro and the Mac (the menu code is
+shared; each loop only opens it, hands it what the wearer changed and ticks it):
+
+| Row | What it is | Chosen |
+|---|---|---|
+| hemera's address | the server every model and voice is on | typed, as a computer's address is (any keyboard, the room's, the phone's, dictation); `http://` added when left out |
+| *Models*: Everyday model, Larger model, Terminal clean-up model | named for what they do | from hemera's text models (`/v1/models`, `hemera.kind` `text`, as SpatiPal offered them), a page of their own, the one in use marked |
+| Text reading model | reads the words in pictures | "hemera's choice" (the default: no model sent; the card says which that is, `/v1/ocr`'s `default_model`) or one of hemera's `ocr` models by name |
+| *Dictation*: Languages spoken | as SpatiPal stepped them: English and Indonesian mixed, English, Indonesian, any | each press the next |
+| Your own words | the word list | a page: each word (A twice forgets it, a card having no question to ask), and "Add a word", typed |
+| *Text in pictures*: Read text in pictures by itself | on by default | each press |
+| First language, Second language | English and Indonesian to begin with | a page of 24 languages; choosing for one the other's swaps them |
+
+Under the three of text in pictures: "Text in the first language is translated into the second;
+anything else into the first. For the text in pictures and paused films in SpatiLoupe and SpatiReel."
+(Until Live Text came, the same day: "Nothing reads text in pictures yet".)
+hemera is asked for its lists on a thread when the card opens (three GETs, no model started), and
+again when its address changes; a model page opened before it answers shows the one in use, and
+keeps the cursor on it when the list comes.
+
+**One store: `ai.json` in the shared folder** (`crates/spatiand-ai`, `~/.config/spatiand/apps`),
+synchronised between paired machines by spatiand-sync as SpatiPal's settings always were -- the
+newest file wins, so a choice made on one machine is everyone's. Read by the room's dictation each
+time it starts (`VoiceSettings::load`, now the AI settings' speech part), written by the card (read
+afresh first, never over a file that cannot be read), and read by any app through the SDK:
+`spatiand_app::ai::settings()`, with `Event::AiSettings` from `App::wait` when the file changes,
+looked at each second as the look is. **A file, not the protocol**, because that is what already
+carries settings between the room and its apps (the look in `prefs.toml`, read the same way) and
+between machines (the shared folder): the protocol would have had to grow, in every client's copy,
+for what a file the sync already carries does. What a newer build adds to the file is kept when an
+older one saves it.
+
+**Carried over once.** The first read of a folder with no `ai.json` (the room's or SpatiPal's, on
+each machine) makes it from SpatiPal's older files -- `voice.json` (hemera, languages, words,
+clean-up and transcription models, pause) and `assistant.json`'s `model` and `large_model` -- and
+writes it **with their time**, not now's: a machine whose older files were behind another's makes an
+older `ai.json`, and the other's wins. A folder with neither gets the defaults and writes nothing
+(defaults written now would be the newest settings everywhere). Half a file being synchronised is
+not carried until it is whole. The older files are left as they are, and SpatiPal keeps the old
+`model` and `large_model` in `assistant.json` when it saves it, for a machine still running an
+older SpatiPal; a change made in an older SpatiPal after this is not carried.
+
+**What SpatiPal keeps**: "Assistant" (start with the room, name, personality, figure, shown),
+"Voice and ears" (voice, voice described, speak answers, listen for its name, while the larger model
+thinks) and "Chats" (go on in the last chat), and one line: "hemera, the models and dictation are in
+Spatiand's settings, under AI." It holds the AI settings and takes a change up as it comes: the
+next turn asks with the new models and hemera, its ears are started again if their languages or
+words changed, hemera is asked to have the new models ready.
+
+**The look and feel card** came with it ("make separate card for look and feel setting. pinned
+windows, look, steadiness, environment, can be there... so the main menu of setting is
+simplified"): the same four rows with the same pages and prefs, the look and steadiness stepping
+where they are, as the pinned windows' rows do; B from the environment picker or the pinned windows'
+list comes back to it. The main menu: Recentre, Keyboard, Controller layout, Take a screenshot,
+Record a video, Windows, (Sound devices,) Look and feel, AI, Remote computers, Bluetooth, Wi-Fi,
+Calibrate head tracking, Leave Spatiand.
+
+Checked on deepmagpie: unit tests for the carrying over (all of it, once, dated as the older files;
+a store with values not written over; nothing written for a new folder; half a file not carried
+until whole; an unreadable store an error, left alone; a newer build's fields kept; 0600), for the
+card (its rows and headings, the model, language and word pages, the swap, the address typed from
+any keyboard), for the SDK's watch, and for SpatiPal keeping the old models in its file. In the
+snapshot room, scratch folders only and a stand-in for hemera answering its two lists: the main
+menu before and after, both cards and each page of the AI card; the real build carrying a pair of
+older files over on the card's first opening (`ai.json` made, 0600, dated as the newer of them); a
+change on the card kept and shown; SpatiPal's settings window, dark and light; and SpatiPal, running,
+taking up a change made to `ai.json` from outside within a second, and having hemera ready the new
+everyday model. The Beam Pro's library and SpatiPal type-check for Android. Not checked: the
+glasses; the Deck, the Beam Pro and the Mac themselves (the Mac not built: the owner decides when);
+two paired machines synchronising `ai.json`.
+
+### Live Text: the text in pictures, read by hemera (2026-11-19)
+
+The owner: "I want it can select text from images (also on image of pdf)... even non latin, unicode
+character. Like apple preview."; "read automatic"; of translating, "2 language... primary and
+secondary... the selection in primary, translate to secondary. other, translate to primary". What the
+wearer does, and how SpatiLoupe and SpatiReel choose what to read, is in docs/spatiand-apps.md
+("Live Text"); here, what is asked of hemera, and what the assistant does with it.
+
+- **Reading** (`spatiand_voice::hemera::ocr`, hemera's `docs/ocr-api.md`): `POST /v1/ocr`, the picture
+  whole in a part `image` -- a photograph as its own file, a screenshot, a frame or a page drawn as a
+  PNG, nothing shrunk unless over hemera's 50 million pixels -- and its options: the AI card's first
+  and second language then `auto` (`["en", "id", "auto"]`), characters, orientation 0 for a frame or
+  a page drawn, the card's text reading model or none for hemera's choice. A 503 (hemera's reader
+  starting) is waited out once for its Retry-After; every refusal is said in hemera's own words. Each
+  reading has a connection of its own, shut when the wearer moves on: hemera stops its work. Read by
+  itself when the card's "Read text in pictures by itself" is on; else from the picture's menu ("Read
+  the text").
+- **Translating** (`spatiand_voice::hemera::translate`): with the card's everyday model, thinking
+  off. Told the rule itself, the 4B model gave Indonesian back unchanged, a lone "Diskon" as it was,
+  Japanese in Indonesian; so the model is asked only which language the text is in (a two-letter
+  code), the rule is applied in code -- text in the first language into the second, anything else
+  into the first -- and the model then asked to translate into that one language, the lines numbered
+  and given back numbered so that each is where its line was, never a digit changed. Against hemera:
+  Indonesian, English, Japanese, Arabic, a sign and a lone word each went the way the rule gives, in
+  0.4-0.7 s, lines and digits kept; an ID card's labels ("Nama") were left as they were. A workaround
+  for a model that does not keep to the rule: the proper way is one that does, or hemera translating
+  into a language it is given.
+- **The assistant** (`crates/spatipal/src/brain.rs`): when the window looked at is SpatiLoupe's or
+  SpatiReel's, its description is asked for with every request, and the text read in its picture
+  (after `spatiand_app::live_text::HEADING`, each word read less surely than 0.9 marked `[?word?]`)
+  goes with the wearer's words: "The text in the picture in window N, read from it exactly as it is
+  printed, on screen now. Answer names, numbers and codes from this text, not by reading the picture
+  again; a word in [? ?] was read with less certainty: say so if you give it". Asked "Pixel, what is
+  the NIK on this card?" in the headless room, SpatiLoupe showing the ID card photographed askew, it
+  answered "The NIK on this card is 4188889534495509." in 1.3 s -- the card's number. Its answers have
+  a Copy button beside them under the pointer: the chat's text cannot be chosen.
+- **Privacy**: hemera neither keeps nor logs a picture or its text, and Spatiand logs only sizes,
+  times and counts; what is read is kept in the application's memory for the session (SpatiLoupe, by
+  the file's path, size and time), never on disk -- an ID card passes through.
+
+Not verified: any of it on the Deck, the Beam Pro, the Mac or the glasses; SpatiPal's answer from a
+paused film's text (the same path as SpatiLoupe's, by its application's id).
 
 ## Dictation with no room
 

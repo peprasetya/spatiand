@@ -9,6 +9,8 @@ description = "Speech for Spatiand: dictation and the assistant's ears and voice
 
 [dependencies]
 glam = { workspace = true }
+# What the wearer chose: hemera, dictation's languages and words, its models.
+spatiand-ai = { path = "../spatiand-ai" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

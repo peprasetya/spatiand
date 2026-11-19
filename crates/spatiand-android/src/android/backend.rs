@@ -269,6 +269,8 @@ pub fn run(
     // The settings' Bluetooth page, the Deck's (`crate::bluetooth`), with this platform's
     // Bluetooth behind it: IOBluetooth through the app on the Mac, Android's on the Beam Pro.
     let mut bluetooth = super::bluetooth_devices();
+    // The settings' AI card, the Deck's (`crate::ai`): the same file, hemera asked the same way.
+    let mut ai_card = crate::ai::Card::default();
     // Where windows pinned to the view go and how big: the wearer's, from last time.
     crate::pip::adopt(&mut runtime.state, &prefs, &mut shell);
     shell.set_look(prefs.look_index());
@@ -835,6 +837,8 @@ pub fn run(
             if let Some(command) = bluetooth.tick(&mut shell) {
                 log::warn!("no way to launch a pairing wizard here: {command}");
             }
+            // hemera's answer to the AI card, once it has come.
+            ai_card.tick(&mut shell);
             if shell.wants_text() && !keyboard.open {
                 keyboard.open = true;
                 keyboard_for_shell = true;
@@ -852,6 +856,7 @@ pub fn run(
                     ShellEvent::Bluetooth(action) => {
                         bluetooth.act(action);
                     }
+                    ShellEvent::Ai(action) => ai_card.act(action, &mut shell),
                     ShellEvent::ModeChanged(mode) => {
                         if mode == Mode::Launcher {
                             // As on the Deck: what has come since is there (SpatiMesh's
@@ -1019,7 +1024,9 @@ pub fn run(
                             keyboard.open = !keyboard.open;
                             log::info!("keyboard {}", if keyboard.open { "shown" } else { "hidden" });
                         }
-                        HudAction::OpenHosts | HudAction::OpenPinned => {}
+                        HudAction::OpenHosts | HudAction::OpenPinned | HudAction::OpenLookAndFeel => {}
+                        // As on the Deck: the settings as kept, and hemera asked.
+                        HudAction::OpenAi => ai_card.open(&mut shell),
                         HudAction::OpenAudio => super::audio_devices_wanted(),
                         HudAction::ChooseAudio(index) => super::audio_device_chosen(index),
                         HudAction::ChooseAppMenu(index) => crate::remote::menu::chosen(index),

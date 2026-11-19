@@ -2707,7 +2707,7 @@ impl Scene {
         };
         match mode {
             Mode::World => {}
-            // All four are the same thing to draw: a card of rows with one selected. The
+            // All of these are the same thing to draw: a card of rows with one selected. The
             // launcher is the odd one out because it is bubbles in space, not a list.
             Mode::Hud
             | Mode::Environment
@@ -2717,7 +2717,9 @@ impl Scene {
             | Mode::Bluetooth
             | Mode::Audio
             | Mode::AppMenu
-            | Mode::Pinned => {
+            | Mode::Pinned
+            | Mode::LookAndFeel
+            | Mode::Ai => {
                 self.draw_card(gl, eye, fov)
             }
             Mode::Controller => {

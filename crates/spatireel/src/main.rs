@@ -616,6 +616,20 @@ impl Reel {
                 }
                 return true;
             }
+            // A paused frame's text is read by itself, or only when asked, as the AI settings say.
+            Event::AiSettings => {
+                if let Some((playing, _)) = self.playing.as_mut() {
+                    playing.ai_changed();
+                }
+                return true;
+            }
+            // The right button on the film: the menu of its paused frame's text.
+            Event::Button { window, button: spatiand_app::Button::Right, pressed: true, .. } if *window == self.window => {
+                if let Some((playing, _)) = self.playing.as_mut() {
+                    playing.text_menu();
+                }
+                return true;
+            }
             Event::LayerRefused { window, .. } | Event::LayerLost { window, .. } => {
                 if let Some((playing, _)) = self.playing.as_mut().filter(|(p, _)| p.sky() == Some(*window)) {
                     playing.sky_was_refused();

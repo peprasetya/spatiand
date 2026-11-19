@@ -289,6 +289,8 @@ pub fn run(
     let control = crate::control::Control::start();
     // Bluetooth devices for the HUD's page, asked on a thread of its own.
     let mut bluetooth = crate::bluetooth::Devices::start();
+    // The AI card's settings, and what hemera offers its choices, asked on a thread of its own.
+    let mut ai_card = crate::ai::Card::default();
     // An event the keyboard produced after this frame's events were already handled — Enter
     // on the address page — carried over to the next frame.
     let mut typed_event: Option<ShellEvent> = None;
@@ -1465,7 +1467,10 @@ pub fn run(
                     log::warn!("could not open the Bluetooth wizard: {e}");
                 }
             }
-            // The address page wants the keyboard, so it gets it, and gives it back after.
+            // hemera's answer to the AI card, once it has come.
+            ai_card.tick(&mut shell);
+            // The address page wants the keyboard, so it gets it, and gives it back after (and
+            // the AI card's: hemera's address, a word).
             if shell.wants_text() && !keyboard.open {
                 keyboard.open = true;
                 keyboard_for_shell = true;
@@ -1481,6 +1486,7 @@ pub fn run(
                     ShellEvent::CancelPairing => remotes.cancel(),
                     ShellEvent::ForgetHost(address) => remotes.forget(&address, &mut prefs),
                     ShellEvent::Bluetooth(action) => bluetooth.act(action),
+                    ShellEvent::Ai(action) => ai_card.act(action, &mut shell),
                     ShellEvent::ModeChanged(mode) => {
                         if mode == Mode::Launcher {
                             // An application installed or removed since is there.
@@ -1760,7 +1766,10 @@ pub fn run(
                             );
                         }
                         // The shell has already opened the page; `remotes.tick` keeps it filled.
-                        HudAction::OpenHosts | HudAction::OpenPinned => {}
+                        // The look and feel card and the pinned windows' list need nothing more.
+                        HudAction::OpenHosts | HudAction::OpenPinned | HudAction::OpenLookAndFeel => {}
+                        // The AI card has opened: the settings as kept, and hemera asked.
+                        HudAction::OpenAi => ai_card.open(&mut shell),
                         // The settings' list of sound devices has opened: what is known now, and
                         // PipeWire asked again at once rather than at the mixer's next poll.
                         HudAction::OpenAudio => {

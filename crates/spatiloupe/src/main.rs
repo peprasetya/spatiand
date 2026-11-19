@@ -472,6 +472,20 @@ impl Loupe {
                 }
                 return true;
             }
+            // The text in a picture is read by itself, or only when asked, as the AI settings say.
+            Event::AiSettings => {
+                if let Some(view) = self.view.as_mut() {
+                    view.ai_changed();
+                }
+                return true;
+            }
+            // The right button: the menu of the text in the picture or the page.
+            Event::Button { button: spatiand_app::Button::Right, pressed: true, .. } => {
+                if let Some(view) = self.view.as_mut() {
+                    self.dirty |= view.text_menu();
+                }
+                return true;
+            }
             _ => {}
         }
         self.dirty = true;

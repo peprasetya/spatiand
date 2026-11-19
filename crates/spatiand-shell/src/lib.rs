@@ -14,6 +14,7 @@
 
 use crate::grid::Direction;
 
+pub mod ai;
 pub mod bluetooth;
 pub mod category;
 pub mod environment;
@@ -25,6 +26,7 @@ pub mod keyboard;
 pub mod launcher;
 pub mod switcher;
 
+pub use ai::{Ai, AiAction, AiRow, AiView, Offered};
 pub use bluetooth::{Bluetooth, BluetoothAction, BluetoothView, DeviceRow};
 pub use category::{Group, GROUPS};
 pub use environment::{
@@ -88,8 +90,14 @@ pub enum Mode {
     Hosts,
     /// Bluetooth devices: the paired ones, connecting them, and adding another. From the HUD.
     Bluetooth,
-    /// Where pinned windows sit and how big. Reached from the HUD; changing either leaves it open.
+    /// Where pinned windows sit and how big. Reached from the look and feel card; changing either
+    /// leaves it open.
     Pinned,
+    /// The look, steadiness, the environment and pinned windows. Reached from the HUD; the look
+    /// and steadiness step where they are, the other two open their lists, and B comes back here.
+    LookAndFeel,
+    /// What more than one app uses: hemera, the models, dictation, text in pictures. From the HUD.
+    Ai,
     /// Sound devices: where sound comes out and which microphone listens. From the HUD.
     Audio,
     /// An application's own menu, as a list: opened from a window's title bar, for a window
@@ -148,6 +156,9 @@ pub enum ShellEvent {
     ForgetHost(String),
     /// Something to do to a Bluetooth device or the adapter. Never [`BluetoothAction::None`].
     Bluetooth(BluetoothAction),
+    /// An AI setting the wearer changed, for the compositor to keep; it hands the card the
+    /// settings again once it has ([`Shell::set_ai`]).
+    Ai(AiAction),
 }
 
 /// The event a remote computers action becomes, if it becomes one.
@@ -171,8 +182,10 @@ fn bluetooth_event(action: BluetoothAction) -> Option<ShellEvent> {
 pub struct Shell {
     mode: Mode,
     hud: Hud,
+    look_and_feel: Hud,
     pinned: Hud,
     audio: Hud,
+    ai: Ai,
     app_menu: Hud,
     app_menu_title: String,
     launcher: Launcher,
@@ -190,8 +203,10 @@ impl Shell {
         Self {
             mode: Mode::World,
             hud: Hud::with_calibration(panels, calibrated),
+            look_and_feel: Hud::look_and_feel(),
             pinned: Hud::pinned(),
             audio: Hud::audio(),
+            ai: Ai::default(),
             app_menu: Hud::app_menu(),
             app_menu_title: String::new(),
             launcher: Launcher::new(apps),
@@ -216,14 +231,41 @@ impl Shell {
         self.hud.set_recording(recording);
     }
 
-    /// Say which look is chosen, 0 to 2 (as the system, light, dark), for the HUD's row.
+    /// Say which look is chosen, 0 to 2 (as the system, light, dark), for the look and feel
+    /// card's row.
     pub fn set_look(&mut self, look: usize) {
-        self.hud.set_look(look);
+        self.look_and_feel.set_look(look);
     }
 
-    /// Say which steadiness is chosen, 0 to 3 (off, light, medium, strong), for the HUD's row.
+    /// Say which steadiness is chosen, 0 to 3 (off, light, medium, strong), for the look and feel
+    /// card's row.
     pub fn set_steadiness(&mut self, level: usize) {
-        self.hud.set_steadiness(level);
+        self.look_and_feel.set_steadiness(level);
+    }
+
+    /// The look and feel card.
+    pub fn look_and_feel(&self) -> &Hud {
+        &self.look_and_feel
+    }
+
+    /// The AI card.
+    pub fn ai(&self) -> &Ai {
+        &self.ai
+    }
+
+    /// The AI settings as they are kept: the card shows them.
+    pub fn set_ai(&mut self, view: AiView) {
+        self.ai.set_view(view);
+    }
+
+    /// What hemera offers the AI card's choices, as it answers.
+    pub fn set_ai_offered(&mut self, offered: Offered) {
+        self.ai.set_offered(offered);
+    }
+
+    /// What went wrong keeping an AI setting, said on the card; `None` once one is kept.
+    pub fn set_ai_note(&mut self, note: Option<String>) {
+        self.ai.set_note(note);
     }
 
     /// Say where pinned windows are and how big, so the HUD's two rows show it. `corner` is 0
@@ -316,9 +358,10 @@ impl Shell {
         self.hosts.set_pairing(view);
     }
 
-    /// Whether the on-screen keyboard should type into the shell rather than into a window.
+    /// Whether the on-screen keyboard should type into the shell rather than into a window: a
+    /// computer's address or code, hemera's address, a word of the wearer's own.
     pub fn wants_text(&self) -> bool {
-        self.mode == Mode::Hosts && self.hosts.wants_text()
+        (self.mode == Mode::Hosts && self.hosts.wants_text()) || (self.mode == Mode::Ai && self.ai.typing())
     }
 
     /// Whether what is typed narrows what is on show: the launcher's bubbles.
@@ -350,14 +393,22 @@ impl Shell {
 
     /// Text typed while [`wants_text`](Self::wants_text).
     pub fn type_text(&mut self, text: &str) {
-        if self.wants_text() {
-            self.hosts.type_text(text);
+        if !self.wants_text() {
+            return;
+        }
+        match self.mode {
+            Mode::Ai => self.ai.type_text(text),
+            _ => self.hosts.type_text(text),
         }
     }
 
     pub fn type_backspace(&mut self) {
-        if self.wants_text() {
-            self.hosts.backspace();
+        if !self.wants_text() {
+            return;
+        }
+        match self.mode {
+            Mode::Ai => self.ai.backspace(),
+            _ => self.hosts.backspace(),
         }
     }
 
@@ -366,7 +417,10 @@ impl Shell {
         if !self.wants_text() {
             return None;
         }
-        hosts_event(self.hosts.submit())
+        match self.mode {
+            Mode::Ai => self.ai.submit().map(ShellEvent::Ai),
+            _ => hosts_event(self.hosts.submit()),
+        }
     }
 
     /// Hand the switcher the open windows. The compositor calls this immediately before the
@@ -452,6 +506,8 @@ impl Shell {
             Mode::Hosts => self.hosts.select(index),
             Mode::Bluetooth => self.bluetooth.select(index),
             Mode::Pinned => self.pinned.select(index),
+            Mode::LookAndFeel => self.look_and_feel.select(index),
+            Mode::Ai => self.ai.select(index),
             Mode::Audio => self.audio.select(index),
             Mode::AppMenu => self.app_menu.select(index),
             Mode::Controller | Mode::World => false,
@@ -471,6 +527,8 @@ impl Shell {
             Mode::Hosts => self.hosts.cursor(),
             Mode::Bluetooth => self.bluetooth.cursor(),
             Mode::Pinned => self.pinned.cursor(),
+            Mode::LookAndFeel => self.look_and_feel.cursor(),
+            Mode::Ai => self.ai.cursor(),
             Mode::Audio => self.audio.cursor(),
             Mode::AppMenu => self.app_menu.cursor(),
             Mode::Controller | Mode::World => return None,
@@ -542,15 +600,19 @@ impl Shell {
                 // These two came from somewhere, and backing out returns there. Dropping
                 // straight to the world would mean re-opening the HUD to make a second try at
                 // a setting you have just decided against — the browser especially, which you
-                // reach two levels down and often leave empty-handed.
-                Mode::Environment => self.enter(Mode::Hud),
+                // reach three levels down and often leave empty-handed.
+                // The environment and pinned windows are the look and feel card's: back to it.
+                Mode::Environment | Mode::Pinned => self.enter(Mode::LookAndFeel),
                 Mode::Files => self.enter(Mode::Environment),
                 // Climbs its own pages, then back to the HUD it was opened from.
                 Mode::Hosts => match self.hosts.back() {
                     (true, action) => hosts_event(action),
                     (false, _) => self.enter(Mode::Hud),
                 },
-                Mode::Bluetooth | Mode::Pinned | Mode::Audio => self.enter(Mode::Hud),
+                Mode::Bluetooth | Mode::Audio | Mode::LookAndFeel => self.enter(Mode::Hud),
+                // Up a page of its own first, then back to the HUD.
+                Mode::Ai if self.ai.back() => None,
+                Mode::Ai => self.enter(Mode::Hud),
                 // Up a level, or out: the compositor knows which, and says.
                 Mode::AppMenu => Some(ShellEvent::Hud(HudAction::AppMenuBack)),
                 _ => self.enter(Mode::World),
@@ -585,6 +647,8 @@ impl Shell {
                     Mode::Hosts => self.hosts.step(direction),
                     Mode::Bluetooth => self.bluetooth.step(direction),
                     Mode::Pinned => self.pinned.step(direction),
+                    Mode::LookAndFeel => self.look_and_feel.step(direction),
+                    Mode::Ai => self.ai.step(direction),
                     Mode::Audio => self.audio.step(direction),
                     Mode::AppMenu => self.app_menu.step(direction),
                     Mode::Controller => false,
@@ -597,15 +661,15 @@ impl Shell {
             Intent::Accept => match self.mode {
                 Mode::Hud => {
                     let action = self.hud.activate();
-                    // The environment row opens a list rather than doing something, so it is
-                    // the one row that goes deeper instead of back to the world. The event is
-                    // still emitted: the compositor answers it by re-reading the folder, which
-                    // is what makes a newly dropped-in image appear.
+                    // A row that opens a list goes deeper instead of back to the world. The event
+                    // is still emitted: the compositor answers it by filling that list in.
                     match action {
-                        HudAction::OpenEnvironments => self.mode = Mode::Environment,
-                        // Same shape as the environment row: it opens a list rather than
-                        // doing something, and the compositor answers the event by filling
-                        // that list in.
+                        // The two cards: a list of rows each, one level down.
+                        HudAction::OpenLookAndFeel => self.mode = Mode::LookAndFeel,
+                        HudAction::OpenAi => {
+                            self.ai.open();
+                            self.mode = Mode::Ai;
+                        }
                         HudAction::OpenSwitcher => self.mode = Mode::Switcher,
                         HudAction::ControllerLayout => self.mode = Mode::Controller,
                         HudAction::OpenHosts => {
@@ -616,7 +680,6 @@ impl Shell {
                             self.bluetooth.open();
                             self.mode = Mode::Bluetooth;
                         }
-                        HudAction::OpenPinned => self.mode = Mode::Pinned,
                         HudAction::OpenAudio => self.mode = Mode::Audio,
                         // Everything else takes you back to the world, settings panels
                         // included: staying on the menu after recentring hides the thing you
@@ -630,6 +693,21 @@ impl Shell {
                 }
                 // Both rows are settings that step: the list stays up, the row says what it is now.
                 Mode::Pinned => Some(ShellEvent::Hud(self.pinned.activate())),
+                // The look and steadiness step and stay, as the pinned windows' rows do; the
+                // environment opens its picker, which the compositor fills in answer to the event
+                // (re-reading the folder, so a newly dropped-in image appears), and pinned windows
+                // their list.
+                Mode::LookAndFeel => {
+                    let action = self.look_and_feel.activate();
+                    match action {
+                        HudAction::OpenEnvironments => self.mode = Mode::Environment,
+                        HudAction::OpenPinned => self.mode = Mode::Pinned,
+                        _ => {}
+                    }
+                    Some(ShellEvent::Hud(action))
+                }
+                // A setting changes, or a page of the card opens.
+                Mode::Ai => self.ai.activate().map(ShellEvent::Ai),
                 // The list stays up, and says which is in use once the choice has taken.
                 Mode::Audio => Some(ShellEvent::Hud(self.audio.activate())),
                 // Stays up: a row may open another level, and the compositor closes it otherwise.
@@ -996,16 +1074,70 @@ mod tests {
     }
 
     #[test]
-    fn the_environment_picker_is_the_only_row_that_goes_deeper() {
-        // It opens a list rather than doing something, so it is the one row where staying in
-        // the menus is the point.
+    fn the_environment_picker_is_one_card_down_and_goes_deeper() {
+        // It opens a list rather than doing something, so it is a row where staying in the
+        // menus is the point -- from the look and feel card now, where it moved with the look.
         let mut s = shell();
         s.handle(Intent::ToggleHud);
-        while !matches!(s.hud().focused().action, HudAction::OpenEnvironments) {
-            assert!(s.hud.step(Direction::Down), "ran out of rows");
-        }
-        s.handle(Intent::Accept);
+        open_environments(&mut s);
         assert_eq!(s.mode(), Mode::Environment);
+    }
+
+    #[test]
+    fn the_look_and_feel_card_steps_its_settings_where_they_are_and_b_comes_back_to_it() {
+        let mut s = shell();
+        s.handle(Intent::ToggleHud);
+        open_look_and_feel(&mut s);
+        assert_eq!(s.mode(), Mode::LookAndFeel);
+        // The look and steadiness change and the card stays, as the pinned windows' rows do.
+        assert_eq!(s.handle(Intent::Accept), Some(ShellEvent::Hud(HudAction::Look)));
+        assert_eq!(s.mode(), Mode::LookAndFeel);
+        s.set_look(1);
+        assert_eq!(s.look_and_feel().items()[0].label, "Look: light");
+        s.handle(Intent::Navigate(Direction::Down));
+        assert_eq!(s.handle(Intent::Accept), Some(ShellEvent::Hud(HudAction::Steadiness)));
+        assert_eq!(s.mode(), Mode::LookAndFeel);
+        // Pinned windows opens its list; B from it comes back here, and B here to the settings.
+        s.handle(Intent::Navigate(Direction::Down));
+        s.handle(Intent::Navigate(Direction::Down));
+        assert_eq!(s.handle(Intent::Accept), Some(ShellEvent::Hud(HudAction::OpenPinned)));
+        assert_eq!(s.mode(), Mode::Pinned);
+        assert_eq!(s.handle(Intent::Accept), Some(ShellEvent::Hud(HudAction::PipCorner)));
+        assert_eq!(s.handle(Intent::Back), Some(ShellEvent::ModeChanged(Mode::LookAndFeel)));
+        assert_eq!(s.look_and_feel().cursor(), 3, "on the row it opened");
+        assert_eq!(s.handle(Intent::Back), Some(ShellEvent::ModeChanged(Mode::Hud)));
+        // The pointer and the wheel find its rows as they find any card's.
+        s.handle(Intent::Accept);
+        assert!(s.point(1));
+        assert_eq!(s.menu_cursor(), Some(1));
+    }
+
+    #[test]
+    fn the_ai_card_types_hemera_s_address_from_any_keyboard_and_says_what_changed() {
+        let mut s = shell();
+        s.set_ai(AiView { hemera: "http://deepmagpie:12434".into(), ..Default::default() });
+        s.handle(Intent::ToggleHud);
+        while s.hud().focused().action != HudAction::OpenAi {
+            assert!(s.handle(Intent::Navigate(Direction::Down)).is_none(), "ran out of rows");
+        }
+        // The compositor is told, to hand the card the settings and ask hemera.
+        assert_eq!(s.handle(Intent::Accept), Some(ShellEvent::Hud(HudAction::OpenAi)));
+        assert_eq!(s.mode(), Mode::Ai);
+        assert!(!s.wants_text());
+        // Its first row is hemera's address: a field, which every keyboard types into.
+        assert_eq!(s.handle(Intent::Accept), None);
+        assert!(s.wants_text());
+        for _ in 0..5 {
+            s.type_backspace();
+        }
+        s.type_text("9000");
+        assert_eq!(s.type_enter(), Some(ShellEvent::Ai(AiAction::Hemera("http://deepmagpie:9000".into()))));
+        assert!(!s.wants_text());
+        // B goes up a page, then back to the settings.
+        s.handle(Intent::Accept);
+        assert_eq!(s.handle(Intent::Back), None);
+        assert_eq!(s.mode(), Mode::Ai);
+        assert_eq!(s.handle(Intent::Back), Some(ShellEvent::ModeChanged(Mode::Hud)));
     }
 
     #[test]
@@ -1081,21 +1213,37 @@ mod tests {
         s
     }
 
-    /// Walk the HUD down to the Environment row and press A.
+    /// Walk the HUD down to the Look and feel row and press A.
     ///
-    /// By position rather than by index, so inserting a row above it does not silently make
+    /// By action rather than by index, so inserting a row above it does not silently make
     /// these tests exercise the wrong thing.
-    fn open_environments(s: &mut Shell) {
+    fn open_look_and_feel(s: &mut Shell) {
         let row = s
             .hud()
             .items()
             .iter()
-            .position(|i| i.action == HudAction::OpenEnvironments)
-            .expect("the HUD has an Environment row");
+            .position(|i| i.action == HudAction::OpenLookAndFeel)
+            .expect("the HUD has a Look and feel row");
         for _ in 0..row {
             s.handle(Intent::Navigate(Direction::Down));
         }
-        assert_eq!(s.hud().activate(), HudAction::OpenEnvironments);
+        assert_eq!(s.hud().activate(), HudAction::OpenLookAndFeel);
+        s.handle(Intent::Accept);
+    }
+
+    /// Into the look and feel card, down to its Environment row, and press A.
+    fn open_environments(s: &mut Shell) {
+        open_look_and_feel(s);
+        let row = s
+            .look_and_feel()
+            .items()
+            .iter()
+            .position(|i| i.action == HudAction::OpenEnvironments)
+            .expect("the card has an Environment row");
+        for _ in 0..row {
+            s.handle(Intent::Navigate(Direction::Down));
+        }
+        assert_eq!(s.look_and_feel().activate(), HudAction::OpenEnvironments);
         s.handle(Intent::Accept);
     }
 
@@ -1110,12 +1258,13 @@ mod tests {
         // which is the whole mechanism by which an image dropped in mid-session appears.
         let mut fresh = shell();
         fresh.handle(Intent::ToggleHud);
+        open_look_and_feel(&mut fresh);
         let row = fresh
-            .hud()
+            .look_and_feel()
             .items()
             .iter()
             .position(|i| i.action == HudAction::OpenEnvironments)
-            .expect("the HUD has an Environment row");
+            .expect("the card has an Environment row");
         for _ in 0..row {
             fresh.handle(Intent::Navigate(Direction::Down));
         }
@@ -1148,13 +1297,13 @@ mod tests {
         let mut s = at_the_picker();
         assert_eq!(
             s.handle(Intent::Back),
-            Some(ShellEvent::ModeChanged(Mode::Hud))
+            Some(ShellEvent::ModeChanged(Mode::LookAndFeel))
         );
-        assert_eq!(s.mode(), Mode::Hud);
+        assert_eq!(s.mode(), Mode::LookAndFeel);
     }
 
     #[test]
-    fn the_browser_is_two_levels_down_and_b_climbs_out_one_at_a_time() {
+    fn the_browser_is_three_levels_down_and_b_climbs_out_one_at_a_time() {
         let mut s = at_the_picker();
         for _ in 0..10 {
             s.handle(Intent::Navigate(Direction::Down));
@@ -1168,6 +1317,10 @@ mod tests {
         assert_eq!(
             s.handle(Intent::Back),
             Some(ShellEvent::ModeChanged(Mode::Environment))
+        );
+        assert_eq!(
+            s.handle(Intent::Back),
+            Some(ShellEvent::ModeChanged(Mode::LookAndFeel))
         );
         assert_eq!(
             s.handle(Intent::Back),

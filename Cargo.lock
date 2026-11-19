@@ -4907,6 +4907,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smithay",
+ "spatiand-ai",
  "spatiand-audio",
  "spatiand-hmd",
  "spatiand-input",
@@ -4946,6 +4947,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "spatiand-ai"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "spatiand-android"
 version = "0.1.0"
 dependencies = [
@@ -4962,6 +4971,7 @@ dependencies = [
  "serde_json",
  "smithay",
  "spatiand-adb",
+ "spatiand-ai",
  "spatiand-audio",
  "spatiand-hmd",
  "spatiand-input",
@@ -4999,9 +5009,13 @@ dependencies = [
  "memmap2",
  "png",
  "resvg",
+ "serde_json",
+ "spatiand-ai",
  "spatiand-proto",
  "spatiand-render",
  "spatiand-surfaces",
+ "spatiand-voice",
+ "unicode-segmentation",
  "wayland-client",
  "wayland-protocols",
  "xkbcommon 0.9.0",
@@ -5296,6 +5310,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "spatiand-ai",
  "ureq",
 ]
 

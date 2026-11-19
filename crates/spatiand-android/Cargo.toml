@@ -21,6 +21,7 @@ spatiand-stream = { path = "../spatiand-stream" }
 spatikey-core = { path = "../spatikey-core" }
 spatiand-sync = { path = "../spatiand-sync" }
 spatiand-voice = { path = "../spatiand-voice" }
+spatiand-ai = { path = "../spatiand-ai" }
 serde_json = "1"
 spatiand-video = { path = "../spatiand-video" }
 # Starting Spatiand's shell helper through the phone's own Wireless debugging (`apps`).

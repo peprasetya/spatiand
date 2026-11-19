@@ -22,6 +22,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use spatiand_app::ai::AiSettings;
 use spatiand_voice::figure::Offers;
 
 use crate::store::Settings;
@@ -54,7 +55,7 @@ Shy, looking down and away: {\"head\": \"down, right\", \"chest\": \"a little fr
 /// shoulders) is left out. One whose name says `{side}` is offered for either side, as written
 /// for the left and mirrored for the right. Each was looked at, from the front and the side, on
 /// a made-up figure in the snapshot room (`tools/mannequin.py`; docs/spatipal-pals.md).
-const STOCK: &[(&str, &str, &[(&str, &str)])] = &[
+const STOCK: &[(&str, &str, Words)] = &[
     ("hands_on_hips", "both hands on your hips", &[("left_upper_arm", "down, out, a little back"), ("left_forearm", "in, a little down, a little front"), ("right_upper_arm", "down, out, a little back"), ("right_forearm", "in, a little down, a little front")]),
     (
         "{side}_hand_on_hip",
@@ -90,6 +91,9 @@ const STOCK: &[(&str, &str, &[(&str, &str)])] = &[
 
 /// Names, each with its words for the model (empty when `pal.json` gives none).
 type Named = Vec<(String, String)>;
+
+/// A pose made of words: each part, with where it points.
+type Words = &'static [(&'static str, &'static str)];
 
 /// Where pals are kept: on every linked machine.
 pub fn root() -> PathBuf {
@@ -255,12 +259,6 @@ impl Pack {
             s.voice = a.voice.trim().to_string();
             s.described = a.described.trim().to_string();
         }
-        if !a.model.trim().is_empty() {
-            s.model = a.model.trim().to_string();
-        }
-        if !a.large_model.trim().is_empty() {
-            s.large_model = a.large_model.trim().to_string();
-        }
         s
     }
 
@@ -279,13 +277,24 @@ impl Pack {
         theirs(&mine.character, &mut s.character, &saved.character);
         theirs(&mine.voice, &mut s.voice, &saved.voice);
         theirs(&mine.described, &mut s.described, &saved.described);
-        theirs(&mine.model, &mut s.model, &saved.model);
-        theirs(&mine.large_model, &mut s.large_model, &saved.large_model);
         s
     }
 
-    /// What it sets itself, of the settings' lines: `name`, `persona`, `figure`, `voice`,
-    /// `models`.
+    /// The room's AI settings (`ai.json`, which SpatiPal reads and does not write) as this pal
+    /// has them: its own everyday and larger models, when `pal.json` names them, over the room's.
+    pub fn ai_over(&self, ai: &AiSettings) -> AiSettings {
+        let mut ai = ai.clone();
+        if !self.about.model.trim().is_empty() {
+            ai.models.everyday = self.about.model.trim().to_string();
+        }
+        if !self.about.large_model.trim().is_empty() {
+            ai.models.larger = self.about.large_model.trim().to_string();
+        }
+        ai
+    }
+
+    /// What it sets itself, of the settings' lines: `name`, `persona`, `figure`, `voice` (its
+    /// models are over the room's AI settings, `ai_over`).
     pub fn sets(&self, what: &str) -> bool {
         let a = &self.about;
         match what {
@@ -293,8 +302,6 @@ impl Pack {
             "persona" => !self.persona.trim().is_empty(),
             "figure" => self.figure.is_some(),
             "voice" => !a.voice.trim().is_empty() || !a.described.trim().is_empty(),
-            "model" => !a.model.trim().is_empty(),
-            "large_model" => !a.large_model.trim().is_empty(),
             _ => false,
         }
     }
@@ -329,7 +336,7 @@ impl Pack {
             return Vec::new();
         }
         let own: Vec<&str> = self.offers.animations.iter().map(|a| a.rsplit('|').next().unwrap_or(a)).collect();
-        let mut all: Vec<(String, String, Vec<(String, String)>)> = Vec::new();
+        let mut all: Vec<(String, String, Named)> = Vec::new();
         for (name, words, parts) in STOCK {
             let parts: Vec<(String, String)> = parts.iter().map(|(p, w)| (p.to_string(), w.to_string())).collect();
             if name.contains("{side}") {
@@ -861,15 +868,17 @@ mod tests {
         let shown = p.over(&saved);
         assert_eq!(shown.name, "Mira");
         assert_eq!(shown.persona, "You are someone.");
-        assert_eq!(shown.model, "own-model");
-        assert_eq!(shown.large_model, saved.large_model);
+        // Its models over the room's AI settings: its own everyday one, the room's larger.
+        let room = AiSettings::default();
+        let ai = p.ai_over(&room);
+        assert_eq!(ai.models.everyday, "own-model");
+        assert_eq!(ai.models.larger, room.models.larger);
         // A setting changed in the window is kept; what the pal set goes back to the wearer's.
         let mut edited = shown.clone();
         edited.spoken = !saved.spoken;
         let kept = p.under(&edited, &saved);
         assert_eq!(kept.name, saved.name);
         assert_eq!(kept.persona, saved.persona);
-        assert_eq!(kept.model, saved.model);
         assert_eq!(kept.spoken, !saved.spoken);
     }
 

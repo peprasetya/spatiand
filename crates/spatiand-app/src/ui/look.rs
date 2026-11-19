@@ -16,6 +16,13 @@ pub fn trouble() -> Color {
     if theme::dark() { [1.0, 0.62, 0.55, 1.0] } else { [0.78, 0.18, 0.12, 1.0] }
 }
 
+/// A word read from a picture with too little certainty to be copied unchecked (an ID number):
+/// the room's amber, deepened in the light look so that it is seen on white paper too. Marked, not
+/// alarmed about: nothing went wrong.
+pub fn unsure() -> Color {
+    if theme::dark() { AMBER } else { [0.74, 0.47, 0.0, 1.0] }
+}
+
 fn faint(color: Color, alpha: f32) -> Color {
     [color[0], color[1], color[2], alpha]
 }

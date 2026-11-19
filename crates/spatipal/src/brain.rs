@@ -35,8 +35,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use spatiand_voice::chat::{converse, Ask, Piece};
+use spatiand_app::ai::AiSettings;
 use spatiand_voice::speech::sentence_end;
-use spatiand_voice::{Hemera, VoiceSettings};
+use spatiand_voice::Hemera;
 
 use crate::store::{Said, Settings};
 use crate::tools::{self, Held, Room};
@@ -51,6 +52,9 @@ pub struct Turn {
     pub history: Vec<Said>,
     pub look: bool,
     pub settings: Settings,
+    /// The room's AI settings as the turn was asked: hemera, and the everyday and larger models
+    /// (a pal's own over them).
+    pub ai: AiSettings,
     /// A pal's `appearance` tool, when its figure offers anything, and how it looks now in words
     /// (`crate::pack`): the tool is the same every turn, the look goes with the wearer's words.
     pub appearance: Option<Value>,
@@ -132,7 +136,7 @@ fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<(u64, Tol
                 log::info!("brain: {} let go: the wearer stopped it", h.what);
             }
         }
-        let address = VoiceSettings::load(&crate::store::shared()).hemera;
+        let address = turn.ai.hemera.clone();
         let hemera = match &client {
             Some((at, h)) if *at == address => h.clone(),
             _ => {
@@ -200,6 +204,7 @@ const REMEMBERED: usize = 16;
 
 fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn(Told), stopped: &dyn Fn() -> bool, held: &mut Option<(Held, std::time::Instant)>) -> Result<Said, String> {
     let s = &turn.settings;
+    let models = &turn.ai.models;
     let started = Instant::now();
     if let Some(ended) = turn.ended {
         voice.mark(ended);
@@ -207,7 +212,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     // **The small model decides who answers**, in one word -- left to a tool the small model
     // might call, it was seen to write a long program itself instead. Asked beside its answer:
     // asked first, it put a round trip and a second before every answer.
-    let decision = if turn.look { None } else { decide(hemera, s, turn) };
+    let decision = if turn.look { None } else { decide(hemera, turn) };
     let windows = room.ask(json!({"do": "windows"}));
     // What the wearer sees: the window looked at and the others in view -- with its picture, or
     // the whole view's, when what they ask is about it.
@@ -225,6 +230,16 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     let note = if turn.looks.is_empty() { room_note(&windows, &seen) } else { format!("{}\n{}", room_note(&windows, &seen), turn.looks) };
     let mut words = format!("{note}\n{}", turn.text);
     let looked = seen.pointer("/looking_at/window").and_then(Value::as_u64);
+    // The text read in the picture looked at (Live Text), whatever is asked: printed there and read
+    // exactly, for a name or a number ("what is the NIK") to be answered from it, not read again
+    // off the picture. With the window's own text, below, it is in that already.
+    let in_picture = seen.pointer("/looking_at/app").and_then(Value::as_str).is_some_and(reads_pictures);
+    if let (Some(window), true, false) = (looked, in_picture, past_the_view(&turn.text)) {
+        if let Some(read) = read_in_picture(room, window) {
+            words = format!("{read}\n{words}");
+            log::info!("brain: given the text read in window {window}'s picture ({} characters)", read.chars().count());
+        }
+    }
     if let (Some(window), true) = (looked, past_the_view(&turn.text)) {
         let own = room.ask(json!({"do": "describe", "window": window}));
         if let Some(text) = own.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
@@ -262,7 +277,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
     messages.push(user);
 
     let mut large = false;
-    let mut model = s.model.clone();
+    let mut model = models.everyday.clone();
     let mut said = Said { role: "assistant".into(), model: model.clone(), at: crate::store::now(), ..Default::default() };
     // Until the decision comes, what the small model writes is held back: shown and said only
     // once the answer is its to give.
@@ -351,10 +366,10 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
             // Decided, and done with: the larger model's answer is its own, not held or cut.
             decided = Some(false);
             large = true;
-            model = s.large_model.clone();
+            model = models.larger.clone();
             said.model = model.clone();
             messages[0] = json!({"role": "system", "content": system(s, true)});
-            log::info!("brain: {} decided the larger model answers", s.model);
+            log::info!("brain: {} decided the larger model answers", models.everyday);
             say(Told::HandedOver(model.clone()));
             voice.set_thinking(s.thinking == "tone");
             continue;
@@ -382,7 +397,7 @@ fn answer(turn: &Turn, hemera: &Hemera, room: &Room, voice: &Voice, say: &dyn Fn
         // The small model hands it over: the same conversation, to the larger, thinking.
         if !large && answer.calls.iter().any(|c| c.name == "hand_over") {
             large = true;
-            model = s.large_model.clone();
+            model = models.larger.clone();
             said.model = model.clone();
             messages[0] = json!({"role": "system", "content": system(s, true)});
             log::info!("brain: handed over to {model}");
@@ -467,9 +482,9 @@ fn system(s: &Settings, larger: bool) -> String {
 /// A request that begins as every one of a model's does, for it to read before it is needed
 /// (`crate::warm`): its tools and its system message, and a word from no one. The larger
 /// model's when `larger`.
-pub fn prime(s: &Settings, larger: bool, appearance: Option<&Value>) -> Value {
+pub fn prime(s: &Settings, ai: &AiSettings, larger: bool, appearance: Option<&Value>) -> Value {
     json!({
-        "model": if larger { &s.large_model } else { &s.model },
+        "model": if larger { &ai.models.larger } else { &ai.models.everyday },
         "messages": [
             {"role": "system", "content": system(s, larger)},
             {"role": "user", "content": "[Getting ready: nothing is asked yet.]\nHi."},
@@ -485,6 +500,31 @@ pub fn prime(s: &Settings, larger: bool, appearance: Option<&Value>) -> Value {
 
 /// The room as it is now, for the wearer's message: the time, the window the wearer is looking
 /// at and how much of it they see, and the windows in the room.
+/// Whether an application reads the text in its pictures (`spatiand_app::live_text`): SpatiLoupe's
+/// pictures and pages, SpatiReel's paused frames. Its description is asked for that text.
+fn reads_pictures(app: &str) -> bool {
+    ["id.prasetya.spatiand.spatiloupe", "id.prasetya.spatiand.spatireel"].iter().any(|id| app.starts_with(id))
+}
+
+/// The text read in the picture in `window`, from its description (after
+/// `spatiand_app::live_text::HEADING`), marked for the model as on screen and exact.
+fn read_in_picture(room: &Room, window: u64) -> Option<String> {
+    let own = room.ask(json!({"do": "describe", "window": window}));
+    picture_text(window, own.get("text").and_then(Value::as_str)?)
+}
+
+/// The part of a window's description that is the text read in its picture, as it is given.
+fn picture_text(window: u64, described: &str) -> Option<String> {
+    let heading = spatiand_app::live_text::HEADING;
+    let at = described.find(heading)?;
+    let read: String = described[at + heading.len()..].trim().chars().take(3000).collect();
+    (!read.trim().is_empty()).then(|| {
+        format!(
+            "[The text in the picture in window {window}, read from it exactly as it is printed, on screen now. Answer names, numbers and codes from this text, not by reading the picture again; a word in [? ?] was read with less certainty: say so if you give it:]\n{read}\n[End of the text in the picture.]"
+        )
+    })
+}
+
 fn room_note(windows: &Value, seen: &Value) -> String {
     let looked = seen.pointer("/looking_at/window").and_then(Value::as_u64);
     let in_view: Vec<u64> = seen.get("others").and_then(Value::as_array).into_iter().flatten().filter_map(|o| o.get("window").and_then(Value::as_u64)).collect();
@@ -724,11 +764,12 @@ mod tests {
         .unwrap();
         let pack = crate::pack::Pack::made_up(about, "You are Mira, a cheerful woman who loves clothes and shows them off.", offers);
         let s = pack.over(&Settings::default());
-        let hemera = Hemera::new(&VoiceSettings::default().hemera);
+        let ai = AiSettings::default();
+        let hemera = Hemera::new(&ai.hemera);
         let tools = tools::all(true, pack.tool().as_ref());
         for (asked, group, value, mv) in [("Put on your dress and give me a twirl!", "outfit", "dress", Some("spin")), ("Time for bed. Get into your pyjamas.", "outfit", "pyjamas", None)] {
             let ask = Ask {
-                model: s.model.clone(),
+                model: ai.models.everyday.clone(),
                 messages: vec![json!({"role": "system", "content": system(&s, false)}), json!({"role": "user", "content": format!("[It is 22:10.]\n{}\n{asked}", pack.note())})],
                 tools: tools.clone(),
                 max_tokens: 300,
@@ -737,7 +778,7 @@ mod tests {
             };
             // A change of clothes is the quick model's: handed to the larger one, it waited for
             // the 27B to load (the snapshot room, 2026-11-19).
-            assert!(!wants_larger(&hemera, &s.model, asked, ""), "{asked:?} went to the larger model");
+            assert!(!wants_larger(&hemera, &ai.models.everyday, asked, ""), "{asked:?} went to the larger model");
             let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
             let call = answer.calls.iter().find(|c| c.name == "appearance").unwrap_or_else(|| panic!("{asked:?}: no appearance call: {:?} {:?}", answer.text, answer.calls));
             let args: Value = serde_json::from_str(&call.arguments).unwrap();
@@ -761,8 +802,9 @@ mod tests {
         let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
         let mut pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
         let s = pack.over(&Settings::default());
-        let model = std::env::var("SPATIPAL_TEST_MODEL").unwrap_or_else(|_| s.model.clone());
-        let hemera = Hemera::new(&VoiceSettings::default().hemera);
+        let model = std::env::var("SPATIPAL_TEST_MODEL").unwrap_or_else(|_| AiSettings::default().models.everyday);
+        let ai = AiSettings::default();
+        let hemera = Hemera::new(&ai.hemera);
         let tools = tools::all(true, pack.tool().as_ref());
         let asks: [(&str, &[&str]); 8] = [
             ("Put your hands on your hips.", &["left_upper_arm", "left_forearm", "right_upper_arm", "right_forearm"]),
@@ -784,7 +826,7 @@ mod tests {
                 temperature: 0.2,
                 thinking: false,
             };
-            eprintln!("{asked:?}: to the larger model: {}", wants_larger(&hemera, &s.model, asked, ""));
+            eprintln!("{asked:?}: to the larger model: {}", wants_larger(&hemera, &ai.models.everyday, asked, ""));
             let started = std::time::Instant::now();
             let answer = converse(&hemera, &ask, |_| true).expect("hemera answers");
             let Some(call) = answer.calls.iter().find(|c| c.name == "appearance") else {
@@ -816,6 +858,22 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_text_read_in_a_picture_is_given_as_on_screen_and_exact() {
+        // SpatiLoupe's description of an ID card: what is known of the file, then what was read.
+        let described = format!("Name: ktp.jpg\nPixels: 4000 × 3000\n\n{}\nNIK\n: 3171234567890001\nNama\n: [?RINA?] KARTIKA SARI", spatiand_app::live_text::HEADING);
+        let given = picture_text(7, &described).unwrap();
+        assert!(given.contains("window 7") && given.contains("on screen now") && given.contains("not by reading the picture"));
+        assert!(given.contains("NIK\n: 3171234567890001\nNama\n: [?RINA?] KARTIKA SARI"));
+        assert!(!given.contains("Pixels"), "only what was read");
+        // Nothing read: nothing given.
+        assert_eq!(picture_text(7, "Name: ktp.jpg\nPixels: 4000 × 3000"), None);
+        assert_eq!(picture_text(7, spatiand_app::live_text::HEADING), None);
+        // Asked of the two that read pictures, on every platform (an instance's own number after).
+        assert!(reads_pictures("id.prasetya.spatiand.spatiloupe") && reads_pictures("id.prasetya.spatiand.spatireel@4321"));
+        assert!(!reads_pictures("id.prasetya.spatiand.spatimesh") && !reads_pictures(""));
+    }
 
     #[test]
     fn what_is_sent_begins_the_same_whatever_the_room() {
@@ -935,12 +993,13 @@ mod tests {
 
 /// The small model's decision whether the larger one answers, asked on a thread of its own while
 /// the small one starts answering. `None` when there is no larger model to hand to.
-fn decide(hemera: &Hemera, s: &Settings, turn: &Turn) -> Option<Receiver<bool>> {
-    if s.large_model.is_empty() || s.large_model == s.model {
+fn decide(hemera: &Hemera, turn: &Turn) -> Option<Receiver<bool>> {
+    let models = &turn.ai.models;
+    if models.larger.is_empty() || models.larger == models.everyday {
         return None;
     }
     let last = turn.history.iter().rev().find(|said| said.role == "assistant").map(|said| said.text.chars().take(300).collect::<String>()).unwrap_or_default();
-    let (hemera, model, text) = (hemera.clone(), s.model.clone(), turn.text.clone());
+    let (hemera, model, text) = (hemera.clone(), models.everyday.clone(), turn.text.clone());
     let (tx, rx) = channel();
     std::thread::Builder::new()
         .name("decide".into())

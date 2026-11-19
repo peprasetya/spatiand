@@ -238,8 +238,8 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 
 | Key | Shelf | Quill | Pal | Key | Reel | Loupe |
 |---|---|---|---|---|---|---|
-| Cmd-C / X / V | files | copy / - / paste (see `quill/keys.rs:42`) | field | field | field | field |
-| Cmd-A | all files | - (menu: Select all) | field | field | field | field |
+| Cmd-C / X / V | files | copy / - / paste (see `quill/keys.rs:42`) | field | field | field; C: a paused frame's chosen text | field; C: a picture's chosen text |
+| Cmd-A | all files | - (menu: Select all) | field | field | field; a paused frame's text | field; a picture's text |
 | Cmd-Z | - | - | - | - | - | in Markup: undo; Shift: redo |
 | Cmd-S | - | - | - | - | - | with markup: save (asks); Shift: save a copy |
 | Cmd-T / Cmd-W | new tab / close tab | new tab / close tab | - | - | - | - |
@@ -254,6 +254,10 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 | Delete | to the Trash; Shift: for good | (the program's) | Cmd-Delete: delete the chat | - | forget a server | in Markup: delete what is chosen (Backspace too) |
 | Others | Cmd-D duplicate, R refresh, H hidden, 1 / 2 view, L path, F2 rename, Space mark | Cmd-1..9 tab, Cmd-M move tab, Shift-PgUp/PgDn history | - | Cmd-L lock | M menu, N next, arrows seek | I about, R turn, 3 eyes, X swap, P page, O contents, N next found, Cmd-Shift-A Markup (Preview's) |
 
+- Live Text (2026-11-19, `spatiand_app::live_text`, SpatiLoupe and SpatiReel): with text chosen in a
+  picture or a paused frame, Cmd-C copies it and Escape lets go of it before Escape's own meaning;
+  Cmd-A chooses all of it. Its menu is `ui::Menu` (Copy, Select all, Translate), its translation a
+  pane closed by Done, Escape or Enter.
 - Only SpatiLoupe's Markup binds Cmd-Z: its marks, crops and turns are undone and redone (2026-11-19).
   Nothing else has undo; that is the norm elsewhere, not a gap to fill.
 - In SpatiLoupe's Markup, Escape lets go of what is going on (words typed, a crop drawn, what is
@@ -273,7 +277,8 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
   **450 ms** and 6 of each other (`ui::DOUBLE_CLICK`, `ui::DOUBLE_CLICK_SLOP`).
 - A press becomes a drag after the pointer has gone **8** (`ui::DRAG_AFTER`; Decisions 3,
   settled so). SpatiReel's 12 for a tap on the picture stays.
-- Right click: the context menu, where there is one (SpatiShelf, SpatiQuill).
+- Right click: the context menu, where there is one (SpatiShelf, SpatiQuill; the text in a picture
+  or a paused frame in SpatiLoupe and SpatiReel, or a press held 800 ms on it).
 - Wheel: scrolls; in SpatiLoupe zooms a picture; in SpatiReel wakes the controls.
 
 ### 17. Controls that hide themselves

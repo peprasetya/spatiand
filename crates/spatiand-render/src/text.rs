@@ -255,6 +255,30 @@ impl TextRenderer {
         self.render_inner(text, size_px, max_width, color, true, align)
     }
 
+    /// Where each glyph of one line of `text` is set at `size_px`, as it is drawn: its bytes in
+    /// `text`, and its left and right in pixels from the line's start, in the order they are drawn
+    /// (left to right, whatever the text's direction). Shaped only, nothing painted: for choosing
+    /// words drawn as a line (a film's subtitles, `spatiand_app::live_text`).
+    pub fn places(&mut self, text: &str, size_px: f32) -> Vec<(std::ops::Range<usize>, f32, f32)> {
+        let line = text.lines().next().unwrap_or("");
+        let metrics = Metrics::new(size_px.max(1.0), size_px.max(1.0) * 1.4);
+        let mut buffer = Buffer::new(&mut self.font_system, metrics);
+        let attrs = Attrs::new().family(Family::SansSerif);
+        {
+            let mut b = buffer.borrow_with(&mut self.font_system);
+            b.set_size(None, None);
+            b.set_text(line, &attrs, Shaping::Advanced, Some(Align::Left));
+            b.shape_until_scroll(false);
+        }
+        let mut out = Vec::new();
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs.iter() {
+                out.push((glyph.start..glyph.end, glyph.x, glyph.x + glyph.w));
+            }
+        }
+        out
+    }
+
     fn render_inner(
         &mut self,
         text: &str,
@@ -429,6 +453,22 @@ impl Default for TextRenderer {
 #[cfg(test)]
 mod padded_tests {
     use super::*;
+
+    /// Each glyph's place along a line, for choosing words drawn as a label: left to right, one
+    /// after another, as wide in all as the line is drawn.
+    #[test]
+    fn a_line_s_glyphs_are_placed_one_after_another() {
+        let mut t = TextRenderer::new();
+        let places = t.places("Diskon 20%", 40.0);
+        assert!(places.len() >= 10, "{places:?}");
+        assert!(places.windows(2).all(|w| w[0].1 <= w[1].1 && w[0].2 <= w[1].2 + 0.5), "{places:?}");
+        assert_eq!(places.first().map(|p| p.0.start), Some(0));
+        let wide = places.last().unwrap().2 - places[0].1;
+        let drawn = t.render("Diskon 20%", 40.0, 4096, [255, 255, 255, 255]).width as f32;
+        assert!((wide - drawn).abs() < 8.0, "{wide} placed, {drawn} drawn");
+        // Only the first line of a text with two.
+        assert_eq!(t.places("ab\ncd", 40.0).len(), 2);
+    }
 
     /// A padded render's width must not depend on what it contains.
     ///
