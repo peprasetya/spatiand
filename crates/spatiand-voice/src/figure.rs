@@ -242,6 +242,9 @@ pub fn bodies(root: &Value) -> Vec<Body> {
         return vec![body];
     }
     let names: Vec<String> = root.get("nodes").and_then(Value::as_array).into_iter().flatten().map(|n| n.get("name").and_then(Value::as_str).unwrap_or_default().to_lowercase()).collect();
+    if let Some(body) = sl_body(&names, &parent) {
+        return vec![body];
+    }
     let mut out: Vec<Body> = Vec::new();
     for skin in root.get("skins").and_then(Value::as_array).into_iter().flatten() {
         let joints: Vec<usize> = skin.get("joints").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64).map(|j| j as usize).filter(|j| *j < at.len()).collect();
@@ -252,6 +255,14 @@ pub fn bodies(root: &Value) -> Vec<Body> {
         }
     }
     out
+}
+
+/// A person's body in any skeleton, by its shape at rest as a figure's is found (`shaped`): each
+/// joint's parent, its place at rest -- +X its own left, +Y up, +Z its front -- and its name in
+/// small letters. A BVH's, when its names say nothing (`crate::bvh`).
+pub fn body_of(parent: &[Option<usize>], at: &[Vec3], names: &[String]) -> Option<Body> {
+    let all: Vec<usize> = (0..at.len().min(parent.len()).min(names.len())).collect();
+    shaped(&all, parent, at, names)
 }
 
 /// A node's own place, as its description has it: a matrix, or a translation, rotation and scale.
@@ -321,6 +332,42 @@ fn vrm_body(root: &Value, nodes: usize) -> Option<Body> {
     };
     let leg = |side: &str| Some(Limb { root: None, upper: bone(&format!("{side}UpperLeg"))?, lower: bone(&format!("{side}LowerLeg"))?, end: bone(&format!("{side}Foot"))?, tip: bone(&format!("{side}Toes")) });
     Some(Body { hips, spine, neck, arms: [arm("left")?, arm("right")?], legs: [leg("left")?, leg("right")?] })
+}
+
+/// Second Life's skeleton, by its bones' names (`mPelvis`, `mShoulderLeft`...): a fitted mesh's,
+/// Ruth2's, Max's -- whose collision volumes (`L_UPPER_ARM`, `BELLY`), Bento's extra spine joints
+/// and its fingers stand among the bones, where the shape alone would be read amiss.
+fn sl_body(names: &[String], parent: &[Option<usize>]) -> Option<Body> {
+    let bone = |name: &str| names.iter().position(|n| n == &name.to_lowercase());
+    let hips = bone("mPelvis")?;
+    let head = bone("mHead")?;
+    let neck = bone("mNeck")?;
+    // The spine: from the pelvis up to the neck, Bento's mSpine joints among mTorso and mChest.
+    let mut up = Vec::new();
+    let mut k = neck;
+    while let Some(p) = parent[k] {
+        if p == hips {
+            break;
+        }
+        up.push(p);
+        k = p;
+        if up.len() > names.len() {
+            return None;
+        }
+    }
+    parent[k]?;
+    up.reverse();
+    let arm = |side: &str| {
+        Some(Limb {
+            root: bone(&format!("mCollar{side}")),
+            upper: bone(&format!("mShoulder{side}"))?,
+            lower: bone(&format!("mElbow{side}"))?,
+            end: bone(&format!("mWrist{side}"))?,
+            tip: bone(&format!("mHandMiddle1{side}")).or_else(|| bone(&format!("mHandIndex1{side}"))),
+        })
+    };
+    let leg = |side: &str| Some(Limb { root: None, upper: bone(&format!("mHip{side}"))?, lower: bone(&format!("mKnee{side}"))?, end: bone(&format!("mAnkle{side}"))?, tip: bone(&format!("mFoot{side}")).or_else(|| bone(&format!("mToe{side}"))) });
+    Some(Body { hips, spine: up, neck: vec![neck, head], arms: [arm("Left")?, arm("Right")?], legs: [leg("Left")?, leg("Right")?] })
 }
 
 /// A skin's joints found to be a person's by their shape at rest, whatever they are named: its
@@ -743,6 +790,47 @@ mod tests {
         // Its names say nothing: the same skeleton named otherwise is the same body.
         let renamed: Vec<(&str, Option<usize>, [f32; 3])> = joints.iter().map(|(_, p, at)| ("joint", *p, *at)).collect();
         assert_eq!(super::bodies(&rig(&renamed, 1.0, json!({})))[0], *body);
+    }
+
+    #[test]
+    fn second_lifes_skeleton_is_found_by_its_bones_names() {
+        // SL's bones (Bento's extra spine joints among them) and a fitted mesh's collision
+        // volumes, which stand along the bones and would read as branches of their own.
+        let mut j: Vec<(&str, Option<usize>, [f32; 3])> = vec![
+            ("mPelvis", None, [0.0, 1.05, 0.0]),
+            ("mSpine1", Some(0), [0.0, 1.05, 0.0]),
+            ("mSpine2", Some(1), [0.0, 1.05, 0.0]),
+            ("mTorso", Some(2), [0.0, 1.13, 0.0]),
+            ("mSpine3", Some(3), [0.0, 1.13, 0.0]),
+            ("mSpine4", Some(4), [0.0, 1.13, 0.0]),
+            ("mChest", Some(5), [0.0, 1.33, 0.0]),
+            ("mNeck", Some(6), [0.0, 1.58, 0.0]),
+            ("mHead", Some(7), [0.0, 1.66, 0.0]),
+            ("BELLY", Some(3), [0.0, 1.1, 0.12]),
+            ("UPPER_BACK", Some(6), [0.0, 1.4, -0.15]),
+        ];
+        for (side, s) in [("Left", 1.0f32), ("Right", -1.0)] {
+            let chest = 6;
+            let at = j.len();
+            j.push((if side == "Left" { "mCollarLeft" } else { "mCollarRight" }, Some(chest), [0.08 * s, 1.5, 0.0]));
+            j.push((if side == "Left" { "mShoulderLeft" } else { "mShoulderRight" }, Some(at), [0.2 * s, 1.5, 0.0]));
+            j.push((if side == "Left" { "L_UPPER_ARM" } else { "R_UPPER_ARM" }, Some(at + 1), [0.35 * s, 1.5, 0.0]));
+            j.push((if side == "Left" { "mElbowLeft" } else { "mElbowRight" }, Some(at + 1), [0.5 * s, 1.5, 0.0]));
+            j.push((if side == "Left" { "mWristLeft" } else { "mWristRight" }, Some(at + 3), [0.75 * s, 1.5, 0.0]));
+            j.push((if side == "Left" { "mHandMiddle1Left" } else { "mHandMiddle1Right" }, Some(at + 4), [0.85 * s, 1.5, 0.0]));
+            let at = j.len();
+            j.push((if side == "Left" { "mHipLeft" } else { "mHipRight" }, Some(0), [0.1 * s, 1.0, 0.0]));
+            j.push((if side == "Left" { "mKneeLeft" } else { "mKneeRight" }, Some(at), [0.1 * s, 0.55, 0.0]));
+            j.push((if side == "Left" { "mAnkleLeft" } else { "mAnkleRight" }, Some(at + 1), [0.1 * s, 0.1, 0.0]));
+            j.push((if side == "Left" { "mFootLeft" } else { "mFootRight" }, Some(at + 2), [0.1 * s, 0.02, 0.12]));
+        }
+        let i = |name: &str| index(&j, name);
+        let body = &bodies(&rig(&j, 1.0, json!({})))[0];
+        assert_eq!(body.hips, i("mPelvis"));
+        assert_eq!(body.spine, vec![i("mSpine1"), i("mSpine2"), i("mTorso"), i("mSpine3"), i("mSpine4"), i("mChest")]);
+        assert_eq!(body.neck, vec![i("mNeck"), i("mHead")]);
+        assert_eq!(body.arms[0], Limb { root: Some(i("mCollarLeft")), upper: i("mShoulderLeft"), lower: i("mElbowLeft"), end: i("mWristLeft"), tip: Some(i("mHandMiddle1Left")) });
+        assert_eq!(body.legs[1], Limb { root: None, upper: i("mHipRight"), lower: i("mKneeRight"), end: i("mAnkleRight"), tip: Some(i("mFootRight")) });
     }
 
     #[test]

@@ -155,7 +155,9 @@ pub struct Kept {
 }
 
 /// A folder of kept motions -- a pal's `moves/` -- each as `<name>.json`, which the room reads
-/// by its path (the avatar's `motions`).
+/// by its path (the avatar's `motions`); and BVH files the wearer put there (`crate::bvh`), each
+/// by a name made of its file's (`Happy Dance.bvh`: `happy_dance`), which are theirs: never
+/// written or let go of here. A motion made and kept by the same name is the one played.
 pub struct Shelf {
     pub dir: std::path::PathBuf,
 }
@@ -177,8 +179,16 @@ pub fn name_of(words: &str) -> String {
 }
 
 impl Shelf {
-    /// The motions kept, by name, in order.
+    /// The motions kept, by name, in order: those made and those given as BVH files.
     pub fn names(&self) -> Vec<String> {
+        let mut all: Vec<String> = self.made().into_iter().chain(self.given().into_iter().map(|(n, _)| n)).collect();
+        all.sort();
+        all.dedup();
+        all
+    }
+
+    /// Those made from words and kept here (`<name>.json`).
+    pub fn made(&self) -> Vec<String> {
         let mut all: Vec<String> = std::fs::read_dir(&self.dir)
             .into_iter()
             .flatten()
@@ -190,8 +200,40 @@ impl Shelf {
         all
     }
 
+    /// The BVH files given (put here by the wearer), each by its name and its file.
+    pub fn given(&self) -> Vec<(String, std::path::PathBuf)> {
+        let mut all: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("bvh")) && p.is_file())
+            .filter_map(|p| Some((name_of(p.file_stem()?.to_str()?), p)))
+            .filter(|(n, _)| !n.is_empty())
+            .collect();
+        all.sort();
+        all.dedup_by(|a, b| a.0 == b.0);
+        all
+    }
+
+    /// Where one made is kept, or would be.
     pub fn path(&self, name: &str) -> std::path::PathBuf {
         self.dir.join(format!("{}.json", name_of(name)))
+    }
+
+    /// The file played for a name: the one made, or else the BVH given.
+    pub fn file(&self, name: &str) -> Option<std::path::PathBuf> {
+        let made = self.path(name);
+        if made.is_file() {
+            return Some(made);
+        }
+        let name = name_of(name);
+        self.given().into_iter().find(|(n, _)| *n == name).map(|(_, p)| p)
+    }
+
+    /// Whether the name is a BVH given, with no motion made by it.
+    pub fn is_given(&self, name: &str) -> bool {
+        !self.path(name).is_file() && self.file(name).is_some()
     }
 
     /// Keep a motion made, by `name`, over one of that name. Written whole or not at all, for its
@@ -222,6 +264,7 @@ impl Shelf {
         serde_json::from_slice(&bytes).map_err(|e| format!("{}: not a kept move ({e})", path.display()))
     }
 
+    /// One made let go of; a BVH given never is.
     pub fn forget(&self, name: &str) -> Result<(), String> {
         let path = self.path(name);
         std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))
@@ -229,7 +272,7 @@ impl Shelf {
 
     /// What the room is told of them: each name to its file.
     pub fn room(&self) -> Value {
-        Value::Object(self.names().into_iter().map(|n| (n.clone(), json!(self.path(&n)))).collect())
+        Value::Object(self.names().into_iter().filter_map(|n| Some((n.clone(), json!(self.file(&n)?)))).collect())
     }
 }
 
@@ -255,6 +298,19 @@ mod tests {
         assert!(shelf.keep("!!", &ask, &small()).is_err());
         shelf.forget("twirl").unwrap();
         assert!(shelf.names().is_empty());
+        // BVH files the wearer put there: by names made of theirs, played by their own file.
+        std::fs::write(dir.join("Happy Dance.BVH"), "HIERARCHY").unwrap();
+        std::fs::write(dir.join("wave.bvh"), "HIERARCHY").unwrap();
+        assert_eq!(shelf.names(), ["happy_dance", "wave"]);
+        assert_eq!((shelf.made(), shelf.is_given("happy_dance")), (Vec::<String>::new(), true));
+        assert_eq!(shelf.room()["happy_dance"], json!(dir.join("Happy Dance.BVH")));
+        // Never let go of here: they are the wearer's.
+        assert!(shelf.forget("wave").is_err());
+        assert!(dir.join("wave.bvh").is_file());
+        // One made by the same name is the one played.
+        shelf.keep("wave", &ask, &small()).unwrap();
+        assert_eq!((shelf.names(), shelf.is_given("wave")), (vec!["happy_dance".to_string(), "wave".to_string()], false));
+        assert_eq!(shelf.room()["wave"], json!(dir.join("wave.json")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

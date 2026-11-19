@@ -62,9 +62,13 @@ pub fn take(skeleton: &mut Skeleton, said: &Value, motions: &mut Motions) -> boo
     true
 }
 
-/// A motion from its file: hemera's own, or one kept with what it was made from (`motion` in it).
+/// A motion from its file: hemera's own, or one kept with what it was made from (`motion` in it),
+/// or a BVH (`spatiand_voice::bvh`: an animation from outside Second Life whose licence allows it).
 fn read(path: &str) -> Result<Motion, String> {
     let text = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    if path.to_ascii_lowercase().ends_with(".bvh") {
+        return spatiand_voice::bvh::read(&String::from_utf8_lossy(&text));
+    }
     let v: Value = serde_json::from_slice(&text).map_err(|e| format!("not JSON: {e}"))?;
     let v = v.get("motion").cloned().unwrap_or(v);
     let m: Motion = serde_json::from_value(v).map_err(|e| format!("not a motion: {e}"))?;
@@ -402,6 +406,39 @@ mod tests {
         // Its left arm up; its right out level, at -X... of a figure facing -Z, its right is +X.
         assert!((at("forearm.L") - at("upper_arm.L")).normalize().y > 0.98);
         assert!((at("forearm.R") - at("upper_arm.R")).normalize().x > 0.98);
+    }
+
+    #[test]
+    fn a_bvh_named_is_played_as_hemeras_are() {
+        let (mut s, names) = person(1.0);
+        // CMU's names, in centimetres-ish units of its own, its left arm raised about Z.
+        let joint = |name: &str, offset: &str, inner: &str| format!("JOINT {name}\n{{\nOFFSET {offset}\nCHANNELS 3 Zrotation Xrotation Yrotation\n{inner}}}\n");
+        let end = |offset: &str| format!("End Site\n{{\nOFFSET {offset}\n}}\n");
+        let leg = |side: &str, x: f32| joint(&format!("{side}UpLeg"), &format!("{} -1 0", x), &joint(&format!("{side}Leg"), "0 -40 0", &joint(&format!("{side}Foot"), "0 -40 0", &end("0 -5 10"))));
+        let arm = |side: &str, x: f32| joint(&format!("{side}Shoulder"), &format!("{} 5 0", 3.0 * x), &joint(&format!("{side}Arm"), &format!("{} 0 0", 12.0 * x), &joint(&format!("{side}ForeArm"), &format!("{} 0 0", 25.0 * x), &joint(&format!("{side}Hand"), &format!("{} 0 0", 20.0 * x), &end(&format!("{} 0 0", 8.0 * x))))));
+        let body = format!("{}{}{}", leg("Left", 9.0), leg("Right", -9.0), joint("Spine", "0 20 0", &format!("{}{}{}", joint("Neck", "0 30 0", &joint("Head", "0 10 0", &end("0 15 0"))), arm("Left", 1.0), arm("Right", -1.0))));
+        let mut frame = vec!["0".to_string(); 6 + 17 * 3];
+        frame[1] = "86".into();
+        let rest = frame.join(" ");
+        frame[6 + 10 * 3] = "90".into();
+        let raised = frame.join(" ");
+        let text = format!("HIERARCHY\nROOT Hips\n{{\nOFFSET 0 0 0\nCHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation\n{body}}}\nMOTION\nFrames: 3\nFrame Time: 0.0333333\n{raised}\n{raised}\n{rest}\n");
+        let dir = std::env::temp_dir().join(format!("spatiand-bvh-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("Wave.BVH");
+        std::fs::write(&path, text).unwrap();
+        let mut motions = Motions::default();
+        assert!(take(&mut s, &json!({"motions": {"wave": path.to_str().unwrap()}}), &mut motions));
+        let c = s.clips.iter().find(|c| c.name == "wave").expect("the BVH played as a clip");
+        let at = played(&s, c, 0.0, &names);
+        // Its left arm up, as the file's; its right out level; standing where it stood.
+        assert!((at("forearm.L") - at("upper_arm.L")).normalize().y > 0.98, "{}", (at("forearm.L") - at("upper_arm.L")).normalize());
+        assert!((at("forearm.R") - at("upper_arm.R")).normalize().x < -0.98);
+        assert!((at("hips") - Vec3::new(0.0, 0.95, 0.0)).length() < 0.02, "{}", at("hips"));
+        // And down again at its end.
+        let at = played(&s, c, c.duration, &names);
+        assert!((at("forearm.L") - at("upper_arm.L")).normalize().x > 0.98);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

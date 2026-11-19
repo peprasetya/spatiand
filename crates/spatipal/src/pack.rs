@@ -526,7 +526,11 @@ impl Pack {
             }
             return Ok(());
         }
-        let made: Vec<String> = self.shelf().names().into_iter().chain(self.pose_shelf().names()).collect();
+        // A BVH the wearer gave it is theirs: it stays (`Shelf::forget` never takes one).
+        if self.shelf().is_given(&name) || self.pose_shelf().is_given(&name) {
+            return Err(format!("{name} was given to you by the wearer as a file, not made by you: it stays, unless they take it away"));
+        }
+        let made: Vec<String> = self.shelf().made().into_iter().chain(self.pose_shelf().made()).collect();
         Err(if made.is_empty() { format!("you have made no move {name}") } else { format!("you have made no move {name}: yours are {}", made.join(", ")) })
     }
 
@@ -534,13 +538,18 @@ impl Pack {
     /// and the moves it made from words, played once too.
     fn moves_and_poses(&self) -> (Named, Named) {
         let (mut moves, mut poses) = (Vec::new(), Vec::new());
-        for kept in self.shelf().names() {
+        // Its words in pal.json, for a BVH the wearer gave it; else what it is.
+        let given_words = |map: &BTreeMap<String, String>, name: &str, what: &str| map.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone()).unwrap_or_else(|| what.to_string());
+        let (shelf, pose_shelf) = (self.shelf(), self.pose_shelf());
+        for kept in shelf.names() {
             if !STATES.contains(&kept.as_str()) {
-                moves.push((kept, "a move of your own, made from words".to_string()));
+                let words = if shelf.is_given(&kept) { given_words(&self.about.moves, &kept, "a move you were given") } else { "a move of your own, made from words".to_string() };
+                moves.push((kept, words));
             }
         }
-        for kept in self.pose_shelf().names() {
-            poses.push((kept, "a pose of your own, made from words".to_string()));
+        for kept in pose_shelf.names() {
+            let words = if pose_shelf.is_given(&kept) { given_words(&self.about.poses, &kept, "a pose you were given") } else { "a pose of your own, made from words".to_string() };
+            poses.push((kept, words));
         }
         for name in &self.offers.animations {
             let bare = name.rsplit('|').next().unwrap_or(name);
@@ -1234,6 +1243,37 @@ mod tests {
         assert_eq!(kept.own_pose.len(), 1);
         p.apply(&json!({"pose": "none"})).unwrap();
         assert!(p.look.own_pose.is_empty());
+        let _ = std::fs::remove_dir_all(&p.dir);
+    }
+
+    #[test]
+    fn bvh_files_the_wearer_gave_it_are_offered_played_and_kept() {
+        let mut about = about();
+        about.moves.insert("happy_dance".into(), "a little happy dance".into());
+        let mut p = pack(about, offers());
+        std::fs::create_dir_all(p.moves_dir()).unwrap();
+        std::fs::create_dir_all(p.poses_dir()).unwrap();
+        std::fs::write(p.moves_dir().join("Happy Dance.bvh"), "HIERARCHY").unwrap();
+        std::fs::write(p.moves_dir().join("cartwheel.bvh"), "HIERARCHY").unwrap();
+        std::fs::write(p.poses_dir().join("Kneel.bvh"), "HIERARCHY").unwrap();
+        std::fs::write(p.moves_dir().join("idle.bvh"), "HIERARCHY").unwrap();
+        let tool = p.tool().unwrap();
+        let props = &tool["function"]["parameters"]["properties"];
+        let moves = props["move"]["description"].as_str().unwrap();
+        // Its words in pal.json, or what it is; the idle is the room's, not a move.
+        assert!(moves.contains("happy_dance (a little happy dance)") && moves.contains("cartwheel (a move you were given)"), "{moves}");
+        assert!(!props["move"]["enum"].as_array().unwrap().iter().any(|n| n == "idle"));
+        assert!(props["pose"]["description"].as_str().unwrap().contains("kneel (a pose you were given)"));
+        // Told to the room by their own files, its idle among them.
+        let room = p.figure_request(true);
+        assert_eq!(room["motions"]["happy_dance"], json!(p.moves_dir().join("Happy Dance.bvh")));
+        assert_eq!(room["motions"]["kneel"], json!(p.poses_dir().join("Kneel.bvh")));
+        assert!(room["motions"].get("idle").is_some());
+        let (room, _) = p.apply(&json!({"pose": "kneel"})).unwrap();
+        assert_eq!(room["pose"], "kneel");
+        // The wearer's: never let go of by its model.
+        assert!(p.forget("cartwheel").unwrap_err().contains("given to you"));
+        assert!(p.moves_dir().join("cartwheel.bvh").is_file());
         let _ = std::fs::remove_dir_all(&p.dir);
     }
 

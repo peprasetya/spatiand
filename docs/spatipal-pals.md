@@ -35,8 +35,10 @@ pal.json      what it is called, its files, its voice and models; its figure's c
 persona.md    who it is
 figure.glb    its figure (or a .vrm)
 look.json     how it looks now: written by SpatiPal as it changes, so it looks the same tomorrow
-moves/        the moves made for it from words, <name>.json each (make_move, below)
-poses/        the poses made for it from words, likewise
+moves/        the moves made for it from words, <name>.json each (make_move, below), and BVH
+              animations given it (<name>.bvh: "Animations from BVH files", below); idle.json or
+              idle.bvh there is how it stands when nothing else happens
+poses/        the poses made for it from words, likewise, and BVHs to hold as poses
 ```
 
 The folder and its files should be the wearer's alone (`chmod 700` the folder, `600` the files);
@@ -215,7 +217,10 @@ the parts it moves and where each points, from its own point of view:
   the lowest joints either side, its hips where their legs meet, its spine the way up from there,
   its arms the branches reaching farthest out; of each limb the two longest bones in a row (an
   upper arm and a forearm past a collarbone; a thigh and a shin). A collarbone, when there is one,
-  is a shoulder. A fox, a robot's arm, a figure with no legs: no body, and no poses of its own.
+  is a shoulder. Second Life's skeleton is found by its bones' names (`mPelvis`, `mShoulderLeft`,
+  Bento's `mSpine1`-`4` in the spine): a fitted mesh's collision volumes (`L_UPPER_ARM`, `BELLY`)
+  stand along its bones and would be read amiss by shape. A fox, a robot's arm, a figure with no
+  legs: no body, and no poses of its own.
 - **How the room turns them** (`crates/spatiand/src/posing.rs`): each bone the short way from
   where it points to where it is asked to; an elbow or a knee bends as a person's does, one way and
   only so far (150 degrees), the upper bone first turned about itself (up to 100 degrees at a
@@ -344,6 +349,37 @@ can do that is not one of its moves or poses -- a cartwheel, a bow, kneeling, st
 turn's note tells the model that its body can do anything asked of it, by one of its moves or
 poses or a new one made with `make_move`, never "I cannot": told only by the tool's description,
 the small model still refused a backflip.
+
+## Animations from BVH files
+
+The owner, 2026-11-20, of Second Life's animations: those "whose licence allows it". Inside SL an
+animation's "full permission" lets it be copied in SL only: Linden Lab's viewer policy (section
+2.b) lets a viewer export only what its user made, full permission or not. Outside SL, animations
+pass around as BVH files, many of them free to use: CMU's motion capture (2,548 motions, "free for
+use in research and commercial", converted to BVH by Bruce Hahne with no further restriction),
+packs sold with a licence for use anywhere, one's own. A BVH put in a pal's folder is one of its
+animations:
+
+- `moves/<name>.bvh` is played once, as a move; `poses/<name>.bvh` held, looping, as a pose;
+  `moves/idle.bvh` is its idle. The name is the file's, in small letters with `_` for spaces
+  (`Happy Dance.bvh` is `happy_dance`); `moves` and `poses` in `pal.json` give it words for its
+  model (`{"happy_dance": "a little happy dance"}`), else it is "a move you were given". A move
+  made from words by the same name is the one played. They are the wearer's: `make_move`'s forget
+  never takes one away, nor does anything else in SpatiPal write there.
+- **Read by the room** (`spatiand_voice::bvh`), the same on every platform, and played as hemera's
+  motions are (above). Its joints are found by their names -- CMU's and Mixamo's (`LeftUpLeg`,
+  `LeftArm`), Second Life's (`mHipLeft`) and its BVHs' (`lThigh`, `lShldr`), Unreal's (`thigh_l`),
+  3ds Max's biped (`Bip01 L Thigh`), Rigify's (`thigh.L`) -- and by its shape at rest when its
+  names say nothing; a part it lacks (a toe, a collarbone, a third spine joint) turns with the joint
+  above it. By name first: CMU's collarbones are longer than its forearms, and the shape alone
+  took a collarbone for an upper arm. Its frame is brought to the motion's own: +Y up (a +Z-up
+  file turned), its own left at +X by its joints' names, facing the wearer at its first frame,
+  standing on its lowest foot joint and starting where it stands (the figure goes no further than
+  half a leg from its place). Over 30 frames a second it is thinned to 30 (CMU's are 120); a first
+  frame of the skeleton at rest -- an SL BVH's reference for its importer -- is left out.
+- What a BVH cannot say: fingers and faces as a figure's own (CMU's have none; SL's Bento fingers
+  are read as joints but the room moves a hand with its forearm), and feet planted (a figure of
+  other proportions slides a little).
 
 ## Making a figure
 
@@ -648,3 +684,25 @@ Not checked: in the glasses; on the Deck, the Beam Pro and the Mac themselves (t
 go through the same calls in the Deck's backend and the one the Beam Pro and the Mac share; the
 Mac is not built here); a pad's or a mouse's real press on the figure (the snapshot room presses it
 through the same calls the backends make, not through a backend's own input); a VRM's figure.
+
+## What was checked: animations from BVH files (2026-11-20)
+
+- `cargo test -p spatiand-voice bvh`: CMU's names and layout, a turn in the file the same turn in
+  the motion, a skeleton facing away and one written +Z up brought round, the first frame facing
+  the wearer where it stands, 120 frames a second thinned to 30, an SL BVH by its Poser names with
+  a reference frame first and no toes, names read for their side and part, what is not a BVH.
+  `SPATIAND_BVH_DIR=<folder> cargo test -p spatiand-voice -- --ignored bvh_files` reads every BVH
+  in a folder: seven of CMU's (a modern dance, directing traffic and waving, jumping jacks, a walk,
+  laughing, balancing on one leg, a stretch) and Max's Bento hand pose, an SL BVH.
+- `cargo test -p spatiand --bin spatiand motion::`: a BVH given as the room is told of one,
+  played on a made-up figure: its arm raised and lowered as the file's, standing where it stood.
+- `cargo test -p spatipal pack::`: BVHs in a pal's `moves/` and `poses/` offered by their names
+  with `pal.json`'s words, told to the room by their own files, `idle.bvh` its idle, never let go of
+  by its model. `cargo test -p spatiand-voice figure`: Second Life's skeleton by its bones' names,
+  among Bento's spine joints and collision volumes.
+- In the snapshot room: the CMU motions on the mannequin and on a pal's doll, dressed -- dance
+  steps, balancing on one leg with the arms out, a stretch, a stride from the side, jumping jacks.
+  SpatiPal with a made-up pal given `Modern Dance.bvh` and `balance.bvh`, typed to: "Do your modern
+  dance for me." and "Now balance on one leg." -- each done at once, as its own.
+- Not checked: in the glasses; an SL BVH of a whole body (only Max's hand pose was at hand).
+

@@ -759,7 +759,12 @@ impl Pal {
                 match self.appear(&json!({key: known})).get("error").and_then(Value::as_str) {
                     Some(why) => json!({"error": why}),
                     None => json!({
-                        "did": format!("{known} is one of your {what} already: done now, not made again. (For a new one of your own, make_move with a new name.)"),
+                        // Not "already ... done": a small model took that as done before, and
+                        // told the wearer it had "already danced earlier" (2026-11-20).
+                        "did": format!(
+                            "You are {} {known} now. Answer in character as you do it. (It is one of your {what}: appearance does it by its name; make_move only makes new ones, by new names.)",
+                            if key == "pose" { "holding" } else { "doing" }
+                        ),
                         "shown": format!("changed: {key}: {known}"),
                     }),
                 }
