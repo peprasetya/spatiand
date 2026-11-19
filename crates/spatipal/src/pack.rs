@@ -351,13 +351,30 @@ impl Pack {
 
     /// Its moves made from words (`crate::moves`), kept in its folder -- its idle made among them.
     /// One of its moves (`pose`: false) or poses by this name, as it is named: its own or the
-    /// figure's, or one made of words.
+    /// figure's, or one made of words -- by the name itself, or by the only one whose name has
+    /// all of its words ("hips": hands_on_hips; 2026-11-20, a small model making anew what it
+    /// had, under a name of its own).
     pub fn known(&self, name: &str, pose: bool) -> Option<String> {
         let (moves, poses) = self.moves_and_poses();
+        let names: Vec<String> = if pose { poses.into_iter().map(|(n, _)| n).chain(self.stock().into_iter().map(|(n, _, _)| n)).collect() } else { moves.into_iter().map(|(n, _)| n).collect() };
         let name = name.trim();
-        let mut names: Vec<String> = if pose { poses.into_iter().map(|(n, _)| n).chain(self.stock().into_iter().map(|(n, _, _)| n)).collect() } else { moves.into_iter().map(|(n, _)| n).collect() };
-        names.retain(|n| n.eq_ignore_ascii_case(name));
-        names.into_iter().next()
+        if let Some(n) = names.iter().find(|n| n.eq_ignore_ascii_case(name)) {
+            return Some(n.clone());
+        }
+        const SAID: [&str; 9] = ["pose", "move", "a", "the", "on", "your", "my", "with", "of"];
+        let words = |n: &str| n.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty() && !SAID.contains(w)).map(str::to_string).collect::<Vec<_>>();
+        let asked = words(name);
+        if asked.is_empty() {
+            return None;
+        }
+        let mut having = names.iter().filter(|n| {
+            let theirs = words(n);
+            asked.iter().all(|w| theirs.contains(w))
+        });
+        match (having.next(), having.next()) {
+            (Some(n), None) => Some(n.clone()),
+            _ => None,
+        }
     }
 
     pub fn shelf(&self) -> spatiand_voice::motion::Shelf {
@@ -982,6 +999,10 @@ mod tests {
         let names = tool["function"]["parameters"]["properties"]["pose"]["enum"].clone();
         assert!(names.as_array().unwrap().iter().any(|n| n == "hands_on_hips"), "{names}");
         assert_eq!(p.known("Hands_Behind_Back", true).as_deref(), Some("hands_behind_back"));
+        // By the only name that has all its words; none when several do, or none.
+        assert_eq!(p.known("hips", true).as_deref(), Some("hands_on_hips"));
+        assert_eq!(p.known("thinking pose", true).as_deref(), Some("thinking"));
+        assert_eq!((p.known("hands_behind", true), p.known("hand_on_heart", true), p.known("kneel", true), p.known("pose", true)), (None, None, None, None));
         assert_eq!(names.as_array().unwrap().iter().filter(|n| *n == "hand_on_hip").count(), 1);
         // Either side of one that has a side, the right mirrored from the left.
         let (room, _) = p.apply(&json!({"pose": "look_over_right_shoulder"})).unwrap();

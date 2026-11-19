@@ -1451,7 +1451,13 @@ impl ModelGpu {
             part.shown = part.option.as_ref().is_none_or(|(group, option)| chosen.get(group) == Some(option));
         }
         let colours = said.get("colors").and_then(|c| c.as_object());
-        self.tints = self.materials.iter().map(|m| colours.and_then(|c| c.iter().find(|(name, _)| !m.name.is_empty() && name.trim().eq_ignore_ascii_case(&m.name))).and_then(|(_, c)| colour_of(c))).collect();
+        // By the name its maker gave it: "hair.001", Blender's name for a second "hair", is hair.
+        self.tints = self
+            .materials
+            .iter()
+            .map(|m| spatiand_voice::figure::material_name(&m.name))
+            .map(|m| colours.and_then(|c| c.iter().find(|(name, _)| !m.is_empty() && name.trim().eq_ignore_ascii_case(m))).and_then(|(_, c)| colour_of(c)))
+            .collect();
 
         // The body: every part an animation moves, posed, with its face's targets moved first.
         if let Some(world) = self.body(live.mood, said) {

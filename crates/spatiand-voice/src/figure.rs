@@ -138,9 +138,25 @@ pub fn offers_of(root: &Value) -> Offers {
             add(name);
         }
     }
-    let materials = names("materials").into_iter().map(|m| m.trim().to_lowercase()).filter(|m| !m.is_empty()).collect();
+    let mut materials: Vec<String> = Vec::new();
+    for m in names("materials").into_iter().map(|m| material_name(&m).to_lowercase()).filter(|m| !m.is_empty()) {
+        if !materials.contains(&m) {
+            materials.push(m);
+        }
+    }
     let body = bodies(root).first().map(|b| b.parts().into_iter().map(str::to_string).collect()).unwrap_or_default();
     Offers { groups: groups(root), animations, expressions, materials, body }
+}
+
+/// A material's name as its maker gave it: Blender names the second of a name "hair.001", the
+/// third "hair.002" -- a doll's three hairstyles, each its own picture, are all its hair, given
+/// one colour by that name.
+pub fn material_name(name: &str) -> &str {
+    let name = name.trim();
+    match name.rsplit_once('.') {
+        Some((base, n)) if !base.is_empty() && n.len() == 3 && n.bytes().all(|b| b.is_ascii_digit()) => base,
+        _ => name,
+    }
 }
 
 /// The parts of a body a pose names, as a figure's model names them: its left its own.
@@ -624,13 +640,15 @@ mod tests {
             "nodes": [{"name": "look=jeans"}, {"name": "look=dress"}],
             "animations": [{"name": "idle"}, {"name": "wave"}, {}],
             "meshes": [{"extras": {"targetNames": ["aa", "smirk"]}}, {"extras": {"targetNames": ["aa"]}}],
-            "materials": [{"name": "Hair"}, {"name": "skin"}, {}]
+            "materials": [{"name": "Hair"}, {"name": "skin"}, {}, {"name": "hair.001"}, {"name": "Dress.002"}]
         });
         let offers = offers_of(&root);
         assert_eq!(offers.groups, vec![("look".to_string(), vec!["jeans".to_string(), "dress".to_string()])]);
         assert_eq!(offers.animations, vec!["idle", "wave", "animation 2"]);
         assert_eq!(offers.expressions, vec!["aa", "smirk"]);
-        assert_eq!(offers.materials, vec!["hair", "skin"]);
+        // Blender's ".001" of a second material of a name is the same name.
+        assert_eq!(offers.materials, vec!["hair", "skin", "dress"]);
+        assert_eq!((material_name("hair.001"), material_name("Material.Skin"), material_name("v.1"), material_name(".001")), ("hair", "Material.Skin", "v.1", ".001"));
     }
 
     #[test]

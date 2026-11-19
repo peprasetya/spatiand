@@ -93,7 +93,8 @@ struct Pal {
     /// When the pal's files were last looked at for a change.
     pack_looked: Instant,
     /// A move being made from words (`crate::moves`).
-    making: Option<moves::Making>,
+    /// Moves being made, each on a thread of its own, in the order asked.
+    making: Vec<moves::Making>,
     /// The room's AI settings, which more than one app uses: hemera, the models, dictation's
     /// languages and words. Read again whenever the SDK says they changed.
     ai: AiSettings,
@@ -761,21 +762,35 @@ impl Pal {
                     }),
                 }
             }
-            Ok(moves::Asked::Make { .. }) if self.making.is_some() => {
-                let m = self.making.as_ref().map(|m| format!("the {} {}", m.kind.word(), m.name)).unwrap_or_default();
-                json!({"error": format!("still making {m} -- one at a time: ask again once it is done")})
-            }
+            // Several at once, each done as it comes: one at a time, "Forget that, do a cartwheel
+            // instead" was answered "still making the pose -- ask again once it is done", and
+            // the wearer was told to wait for what they had let go of (2026-11-20).
+            Ok(moves::Asked::Make { ref name, .. }) if self.making.iter().any(|m| &m.name == name) => json!({"error": format!("{name} is being made already: a moment")}),
             Ok(moves::Asked::Make { ask, name, kind }) => {
                 log::info!("making the {} {name}: {}", kind.word(), store::quoted(&ask.prompt));
                 let shelf = if kind == moves::Kind::Pose { p.pose_shelf() } else { p.shelf() };
                 let mut making = moves::start(&self.ai.hemera, ask, name.clone(), kind, shelf.dir);
                 making.held_then = p.look.holding();
-                self.making = Some(making);
-                json!({"did": moves::begun(&name, kind)})
+                // A pose or move asked for after a pose still being made is what is wanted now: that
+                // pose is kept, not taken (2026-11-20: "Forget that, I don't want it. Do a little
+                // cartwheel instead." -- the small model made the cartwheel and let nothing go,
+                // and the pose came after it).
+                if kind != moves::Kind::Idle {
+                    for m in self.making.iter_mut().filter(|m| m.kind == moves::Kind::Pose) {
+                        m.take = false;
+                    }
+                }
+                let others: Vec<String> = self.making.iter().filter(|m| !m.forget && m.take).map(|m| format!("the {} {}", m.kind.word(), m.name)).collect();
+                self.making.push(making);
+                let mut did = moves::begun(&name, kind);
+                if !others.is_empty() {
+                    did.push_str(&format!(" ({} still being made too, and done when made: if the wearer no longer wants it, make_move with kind forget and its name.)", others.join(", ")));
+                }
+                json!({"did": did})
             }
-            // The one being made: let go of once it is made, never done.
-            Ok(moves::Asked::Forget(name)) if self.making.as_ref().is_some_and(|m| m.name == name) => {
-                let Some(m) = self.making.as_mut() else { return json!({"error": "nothing is being made"}) };
+            // One being made: let go of once it is made, never done.
+            Ok(moves::Asked::Forget(name)) if self.making.iter().any(|m| m.name == name) => {
+                let Some(m) = self.making.iter_mut().find(|m| m.name == name) else { return json!({"error": "nothing is being made"}) };
                 m.forget = true;
                 log::info!("the {} {name} is let go of while it is made", m.kind.word());
                 json!({"did": format!("{name} will not be kept: it is let go of as soon as it is made, and not done.")})
@@ -797,10 +812,22 @@ impl Pal {
         }
     }
 
-    /// A move made: done at once -- an idle is simply the figure's idle from now on -- or why not.
+    /// Moves made, each as it comes: done at once -- an idle is simply the figure's idle from
+    /// now on -- or why not.
     fn look_at_moves(&mut self) {
-        let Some(done) = self.making.as_ref().and_then(moves::Making::done) else { return };
-        let Some(making) = self.making.take() else { return };
+        let mut i = 0;
+        while i < self.making.len() {
+            match self.making[i].done() {
+                None => i += 1,
+                Some(done) => {
+                    let making = self.making.remove(i);
+                    self.made(making, done);
+                }
+            }
+        }
+    }
+
+    fn made(&mut self, making: moves::Making, done: Result<std::path::PathBuf, String>) {
         let (word, name) = (making.kind.word(), &making.name);
         match done {
             Ok(file) => {
@@ -822,9 +849,10 @@ impl Pal {
                         Ok(r)
                     }
                     moves::Kind::Move => p.apply(&json!({"move": name})).map(|(r, _)| r),
-                    // Another pose taken while it was made stays: this one is kept, to take later.
-                    moves::Kind::Pose if p.look.holding() != making.held_then => {
-                        log::info!("the pose {name} kept, not taken: another was taken meanwhile");
+                    // Another pose taken or asked for while it was made stays: this one is kept,
+                    // to take later.
+                    moves::Kind::Pose if p.look.holding() != making.held_then || !making.take => {
+                        log::info!("the pose {name} kept, not taken: another pose or move came after it");
                         return;
                     }
                     // Held, as a pose by name is, and kept as how it looks.
@@ -874,7 +902,7 @@ impl Pal {
             (Some(a), _) if a.handed_over => "pondering",
             (Some(_), _) => "thinking",
             // A move being made from words (`crate::moves`): thinking it up.
-            (None, _) if self.making.is_some() => "thinking",
+            (None, _) if !self.making.is_empty() => "thinking",
             (None, Ear::Writing) => "checking",
             (None, _) if heard_out.is_some_and(|at| at.elapsed() < Duration::from_millis(1200)) => "happy",
             (None, _) if engaged => "attentive",
@@ -1210,7 +1238,7 @@ fn main() {
             pack: None,
             pals: pack::folders(),
             pack_looked: Instant::now(),
-            making: None,
+            making: Vec::new(),
             ai,
             chats: Vec::new(),
             current: None,

@@ -117,6 +117,8 @@ pub struct Making {
     pub held_then: String,
     /// Let go of while it was being made: not kept once made.
     pub forget: bool,
+    /// Taken when made (a pose): not when another pose or move was asked for after it.
+    pub take: bool,
     rx: Receiver<Result<PathBuf, String>>,
 }
 
@@ -144,7 +146,7 @@ pub fn start(hemera: &str, ask: Ask, name: String, kind: Kind, shelf: PathBuf) -
             let _ = tx.send(made);
         })
         .expect("a thread for a move");
-    Making { name, kind, since: Instant::now(), pal, held_then: String::new(), forget: false, rx }
+    Making { name, kind, since: Instant::now(), pal, held_then: String::new(), forget: false, take: true, rx }
 }
 
 /// What the tool answers at once, while it is made: that it is not done yet, and that it will
@@ -220,7 +222,7 @@ mod tests {
         // Nothing listens there.
         let making = start("http://127.0.0.1:9", ask, name, kind, dir.clone());
         // Kept for the pal whose folder holds the shelf, and taken over nothing yet.
-        assert_eq!((making.pal.as_path(), making.held_then.as_str(), making.forget), (std::env::temp_dir().as_path(), "", false));
+        assert_eq!((making.pal.as_path(), making.held_then.as_str(), making.forget, making.take), (std::env::temp_dir().as_path(), "", false, true));
         let since = Instant::now();
         let done = loop {
             if let Some(d) = making.done() {
