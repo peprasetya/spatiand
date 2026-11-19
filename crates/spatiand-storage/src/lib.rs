@@ -277,6 +277,43 @@ impl Storage {
         Ok((bytes, total))
     }
 
+    /// Write `bytes` as the remote file `path`, made or written over: through the service's
+    /// WebDAV, which hands it to rclone as it comes (nothing is kept on disk on the way).
+    pub fn write(&self, remote: &str, path: &str, bytes: &[u8]) -> Result<(), String> {
+        let url = format!("{}/dav/{}/{}", self.base(), percent(remote), percent(path.trim_start_matches('/')));
+        let request = agent().put(&url).header("Authorization", &self.auth());
+        let response = within(request, Duration::from_secs(600)).config().http_status_as_error(false).build().send(bytes).map_err(|e| words(&e))?;
+        match response.status().as_u16() {
+            200..=299 => Ok(()),
+            status => Err(format!("the storage service answered {status}")),
+        }
+    }
+
+    /// Whether there is a file or a folder at `path` in the remote.
+    pub fn exists(&self, remote: &str, path: &str) -> Result<bool, String> {
+        let answer = self.rc("operations/stat", json!({"fs": format!("{remote}:"), "remote": path.trim_start_matches('/')}))?;
+        Ok(answer.get("item").is_some_and(|item| !item.is_null()))
+    }
+
+    /// The remote file `from` given the name `to` in the same remote, over whatever had it:
+    /// the last step of writing a file in full before it takes the place of the one there. The
+    /// move is rclone's own (on the remote itself where it can be), which the service's WebDAV
+    /// does not see: its view of both names is let go of, or a file read through it straight
+    /// after would be read at its old length for half a minute.
+    pub fn rename(&self, remote: &str, from: &str, to: &str) -> Result<(), String> {
+        let fs = format!("{remote}:");
+        let (from, to) = (from.trim_start_matches('/'), to.trim_start_matches('/'));
+        self.rc("operations/movefile", json!({"srcFs": fs, "srcRemote": from, "dstFs": fs, "dstRemote": to}))?;
+        // No WebDAV view of the remote yet is nothing to forget.
+        let _ = self.rc("vfs/forget", json!({"fs": fs, "file": from, "file2": to}));
+        Ok(())
+    }
+
+    /// The remote file at `path` deleted.
+    pub fn delete(&self, remote: &str, path: &str) -> Result<(), String> {
+        self.rc("operations/deletefile", json!({"fs": format!("{remote}:"), "remote": path.trim_start_matches('/')})).map(|_| ())
+    }
+
     /// Copy the user's own rclone remotes in. Returns their names.
     pub fn import(&self) -> Result<Vec<String>, String> {
         let response = agent().get(&format!("{}/import", self.base())).header("Authorization", &self.auth()).call().map_err(|e| words(&e))?;
@@ -483,6 +520,40 @@ mod tests {
         let nobody = Storage { port: std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port(), token: "t".into() };
         assert!(!nobody.ping());
         assert!(nobody.import().unwrap_err().contains("Connection refused"));
+    }
+
+    /// A file written to a remote is put there whole, under its own name; whether a name is
+    /// taken is asked of rclone; and a file is given another's name by rclone's move.
+    #[test]
+    fn a_file_is_written_asked_after_and_renamed() {
+        let (storage, seen) = serve(move |request| {
+            let path = request.split_whitespace().nth(1).unwrap_or("");
+            match (request.split_whitespace().next().unwrap_or(""), path) {
+                ("PUT", "/dav/My%20Drive/Photos/a%20%28edited%29.jpg") => reply("201 Created", b""),
+                ("PUT", _) => reply("403 Forbidden", b""),
+                (_, "/rc/operations/stat") if request.contains("there.jpg") => reply("200 OK", br#"{"item":{"Name":"there.jpg"}}"#),
+                (_, "/rc/operations/stat") => reply("200 OK", br#"{"item":null}"#),
+                (_, "/rc/operations/movefile") => reply("200 OK", b"{}"),
+                _ => reply("404 Not Found", b""),
+            }
+        });
+        let bytes: Vec<u8> = (0..100_000u32).map(|i| (i % 253) as u8).collect();
+        storage.write("My Drive", "Photos/a (edited).jpg", &bytes).unwrap();
+        assert_eq!(storage.write("My Drive", "elsewhere.jpg", b"x").unwrap_err(), "the storage service answered 403");
+        assert!(storage.exists("My Drive", "Photos/there.jpg").unwrap());
+        assert!(!storage.exists("My Drive", "Photos/not.jpg").unwrap());
+        storage.rename("My Drive", "Photos/.a.tmp", "Photos/a.jpg").unwrap();
+        let seen = seen.lock().unwrap();
+        // The body went whole, as it was.
+        assert!(seen[0].starts_with("PUT /dav/My%20Drive/Photos/a%20%28edited%29.jpg"));
+        assert!(seen[0].contains("content-length: 100000") || seen[0].contains("Content-Length: 100000"), "{}", &seen[0][..300]);
+        let body = |path: &str| -> Value {
+            let asked = seen.iter().find(|r| r.contains(path)).unwrap_or_else(|| panic!("{path} asked"));
+            serde_json::from_str(&asked[asked.find("\r\n\r\n").unwrap() + 4..]).unwrap()
+        };
+        assert_eq!(body("/rc/operations/movefile"), json!({"srcFs": "My Drive:", "srcRemote": "Photos/.a.tmp", "dstFs": "My Drive:", "dstRemote": "Photos/a.jpg"}));
+        // And the service's WebDAV told to look again at both names.
+        assert_eq!(body("/rc/vfs/forget"), json!({"fs": "My Drive:", "file": "Photos/.a.tmp", "file2": "Photos/a.jpg"}));
     }
 
     /// A part of a file is asked for by a range and read no further, and a service that sends
