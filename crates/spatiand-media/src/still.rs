@@ -70,9 +70,23 @@ fn file_name(path: &std::path::Path) -> Option<CString> {
     CString::new(path.to_str()?).ok()
 }
 
+/// As [`grab`], with how many bits its samples had in the file: whether it is deeper than eight.
+pub fn grab_depth(path: &str, width: u32) -> Option<(Still, u8)> {
+    grab_named_depth(CString::new(path).ok()?, width)
+}
+
+/// As [`grab_file`], with how many bits its samples had in the file.
+pub fn grab_file_depth(path: &std::path::Path, width: u32) -> Option<(Still, u8)> {
+    grab_named_depth(file_name(path)?, width)
+}
+
 fn grab_named(name: CString, width: u32) -> Option<Still> {
-    let (w, h, rgba, _) = opened(name, |format| unsafe { from_open::<u8>(format, Some(width)) })?;
-    Some(Still { width: w as u32, height: h as u32, rgba })
+    grab_named_depth(name, width).map(|(still, _)| still)
+}
+
+fn grab_named_depth(name: CString, width: u32) -> Option<(Still, u8)> {
+    let (w, h, rgba, about) = opened(name, |format| unsafe { from_open::<u8>(format, Some(width)) })?;
+    Some((Still { width: w as u32, height: h as u32, rgba }, about.bits))
 }
 
 fn whole_named(name: CString) -> Option<Deep> {

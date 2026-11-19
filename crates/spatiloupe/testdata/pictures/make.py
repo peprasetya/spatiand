@@ -165,11 +165,16 @@ for src, out, fmt in ((p("pattern.png"), p("pattern.avif"), "yuv420p"), (ramp16,
     run("ffmpeg", "-y", "-loglevel", "error", "-i", src, "-vf", f"scale=out_color_matrix=bt709:out_range=pc,format={fmt}", "-color_range", "pc",
         "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-c:v", "libaom-av1", "-still-picture", "1", "-crf", "4", "-cpu-used", "8", out)
 
+# 4b. An HDR10 AVIF: ten bits, BT.2020, PQ (the frame's own parameters, which ffmpeg's encoder
+# takes over its options).
+run("ffmpeg", "-y", "-loglevel", "error", "-i", ramp16, "-vf", "scale=out_color_matrix=bt2020:out_range=pc,format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc:range=pc",
+    "-c:v", "libaom-av1", "-still-picture", "1", "-crf", "4", "-cpu-used", "8", p("hdr10.avif"))
+
 # 5. JPEG XL, eight and sixteen bits (libjxl); JPEG 2000, eight and sixteen (OpenJPEG).
 run("ffmpeg", "-y", "-loglevel", "error", "-i", p("pattern.png"), "-c:v", "libjxl", "-distance", "0.5", p("pattern.jxl"))
 run("ffmpeg", "-y", "-loglevel", "error", "-i", ramp16, "-pix_fmt", "rgb48le", "-c:v", "libjxl", "-distance", "0", p("ramp16.jxl"))
 run("ffmpeg", "-y", "-loglevel", "error", "-i", p("pattern.png"), "-c:v", "libopenjpeg", p("pattern.jp2"))
 run("ffmpeg", "-y", "-loglevel", "error", "-i", ramp16, "-pix_fmt", "rgb48le", "-c:v", "libopenjpeg", p("ramp16.jp2"))
-for f in ("iphone.heic", "plain.heic", "pattern.avif", "pattern.jxl", "pattern.jp2", "ramp10.heic", "ramp10.avif", "ramp16.jxl"):
+for f in ("iphone.heic", "plain.heic", "pattern.avif", "pattern.jxl", "pattern.jp2", "ramp10.heic", "ramp10.avif", "hdr10.avif", "ramp16.jxl"):
     shutil.copy(p(f), os.path.join(HERE, f))
     print(f, os.path.getsize(p(f)))

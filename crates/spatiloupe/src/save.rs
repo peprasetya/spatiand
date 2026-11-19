@@ -1,21 +1,24 @@
-//! A picture marked up, written: drawn on at its own size, cropped, and written in its own
-//! format where SpatiLoupe writes that format -- over the file, whole or not at all -- or as a
-//! copy beside it. A PDF is written by `annotate`, on the PDF's own thread.
+//! A picture marked up, written: drawn on at its own size and its own depth (`depth`), cropped,
+//! and written in its own format where SpatiLoupe writes that format as it was read -- over the
+//! file, whole or not at all -- or as a copy beside it. A PDF is written by `annotate`, on the
+//! PDF's own thread.
 
 use std::path::PathBuf;
 
-use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, RgbaImage};
+use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat};
 
+use crate::depth::{self, Curve};
 use crate::ink::{self, Map};
 use crate::markup::Marks;
 
 /// How a JPEG is written: high, as a photograph written again should be.
 const JPEG_QUALITY: u8 = 92;
 
-/// The formats a picture is written back in as it is: what the image crate writes at eight bits
-/// a channel without losing what the file had. JPEG is written again at high quality, WebP
-/// without loss (the image crate's only WebP). Any other -- HEIC, AVIF, JPEG XL, JPEG 2000, TIFF,
-/// GIF, OpenEXR, a drawing -- is saved as a copy.
+/// The formats a picture is written back in as it is. JPEG is written again at high quality,
+/// PNG at its own depth (sixteen bits where it had them), WebP without loss (the image crate's
+/// only WebP); TIFF, OpenEXR and Radiance HDR as they were read, where SpatiLoupe can
+/// (`depth::tiff_as_read` and the rest say, of the file). Any other -- HEIC, AVIF, JPEG XL,
+/// JPEG 2000, GIF, a drawing -- is saved as a copy.
 pub fn in_place(name: &str) -> Option<ImageFormat> {
     let extension = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase())?;
     match extension.as_str() {
@@ -23,6 +26,41 @@ pub fn in_place(name: &str) -> Option<ImageFormat> {
         "png" => Some(ImageFormat::Png),
         "webp" => Some(ImageFormat::WebP),
         "bmp" => Some(ImageFormat::Bmp),
+        "tif" | "tiff" => Some(ImageFormat::Tiff),
+        "exr" => Some(ImageFormat::OpenExr),
+        "hdr" => Some(ImageFormat::Hdr),
+        _ => None,
+    }
+}
+
+/// How deep a picture's samples are, for what a copy of it is written as.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Depth {
+    Eight,
+    /// Ten, twelve or sixteen bits.
+    Sixteen,
+    /// Floats: light itself.
+    Float,
+}
+
+impl Depth {
+    pub fn of(image: &DynamicImage) -> Depth {
+        match image {
+            DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => Depth::Float,
+            DynamicImage::ImageLuma16(_) | DynamicImage::ImageLumaA16(_) | DynamicImage::ImageRgb16(_) | DynamicImage::ImageRgba16(_) => Depth::Sixteen,
+            _ => Depth::Eight,
+        }
+    }
+}
+
+/// Why a picture SpatiLoupe writes the format of is not written over as it is, said of its
+/// bytes: a TIFF, an OpenEXR or a Radiance HDR it would not write back as it was read. `None`
+/// for any other.
+pub fn not_over(name: &str, bytes: &[u8]) -> Option<String> {
+    match in_place(name)? {
+        ImageFormat::Tiff => depth::tiff_as_read(bytes).err(),
+        ImageFormat::OpenExr => depth::exr_as_read(bytes).err(),
+        ImageFormat::Hdr => depth::hdr_as_read(bytes).err(),
         _ => None,
     }
 }
@@ -49,13 +87,34 @@ pub fn copy_name(name: &str, extension: Option<&str>, taken: impl Fn(&str) -> bo
     }
 }
 
-/// What a copy of a picture is written as: its own format where it can be, else JPEG -- or PNG,
-/// for a picture with see-through parts, which JPEG has not.
-pub fn copy_format(name: &str, clear: bool) -> (ImageFormat, Option<&'static str>) {
-    match in_place(name) {
-        Some(format) => (format, None),
-        None if clear => (ImageFormat::Png, Some("png")),
-        None => (ImageFormat::Jpeg, Some("jpg")),
+/// What a copy of a picture is written as: its own format where it can be; else, deeper than
+/// eight bits, what keeps its depth without loss -- a sixteen-bit PNG, or for floats an OpenEXR
+/// -- and otherwise JPEG, or PNG for a picture with see-through parts, which JPEG has not.
+/// `own` is whether its own format is written as it was read (`not_over`).
+pub fn copy_format(name: &str, clear: bool, depth: Depth, own: bool) -> (ImageFormat, Option<&'static str>) {
+    match (in_place(name), depth) {
+        (Some(format), _) if own => (format, None),
+        // Floats in a TIFF it does not write as it was: still a TIFF, of floats.
+        (Some(ImageFormat::Tiff), Depth::Float) => (ImageFormat::Tiff, None),
+        (_, Depth::Float) => (ImageFormat::OpenExr, Some("exr")),
+        (_, Depth::Sixteen) => (ImageFormat::Png, Some("png")),
+        _ if clear => (ImageFormat::Png, Some("png")),
+        _ => (ImageFormat::Jpeg, Some("jpg")),
+    }
+}
+
+/// What the foot says of a picture SpatiLoupe only copies: why, and what the copy is.
+pub fn copy_only(name: &str, why: Option<&str>, depth: Depth) -> String {
+    let kind = name.rsplit_once('.').map_or(String::new(), |(_, e)| format!("{} ", e.to_uppercase()));
+    let copy = match (copy_format(name, false, depth, false).0, depth) {
+        (ImageFormat::Png, Depth::Sixteen) => "a 16-bit PNG beside it, which keeps its depth",
+        (ImageFormat::Tiff, _) => "a TIFF of its floats beside it",
+        (ImageFormat::OpenExr, _) => "an OpenEXR beside it, which keeps its light as it is",
+        _ => "a JPEG beside it, or a PNG if it has see-through parts",
+    };
+    match why {
+        Some(why) => format!("SpatiLoupe does not write this {kind}picture over itself: {why}. Save a copy writes {copy}."),
+        None => format!("SpatiLoupe does not write {kind}pictures: Save a copy writes {copy}."),
     }
 }
 
@@ -121,16 +180,15 @@ pub fn exif_upright(mut exif: Vec<u8>, size: (u32, u32)) -> Vec<u8> {
     exif
 }
 
-/// `image` in `format`, with the file's colour profile and camera's account where the format
-/// carries them.
-fn encode(image: &RgbaImage, format: ImageFormat, exif: Option<Vec<u8>>, icc: Option<Vec<u8>>) -> Result<Vec<u8>, String> {
+/// `image` in `format` at its own depth where the format keeps it, with the file's colour profile
+/// and camera's account where the format carries them -- or, for a PNG of a picture that named
+/// its colours rather than profiled them (a HEIF's or AVIF's nclx), their code points (cICP).
+fn encode(image: &DynamicImage, format: ImageFormat, whole: &crate::picture::Whole) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
-    let (w, h) = image.dimensions();
-    let opaque = image.pixels().all(|p| p.0[3] == 255);
-    let rgb = || DynamicImage::ImageRgba8(image.clone()).to_rgb8().into_raw();
-    // Without see-through parts, three channels: a third smaller, and what a photograph is.
-    let (data, kind) = if opaque || format == ImageFormat::Jpeg { (rgb(), ExtendedColorType::Rgb8) } else { (image.as_raw().clone(), ExtendedColorType::Rgba8) };
-    let exif = exif.map(|exif| exif_upright(exif, (w, h)));
+    let (w, h) = (image.width(), image.height());
+    let opaque = opaque(image);
+    let exif = whole.exif.clone().map(|exif| exif_upright(exif, (w, h)));
+    let icc = whole.icc.clone();
     fn finish(mut encoder: impl ImageEncoder, data: &[u8], (w, h): (u32, u32), kind: ExtendedColorType, exif: Option<Vec<u8>>, icc: Option<Vec<u8>>) -> Result<(), String> {
         // Formats that do not carry them say so; the picture is written all the same.
         if let Some(icc) = icc {
@@ -141,11 +199,57 @@ fn encode(image: &RgbaImage, format: ImageFormat, exif: Option<Vec<u8>>, icc: Op
         }
         encoder.write_image(data, w, h, kind).map_err(|e| e.to_string())
     }
+    // Eight bits a sample, as JPEG, WebP and BMP have them; three channels without see-through
+    // parts: a third smaller, and what a photograph is.
+    let eight = |alpha: bool| if alpha && !opaque { (image.to_rgba8().into_raw(), ExtendedColorType::Rgba8) } else { (image.to_rgb8().into_raw(), ExtendedColorType::Rgb8) };
     match format {
-        ImageFormat::Jpeg => finish(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY), &data, (w, h), kind, exif, icc)?,
-        ImageFormat::Png => finish(image::codecs::png::PngEncoder::new(&mut out), &data, (w, h), kind, exif, icc)?,
-        ImageFormat::WebP => finish(image::codecs::webp::WebPEncoder::new_lossless(&mut out), &data, (w, h), kind, exif, icc)?,
-        ImageFormat::Bmp => finish(image::codecs::bmp::BmpEncoder::new(&mut out), &data, (w, h), kind, exif, icc)?,
+        ImageFormat::Jpeg => {
+            let (data, kind) = eight(false);
+            finish(image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY), &data, (w, h), kind, exif, icc)?;
+        }
+        ImageFormat::WebP => {
+            let (data, kind) = eight(true);
+            finish(image::codecs::webp::WebPEncoder::new_lossless(&mut out), &data, (w, h), kind, exif, icc)?;
+        }
+        ImageFormat::Bmp => {
+            let (data, kind) = eight(true);
+            finish(image::codecs::bmp::BmpEncoder::new(&mut out), &data, (w, h), kind, exif, icc)?;
+        }
+        ImageFormat::Png => {
+            // At its own depth: eight or sixteen bits, grey or coloured, see-through only if it is.
+            let image = match image {
+                DynamicImage::ImageRgba8(_) | DynamicImage::ImageLumaA8(_) if opaque => DynamicImage::ImageRgb8(image.to_rgb8()),
+                DynamicImage::ImageRgba16(_) | DynamicImage::ImageLumaA16(_) if opaque => DynamicImage::ImageRgb16(image.to_rgb16()),
+                DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_) => DynamicImage::ImageRgba16(image.to_rgba16()),
+                other => other.clone(),
+            };
+            let kind = image.color().into();
+            finish(image::codecs::png::PngEncoder::new(&mut out), image.as_bytes(), (w, h), kind, exif, icc.clone())?;
+            if let (None, Some(cicp)) = (&icc, whole.cicp) {
+                out = depth::with_cicp(out, cicp);
+            }
+        }
+        ImageFormat::Tiff => match depth::tiff_as_read(&whole.bytes) {
+            // As it was read: its compression, resolution, profile and words.
+            Ok(asread) => out = depth::tiff_bytes(image, &asread)?,
+            // A copy of a TIFF it does not write back as it was: the image crate's own, at its
+            // depth, uncompressed, with its profile.
+            Err(_) => {
+                let mut cursor = std::io::Cursor::new(Vec::new());
+                let kind = image.color().into();
+                finish(image::codecs::tiff::TiffEncoder::new(&mut cursor), image.as_bytes(), (w, h), kind, None, icc)?;
+                out = cursor.into_inner();
+            }
+        },
+        ImageFormat::OpenExr => {
+            // Light, red, green, blue (and alpha), as floats: the image crate's own.
+            let mut cursor = std::io::Cursor::new(Vec::new());
+            let (data, kind) = if opaque { (image.to_rgb32f().into_raw(), ExtendedColorType::Rgb32F) } else { (image.to_rgba32f().into_raw(), ExtendedColorType::Rgba32F) };
+            let bytes: Vec<u8> = data.iter().flat_map(|v| v.to_ne_bytes()).collect();
+            finish(image::codecs::openexr::OpenExrEncoder::new(&mut cursor), &bytes, (w, h), kind, None, None)?;
+            out = cursor.into_inner();
+        }
+        ImageFormat::Hdr => out = depth::hdr_bytes(image, &whole.bytes)?,
         other => return Err(format!("SpatiLoupe does not write {other:?}")),
     }
     Ok(out)
@@ -162,32 +266,56 @@ pub struct Saving {
     pub copy: bool,
 }
 
-/// The picture of `saving.source` at its own size, turned, drawn on and cropped as its marks
-/// say -- what is written -- and, from the file, its camera's account and colour profile and the
+/// A picture as its marks make it: turned, the marks' layer at its turned size, and what is kept
+/// of it (x, y, width, height in the turned picture's pixels).
+pub struct Rendered {
+    pub image: DynamicImage,
+    pub whole: crate::picture::Whole,
+    pub turns: u8,
+    pub layer: Vec<u8>,
+    pub crop: Option<(u32, u32, u32, u32)>,
+}
+
+/// The picture of `saving.source` at its own size and depth, turned, drawn on and cropped as its
+/// marks say -- what is written -- and, from the file, its camera's account, its colours and the
 /// format it is in.
-pub fn render(saving: &Saving) -> Result<(RgbaImage, crate::picture::Whole), String> {
+pub fn render(saving: &Saving) -> Result<Rendered, String> {
     let mut whole = crate::picture::read_whole(&saving.source)?;
-    let image = std::mem::replace(&mut whole.image, RgbaImage::new(0, 0));
-    let mut image = match saving.marks.turns % 4 {
-        1 => image::imageops::rotate90(&image),
-        2 => image::imageops::rotate180(&image),
-        3 => image::imageops::rotate270(&image),
-        _ => image,
-    };
-    let (w, h) = image.dimensions();
+    // The curve its samples are on, which the marks' colours are put on.
+    let curve = Curve::of(&whole);
+    let image = std::mem::replace(&mut whole.image, DynamicImage::new_rgba8(0, 0));
+    let turns = saving.marks.turns % 4;
+    let image = depth::turned(image, turns);
+    let (w, h) = (image.width(), image.height());
     // The marks' units to this picture's pixels: one to one but for a drawing, drawn at its
     // shown size rather than its own.
     let scale = w as f32 / saving.frame.0.max(1e-3);
     let notes: Vec<_> = saving.marks.notes.iter().filter(|n| n.page == 0).collect();
-    ink::paint_over(&mut image, w, h, &notes, Map { scale, dx: 0.0, dy: 0.0 })?;
-    if let Some(crop) = saving.marks.crop(0) {
+    let layer = ink::layer(w, h, &notes, Map { scale, dx: 0.0, dy: 0.0 })?;
+    let mut image = depth::lay(image, &layer, curve);
+    let crop = saving.marks.crop(0).map(|crop| {
         let x0 = (crop.x0 * scale).round().clamp(0.0, w as f32 - 1.0) as u32;
         let y0 = (crop.y0 * scale).round().clamp(0.0, h as f32 - 1.0) as u32;
         let x1 = ((crop.x1 * scale).round() as u32).clamp(x0 + 1, w);
         let y1 = ((crop.y1 * scale).round() as u32).clamp(y0 + 1, h);
-        image = image::imageops::crop_imm(&image, x0, y0, x1 - x0, y1 - y0).to_image();
+        (x0, y0, x1 - x0, y1 - y0)
+    });
+    if let Some((x, y, cw, ch)) = crop {
+        image = image.crop_imm(x, y, cw, ch);
     }
-    Ok((image, whole))
+    Ok(Rendered { image, whole, turns, layer, crop })
+}
+
+/// Whether a picture has no see-through parts at all.
+fn opaque(image: &DynamicImage) -> bool {
+    match image {
+        DynamicImage::ImageRgba8(b) => b.pixels().all(|p| p.0[3] == 255),
+        DynamicImage::ImageLumaA8(b) => b.pixels().all(|p| p.0[1] == 255),
+        DynamicImage::ImageRgba16(b) => b.pixels().all(|p| p.0[3] == u16::MAX),
+        DynamicImage::ImageLumaA16(b) => b.pixels().all(|p| p.0[1] == u16::MAX),
+        DynamicImage::ImageRgba32F(b) => b.pixels().all(|p| p.0[3] >= 1.0),
+        _ => true,
+    }
 }
 
 /// Write the picture marked up: over itself in its own format, or as a copy beside it. Where it
@@ -195,26 +323,37 @@ pub fn render(saving: &Saving) -> Result<(RgbaImage, crate::picture::Whole), Str
 pub fn save(saving: &Saving) -> Result<PathBuf, String> {
     let name = crate::place::name(&saving.source);
     if !saving.copy && in_place(&name).is_none() {
-        return Err(format!("SpatiLoupe does not write pictures like {name}: Save a copy writes a JPEG or PNG beside it"));
+        return Err(format!("SpatiLoupe does not write pictures like {name}: Save a copy writes one beside it"));
     }
-    let (image, whole) = render(saving)?;
-    let clear = image.pixels().any(|p| p.0[3] < 255);
+    let rendered = render(saving)?;
+    let (image, whole) = (&rendered.image, &rendered.whole);
+    // Its own format, written as it was read: what is written over it, and its copy's format.
+    let own = in_place(&name).is_some_and(|format| whole.format == Some(format)) && not_over(&name, &whole.bytes).is_none();
+    let (format, extension) = if saving.copy {
+        copy_format(&name, !opaque(image), Depth::of(image), own)
+    } else {
+        let format = in_place(&name).ok_or("no format")?;
+        if whole.format != Some(format) {
+            return Err(format!("{name} is not the kind of picture its name says: Save a copy writes it as one"));
+        }
+        if let Some(why) = not_over(&name, &whole.bytes) {
+            return Err(format!("SpatiLoupe does not write {name} over itself, as {why}: Save a copy writes it beside it"));
+        }
+        (format, None)
+    };
+    // An OpenEXR written as it was: every channel of its layer, not only the picture of it.
+    let bytes = if format == ImageFormat::OpenExr && own {
+        depth::exr_bytes(&whole.bytes, rendered.turns, &rendered.layer, rendered.crop)?
+    } else {
+        encode(image, format, whole)?
+    };
     if saving.copy {
-        let (format, extension) = copy_format(&name, clear);
-        // Its camera's account and its colours' profile go with it, whatever it is written as:
-        // a HEIC's to its JPEG, its orientation made upright.
-        let bytes = encode(&image, format, whole.exif, whole.icc)?;
         let folder = crate::place::parent(&saving.source).ok_or("it is in no folder")?;
         let copy = copy_name(&name, extension, |candidate| crate::place::exists(&crate::place::join(&folder, candidate)));
         let path = crate::place::join(&folder, &copy);
         crate::place::write_new(&path, &bytes)?;
         return Ok(path);
     }
-    let format = in_place(&name).ok_or_else(|| format!("SpatiLoupe does not write pictures like {name}: Save a copy writes a JPEG or PNG beside it"))?;
-    if whole.format != Some(format) {
-        return Err(format!("{name} is not the kind of picture its name says: Save a copy writes it as one"));
-    }
-    let bytes = encode(&image, format, whole.exif, whole.icc)?;
     crate::place::replace(&saving.source, &bytes)?;
     Ok(saving.source.clone())
 }
@@ -223,6 +362,7 @@ pub fn save(saving: &Saving) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use crate::markup::{Area, Ink, Note, Shape, Weight};
+    use image::RgbaImage;
 
     /// A little-endian or big-endian TIFF: IFD0 with the orientation (6, a quarter turn) and the
     /// Exif IFD's pointer, a next IFD (a thumbnail's); the Exif IFD with the pixel size, as a
@@ -300,12 +440,28 @@ mod tests {
         assert_eq!(in_place("a.png"), Some(ImageFormat::Png));
         assert_eq!(in_place("a.webp"), Some(ImageFormat::WebP));
         assert_eq!(in_place("a.bmp"), Some(ImageFormat::Bmp));
-        for other in ["a.heic", "a.avif", "a.jxl", "a.jp2", "a.exr", "a.hdr", "a.tif", "a.gif", "a.svg", "a"] {
+        // As they were read, where they can be (`not_over` says, of the file).
+        assert_eq!(in_place("a.tif"), Some(ImageFormat::Tiff));
+        assert_eq!(in_place("a.exr"), Some(ImageFormat::OpenExr));
+        assert_eq!(in_place("a.hdr"), Some(ImageFormat::Hdr));
+        for other in ["a.heic", "a.avif", "a.jxl", "a.jp2", "a.gif", "a.svg", "a"] {
             assert_eq!(in_place(other), None, "{other}");
         }
-        assert_eq!(copy_format("a.heic", false), (ImageFormat::Jpeg, Some("jpg")));
-        assert_eq!(copy_format("a.heic", true), (ImageFormat::Png, Some("png")));
-        assert_eq!(copy_format("a.webp", true), (ImageFormat::WebP, None));
+        let eight = Depth::Eight;
+        assert_eq!(copy_format("a.heic", false, eight, false), (ImageFormat::Jpeg, Some("jpg")));
+        assert_eq!(copy_format("a.heic", true, eight, false), (ImageFormat::Png, Some("png")));
+        assert_eq!(copy_format("a.webp", true, eight, true), (ImageFormat::WebP, None));
+        // Deeper: what keeps the depth, without loss.
+        assert_eq!(copy_format("a.heic", false, Depth::Sixteen, false), (ImageFormat::Png, Some("png")));
+        assert_eq!(copy_format("a.png", false, Depth::Sixteen, true), (ImageFormat::Png, None));
+        assert_eq!(copy_format("a.tif", false, Depth::Sixteen, false), (ImageFormat::Png, Some("png")));
+        assert_eq!(copy_format("a.tif", false, Depth::Sixteen, true), (ImageFormat::Tiff, None));
+        assert_eq!(copy_format("a.exr", false, Depth::Float, false), (ImageFormat::OpenExr, Some("exr")));
+        assert_eq!(copy_format("a.tif", false, Depth::Float, false), (ImageFormat::Tiff, None));
+        // And what the foot says of one only copied.
+        assert_eq!(copy_only("IMG_1.HEIC", None, Depth::Sixteen), "SpatiLoupe does not write HEIC pictures: Save a copy writes a 16-bit PNG beside it, which keeps its depth.");
+        assert_eq!(copy_only("a.heic", None, eight), "SpatiLoupe does not write HEIC pictures: Save a copy writes a JPEG beside it, or a PNG if it has see-through parts.");
+        assert_eq!(copy_only("scan.tif", Some("it holds more than one picture"), Depth::Sixteen), "SpatiLoupe does not write this TIF picture over itself: it holds more than one picture. Save a copy writes a 16-bit PNG beside it, which keeps its depth.");
     }
 
     fn folder(name: &str) -> PathBuf {
@@ -474,6 +630,7 @@ pub(crate) mod pictures {
             "pattern.jp2" => include_bytes!("../testdata/pictures/pattern.jp2"),
             "ramp10.heic" => include_bytes!("../testdata/pictures/ramp10.heic"),
             "ramp10.avif" => include_bytes!("../testdata/pictures/ramp10.avif"),
+            "hdr10.avif" => include_bytes!("../testdata/pictures/hdr10.avif"),
             "ramp16.jxl" => include_bytes!("../testdata/pictures/ramp16.jxl"),
             _ => panic!("no fixture {name}"),
         };

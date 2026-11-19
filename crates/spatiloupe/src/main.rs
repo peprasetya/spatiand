@@ -12,6 +12,7 @@
 //! ```
 
 mod annotate;
+mod depth;
 mod folder;
 mod ink;
 mod markup;

@@ -784,12 +784,22 @@ impl View {
     }
 
     /// Whether this file can be written over in its own format (a PDF always; a picture in what
-    /// SpatiLoupe writes), or only copied.
+    /// SpatiLoupe writes, as it was read), or only copied.
     fn can_save_in_place(&self) -> bool {
         match &self.doc {
             Doc::Pdf(_) => true,
+            Doc::Picture(shown) => crate::save::in_place(&self.entry.name).is_some() && shown.picture.saves.not_over.is_none(),
             _ => crate::save::in_place(&self.entry.name).is_some(),
         }
+    }
+
+    /// What the foot says of a picture that is only copied: why, and what its copy is.
+    fn copy_only_words(&self) -> String {
+        let (why, depth) = match &self.doc {
+            Doc::Picture(shown) => (shown.picture.saves.not_over.as_deref(), shown.picture.saves.depth),
+            _ => (None, crate::save::Depth::Eight),
+        };
+        crate::save::copy_only(&self.entry.name, why.filter(|_| crate::save::in_place(&self.entry.name).is_some()), depth)
     }
 
     /// Why markup does not draw on this file, though there is something to draw on: a PDF whose
@@ -1599,8 +1609,7 @@ impl View {
             hint_pane(p, gl, all, &hint);
             // A picture SpatiLoupe does not write in its own format: said, over the keys.
             if self.unsaved() && !self.can_save_in_place() && self.saving.is_none() {
-                let kind = self.entry.name.rsplit_once('.').map_or(String::new(), |(_, e)| format!("{} ", e.to_uppercase()));
-                let words = format!("SpatiLoupe does not write {kind}pictures: Save a copy writes a JPEG beside it, or a PNG if it has see-through parts.");
+                let words = self.copy_only_words();
                 hint_pane_over(p, gl, all, all.bottom() - 74.0, &words);
             }
         } else if self.files.len() > 1 && !matches!(self.doc, Doc::Pdf(_)) {
@@ -2685,7 +2694,7 @@ pub fn quarter_turn_pair(picture: &mut Picture, eyes: Eyes, clockwise: bool) -> 
             for y in y0..y0 + eh {
                 eye.extend_from_slice(&rgba[(y * w + x0) * 4..(y * w + x0 + ew) * 4]);
             }
-            let mut picture = Picture { width: ew as u32, height: eh as u32, rgba: eye, eyes: Eyes::Mono, right: None, frames: Vec::new(), first: Duration::ZERO, original: (0, 0), about: Vec::new() };
+            let mut picture = Picture { width: ew as u32, height: eh as u32, rgba: eye, eyes: Eyes::Mono, right: None, frames: Vec::new(), first: Duration::ZERO, original: (0, 0), about: Vec::new(), saves: Default::default() };
             quarter_turn(&mut picture, clockwise);
             picture
         };
@@ -2795,6 +2804,7 @@ mod tests {
             first: Duration::ZERO,
             original: (width, height),
             about: Vec::new(),
+            saves: Default::default(),
         }
     }
 
@@ -3487,6 +3497,20 @@ mod tests {
         drag(&mut view, (400.0, 400.0), (800.0, 600.0));
         assert!(!view.can_save_in_place());
         assert!(matches!(view.input(&chord('s', false)), Want::Save(saving) if saving.copy), "Save is a copy, without a question");
+        assert_eq!(view.copy_only_words(), "SpatiLoupe does not write HEIC pictures: Save a copy writes a JPEG beside it, or a PNG if it has see-through parts.");
+        // Ten bits: its copy keeps them, and the foot says so.
+        if let Doc::Picture(shown) = &mut view.doc {
+            shown.picture.saves.depth = crate::save::Depth::Sixteen;
+        }
+        assert_eq!(view.copy_only_words(), "SpatiLoupe does not write HEIC pictures: Save a copy writes a 16-bit PNG beside it, which keeps its depth.");
+        // A TIFF of pages, which SpatiLoupe would write but not as it was: only copied, and why.
+        view.entry.name = "scan.tif".into();
+        assert!(view.can_save_in_place());
+        if let Doc::Picture(shown) = &mut view.doc {
+            shown.picture.saves.not_over = Some("it holds more than one picture".into());
+        }
+        assert!(!view.can_save_in_place());
+        assert_eq!(view.copy_only_words(), "SpatiLoupe does not write this TIF picture over itself: it holds more than one picture. Save a copy writes a 16-bit PNG beside it, which keeps its depth.");
     }
 
     #[test]

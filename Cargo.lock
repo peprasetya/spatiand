@@ -5342,6 +5342,7 @@ version = "0.1.0"
 dependencies = [
  "cosmic-text",
  "env_logger",
+ "exr",
  "glam",
  "gltf",
  "image",
@@ -5355,6 +5356,7 @@ dependencies = [
  "spatiand-media",
  "spatiand-render",
  "spatiand-storage",
+ "tiff",
  "zeroize",
 ]
 

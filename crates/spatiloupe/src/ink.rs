@@ -242,6 +242,7 @@ fn blend(under: &mut [u8], over: [u8; 4]) {
 
 /// Pixels with their alpha multiplied in, as tiny-skia keeps them, and back: a picture's and
 /// the GPU's are not.
+#[cfg(test)]
 pub fn premultiply(rgba: &mut [u8]) {
     for px in rgba.chunks_exact_mut(4) {
         let a = px[3] as u32;
@@ -264,8 +265,21 @@ pub fn unpremultiply(rgba: &mut [u8]) {
     }
 }
 
+/// `notes` painted on nothing, `width` by `height`, through `map`: a layer of the marks alone
+/// (four bytes a pixel, alpha multiplied in, as tiny-skia keeps them), to be laid over a picture
+/// being saved at the picture's own depth (`depth::lay`).
+pub fn layer(width: u32, height: u32, notes: &[&Note], map: Map) -> Result<Vec<u8>, String> {
+    let mut rgba = vec![0u8; width as usize * height as usize * 4];
+    if !notes.is_empty() {
+        let mut pixmap = PixmapMut::from_bytes(&mut rgba, width, height).ok_or("a picture of no size")?;
+        paint(&mut pixmap, notes, map, None, &mut fonts());
+    }
+    Ok(rgba)
+}
+
 /// Paint `notes` over a picture `width` by `height` (four bytes a pixel, alpha not multiplied
 /// in) through `map`: a picture being saved, at its own size.
+#[cfg(test)]
 pub fn paint_over(rgba: &mut [u8], width: u32, height: u32, notes: &[&Note], map: Map) -> Result<(), String> {
     premultiply(rgba);
     {

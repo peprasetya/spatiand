@@ -18,6 +18,11 @@ log.workspace = true
 env_logger.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "tga", "pnm", "qoi", "hdr", "exr"] }
 kamadak-exif = "0.6"
+# A TIFF and an OpenEXR written back as they were read -- their compression, tags, channels and
+# attributes -- by the image crate's own TIFF and OpenEXR libraries, which its encoders do not
+# reach so far (depth.rs).
+tiff = "0.11"
+exr = { version = "1.74", default-features = false }
 # Markup's lines and shapes are drawn by resvg's tiny-skia, its words by cosmic-text with the
 # room's own fonts and fallbacks (spatiand-render's `font_system`): the same two the room and the
 # SDK already draw with.

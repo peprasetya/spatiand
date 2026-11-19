@@ -33,12 +33,29 @@ pub struct Picture {
     pub original: (u32, u32),
     /// The camera's account of it, a line each: when, with what, how.
     pub about: Vec<(String, String)>,
+    /// What saving it marked up keeps of it, as its file says.
+    pub saves: Saves,
+}
+
+/// What saving a marked-up picture keeps of it, found as it is read: why it is not written over
+/// in its own format though SpatiLoupe writes that format (a TIFF of pages, an OpenEXR of
+/// layers), and how deep its samples are, which a copy keeps.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Saves {
+    pub not_over: Option<String>,
+    pub depth: crate::save::Depth,
+}
+
+impl Default for Saves {
+    fn default() -> Saves {
+        Saves { not_over: None, depth: crate::save::Depth::Eight }
+    }
 }
 
 impl Picture {
     fn of(image: RgbaImage, original: (u32, u32)) -> Picture {
         let (width, height) = image.dimensions();
-        Picture { width, height, rgba: image.into_raw(), eyes: Eyes::Mono, right: None, frames: Vec::new(), first: Duration::ZERO, original, about: Vec::new() }
+        Picture { width, height, rgba: image.into_raw(), eyes: Eyes::Mono, right: None, frames: Vec::new(), first: Duration::ZERO, original, about: Vec::new(), saves: Saves::default() }
     }
 }
 
@@ -99,23 +116,36 @@ fn read_as(path: &Path, largest: u32, may_move: bool) -> Result<Picture, String>
     read_bytes_as(path, &bytes, largest, may_move)
 }
 
-/// A picture whole, at its own size, the right way up, as it is to be saved once marked up: with
-/// what its file said of it -- the camera's account and the colours' profile -- where the image
-/// crate reads them, and the format its bytes are in.
+/// A picture whole, at its own size, the right way up, as it is to be saved once marked up -- at
+/// its own depth: eight or sixteen bits a sample, or floats, light itself (an OpenEXR, a Radiance
+/// HDR) -- with what its file said of it: the camera's account and the colours' profile where they
+/// are read, the code points of its colours where it gives those instead (a HEIF's or AVIF's
+/// nclx), the format its bytes are in, and the bytes themselves, which a format written as it
+/// was read (TIFF, OpenEXR, Radiance HDR) takes what it keeps from.
 pub struct Whole {
-    pub image: RgbaImage,
+    pub image: DynamicImage,
     pub exif: Option<Vec<u8>>,
     pub icc: Option<Vec<u8>>,
+    /// ITU-T H.273's colour primaries and transfer, where they are not sRGB's.
+    pub cicp: Option<(u8, u8)>,
     pub format: Option<image::ImageFormat>,
+    pub bytes: Vec<u8>,
 }
 
-/// Read the picture at `path` whole, as [`read`] reads it for the window but not made smaller:
-/// what a saved picture is drawn on. A drawing (SVG) is drawn as large as it is shown.
+impl Whole {
+    fn of(image: DynamicImage) -> Whole {
+        Whole { image, exif: None, icc: None, cicp: None, format: None, bytes: Vec::new() }
+    }
+}
+
+/// Read the picture at `path` whole, as [`read`] reads it for the window but not made smaller,
+/// nor made eight bits: what a saved picture is drawn on. A drawing (SVG) is drawn as large as
+/// it is shown.
 pub fn read_whole(path: &Path) -> Result<Whole, String> {
     let kind = ending(path);
     let plain = |picture: Picture| -> Result<Whole, String> {
         let image = RgbaImage::from_raw(picture.width, picture.height, picture.rgba).ok_or("a picture of the wrong size")?;
-        Ok(Whole { image, exif: None, icc: None, format: None })
+        Ok(Whole::of(DynamicImage::ImageRgba8(image)))
     };
     if ["heic", "heif", "hif", "avif", "jp2", "j2k", "jpf", "jpx", "j2c", "jxl"].contains(&kind.as_str()) {
         return whole_by_ffmpeg(path, &kind);
@@ -145,10 +175,14 @@ pub fn read_whole(path: &Path) -> Result<Whole, String> {
         if let Some(orientation) = orientation {
             image.apply_orientation(orientation);
         }
-        Ok(Whole { image: shown(image), exif, icc, format })
+        Ok(Whole { image, exif, icc, cicp: None, format, bytes: Vec::new() })
     };
     // Named wrongly, or not the image crate's: FFmpeg, as for the window.
-    read().or_else(|e| whole_by_ffmpeg(path, &kind).map_err(|_| e))
+    let mut whole = read().or_else(|e| whole_by_ffmpeg(path, &kind).map_err(|_| e))?;
+    if whole.format.is_some() {
+        whole.bytes = bytes;
+    }
+    Ok(whole)
 }
 
 /// A picture FFmpeg reads, whole and upright, with what its file says of it: its colours'
@@ -161,9 +195,21 @@ fn whole_by_ffmpeg(path: &Path, kind: &str) -> Result<Whole, String> {
         None => spatiand_media::still::whole_file(path),
     };
     let deep = deep.ok_or("not a picture this can read")?;
-    // Eight bits a sample: sixteen's top eight, rounded.
-    let rgba: Vec<u8> = deep.rgba.iter().map(|&v| ((v as u32 + 128) / 257) as u8).collect();
-    let image = RgbaImage::from_raw(deep.width, deep.height, rgba).ok_or("a picture of the wrong size")?;
+    let (w, h) = (deep.width, deep.height);
+    let image = if deep.bits > 8 {
+        // Deeper than eight bits: its sixteen, all of them; see-through parts only if it has any.
+        let rgba = image::ImageBuffer::<image::Rgba<u16>, _>::from_raw(w, h, deep.rgba).ok_or("a picture of the wrong size")?;
+        let image = DynamicImage::ImageRgba16(rgba);
+        if deep.alpha { image } else { DynamicImage::ImageRgb16(image.to_rgb16()) }
+    } else {
+        // Eight bits a sample: sixteen's top eight, rounded.
+        let rgba: Vec<u8> = deep.rgba.iter().map(|&v| ((v as u32 + 128) / 257) as u8).collect();
+        DynamicImage::ImageRgba8(RgbaImage::from_raw(w, h, rgba).ok_or("a picture of the wrong size")?)
+    };
+    // Colours it names rather than profiles: not sRGB's primaries (BT.709's, or unsaid), or a
+    // transfer of HDR (PQ, HLG) or of light itself.
+    let srgb_like = matches!(deep.primaries, 1 | 2) && matches!(deep.transfer, 1 | 2 | 6 | 13 | 14 | 15);
+    let cicp = (!srgb_like).then_some((deep.primaries, deep.transfer));
     let (mut icc, mut exif) = (deep.icc, None);
     if ["heic", "heif", "hif", "avif"].contains(&kind) {
         let mut read = |from: &mut dyn ReadSeek| {
@@ -181,7 +227,7 @@ fn whole_by_ffmpeg(path: &Path, kind: &str) -> Result<Whole, String> {
             }
         }
     }
-    Ok(Whole { image, exif, icc, format: None })
+    Ok(Whole { image, exif, icc, cicp, format: None, bytes: Vec::new() })
 }
 
 /// What a HEIF's boxes are read from: a file, or a remote's pieces.
@@ -360,7 +406,10 @@ fn by_image(bytes: &[u8], ending: &str, largest: u32, may_move: bool) -> Result<
         image.apply_orientation(orientation);
     }
     let original = (image.width(), image.height());
-    Ok(Picture::of(shown(fit(image, largest)), original))
+    let saves = Saves { not_over: crate::save::not_over(&format!("a.{ending}"), bytes), depth: crate::save::Depth::of(&image) };
+    let mut picture = Picture::of(shown(fit(image, largest)), original);
+    picture.saves = saves;
+    Ok(picture)
 }
 
 /// A picture as eight bits a channel of sRGB, as it is shown. A Radiance HDR or an OpenEXR's
@@ -469,14 +518,17 @@ fn moving(bytes: &[u8], format: Option<image::ImageFormat>, largest: u32) -> Opt
 
 fn by_ffmpeg(path: &Path, largest: u32) -> Result<Picture, String> {
     let still = match crate::place::remote(path) {
-        Some(_) => spatiand_media::still::grab(&crate::place::source(path), largest),
-        None => spatiand_media::still::grab_file(path, largest),
+        Some(_) => spatiand_media::still::grab_depth(&crate::place::source(path), largest),
+        None => spatiand_media::still::grab_file_depth(path, largest),
     };
-    let still = still.ok_or("not a picture this can read")?;
+    let (still, bits) = still.ok_or("not a picture this can read")?;
     let image = RgbaImage::from_raw(still.width, still.height, still.rgba).ok_or("a picture of the wrong size")?;
     let image = fit(DynamicImage::ImageRgba8(image), largest).to_rgba8();
     let original = (still.width, still.height);
-    Ok(Picture::of(image, original))
+    let mut picture = Picture::of(image, original);
+    // Ten bits or more: a copy keeps them.
+    picture.saves.depth = if bits > 8 { crate::save::Depth::Sixteen } else { crate::save::Depth::Eight };
+    Ok(picture)
 }
 
 /// The machine's fonts, for a drawing's text: read once, the first time a drawing wants them, and
