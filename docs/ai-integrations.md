@@ -542,7 +542,7 @@ shared; each loop only opens it, hands it what the wearer changed and ticks it):
 
 | Row | What it is | Chosen |
 |---|---|---|
-| hemera's address | the server every model and voice is on | typed, as a computer's address is (any keyboard, the room's, the phone's, dictation); `http://` added when left out |
+| hemera's address | the server every model and voice is on; **Not set** until one is typed (since 2026-11-20, below) | typed, as a computer's address is (any keyboard, the room's, the phone's, dictation); `http://` added when left out; cleared and kept (Enter on an empty field), none: hemera off |
 | *Models*: Everyday model, Larger model, Terminal clean-up model | named for what they do | from hemera's text models (`/v1/models`, `hemera.kind` `text`, as SpatiPal offered them), a page of their own, the one in use marked |
 | Text reading model | reads the words in pictures | "hemera's choice" (the default: no model sent; the card says which that is, `/v1/ocr`'s `default_model`) or one of hemera's `ocr` models by name |
 | *Dictation*: Languages spoken | as SpatiPal stepped them: English and Indonesian mixed, English, Indonesian, any | each press the next |
@@ -556,6 +556,25 @@ anything else into the first. For the text in pictures and paused films in Spati
 hemera is asked for its lists on a thread when the card opens (three GETs, no model started), and
 again when its address changes; a model page opened before it answers shows the one in use, and
 keeps the cursor on it when the list comes.
+
+**No hemera until one is set** (2026-11-20, found testing the first public release: in a fresh
+home every picture SpatiLoupe opened said in red that `deepmagpie:12434` could not be reached).
+The defaults name no server -- `AiSettings::default().hemera` is empty, where until then it was
+the author's own -- and dictation's default words no longer name his machine. With none set,
+nothing asks hemera by itself, and nothing is said of it: no picture is read as it is shown
+(`spatiand_app::live_text::reads_by_itself`), SpatiPal does not take the room's microphone, have
+models made ready or fetch hemera's voices, and the card fetches no lists. What the wearer asks for
+says "hemera's address is not set (Settings → AI)" where it would show any error: "Read the text"
+and Translate at the picture's foot, a message to SpatiPal as its answer in the chat ("I can't
+answer yet: ..."), SpatiPal's listen button on its trouble line, and dictation on the room's notice
+card, the microphone not opened (a desktop's dictation says it and stops). One guard does it in
+the client (`spatiand_voice::Hemera`, the same on every platform): with no address every request
+fails at once with that sentence, and nothing is sent. The card shows the address as "Not set",
+takes one typed as before, and clearing it turns hemera off; with none, the model rows and pages
+say that hemera's models are offered once it is set, rather than an error. An `ai.json` that names
+an address, as the author's machines' do, and an older build's `voice.json` carried over, are used
+as they were. The tests against a real hemera, by hand, take `HEMERA` (`SPATIAND_HEMERA` for
+`tests/hemera.rs`) or the address saved on the machine, no longer the default.
 
 **One store: `ai.json` in the shared folder** (`crates/spatiand-ai`, `~/.config/spatiand/apps`),
 synchronised between paired machines by spatiand-sync as SpatiPal's settings always were -- the
