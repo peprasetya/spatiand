@@ -256,9 +256,17 @@ Listed because finding out by hitting them is worse.
 
 ## Getting it
 
-Download a release, unpack it, double-click **Install Spatiand**. See
-[docs/install.md](docs/install.md) for what it does and what to check when
-something is wrong.
+Download the newest release from the
+[Releases page](https://github.com/peprasetya/spatiand/releases/latest):
+
+  * **Steam Deck**: the `.tar.gz`. Unpack it in Desktop Mode and double-click
+    **Install Spatiand**.
+  * **XREAL Beam Pro**: the `.apk`. Open it on the phone and allow the install.
+  * **Mac** (Apple Silicon): the `.zip`. Move Spatiand.app to Applications and
+    open it the first time with right-click → Open (it is not notarised).
+
+See [docs/install.md](docs/install.md) for what each does and what to check
+when something is wrong.
 
 ## Tested on
 
