@@ -35,7 +35,7 @@ mod text;
 mod truth;
 
 pub use place::{turned_size, upright_size, Mapping};
-pub use reader::{within_limit, Picture, Reading, Translating};
+pub use reader::{reads_by_itself, within_limit, Picture, Reading, Translating};
 pub use spatiand_voice::hemera::ocr::Kind;
 pub use text::{Direction, Grapheme, Line, Point, ReadText, Spot, Word, SURE};
 

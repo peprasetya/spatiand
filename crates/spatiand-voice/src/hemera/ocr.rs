@@ -254,6 +254,8 @@ pub enum Failure {
     Unreachable(String),
     /// What came back was not an answer of hemera's.
     Unreadable(String),
+    /// There is no hemera to ask: its address is not set ([`super::NOT_SET`]). Nothing was sent.
+    NotSet,
 }
 
 impl Failure {
@@ -261,6 +263,7 @@ impl Failure {
     pub fn words(&self) -> String {
         match self {
             Failure::Cancelled => "it was called off".into(),
+            Failure::NotSet => super::NOT_SET.into(),
             Failure::Refused { message, .. } => message.trim().trim_end_matches('.').to_string(),
             Failure::Unreachable(said) | Failure::Unreadable(said) => said.trim().trim_end_matches('.').to_string(),
         }
@@ -369,11 +372,12 @@ pub(super) struct Reply {
 
 /// A POST of `body` to `path`, on a connection of its own that `cancel` shuts.
 pub(super) fn post(hemera: &Hemera, path: &str, content_type: &str, body: &[u8], within: Duration, cancel: &Cancel) -> Result<Reply, Failure> {
+    let url = hemera.url(path).map_err(|_| Failure::NotSet)?;
     let agent = super::agent(0);
     if !cancel.hold(&agent) {
         return Err(Failure::Cancelled);
     }
-    let asked = agent.post(&format!("{}{path}", hemera.base)).header("Content-Type", content_type);
+    let asked = agent.post(&url).header("Content-Type", content_type);
     let sent = super::within(asked, within).send(body);
     let reply = sent.and_then(|reply| {
         let status = reply.status().as_u16();
@@ -412,6 +416,10 @@ impl Hemera {
     /// reader starting -- is tried once more after the `Retry-After` it gives; `cancel` calls the
     /// whole of it off. Logged: the picture's size, the times, how many lines. Never its text.
     pub fn read_text(&self, picture: &[u8], kind: Kind, options: &Options, cancel: &Cancel) -> Result<Answer, Failure> {
+        // No hemera: nothing to send it to, and the picture is not copied into a form for nothing.
+        if !self.is_set() {
+            return Err(Failure::NotSet);
+        }
         let started = Instant::now();
         let (content_type, body) = form(picture, kind, options);
         let mut reply = post(self, "/v1/ocr", &content_type, &body, WITHIN, cancel)?;
@@ -647,6 +655,15 @@ mod tests {
         cancel.cancel();
         assert_eq!(Hemera::new(&base).read_text(b"x", Kind::Png, &Options::default(), &cancel), Err(Failure::Cancelled));
         assert!(told.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn with_no_address_nothing_is_read_or_translated_and_it_is_said_why() {
+        let none = Hemera::new("");
+        let read = none.read_text(b"\x89PNG\r\n\x1a\n", Kind::Png, &Options::default(), &Cancel::new()).unwrap_err();
+        assert_eq!(read, Failure::NotSet);
+        assert_eq!(read.words(), "hemera's address is not set (Settings \u{2192} AI)");
+        assert_eq!(none.translate("neohorse-1:4b", "Diskon", "en", "id", &Cancel::new()), Err(Failure::NotSet));
     }
 
     #[test]

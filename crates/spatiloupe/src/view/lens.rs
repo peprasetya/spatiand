@@ -81,8 +81,9 @@ pub struct Lens {
 
 impl Lens {
     pub fn new() -> Lens {
-        // A test never asks hemera, whatever the machine's own settings say.
-        let by_itself = !cfg!(test) && spatiand_app::ai::settings().text_in_pictures.read_by_itself;
+        // A test never asks hemera, whatever the machine's own settings say; nor anything with no
+        // hemera to ask.
+        let by_itself = !cfg!(test) && spatiand_app::live_text::reads_by_itself(&spatiand_app::ai::settings());
         let mut live = LiveText::new();
         live.can_read = !by_itself;
         Lens { live, reading: None, space: Space::Upright, still: None, asked: false, by_itself }
@@ -444,7 +445,7 @@ impl View {
 
     /// The AI settings changed: read by itself, or only when asked, from now on.
     pub fn ai_changed(&mut self) {
-        let by_itself = spatiand_app::ai::settings().text_in_pictures.read_by_itself;
+        let by_itself = spatiand_app::live_text::reads_by_itself(&spatiand_app::ai::settings());
         self.lens.by_itself = by_itself;
         self.lens.live.can_read = !by_itself && !self.lens.live.has_text();
         if let Doc::Pdf(paper) = &mut self.doc {

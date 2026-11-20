@@ -244,12 +244,14 @@ impl Pal {
         }
     }
 
-    /// Listen for its name, or stop, as the settings say.
+    /// Listen for its name, or stop, as the settings say -- and never with no hemera to write
+    /// what is heard: then the room's microphone is not asked for, quietly, until its address
+    /// is set ([`Pal::follow_ai`]).
     fn tend_ears(&mut self) {
         if self.away {
             return;
         }
-        match (self.settings.listening, self.ears.is_some()) {
+        match (self.settings.listening && self.ai.has_hemera(), self.ears.is_some()) {
             (true, false) => {
                 let Some(microphone) = self.app.room_listen() else {
                     self.say_trouble("The room would not give its microphone.");
@@ -317,6 +319,11 @@ impl Pal {
     /// Have hemera ready with what the next answer needs (`crate::warm`); not again for a few
     /// minutes unless `now`.
     fn warm(&mut self, now: bool) {
+        // No hemera: nothing to have ready, and nothing asked.
+        if !self.ai.has_hemera() {
+            self.warm_due = None;
+            return;
+        }
         if !now && self.warmed.is_some_and(|at| at.elapsed() < warm::EVERY) {
             return;
         }
@@ -539,6 +546,8 @@ impl Pal {
                 self.tend_ears();
                 if let Some(e) = &self.ears {
                     e.once.store(true, std::sync::atomic::Ordering::Relaxed);
+                } else if !self.ai.has_hemera() {
+                    self.say_trouble(spatiand_voice::hemera::NOT_SET);
                 }
             }
             Want::Spoken => {
@@ -651,7 +660,12 @@ impl Pal {
             self.voice.set_voice(spoken_voice(&self.settings), Hemera::new(&self.ai.hemera));
         }
         if ears_changed && self.ears.is_some() {
+            // Started again, hearing with what changed -- or, hemera's address cleared, not.
             self.ears = None;
+            self.ear = Ear::Quiet;
+            self.tend_ears();
+        } else if hemera_changed {
+            // hemera's address set: it listens now, if it is to.
             self.tend_ears();
         }
         if models_changed {
@@ -904,7 +918,9 @@ impl Pal {
     /// is heard out it smiles a moment, then waits for more: no name needed, until the
     /// conversation lapses.
     fn tend_mood(&mut self) {
-        let engaged = self.conversation.open(&self.voice);
+        // Only with ears is a follow-up heard: without them -- not listening, or no hemera to
+        // write what is heard -- an answer does not leave it "listening" for more.
+        let engaged = self.ears.is_some() && self.conversation.open(&self.voice);
         let heard_out = self.finished_at.map(|at| self.voice.quiet_at().map_or(at, |q| q.max(at)));
         let state = match (&self.answering, self.ear) {
             _ if self.voice.speaking() => "talking",
@@ -933,9 +949,14 @@ impl Pal {
     fn fetch_lists(&mut self) {
         self.characters = store::characters();
         self.pals = pack::folders();
+        let hemera = Hemera::new(&self.ai.hemera);
+        // No hemera, no voices to offer: none asked for.
+        if !hemera.is_set() {
+            self.voices.clear();
+            return;
+        }
         let tx = self.lists_tx.clone();
         let waker = self.waker.clone();
-        let hemera = Hemera::new(&self.ai.hemera);
         std::thread::spawn(move || {
             let _ = tx.send(ureq_voices(&hemera));
             waker.wake();

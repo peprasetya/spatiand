@@ -152,6 +152,12 @@ const TEXT_NOTE: &str = "Text in the first language is translated into the secon
 /// The row that adds a word, after the words.
 pub const ADD_WORD: &str = "Add a word";
 
+/// hemera's address, as its row shows it when there is none (a fresh install's).
+const NOT_SET: &str = "Not set";
+
+/// Why the model pages offer nothing of hemera's when it has no address: not an error.
+const NO_HEMERA: &str = "hemera's address is not set: its models are offered here once it is.";
+
 /// Where the card is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Page {
@@ -302,6 +308,11 @@ impl Ai {
         &self.typed
     }
 
+    /// Whether hemera's address is set: with none, nothing asks hemera.
+    fn has_hemera(&self) -> bool {
+        !self.view.hemera.trim().is_empty()
+    }
+
     /// The models a model's page offers, the one in use among them: hemera's, with the one in use
     /// first if hemera has not said it (not answered yet, or not offering it any more).
     fn choices(&self, model: Model) -> Vec<String> {
@@ -370,7 +381,7 @@ impl Ai {
                 .iter()
                 .map(|item| match *item {
                     Item::Heading(name) => AiRow { label: name.into(), value: None, heading: true },
-                    Item::Hemera => AiRow::with("hemera's address", self.view.hemera.clone()),
+                    Item::Hemera => AiRow::with("hemera's address", if self.has_hemera() { self.view.hemera.as_str() } else { NOT_SET }),
                     Item::Model(m) => AiRow::with(m.label(), Self::model_name(self.model(m))),
                     Item::Languages => AiRow::with("Languages spoken", Self::spoken(&self.view.languages)),
                     Item::Words => AiRow::with("Your own words", self.words_value()),
@@ -436,9 +447,14 @@ impl Ai {
     pub fn detail(&self) -> String {
         let detail = match self.page {
             Page::List => match LIST.get(self.cursor) {
-                Some(Item::Hemera) => "Where hemera answers: the server every model and voice is on. Dictation, SpatiPal and any app that \
-                                       asks a model go there, on every device. Choose to change it."
+                Some(Item::Hemera) if !self.has_hemera() => "Where hemera answers: the server every model and voice is on. None is set, so \
+                                                              dictation, SpatiPal, translation and reading text in pictures are off until one \
+                                                              is. Choose to type its address."
                     .to_string(),
+                Some(Item::Hemera) => "Where hemera answers: the server every model and voice is on. Dictation, SpatiPal and any app that \
+                                       asks a model go there, on every device. Choose to change it, or clear it to turn them off."
+                    .to_string(),
+                Some(Item::Model(m)) if !self.has_hemera() => format!("{} {NO_HEMERA}", m.does()),
                 Some(Item::Model(m)) => match &self.offered.trouble {
                     Some(why) => format!("{} {why}", m.does()),
                     None => format!("{} Choose from hemera's models.", m.does()),
@@ -462,7 +478,9 @@ impl Ai {
                 Some(Item::Heading(_)) | None => String::new(),
             },
             Page::Model(m) => {
-                let state = if let Some(why) = &self.offered.trouble {
+                let state = if !self.has_hemera() {
+                    NO_HEMERA.to_string()
+                } else if let Some(why) = &self.offered.trouble {
                     why.clone()
                 } else if self.offered.asking {
                     "Asking hemera for its models\u{2026}".to_string()
@@ -482,7 +500,9 @@ impl Ai {
                 Some(w) => format!("{w}. Press A twice to forget it."),
                 None => "Add a name or a word of your own, so that dictation writes it as you spell it.".to_string(),
             },
-            Page::Hemera => "hemera's address, as http://name:port. Type it and press Enter; B leaves it as it was.".to_string(),
+            Page::Hemera => "hemera's address, as http://name:port. Type it and press Enter; B leaves it as it was. Cleared and kept, \
+                             there is no hemera: dictation, SpatiPal and text in pictures wait until one is set."
+                .to_string(),
             Page::NewWord => "Type the word as it is to be written, and press Enter.".to_string(),
         };
         match &self.note {
@@ -664,11 +684,17 @@ impl Ai {
         }
     }
 
-    /// Enter: what was typed is kept, if there is anything.
+    /// Enter: what was typed is kept, if there is anything -- or, for hemera's address, nothing
+    /// kept as no address: hemera turned off.
     pub fn submit(&mut self) -> Option<AiAction> {
         let text = self.typed.trim().to_string();
         if text.is_empty() {
-            return None;
+            if self.page != Page::Hemera {
+                return None;
+            }
+            self.typed.clear();
+            self.back_to_list();
+            return self.has_hemera().then(|| AiAction::Hemera(String::new()));
         }
         match self.page {
             Page::Hemera => {
@@ -891,13 +917,58 @@ mod tests {
         assert!(ai.back());
         assert_eq!(ai.typed(), "");
         assert_eq!(ai.page(), Page::List);
-        // Nothing typed is not an address.
+        // Cleared and kept: no address, hemera off.
         ai.activate();
         while !ai.typed().is_empty() {
             ai.backspace();
         }
+        assert_eq!(ai.submit(), Some(AiAction::Hemera(String::new())));
+        assert_eq!(ai.page(), Page::List);
+        assert!(!ai.typing());
+    }
+
+    #[test]
+    fn with_no_hemera_the_card_says_it_is_not_set_takes_one_typed_and_clears_it() {
+        let mut ai = card();
+        let mut view = ai.view().clone();
+        view.hemera = String::new();
+        ai.set_view(view);
+        ai.set_offered(Offered::default());
+        // Not set, in the card's own words, with what that means.
+        assert_eq!(ai.rows()[0], AiRow::with("hemera's address", NOT_SET));
+        assert!(ai.detail().contains("None is set, so dictation, SpatiPal, translation and reading text in pictures are off"));
+        // The models in use are still shown; their pages say why hemera offers none, not an error.
+        to_row(&mut ai, "Everyday model");
+        assert_eq!(ai.rows()[ai.cursor()].value.as_deref(), Some("neohorse-1:4b"));
+        assert!(ai.detail().ends_with(NO_HEMERA));
+        ai.activate();
+        assert_eq!(ai.rows(), vec![AiRow::with("neohorse-1:4b", "In use")]);
+        assert!(ai.detail().ends_with(NO_HEMERA), "{}", ai.detail());
+        assert!(!ai.detail().contains("could not"));
+        ai.back();
+        // One typed, as ever.
+        to_row(&mut ai, "hemera's address");
+        ai.activate();
+        assert_eq!((ai.page(), ai.typed()), (Page::Hemera, ""));
+        assert!(ai.detail().contains("Cleared and kept, there is no hemera"));
+        // Nothing typed, with none set: nothing changed.
         assert_eq!(ai.submit(), None);
-        assert!(ai.typing());
+        assert_eq!(ai.page(), Page::List);
+        ai.activate();
+        ai.type_text("100.67.14.85:12434");
+        assert_eq!(ai.submit(), Some(AiAction::Hemera("http://100.67.14.85:12434".into())));
+        let mut view = ai.view().clone();
+        view.hemera = "http://100.67.14.85:12434".into();
+        ai.set_view(view);
+        assert_eq!(ai.rows()[0], AiRow::with("hemera's address", "http://100.67.14.85:12434"));
+        assert!(ai.detail().contains("clear it to turn them off"));
+        // And cleared again: Enter on an empty field, or A.
+        ai.activate();
+        while !ai.typed().is_empty() {
+            ai.backspace();
+        }
+        assert_eq!(ai.activate(), Some(AiAction::Hemera(String::new())));
+        assert_eq!(ai.page(), Page::List);
     }
 
     #[test]

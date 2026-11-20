@@ -46,6 +46,12 @@ impl VoiceSettings {
         VoiceSettings::of(&AiSettings::load(folder))
     }
 
+    /// Whether hemera's address is set: with none, dictation does not listen
+    /// ([`AiSettings::has_hemera`]).
+    pub fn has_hemera(&self) -> bool {
+        !self.hemera.trim().is_empty()
+    }
+
     /// A sentence in the way the wearer speaks, for Whisper's prompt before they have said
     /// anything: punctuated, and mixing their languages as they do.
     pub fn primer(&self) -> &'static str {
@@ -65,4 +71,22 @@ impl VoiceSettings {
             _ => None,
         }
     }
+}
+
+/// For the tests that ask a real hemera, by hand: `HEMERA`, else the address in the AI settings
+/// saved on this machine -- the shared folder, found as the room and the SDK find it -- never the
+/// defaults, which name none.
+#[cfg(test)]
+pub(crate) fn hemera_for_tests() -> String {
+    std::env::var("HEMERA").unwrap_or_else(|_| {
+        use std::path::PathBuf;
+        let root = std::env::var_os("SPATIAND_APPS_CONFIG").map(PathBuf::from).unwrap_or_else(|| {
+            std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/".into())).join(".config"))
+                .join("spatiand")
+        });
+        AiSettings::load(&root.join("apps")).hemera
+    })
 }

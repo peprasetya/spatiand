@@ -27,7 +27,9 @@ const OLDER_ASSISTANT: &str = "assistant.json";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AiSettings {
-    /// hemera's address, `http://deepmagpie:12434`: every model and voice is there.
+    /// hemera's address, `http://name:12434`: every model and voice is there. **None until one is
+    /// set** (empty, as a fresh install's settings are): what would ask hemera is then off,
+    /// quietly, and what the wearer asks for says so ([`AiSettings::has_hemera`]).
     pub hemera: String,
     pub models: Models,
     pub dictation: Dictation,
@@ -127,7 +129,9 @@ pub fn language_name(code: &str) -> String {
 impl Default for AiSettings {
     fn default() -> Self {
         AiSettings {
-            hemera: "http://deepmagpie:12434".into(),
+            // No server: the author's own was named here until the first public release
+            // (2026-11-20), and every fresh install asked a machine it could not reach.
+            hemera: String::new(),
             models: Models::default(),
             dictation: Dictation::default(),
             text_in_pictures: TextInPictures::default(),
@@ -155,7 +159,7 @@ impl Default for Dictation {
             languages: vec!["en".into(), "id".into()],
             words: [
                 "Spatiand", "SpatiQuill", "SpatiShelf", "SpatiReel", "SpatiLoupe", "SpatiMesh", "SpatiWorld", "Steam Deck",
-                "Beam Pro", "deepmagpie", "hemera",
+                "Beam Pro", "hemera",
             ]
             .iter()
             .map(|w| w.to_string())
@@ -173,6 +177,13 @@ impl Default for TextInPictures {
 }
 
 impl AiSettings {
+    /// Whether hemera's address is set. Without one, nothing asks hemera by itself -- no picture
+    /// is read as it is shown, SpatiPal does not listen, no list of models is fetched -- and what
+    /// the wearer asks for says that the address is not set.
+    pub fn has_hemera(&self) -> bool {
+        !self.hemera.trim().is_empty()
+    }
+
     /// The settings in `folder` (the shared folder), or the defaults when they cannot be read.
     ///
     /// With no `ai.json` there yet, they are made from what an older build kept (see the crate's
@@ -369,6 +380,30 @@ mod tests {
         older_files(&dir);
         assert_eq!(AiSettings::load(&dir), mine);
         assert_eq!(stamp(&dir), before, "the store is not written again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fresh_install_names_no_hemera_and_a_saved_address_is_still_used() {
+        // The defaults name no server, nor the author's machine among the wearer's words.
+        let fresh = AiSettings::default();
+        assert_eq!(fresh.hemera, "");
+        assert!(!fresh.has_hemera());
+        assert!(!fresh.dictation.words.iter().any(|w| w.eq_ignore_ascii_case("deepmagpie")));
+        assert!(fresh.dictation.words.iter().any(|w| w == "hemera") && fresh.dictation.words.iter().any(|w| w == "Spatiand"));
+        let dir = folder("fresh");
+        assert!(!AiSettings::load(&dir).has_hemera());
+        // An ai.json that names one is read as it was: the owner's machines name theirs.
+        std::fs::write(dir.join(FILE), r#"{"hemera": "http://100.67.14.85:12434", "models": {"everyday": "neohorse-1:4b"}}"#).unwrap();
+        let saved = AiSettings::load(&dir);
+        assert_eq!(saved.hemera, "http://100.67.14.85:12434");
+        assert!(saved.has_hemera());
+        // Blank is none.
+        std::fs::write(dir.join(FILE), r#"{"hemera": "  "}"#).unwrap();
+        assert!(!AiSettings::load(&dir).has_hemera());
+        // An older build's voice.json with no address carries none over; with one, it is taken.
+        assert_eq!(AiSettings::from_older(Some(&serde_json::json!({"languages": ["id"]})), None).hemera, "");
+        assert_eq!(AiSettings::from_older(Some(&serde_json::json!({"hemera": "http://deepmagpie:12434"})), None).hemera, "http://deepmagpie:12434");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

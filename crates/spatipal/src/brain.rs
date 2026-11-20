@@ -156,6 +156,13 @@ fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<(u64, Tol
             let _ = told.send((number, t));
             wake();
         };
+        // No hemera, no model to answer with: that is the answer, in its chat -- the turn ends,
+        // and nothing is asked anywhere (nor said aloud: its voice is hemera's too).
+        if !hemera.is_set() {
+            held = None;
+            say(Told::Done(not_set_answer()));
+            continue;
+        }
         // The answer to a question it asked: what was held is done, or let go.
         if let Some((h, at)) = held.take().filter(|(_, at)| at.elapsed() < std::time::Duration::from_secs(180)) {
             let _ = at;
@@ -195,6 +202,11 @@ fn think(turns: Receiver<Turn>, room: Room, voice: Voice, told: Sender<(u64, Tol
             }
         }
     }
+}
+
+/// What it answers with no hemera to answer with: a whole sentence the wearer can act on.
+fn not_set_answer() -> Said {
+    Said { role: "assistant".into(), text: format!("I can't answer yet: {}.", spatiand_voice::hemera::NOT_SET), at: crate::store::now(), ..Default::default() }
 }
 
 /// How many times a turn may go back to the model with what its tools did.
@@ -825,7 +837,7 @@ mod tests {
         .unwrap();
         let pack = crate::pack::Pack::made_up(about, "You are Mira, a cheerful woman who loves clothes and shows them off.", offers);
         let s = pack.over(&Settings::default());
-        let ai = AiSettings::default();
+        let ai = ai_for_tests();
         let hemera = Hemera::new(&ai.hemera);
         let tools = tools::all(true, pack.tool().as_ref());
         for (asked, group, value, mv) in [("Put on your dress and give me a twirl!", "outfit", "dress", Some("spin")), ("Time for bed. Get into your pyjamas.", "outfit", "pyjamas", None)] {
@@ -871,7 +883,7 @@ mod tests {
         let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
         let pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
         let s = pack.over(&Settings::default());
-        let ai = AiSettings::default();
+        let ai = ai_for_tests();
         let hemera = Hemera::new(&ai.hemera);
         let own = Value::Array(vec![pack.tool().unwrap(), crate::moves::tool()]);
         let tools = tools::all(true, Some(&own));
@@ -933,7 +945,7 @@ mod tests {
         let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
         let pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
         let s = pack.over(&Settings::default());
-        let ai = AiSettings::default();
+        let ai = ai_for_tests();
         let hemera = Hemera::new(&ai.hemera);
         let own = Value::Array(vec![pack.tool().unwrap(), crate::moves::tool()]);
         let tools = tools::all(true, Some(&own));
@@ -1021,7 +1033,7 @@ mod tests {
         let about = serde_json::from_value::<crate::pack::About>(serde_json::json!({"name": "Mira"})).unwrap();
         let mut pack = crate::pack::Pack::made_up(about, "You are Mira, a playful woman who talks with her whole body.", offers);
         let s = pack.over(&Settings::default());
-        let ai = AiSettings::default();
+        let ai = ai_for_tests();
         // The small model by default, which hands a pose of its own over; SPATIPAL_TEST_MODEL a
         // larger one, which makes it (its tools without hand_over).
         let large = std::env::var("SPATIPAL_TEST_MODEL").ok();
@@ -1110,7 +1122,7 @@ mod tests {
         let still: spatiand_voice::motion::Motion = serde_json::from_value(json!({"fps": 30, "skeleton": {"joints": ["Pelvis"], "parents": [-1], "offsets": [[0, 0.97, 0]]}, "frames": [{"translation": [0, 0.97, 0], "rotations": [[0, 0, 0, 1]]}]})).unwrap();
         pack.shelf().keep("cartwheel", &spatiand_voice::motion::Ask { prompt: "a person does a cartwheel".into(), duration: 3.0, ..Default::default() }, &still).unwrap();
         let s = pack.over(&Settings::default());
-        let ai = AiSettings::default();
+        let ai = ai_for_tests();
         let model = std::env::var("SPATIPAL_TEST_MODEL").unwrap_or_else(|_| ai.models.everyday.clone());
         let hemera = Hemera::new(&ai.hemera);
         let own = Value::Array(vec![pack.tool().unwrap(), crate::moves::tool()]);
@@ -1192,6 +1204,47 @@ mod tests {
     }
 
     use super::*;
+
+    /// What the tests against hemera ask with: the default models, at `HEMERA` or the address in
+    /// the AI settings saved on this machine -- the defaults name no hemera.
+    fn ai_for_tests() -> AiSettings {
+        let hemera = std::env::var("HEMERA").unwrap_or_else(|_| spatiand_app::ai::settings().hemera);
+        assert!(!hemera.trim().is_empty(), "no hemera: HEMERA=<address>, or one set in the AI settings");
+        AiSettings { hemera, ..AiSettings::default() }
+    }
+
+    #[test]
+    fn with_no_hemera_a_message_is_answered_in_its_chat_with_why() {
+        let (ask, asked) = channel();
+        let room = Room { ask, wake: Arc::new(|| {}) };
+        let (told_tx, told) = channel();
+        let brain = Brain::start(room, Voice::silent(), told_tx);
+        let turn = |text: &str| Turn {
+            number: 0,
+            text: text.into(),
+            history: Vec::new(),
+            look: false,
+            settings: Settings::default(),
+            ai: AiSettings::default(),
+            appearance: None,
+            looks: String::new(),
+            ended: None,
+        };
+        for asked_for in ["What time is it?", "Describe this"] {
+            let number = brain.ask(turn(asked_for)).unwrap();
+            match told.recv_timeout(Duration::from_secs(5)) {
+                Ok((n, Told::Done(said))) => {
+                    assert_eq!(n, number);
+                    assert_eq!(said.role, "assistant");
+                    assert_eq!(said.text, "I can't answer yet: hemera's address is not set (Settings \u{2192} AI).");
+                }
+                Ok(_) => panic!("{asked_for:?}: not answered in its chat"),
+                Err(e) => panic!("{asked_for:?}: no answer ({e}): the turn is stuck"),
+            }
+        }
+        // Nothing was asked of the room for it either: not its windows, nor what is seen.
+        assert!(asked.try_recv().is_err());
+    }
 
     #[test]
     fn the_text_read_in_a_picture_is_given_as_on_screen_and_exact() {

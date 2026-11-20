@@ -1,10 +1,12 @@
 //! Dictation end to end against a real hemera: speech made by hemera's own voice model, fed in
 //! as a microphone would, written back by Whisper and the small model.
 //!
-//! Needs deepmagpie, so it is ignored by default:
+//! Needs a hemera, so it is ignored by default:
 //! `cargo test -p spatiand-voice --test hemera -- --ignored --nocapture`
-//! (`SPATIAND_HEMERA` for another server).
+//! (`SPATIAND_HEMERA` for its address; else the one in the AI settings saved on this machine --
+//! the defaults name none).
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use spatiand_voice::dictation::{Dictation, Event};
@@ -12,10 +14,19 @@ use spatiand_voice::hemera::read_wav;
 use spatiand_voice::{Description, VoiceSettings, RATE};
 
 fn settings() -> VoiceSettings {
-    let mut s = VoiceSettings::default();
-    if let Ok(h) = std::env::var("SPATIAND_HEMERA") {
-        s.hemera = h;
-    }
+    let hemera = std::env::var("SPATIAND_HEMERA").unwrap_or_else(|_| {
+        // The shared folder, found as the room and the SDK find it.
+        let root = std::env::var_os("SPATIAND_APPS_CONFIG").map(PathBuf::from).unwrap_or_else(|| {
+            std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/".into())).join(".config"))
+                .join("spatiand")
+        });
+        VoiceSettings::load(&root.join("apps")).hemera
+    });
+    let s = VoiceSettings { hemera, ..VoiceSettings::default() };
+    assert!(s.has_hemera(), "no hemera: SPATIAND_HEMERA=<address>, or one set in the AI settings");
     s
 }
 

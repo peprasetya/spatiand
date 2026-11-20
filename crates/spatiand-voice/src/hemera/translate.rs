@@ -201,13 +201,14 @@ mod tests {
         assert_eq!(translation_of(&json!({"choices": []}), "a"), None);
     }
 
-    /// The rule, by the real hemera and its everyday model (`HEMERA`, else deepmagpie's), each way:
-    /// Indonesian into English, English into Indonesian, anything else into English -- its lines
-    /// and digits as they were. By hand: `cargo test -p spatiand-voice -- --ignored translate --nocapture`.
+    /// The rule, by the real hemera and its everyday model (`HEMERA`, else the saved AI settings'),
+    /// each way: Indonesian into English, English into Indonesian, anything else into English -- its
+    /// lines and digits as they were. By hand: `cargo test -p spatiand-voice -- --ignored translate --nocapture`.
     #[test]
     #[ignore]
     fn the_everyday_model_translates_each_way_and_keeps_lines_and_digits() {
-        let hemera = Hemera::new(&std::env::var("HEMERA").unwrap_or_else(|_| "http://deepmagpie:12434".into()));
+        let hemera = Hemera::new(&crate::settings::hemera_for_tests());
+        assert!(hemera.is_set(), "no hemera: HEMERA=<address>, or one set in the AI settings");
         let model = std::env::var("MODEL").unwrap_or_else(|_| "neohorse-1:4b".into());
         let cases = [
             ("Kode verifikasi Anda: 482913.\nJangan berikan kode ini kepada siapa pun.", "en", "482913"),

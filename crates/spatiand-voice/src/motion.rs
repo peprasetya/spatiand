@@ -348,12 +348,13 @@ mod tests {
         assert!(make(&hemera, &Ask { prompt: "  ".into(), duration: 3.0, ..Default::default() }, |_| {}).unwrap_err().contains("how the body moves"));
     }
 
-    /// **Against hemera**: a wave made, fetched and dropped.
+    /// **Against hemera** (`HEMERA`, else the saved AI settings'): a wave made, fetched and dropped.
     /// `cargo test -p spatiand-voice motion -- --ignored`
     #[test]
     #[ignore]
     fn hemera_makes_a_wave() {
-        let hemera = Hemera::new(&crate::settings::VoiceSettings::default().hemera);
+        let hemera = Hemera::new(&crate::settings::hemera_for_tests());
+        assert!(hemera.is_set(), "no hemera: HEMERA=<address>, or one set in the AI settings");
         let ask = Ask { prompt: "a person waves with the right hand raised above the head".into(), duration: 2.0, looping: false, seed: Some(11) };
         let started = Instant::now();
         let mut heard = Vec::new();

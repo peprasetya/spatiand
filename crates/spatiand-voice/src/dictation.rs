@@ -110,6 +110,13 @@ impl Dictation {
             .name("dictation-write".into())
             .spawn(move || {
                 let hemera = Hemera::new(&settings.hemera);
+                if !hemera.is_set() {
+                    // Nothing to write with: said once, and done at once -- no phrase is asked
+                    // about, nor a trouble said for each.
+                    let _ = events_out.send(Event::Trouble(crate::hemera::NOT_SET.into()));
+                    let _ = events_out.send(Event::Done);
+                    return;
+                }
                 while let Ok(Some(phrase)) = phrases_in.recv() {
                     let focus = writer_focus.lock().unwrap().clone();
                     let mine = writer_recent.lock().unwrap().clone();
@@ -326,14 +333,15 @@ fn tail_lines(text: &str, n: usize) -> String {
 mod tests {
     use super::{echoes, typed_line};
 
-    /// Needs hemera (deepmagpie), so it is ignored by default:
+    /// Needs hemera (`HEMERA`, else the saved AI settings'), so it is ignored by default:
     /// `cargo test -p spatiand-voice --lib the_small_model -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn the_small_model_types_the_phrase_and_never_the_terminals_folder() {
         use crate::{context::Description, hemera::Hemera, settings::VoiceSettings, spoken};
         let settings = VoiceSettings::default();
-        let hemera = Hemera::new(&std::env::var("HEMERA").unwrap_or_else(|_| settings.hemera.clone()));
+        let hemera = Hemera::new(&crate::settings::hemera_for_tests());
+        assert!(hemera.is_set(), "no hemera: HEMERA=<address>, or one set in the AI settings");
         let focus = Description { kind: "terminal".into(), title: "~".into(), directory: "~".into(), ..Default::default() };
         for (heard, wanted) in [
             ("Hello, this is a test.", "Hello, this is a test."),
@@ -353,6 +361,23 @@ mod tests {
             // By its words: the rules drop a sentence's commas and full stop.
             assert_eq!(super::words_of(&typed), super::words_of(wanted));
         }
+    }
+
+    #[test]
+    fn with_no_hemera_dictation_says_so_once_and_is_done() {
+        use crate::{context::Description, settings::VoiceSettings, Dictation, Event};
+        let settings = VoiceSettings { hemera: String::new(), ..VoiceSettings::default() };
+        let dictation = Dictation::start(settings, Description::default(), Vec::new());
+        // Something said into it: nothing is asked about it, and no trouble said for it.
+        dictation.feeder().feed(&[9000i16; 16_000]);
+        let started = std::time::Instant::now();
+        let mut told = Vec::new();
+        while !told.contains(&Event::Done) && started.elapsed() < std::time::Duration::from_secs(5) {
+            told.extend(dictation.events().into_iter().filter(|e| matches!(e, Event::Trouble(_) | Event::Text { .. } | Event::Done)));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(told, vec![Event::Trouble(crate::hemera::NOT_SET.into()), Event::Done]);
+        dictation.stop();
     }
 
     #[test]

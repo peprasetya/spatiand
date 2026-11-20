@@ -9,6 +9,14 @@ use spatiand_voice::hemera::ocr::{self, Cancel, Failure, Kind, Options};
 use spatiand_voice::Hemera;
 
 use super::text::ReadText;
+use crate::ai::AiSettings;
+
+/// Whether a picture's words are read as soon as it is shown: the AI settings' switch -- and
+/// hemera's address set. With none, nothing is read by itself and nothing is said of it; the
+/// picture's menu offers "Read the text", which says why it cannot.
+pub fn reads_by_itself(ai: &AiSettings) -> bool {
+    ai.text_in_pictures.read_by_itself && ai.has_hemera()
+}
 
 /// A picture as it is sent to be read.
 pub struct Picture {
@@ -64,6 +72,33 @@ fn said(failure: &Failure) -> String {
     format!("The text could not be read: {}.", failure.words())
 }
 
+/// One reading, on its thread: the picture `make` makes, read by `ai`'s hemera with its languages
+/// and reading model. `None` when it was called off. With no hemera, it is said at once, and no
+/// picture is made for nothing.
+fn read(ai: &AiSettings, make: impl FnOnce() -> Result<Picture, String>, called: &Cancel) -> Option<Result<ReadText, String>> {
+    if !ai.has_hemera() {
+        return Some(Err(said(&Failure::NotSet)));
+    }
+    let picture = match make() {
+        Ok(picture) => picture,
+        Err(e) => return Some(Err(format!("The text could not be read: {}.", e.trim_end_matches('.')))),
+    };
+    if called.cancelled() {
+        return None;
+    }
+    let options = Options {
+        languages: Options::languages(&ai.text_in_pictures.first_language, &ai.text_in_pictures.second_language),
+        orientation: picture.upright.then_some(0),
+        model: Some(ai.models.reading.clone()).filter(|m| !m.trim().is_empty()),
+        ..Default::default()
+    };
+    match Hemera::new(&ai.hemera).read_text(&picture.bytes, picture.kind, &options, called) {
+        Ok(answer) => Some(Ok(ReadText::of(&answer))),
+        Err(Failure::Cancelled) => None,
+        Err(failure) => Some(Err(said(&failure))),
+    }
+}
+
 /// A picture's text being read.
 pub struct Reading {
     cancel: Cancel,
@@ -79,30 +114,9 @@ impl Reading {
         let (tell, told) = channel();
         let called = cancel.clone();
         let _ = std::thread::Builder::new().name("live text".into()).spawn(move || {
-            let picture = match make() {
-                Ok(picture) => picture,
-                Err(e) => {
-                    let _ = tell.send(Err(format!("The text could not be read: {}.", e.trim_end_matches('.'))));
-                    return;
-                }
-            };
-            if called.cancelled() {
-                return;
+            if let Some(answer) = read(&crate::ai::settings(), make, &called) {
+                let _ = tell.send(answer);
             }
-            let ai = crate::ai::settings();
-            let options = Options {
-                languages: Options::languages(&ai.text_in_pictures.first_language, &ai.text_in_pictures.second_language),
-                orientation: picture.upright.then_some(0),
-                model: Some(ai.models.reading.clone()).filter(|m| !m.trim().is_empty()),
-                ..Default::default()
-            };
-            let read = Hemera::new(&ai.hemera).read_text(&picture.bytes, picture.kind, &options, &called);
-            let answer = match read {
-                Ok(answer) => Ok(ReadText::of(&answer)),
-                Err(Failure::Cancelled) => return,
-                Err(failure) => Err(said(&failure)),
-            };
-            let _ = tell.send(answer);
         });
         Reading { cancel, told, started: Instant::now() }
     }
@@ -163,6 +177,21 @@ impl Drop for Translating {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_no_hemera_nothing_is_read_by_itself_and_asked_for_it_says_why() {
+        // A fresh install: the switch on, no address.
+        let fresh = AiSettings::default();
+        assert!(fresh.text_in_pictures.read_by_itself);
+        assert!(!reads_by_itself(&fresh));
+        let mut set = AiSettings { hemera: "http://100.67.14.85:12434".into(), ..AiSettings::default() };
+        assert!(reads_by_itself(&set));
+        set.text_in_pictures.read_by_itself = false;
+        assert!(!reads_by_itself(&set));
+        // "Read the text" chosen: the sentence, at once, and no picture made.
+        let answer = read(&fresh, || panic!("a picture made with no hemera to read it"), &Cancel::new());
+        assert_eq!(answer, Some(Err("The text could not be read: hemera's address is not set (Settings \u{2192} AI).".into())));
+    }
 
     #[test]
     fn a_picture_is_sent_whole_unless_hemera_would_refuse_it() {

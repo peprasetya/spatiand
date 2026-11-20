@@ -78,6 +78,12 @@ impl Dictation {
             return;
         }
         let settings = VoiceSettings::load(&spatiand_sync::default_folders().0);
+        // No hemera to write with: said where trouble is said, and the microphone left closed.
+        if !settings.has_hemera() {
+            log::info!("dictation: not started: hemera's address is not set");
+            self.trouble = Some((spatiand_voice::hemera::NOT_SET.to_string(), Instant::now()));
+            return;
+        }
         log::info!("dictation: listening for {} ({}, {:?})", focus.app, focus.kind, focus.title);
         let voice = spatiand_voice::Dictation::start(settings, focus, self.recent.clone());
         let feeder = voice.feeder();

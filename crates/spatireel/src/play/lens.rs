@@ -67,8 +67,9 @@ const HANDS_DEAF: Duration = Duration::from_millis(600);
 
 impl Lens {
     pub fn new() -> Lens {
-        // A test never asks hemera, whatever the machine's own settings say.
-        let by_itself = !cfg!(test) && spatiand_app::ai::settings().text_in_pictures.read_by_itself;
+        // A test never asks hemera, whatever the machine's own settings say; nor anything with no
+        // hemera to ask.
+        let by_itself = !cfg!(test) && spatiand_app::live_text::reads_by_itself(&spatiand_app::ai::settings());
         Lens { frame: LiveText::new(), cues: LiveText::new(), reading: None, read_size: (1.0, 1.0), still: None, asked: false, capture: false, cue_key: None, cue_lift: 0.0, tap: None, deaf_until: None, by_itself }
     }
 
@@ -448,7 +449,7 @@ impl Playing {
 
     /// The AI settings changed: a paused frame read by itself, or only when asked.
     pub fn ai_changed(&mut self) {
-        self.lens.by_itself = spatiand_app::ai::settings().text_in_pictures.read_by_itself;
+        self.lens.by_itself = spatiand_app::live_text::reads_by_itself(&spatiand_app::ai::settings());
         self.lens.frame.can_read = !self.lens.by_itself && !self.lens.frame.has_text() && self.lens.still.is_some();
     }
 }

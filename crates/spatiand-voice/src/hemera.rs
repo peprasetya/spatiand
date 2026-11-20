@@ -6,6 +6,10 @@
 //!
 //! hemera's errors are `{"error": "<message fit to show a user>"}`, so that message is what an
 //! error here says.
+//!
+//! **No address, no hemera**: a fresh install's AI settings name no server, and a `Hemera` made
+//! from an empty address fails every request at once with [`NOT_SET`], sending nothing anywhere.
+//! What would ask by itself looks at [`Hemera::is_set`] first and does not ask.
 
 use std::time::Duration;
 
@@ -15,6 +19,10 @@ use serde_json::{json, Value};
 pub mod ocr;
 /// A picture's text, translated between the wearer's two languages.
 pub mod translate;
+
+/// What every request says when hemera's address is not set, in words the wearer understands,
+/// fit to go inside a sentence ("The text could not be read: ..."): no full stop.
+pub const NOT_SET: &str = "hemera's address is not set (Settings \u{2192} AI)";
 
 /// One hemera server.
 #[derive(Clone)]
@@ -41,15 +49,31 @@ impl Message {
 }
 
 impl Hemera {
-    /// `base` is the server's address, `http://deepmagpie:12434`; a trailing slash is fine.
+    /// `base` is the server's address, `http://name:12434`; a trailing slash is fine. Empty (or
+    /// blank): no hemera -- every request fails at once with [`NOT_SET`], and nothing is sent.
     pub fn new(base: &str) -> Hemera {
         // Connections kept for the next request: over Wi-Fi each new one costs a round trip, and a
         // turn of the assistant's asks for a few at once.
-        Hemera { base: base.trim_end_matches('/').to_string(), agent: agent(4) }
+        Hemera { base: base.trim().trim_end_matches('/').to_string(), agent: agent(4) }
     }
 
     pub fn base(&self) -> &str {
         &self.base
+    }
+
+    /// Whether there is a hemera to ask: its address is set.
+    pub fn is_set(&self) -> bool {
+        !self.base.is_empty()
+    }
+
+    /// `path` on this hemera -- or, with no address, [`NOT_SET`]: the one guard every request
+    /// goes through before anything is sent.
+    fn url(&self, path: &str) -> Result<String, String> {
+        if self.is_set() {
+            Ok(format!("{}{path}", self.base))
+        } else {
+            Err(NOT_SET.to_string())
+        }
     }
 
     /// What was said in `pcm` (16-bit mono at `rate`).
@@ -127,13 +151,13 @@ impl Hemera {
 
     /// A GET of hemera's, as JSON.
     pub fn get_json(&self, path: &str) -> Result<Value, String> {
-        let reply = answered(within(self.agent.get(&format!("{}{path}", self.base)), Duration::from_secs(5)).call(), &self.base)?;
+        let reply = answered(within(self.agent.get(&self.url(path)?), Duration::from_secs(5)).call(), &self.base)?;
         json_of(reply).map_err(|e| format!("hemera's answer was not readable: {e}"))
     }
 
     /// hemera's models of one kind (`text`, `transcription`, `speech`), by name.
     pub fn models(&self, kind: &str) -> Result<Vec<String>, String> {
-        let reply = answered(within(self.agent.get(&format!("{}/v1/models", self.base)), Duration::from_secs(5)).call(), &self.base)?;
+        let reply = answered(within(self.agent.get(&self.url("/v1/models")?), Duration::from_secs(5)).call(), &self.base)?;
         let list: Value = json_of(reply).map_err(|e| format!("hemera's list of models was not readable: {e}"))?;
         Ok(list
             .get("data")
@@ -153,10 +177,11 @@ impl Hemera {
     /// A POST of JSON, asked again while hemera says it is still getting its model ready (503),
     /// after the wait its `Retry-After` gives -- `tries` times in all.
     pub fn post_json_waiting(&self, path: &str, request: &Value, timeout: Duration, tries: u32) -> Result<Value, String> {
+        let url = self.url(path)?;
         let mut tried = 0;
         loop {
             tried += 1;
-            let asked = self.agent.post(&format!("{}{path}", self.base)).header("Content-Type", "application/json");
+            let asked = self.agent.post(&url).header("Content-Type", "application/json");
             match within(asked, timeout).send(request.to_string().as_bytes()) {
                 Ok(reply) if reply.status().as_u16() == 503 && tried < tries => {
                     let wait = reply.headers().get("Retry-After").and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(10);
@@ -169,7 +194,7 @@ impl Hemera {
 
     /// A DELETE of hemera's: what it holds of something made, let go.
     pub fn delete(&self, path: &str) -> Result<(), String> {
-        answered(within(self.agent.delete(&format!("{}{path}", self.base)), Duration::from_secs(5)).call(), &self.base).map(|_| ())
+        answered(within(self.agent.delete(&self.url(path)?), Duration::from_secs(5)).call(), &self.base).map(|_| ())
     }
 
     /// A POST of a form (`multipart/form-data`): text fields, and one file as `file`. Answered in
@@ -192,14 +217,14 @@ impl Hemera {
     /// A request whose answer is read as it comes (server-sent events): the body, to be read
     /// line by line. Dropping it stops the answer.
     pub fn post_stream(&self, path: &str, request: &Value, timeout: Duration) -> Result<Box<dyn std::io::Read + Send + Sync>, String> {
-        let asked = self.agent.post(&format!("{}{path}", self.base)).header("Content-Type", "application/json").header("Accept", "text/event-stream");
+        let asked = self.agent.post(&self.url(path)?).header("Content-Type", "application/json").header("Accept", "text/event-stream");
         let reply = answered(within(asked, timeout).send(request.to_string()), &self.base)?;
         // No limit on what is read, as ureq 2's `into_reader` had none: speech is as long as it is.
         Ok(Box::new(reply.into_body().into_reader()))
     }
 
     fn post(&self, path: &str, content_type: &str, body: &[u8], timeout: Duration) -> Result<Value, String> {
-        let request = self.agent.post(&format!("{}{path}", self.base)).header("Content-Type", content_type);
+        let request = self.agent.post(&self.url(path)?).header("Content-Type", content_type);
         let reply = answered(within(request, timeout).send(body), &self.base)?;
         json_of(reply).map_err(|e| format!("hemera's answer was not readable: {e}"))
     }
@@ -311,6 +336,34 @@ pub fn read_wav(bytes: &[u8]) -> Option<(Vec<i16>, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_no_address_every_request_fails_at_once_and_says_why() {
+        for blank in ["", "  ", "/"] {
+            let hemera = Hemera::new(blank);
+            assert!(!hemera.is_set(), "{blank:?}");
+            let started = std::time::Instant::now();
+            let said = [
+                hemera.transcribe("whisper-large-v3-turbo", &[0; 1600], 16_000, None, "").unwrap_err(),
+                hemera.complete("neohorse-1:4b", &[Message::user("hello")], 8, Duration::from_secs(30)).unwrap_err(),
+                hemera.get_json("/v1/ocr").unwrap_err(),
+                hemera.models("text").unwrap_err(),
+                hemera.post_json("/v1/motion", &json!({}), Duration::from_secs(30)).unwrap_err(),
+                hemera.post_json_waiting("/v1/motion", &json!({}), Duration::from_secs(30), 5).unwrap_err(),
+                hemera.delete("/v1/motion/1").unwrap_err(),
+                hemera.post_form("/v1/audio/voices", &[("name", "a")], ("a.wav", "audio/wav", b"RIFF"), Duration::from_secs(30)).err().unwrap(),
+                hemera.post_stream("/v1/chat/completions", &json!({}), Duration::from_secs(30)).err().unwrap(),
+            ];
+            assert!(said.iter().all(|s| s == NOT_SET), "{said:?}");
+            // Nothing tried: no name looked up, no connection waited for.
+            assert!(started.elapsed() < Duration::from_millis(200), "{:?}", started.elapsed());
+        }
+        // An address is used as it is given, its trailing slash and blanks off.
+        let hemera = Hemera::new(" http://hemera.local:12434/ ");
+        assert!(hemera.is_set());
+        assert_eq!(hemera.base(), "http://hemera.local:12434");
+        assert_eq!(hemera.url("/v1/models").unwrap(), "http://hemera.local:12434/v1/models");
+    }
 
     #[test]
     fn a_wav_reads_back_as_written() {

@@ -136,7 +136,7 @@ impl Voice {
     /// Have the voice made now, if it is a described one not made yet: the first sentence then
     /// does not wait for it.
     fn prepare(&self) {
-        if !self.shared.spoken.load(Ordering::Relaxed) {
+        if !self.shared.spoken.load(Ordering::Relaxed) || !self.has_hemera() {
             return;
         }
         let shared = self.shared.clone();
@@ -146,10 +146,16 @@ impl Voice {
         });
     }
 
-    /// Say this, after what is already being said. Nothing when the voice is off.
+    /// Whether there is a hemera to speak with: its address is set.
+    fn has_hemera(&self) -> bool {
+        self.shared.hemera.lock().unwrap().is_set()
+    }
+
+    /// Say this, after what is already being said. Nothing when the voice is off, or there is no
+    /// hemera to say it with (a reminder is still shown).
     pub fn say(&self, text: &str) {
         let text = text.trim();
-        if text.is_empty() || !self.shared.spoken.load(Ordering::Relaxed) {
+        if text.is_empty() || !self.shared.spoken.load(Ordering::Relaxed) || !self.has_hemera() {
             return;
         }
         self.shared.waiting.fetch_add(1, Ordering::Relaxed);

@@ -7,6 +7,8 @@
 //! settings' AI row is chosen, [`Card::act`] with what the wearer changed, and [`Card::tick`]
 //! each frame. Dictation reads the same file each time it starts (`crate::dictate`), and every
 //! application through the SDK, which tells it when the file changes (`spatiand_app::ai`).
+//!
+//! With no address (a fresh install's), hemera is not asked at all: the card says it is not set.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
@@ -36,6 +38,13 @@ impl Card {
     }
 
     fn ask(&mut self, hemera: &str, shell: &mut Shell) {
+        // No address: nothing to ask, and nothing asked -- the card says it is not set. An answer
+        // still coming from the hemera that was is let go.
+        if hemera.trim().is_empty() {
+            self.asking = None;
+            shell.set_ai_offered(Offered::default());
+            return;
+        }
         shell.set_ai_offered(Offered { asking: true, ..Default::default() });
         let (tx, rx) = channel();
         let hemera = hemera.to_string();
@@ -191,6 +200,28 @@ mod tests {
         let v = view_of(&s);
         assert_eq!((v.hemera.as_str(), v.larger.as_str(), v.reading.as_str()), ("http://elsewhere:12434", "Ornith-1.5:35b", "pp-ocrv6"));
         assert_eq!(v.first_language, "id");
+    }
+
+    #[test]
+    fn with_no_address_hemera_is_not_asked_and_one_typed_is() {
+        let mut shell = Shell::new(Vec::new(), spatiand_shell::DesktopPanels::ALL, true);
+        let mut card = Card::default();
+        // A fresh install's: no thread, no request, nothing in trouble.
+        card.ask(&AiSettings::default().hemera, &mut shell);
+        assert!(card.asking.is_none());
+        assert_eq!(shell.ai().offered(), &Offered::default());
+        // An address typed: asked.
+        card.ask("http://127.0.0.1:9", &mut shell);
+        assert!(card.asking.is_some() && shell.ai().offered().asking);
+        // Cleared while it is being asked: its answer is let go, and nothing is said of it.
+        card.ask("  ", &mut shell);
+        assert!(card.asking.is_none());
+        assert_eq!(shell.ai().offered(), &Offered::default());
+        // Clearing it on the card is kept as no address.
+        let mut s = AiSettings { hemera: "http://100.67.14.85:12434".into(), ..AiSettings::default() };
+        apply(&mut s, &AiAction::Hemera(String::new()));
+        assert!(!s.has_hemera());
+        assert_eq!(view_of(&s).hemera, "");
     }
 
     #[test]
