@@ -256,6 +256,12 @@ profile's history and wrote an all-time entry to `forgotten-<machine>.json`. Suc
 a person clearing all history writes `from` 0. To reproduce, age `timer_last_fired` and the `bounces` times in a copy
 of the profile's `DIPS` database and start it: the cleanup runs within seconds.
 
+**WebGL is allowed by default (patch 0032; 2026-11-20).** Cromite's "Add webGL site setting" (in
+`patches/base`) blocks WebGL for every site unless allowed one by one, so a page asking for a context
+got none and said the browser had no WebGL (spatiand.com's room), while chrome://gpu showed WebGL
+hardware accelerated. Upstream Chromium allows it; so does SpatiMesh now. The per-site setting stays,
+to block WebGL where wanted, as patch 0001 does for the JavaScript JIT.
+
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
 scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look

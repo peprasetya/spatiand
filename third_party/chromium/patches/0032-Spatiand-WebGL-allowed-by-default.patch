@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 20 Nov 2026 11:30:00 +0700
+Subject: [PATCH] Spatiand: WebGL allowed by default
+
+Cromite blocks WebGL for every site unless allowed one by one, so a page asking for a WebGL
+context gets none and says the browser has no WebGL (spatiand.com's room, 2026-11-20), though
+chrome://gpu shows it hardware accelerated; upstream Chromium allows it. The per-site setting
+stays, to block it where wanted, and Cromite's other half of the patch (no device information in
+a context creation error) is kept.
+---
+  .../content_settings/core/browser/bromite_content_settings/webgl.inc    | 2 +-
+  1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/components/content_settings/core/browser/bromite_content_settings/webgl.inc b/components/content_settings/core/browser/bromite_content_settings/webgl.inc
+index 32fbb90980..8750d12c5d 100644
+--- a/components/content_settings/core/browser/bromite_content_settings/webgl.inc
++++ b/components/content_settings/core/browser/bromite_content_settings/webgl.inc
+@@ -1,4 +1,4 @@
+-  Register(ContentSettingsType::WEBGL, "webgl", CONTENT_SETTING_BLOCK,
++  Register(ContentSettingsType::WEBGL, "webgl", CONTENT_SETTING_ALLOW,
+            WebsiteSettingsInfo::SYNCABLE,
+            /*allowlisted_schemes=*/{},
+            /*valid_settings=*/{CONTENT_SETTING_ALLOW,
