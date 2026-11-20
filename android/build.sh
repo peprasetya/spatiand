@@ -148,8 +148,21 @@ if [ ! -f "$HOME/.android/debug.keystore" ]; then
     keytool -genkeypair -keystore "$HOME/.android/debug.keystore" -storepass android -keypass android \
         -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" -keyalg RSA -keysize 2048 -validity 10000 >/dev/null
 fi
-$BT/apksigner sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
-    --out spatiand.apk $OUT/aligned.apk 2>/dev/null
+# A release for others (`SPATIAND_RELEASE_KEY=<keystore>`, its password in the file
+# `SPATIAND_RELEASE_KEY_PASS`, by default `.spatiand-release-pass` beside it) is signed with the
+# project's release key instead: every later release must be signed with the same key, or a phone
+# that has one installed refuses the update. Development builds keep the debug key, so a phone that
+# runs them is not made to uninstall.
+if [ -n "${SPATIAND_RELEASE_KEY:-}" ]; then
+    pass=${SPATIAND_RELEASE_KEY_PASS:-$(dirname "$SPATIAND_RELEASE_KEY")/.spatiand-release-pass}
+    [ -f "$SPATIAND_RELEASE_KEY" ] && [ -f "$pass" ] || { echo "!! no release key at $SPATIAND_RELEASE_KEY (or its password at $pass)" >&2; exit 1; }
+    $BT/apksigner sign --ks "$SPATIAND_RELEASE_KEY" --ks-pass "file:$pass" \
+        --out spatiand.apk $OUT/aligned.apk
+    $BT/apksigner verify spatiand.apk
+else
+    $BT/apksigner sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android \
+        --out spatiand.apk $OUT/aligned.apk 2>/dev/null
+fi
 echo "built $(pwd)/spatiand.apk"
 
 if [ "${1:-}" = install ]; then
