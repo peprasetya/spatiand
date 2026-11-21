@@ -590,7 +590,7 @@ final class RoomTap {
             CGEventSource(stateID: .combinedSessionState)?.localEventsSuppressionInterval = 0
         }
         hideCursor(on)
-        if on { startRawFingers() } else { sp_multitouch_stop(); rawFingers = false }
+        if on { lastRawAt = Self.uptime; rawLookedAt = lastRawAt; startRawFingers() } else { sp_multitouch_stop(); rawFingers = false }
         if !on {
             keysLock.lock()
             let held = keysDown
@@ -783,7 +783,19 @@ final class RoomTap {
                 warpLock.lock(); touchedAt = Self.uptime; warpLock.unlock()
                 // The fingers come from the trackpad itself, on this thread (`rawFrame`): macOS's
                 // gestures are only dropped.
-                if rawFingers { return nil }
+                if rawFingers {
+                    // **Fingers on a pad whose frames have stopped**: whatever stopped them (the
+                    // trackpad reconnected, the Mac slept), the trackpads are looked for anew, and
+                    // no oftener than every two seconds. Without this the pointer stood still
+                    // for as long as the room had the mouse.
+                    let now = Self.uptime
+                    if now - lastRawAt > 0.5, now - rawLookedAt > 2 {
+                        rawLookedAt = now
+                        let found = sp_multitouch_again()
+                        print("input: fingers on a trackpad that sends no frames; the trackpads were looked for anew (\(found ? "found" : "none"))")
+                    }
+                    return nil
+                }
                 // **Else the touches are read on the main thread**: off it, a trackpad's touches
                 // did not come (no scroll, pinch or gesture of the room's was ever made, and
                 // macOS's own scroll went through). Only the deciding is here, where it must be at once.
@@ -906,6 +918,9 @@ final class RoomTap {
     /// Whether the fingers come from the trackpad itself now (MultitouchSupport), not from macOS's gestures.
     private var rawFingers = false
     private var rawFramesSeen = 0
+    /// When the trackpad's own frames last came, and when the trackpads were last looked for anew (uptime, s).
+    private var lastRawAt = 0.0
+    private var rawLookedAt = 0.0
 
     /// Hear every trackpad's fingers from the trackpad itself, on the pointer's thread.
     private func startRawFingers() {
@@ -932,6 +947,7 @@ final class RoomTap {
         guard let loop = tapLoop else { return }
         CFRunLoopPerformBlock(loop, CFRunLoopMode.commonModes.rawValue) { [self] in
             guard holding, rawFingers else { return }
+            lastRawAt = Self.uptime
             if !frame.all.isEmpty { warpLock.lock(); touchedAt = Self.uptime; warpLock.unlock() }
             if rawFramesSeen < 12 { rawFramesSeen += 1; gestureLog("pointer thread: raw frame, %ld fingers", frame.all.count) }
             heard(frame)

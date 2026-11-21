@@ -6,6 +6,8 @@
 
 #include "include/SPMultitouch.h"
 #include <CoreFoundation/CoreFoundation.h>
+#include <IOKit/IOKitLib.h>
+#include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -77,12 +79,17 @@ static int frame(MTDeviceRef device, MTTouch *touches, int32_t count, double tim
     return 0;
 }
 
-bool sp_multitouch_start(SPFingersCallback callback, void *context) {
-    if (!load()) return false;
-    sp_multitouch_stop();
-    pthread_mutex_lock(&lock);
-    heard = callback;
-    heardContext = context;
+/// Hear every trackpad there is now, in place of those heard before. With the lock held.
+static CFIndex listen(void) {
+    if (devices) {
+        for (CFIndex i = 0; i < CFArrayGetCount(devices); i++) {
+            MTDeviceRef device = (MTDeviceRef)CFArrayGetValueAtIndex(devices, i);
+            if (MTUnregisterContactFrameCallback) MTUnregisterContactFrameCallback(device, frame);
+            MTDeviceStop(device);
+        }
+        CFRelease(devices);
+        devices = NULL;
+    }
     devices = MTDeviceCreateList();
     CFIndex count = devices ? CFArrayGetCount(devices) : 0;
     for (CFIndex i = 0; i < count; i++) {
@@ -90,12 +97,73 @@ bool sp_multitouch_start(SPFingersCallback callback, void *context) {
         MTRegisterContactFrameCallback(device, frame);
         MTDeviceStart(device, 0);
     }
+    return count;
+}
+
+// **A trackpad that comes back is another trackpad.** A Bluetooth Magic Trackpad that drops its
+// connection and takes it up again (it does, by itself, in the middle of use) is a new device to
+// the framework, and the one being heard never says another word: the room's pointer stood still
+// under the finger while macOS's own cursor went on moving (the owner, 2026-11-21). So the
+// trackpads are looked for anew whenever one arrives or goes, for as long as they are heard.
+static IONotificationPortRef watchPort;
+static io_iterator_t watchArrived, watchGone;
+
+static void changed(void *context, io_iterator_t iterator) {
+    (void)context;
+    // The iterator has to be emptied to be told of the next.
+    bool any = false;
+    for (io_object_t one; (one = IOIteratorNext(iterator)); IOObjectRelease(one)) any = true;
+    if (!any) return;
+    // A moment later: the framework has not the new trackpad in its list the instant it arrives.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 300 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+        pthread_mutex_lock(&lock);
+        if (heard) listen();
+        pthread_mutex_unlock(&lock);
+    });
+}
+
+/// With the lock held.
+static void watch(void) {
+    if (watchPort) return;
+    watchPort = IONotificationPortCreate(kIOMainPortDefault);
+    if (!watchPort) return;
+    IONotificationPortSetDispatchQueue(watchPort, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
+    // Those there already are heard by `listen`: the iterators are only emptied, to arm them.
+    if (IOServiceAddMatchingNotification(watchPort, kIOFirstMatchNotification, IOServiceMatching("AppleMultitouchDevice"), changed, NULL, &watchArrived) == KERN_SUCCESS)
+        for (io_object_t one; (one = IOIteratorNext(watchArrived)); IOObjectRelease(one)) {}
+    if (IOServiceAddMatchingNotification(watchPort, kIOTerminatedNotification, IOServiceMatching("AppleMultitouchDevice"), changed, NULL, &watchGone) == KERN_SUCCESS)
+        for (io_object_t one; (one = IOIteratorNext(watchGone)); IOObjectRelease(one)) {}
+}
+
+/// With the lock held.
+static void unwatch(void) {
+    if (watchArrived) { IOObjectRelease(watchArrived); watchArrived = 0; }
+    if (watchGone) { IOObjectRelease(watchGone); watchGone = 0; }
+    if (watchPort) { IONotificationPortDestroy(watchPort); watchPort = NULL; }
+}
+
+bool sp_multitouch_start(SPFingersCallback callback, void *context) {
+    if (!load()) return false;
+    pthread_mutex_lock(&lock);
+    heard = callback;
+    heardContext = context;
+    CFIndex count = listen();
+    // Watched even with none: the trackpad may be yet to connect.
+    watch();
+    pthread_mutex_unlock(&lock);
+    return count > 0;
+}
+
+bool sp_multitouch_again(void) {
+    pthread_mutex_lock(&lock);
+    CFIndex count = heard ? listen() : 0;
     pthread_mutex_unlock(&lock);
     return count > 0;
 }
 
 void sp_multitouch_stop(void) {
     pthread_mutex_lock(&lock);
+    unwatch();
     if (devices) {
         for (CFIndex i = 0; i < CFArrayGetCount(devices); i++) {
             MTDeviceRef device = (MTDeviceRef)CFArrayGetValueAtIndex(devices, i);

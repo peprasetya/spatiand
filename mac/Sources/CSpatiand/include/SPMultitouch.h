@@ -27,9 +27,13 @@ typedef struct {
 /// fingers of that frame (none, once they have all gone) and the pad's size in millimetres.
 typedef void (*SPFingersCallback)(const SPFinger *fingers, int32_t count, float width_mm, float height_mm, void *context);
 
-/// Start hearing every trackpad there is. False when the framework is not there, or has no
-/// trackpad. Safe to call again: the trackpads are looked for anew.
+/// Start hearing every trackpad there is, and every one that comes while they are heard (a
+/// Bluetooth trackpad that reconnects is a new one). False when the framework is not there, or
+/// has no trackpad just now. Safe to call again: the trackpads are looked for anew.
 bool sp_multitouch_start(SPFingersCallback callback, void *context);
+/// Look for the trackpads anew while they are being heard: for when their frames have stopped
+/// though fingers are on one. False when there is none.
+bool sp_multitouch_again(void);
 /// Stop hearing them.
 void sp_multitouch_stop(void);
 
