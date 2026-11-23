@@ -142,6 +142,9 @@ struct Pal {
     /// once it is heard out).
     state: &'static str,
     finished_at: Option<Instant>,
+    /// When it was last asked something, or last said or did something: a pose or a face held
+    /// longer than `pack::HELD_FOR` since is let go. `None`: longer ago than can be told.
+    stirred: Option<Instant>,
     /// When the wearer last spoke over it, and what it had been saying: what is heard next is
     /// checked against that.
     interrupted: Option<(Instant, String)>,
@@ -601,6 +604,9 @@ impl Pal {
         let before = self.settings.clone();
         // Read again as it is now: another pal, its files just written, or Pixel's settings.
         self.load_pack();
+        if pal_changed {
+            self.held_since_kept();
+        }
         if written {
             log::info!("pal {}: its own lines written into its folder", self.pack.folder);
         }
@@ -897,6 +903,28 @@ impl Pal {
         }
     }
 
+    /// A pal just read holds what it holds since its look was kept, as far as can be told: a pose
+    /// kept from another day is let go at once.
+    fn held_since_kept(&mut self) {
+        self.stirred = self.pack.look_kept().and_then(|ago| Instant::now().checked_sub(ago));
+    }
+
+    /// A pose or a face held is let go once nothing has been asked of it, said or done by it for
+    /// `pack::HELD_FOR`: it stands as its figure does by itself again, looking at the wearer.
+    fn tend_pose(&mut self) {
+        if self.answering.is_some() || self.voice.speaking() || !self.making.is_empty() {
+            self.stirred = Some(Instant::now());
+            return;
+        }
+        if !self.pack.holds() || self.stirred.is_some_and(|at| at.elapsed() < pack::HELD_FOR) {
+            return;
+        }
+        if let Some(room) = self.pack.rest() {
+            log::info!("pal {}: the pose and face it held let go, nothing said for a while", self.pack.key());
+            self.app.room_ask(&room.to_string(), channel().0);
+        }
+    }
+
     /// A pal's look changed by its model (`tools.rs`'s `appearance`): kept, and the room told.
     fn appear(&mut self, with: &Value) -> Value {
         match self.pack.apply(with) {
@@ -1158,6 +1186,7 @@ impl Pal {
             self.look_at_reminders();
             self.look_at_pack();
             self.look_at_moves();
+            self.tend_pose();
             self.tend_mood();
             self.draw()?;
         }
@@ -1304,10 +1333,12 @@ fn main() {
             away: false,
             state: "",
             finished_at: None,
+            stirred: None,
             interrupted: None,
         };
         // The pal chosen, over the settings: its name, voice and chats from the start.
         pal.load_pack();
+        pal.held_since_kept();
         *pal.name.lock().unwrap() = pal.settings.name.clone();
         pal.voice.set_voice(spoken_voice(&pal.settings), Hemera::new(&pal.ai.hemera));
         pal.chats = store::chats_with(&pal.settings.pal);

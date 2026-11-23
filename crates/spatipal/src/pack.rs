@@ -26,7 +26,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -192,6 +192,12 @@ pub struct About {
     /// Its materials that may be given another colour, in words: `{"hair": "your hair"}`.
     pub colours: BTreeMap<String, String>,
 }
+
+/// How long a pose or a face is held with nothing asked of its pal and nothing said by it: then
+/// it is let go, by itself. A model takes a pose for a moment of a conversation and seldom lets
+/// it go: one held its head up for four days, kept from start to start (the owner, 2026-11-23:
+/// "why I feel the model looks to top.. not to me...").
+pub const HELD_FOR: Duration = Duration::from_secs(600);
 
 /// How it looks now: what each group shows, the pose held -- one of its animations, or one of its
 /// own making, by its parts' words -- the face held, colours asked for.
@@ -846,6 +852,33 @@ impl Pack {
         Ok(made)
     }
 
+    /// Whether it holds a pose or a face: what is let go again ([`HELD_FOR`]).
+    pub fn holds(&self) -> bool {
+        !self.look.pose.is_empty() || !self.look.own_pose.is_empty() || !self.look.face.is_empty()
+    }
+
+    /// The pose and the face it holds let go: it stands as its figure does by itself, looking at
+    /// the wearer. Kept, and what the room is to be told; nothing when it held none. What it wears
+    /// and its colours stay.
+    pub fn rest(&mut self) -> Option<Value> {
+        if !self.holds() {
+            return None;
+        }
+        self.look.pose.clear();
+        self.look.own_pose.clear();
+        self.look.face.clear();
+        self.keep_look();
+        let mut room = self.figure_request(true);
+        room.as_object_mut().map(|r| r.remove("visible"));
+        Some(room)
+    }
+
+    /// How long ago its look was kept: how long it has held what it holds, at the least, for a
+    /// SpatiPal just started.
+    pub fn look_kept(&self) -> Option<Duration> {
+        std::fs::metadata(self.dir.join("look.json")).and_then(|m| m.modified()).ok().and_then(|at| at.elapsed().ok())
+    }
+
     fn keep_look(&self) {
         let kept = serde_json::to_string_pretty(&self.look).map_err(|e| e.to_string()).and_then(|text| crate::store::write(&self.own_dir()?.join("look.json"), &text));
         if let Err(e) = kept {
@@ -1243,6 +1276,14 @@ mod tests {
         assert_eq!(kept.own_pose.len(), 1);
         p.apply(&json!({"pose": "none"})).unwrap();
         assert!(p.look.own_pose.is_empty());
+        // A pose and a face held are let go together, what it wears kept: nothing held, nothing to tell.
+        p.apply(&json!({"outfit": "dress", "own_pose": {"head": "up"}})).unwrap();
+        assert!(p.holds() && p.look_kept().is_some_and(|ago| ago < Duration::from_secs(60)));
+        let room = p.rest().unwrap();
+        assert_eq!((room["pose"].as_str(), room["options"]["outfit"].as_str(), room.get("visible")), (Some(""), Some("dress"), None));
+        let kept: Look = serde_json::from_str(&std::fs::read_to_string(p.dir.join("look.json")).unwrap()).unwrap();
+        assert!(kept.own_pose.is_empty() && kept.pose.is_empty() && kept.options["outfit"] == "dress");
+        assert!(!p.holds() && p.rest().is_none());
         let _ = std::fs::remove_dir_all(&p.dir);
     }
 

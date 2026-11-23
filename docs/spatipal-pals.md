@@ -34,7 +34,7 @@ choice beside it.
 pal.json      what it is called, its files, its voice and models; its figure's choices in words
 persona.md    who it is
 figure.glb    its figure (or a .vrm)
-look.json     how it looks now: written by SpatiPal as it changes, so it looks the same tomorrow
+look.json     how it looks now: written by SpatiPal as it changes, so it wears the same tomorrow
 moves/        the moves made for it from words, <name>.json each (make_move, below), and BVH
               animations given it (<name>.bvh: "Animations from BVH files", below); idle.json or
               idle.bvh there is how it stands when nothing else happens
@@ -60,7 +60,7 @@ Every field may be left out; one left out is the room's own, never Pixel's.
 | `private` | See above. |
 | `signs` | `false` takes away the robot's lights over its head (listening, writing down, thinking): for a figure whose own animations show what it is doing. |
 | `options` | Its figure's options in words, by group, for its model: `{"outfit": {"dress": "a short black dress and heels"}}`. |
-| `moves`, `poses` | Its animations in words: `{"wave": "a wave"}`. A move is played once; a pose is held until another is chosen, or none. An animation in neither is offered as a move, unless it is one the room plays by itself (below). |
+| `moves`, `poses` | Its animations in words: `{"wave": "a wave"}`. A move is played once; a pose is held until another is chosen, or none, or the conversation is over (below). An animation in neither is offered as a move, unless it is one the room plays by itself (below). |
 | `faces` | Its expressions in words: offered to hold (a pout, a smirk). |
 | `colours` | Its materials that may be given another colour, in words: `{"hair": "your hair"}`. |
 
@@ -302,6 +302,15 @@ not there is answered with the ones that are, for the model to choose again.
 
 SpatiPal keeps the look in `look.json` and tells the room, through `spatiand_assist_v1`'s `avatar`
 (the protocol's notes, `crates/spatiand-proto/protocol/spatiand-xr-v1.xml`, have its fields).
+
+**A pose and a face are for the conversation; what it wears is kept.** A model takes a pose for a
+moment and seldom lets it go: one held "head up, chest a little back" from 19 November, kept in
+`look.json` from start to start, and four days later its wearer asked "why I feel the model looks
+to top.. not to me..." (2026-11-23). So a pose (by name, of words, or of its own) and a face are
+let go by SpatiPal itself once nothing has been asked of the pal, and it has said and made nothing,
+for ten minutes (`pack::HELD_FOR`; `Pal::tend_pose`, `Pack::rest`): the figure stands as it does by
+itself again, facing the wearer. A SpatiPal just started counts from when `look.json` was last
+written, so a pose from another day is let go at once. Outfit, hair and colours stay as they are.
 
 ## Moves and poses made from words: `make_move`
 
