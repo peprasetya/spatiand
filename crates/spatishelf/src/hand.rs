@@ -250,8 +250,10 @@ impl Shelf {
 
     pub(crate) fn content_press(&mut self, x: f32, y: f32) {
         let m = self.modifiers;
-        // Control-click on a Mac is the right button, as everywhere on a Mac.
-        if cfg!(target_os = "macos") && m.control && !m.logo {
+        // Control-click on a Mac is the right button, as everywhere on a Mac. Command is not
+        // Control, though the Mac's room hands it over as the right Control: Command-click
+        // chooses one more, or one fewer.
+        if cfg!(target_os = "macos") && menu_click(m) {
             self.context_menu(x, y);
             return;
         }
@@ -549,10 +551,12 @@ impl Shelf {
         if *to == Place::Trash {
             return false;
         }
-        if m.alt || m.control {
+        // A Mac's Command moves; it reaches here as the right Control, which is not a copy.
+        let mac_command = cfg!(target_os = "macos") && (m.logo || m.command);
+        if m.alt || (m.control && !mac_command) {
             return true;
         }
-        if m.shift || (cfg!(target_os = "macos") && m.logo) {
+        if m.shift || mac_command {
             return false;
         }
         match (from, to) {
@@ -1114,5 +1118,27 @@ mod uri_tests {
         assert_eq!(pixels.len(), (w * h * 4) as usize);
         assert!(pixels.chunks_exact(4).filter(|p| p[3] > 200).count() > (w * h / 2) as usize);
         assert_eq!(pixels[3], 0, "the corner is outside the rounding");
+    }
+}
+
+/// Whether a click with these keys held is a Mac's Control-click (its right button): the left
+/// Control alone. Command comes from the Mac's room as the right Control (`command`), and is
+/// for choosing.
+pub(crate) fn menu_click(m: Modifiers) -> bool {
+    m.control && !m.command && !m.logo
+}
+
+#[cfg(test)]
+mod menu_click_tests {
+    use super::*;
+
+    #[test]
+    fn a_macs_command_click_chooses_and_only_its_control_click_is_the_right_button() {
+        let held = |control, command, logo| Modifiers { control, command, logo, ..Default::default() };
+        assert!(menu_click(held(true, false, false)));
+        // Command, as the Mac's room gives it: the right Control.
+        assert!(!menu_click(held(true, true, false)));
+        assert!(!menu_click(held(false, false, true)));
+        assert!(!menu_click(held(false, false, false)));
     }
 }

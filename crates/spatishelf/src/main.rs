@@ -1683,7 +1683,7 @@ impl Shelf {
                 Some('r') => self.act(Action::Refresh),
                 // Control-H on Linux, as its file managers have it; Shift-Command-. on a Mac.
                 Some('h') if m.shift || m.logo || !cfg!(target_os = "macos") => self.act(Action::ToggleHidden),
-                Some('.') if m.shift && m.logo => self.act(Action::ToggleHidden),
+                Some('.') if m.shift && (m.logo || m.command) => self.act(Action::ToggleHidden),
                 Some('1') => self.set_view(View::Grid),
                 Some('2') => self.set_view(View::List),
                 Some('l') => {
