@@ -42,6 +42,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 pub mod ai;
+pub mod browser;
 pub mod clipboard;
 pub mod config;
 pub mod describe;
@@ -481,6 +482,22 @@ impl App {
             let _ = std::io::Read::read_to_string(&mut file, &mut answer);
             let _ = reply.send(answer);
         });
+    }
+
+    /// Open a link in SpatiMesh (`spatiand_xr_v1.ask_system`, `open_link`): in the profile
+    /// named (`browser::Profile::id`), or with none in the one SpatiMesh would open itself. The
+    /// room starts SpatiMesh or hands the link to the one running, the same on every platform.
+    pub fn open_link(&mut self, url: &str, profile: Option<&str>) -> Result<(), String> {
+        let mut asked = serde_json::json!({ "do": "open_link", "url": url });
+        if let Some(profile) = profile {
+            asked["profile"] = profile.into();
+        }
+        let answer = self.ask_system(&asked.to_string(), std::time::Duration::from_secs(5))?;
+        let answer: serde_json::Value = serde_json::from_str(&answer).map_err(|_| "The room's answer could not be read.".to_string())?;
+        match answer.get("error").and_then(|e| e.as_str()) {
+            Some(why) => Err(why.to_string()),
+            None => Ok(()),
+        }
     }
 
     /// Ask the room what only it can ask of the system it runs on (`spatiand_xr_v1.ask_system`:

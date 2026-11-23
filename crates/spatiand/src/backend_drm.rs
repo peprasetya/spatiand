@@ -3364,6 +3364,9 @@ pub fn run(
                     }
                     // The assistant's questions and actions (`crate::assist`); what needs the shell is
                     // done next frame, as a pointer's is.
+                    // What a client asked the room to start (a link for SpatiMesh): started as
+                    // from the launcher, with a place for its sound.
+                    pointed_events.extend(runtime.state.own_launches.get_or_insert_with(Vec::new).drain(..).map(ShellEvent::LaunchOwn));
                     pointed_events.extend(crate::assist::serve(&mut runtime.state, Some(&shell), &windows, &mut renderer, time_ms, Some(&crate::assist::Sight { orientation, stereo })));
                     crate::spatikey::serve(&mut runtime.state, time_ms);
 

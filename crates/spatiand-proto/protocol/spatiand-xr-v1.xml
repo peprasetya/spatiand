@@ -105,6 +105,17 @@
           file with that application, in the room, as any of the system's own
           applications is opened there; `{"ok": true}` once it is on its way.
 
+        And one the room answers itself, on every system:
+
+        - `{"do": "open_link", "url": u, "profile": id}`: open that address of
+          the web in SpatiMesh -- started if it is not running, else handed to
+          the one that is. `profile`, where given, is one of SpatiMesh's
+          profiles as its folder in the shared data is named
+          (its folder in `apps/spatimesh/profiles`); without it SpatiMesh opens the
+          profile it would open itself. A profile with a lock is not opened by
+          this: its lock is given only in SpatiMesh's own window for it.
+          `{"ok": true}` once it is on its way.
+
         An answer of `{"error": "..."}` says what went wrong in words fit to
         show.
       </description>

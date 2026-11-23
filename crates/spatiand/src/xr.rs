@@ -433,20 +433,22 @@ pub fn answer_system_with(asker: impl Fn(String, std::os::fd::OwnedFd) + Send + 
     let _ = SYSTEM_ASKER.set(Box::new(asker));
 }
 
+/// A short answer into a client's descriptor, without waiting: this is the compositor's thread,
+/// and a pipe nobody reads would otherwise hold every window. Written whole into a pipe with
+/// room, or not at all.
+fn answer_at_once(answer: std::os::fd::OwnedFd, reply: &[u8]) {
+    use std::os::fd::AsRawFd;
+    let fd = answer.as_raw_fd();
+    unsafe { libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK) };
+    let mut file = std::fs::File::from(answer);
+    let _ = std::io::Write::write_all(&mut file, reply);
+}
+
 fn ask_system(json: String, answer: std::os::fd::OwnedFd) {
     match SYSTEM_ASKER.get() {
         Some(asker) => asker(json, answer),
         // Here a client asks the system itself (desktop entries, Launch Services).
-        // The descriptor is the client's: written without waiting, since this is the
-        // compositor's thread and a pipe nobody reads would otherwise hold every window.
-        // The answer is a few bytes, written whole into a pipe with room or not at all.
-        None => {
-            use std::os::fd::AsRawFd;
-            let fd = answer.as_raw_fd();
-            unsafe { libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL) | libc::O_NONBLOCK) };
-            let mut file = std::fs::File::from(answer);
-            let _ = std::io::Write::write_all(&mut file, br#"{"error":"Here an application asks the system itself."}"#);
-        }
+        None => answer_at_once(answer, br#"{"error":"Here an application asks the system itself."}"#),
     }
 }
 
@@ -489,7 +491,20 @@ impl Dispatch<SpatiandXrV1, ()> for Spatiand {
                 // there is a head to track. See `crate::pose`.
                 state.pose_channels_to_open = true;
             }
-            spatiand_xr_v1::Request::AskSystem { json, answer } => ask_system(json, answer),
+            spatiand_xr_v1::Request::AskSystem { json, answer } => {
+                // A link for SpatiMesh is the room's own to open, on every platform; the
+                // rest is the system's (`ask_system`).
+                let asked = serde_json::from_str::<serde_json::Value>(&json).ok();
+                match asked.as_ref().filter(|v| v.get("do").and_then(|d| d.as_str()) == Some("open_link")) {
+                    Some(v) => {
+                        let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default();
+                        let profile = v.get("profile").and_then(|p| p.as_str());
+                        let reply = crate::own::open_link(state, url, profile);
+                        answer_at_once(answer, reply.as_bytes());
+                    }
+                    None => ask_system(json, answer),
+                }
+            }
             spatiand_xr_v1::Request::Destroy => {}
             _ => {}
         }

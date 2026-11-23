@@ -426,6 +426,13 @@ impl Reel {
                 let device = self.store.lock().unwrap().device.clone();
                 self.work.call(move || Some(Done::SignedIn(jellyfin::sign_in(flavour, &address, &user, &password, &device).map(Account::Jellyfin))));
             }
+            Act::OpenLink { url, profile } => {
+                if let Err(why) = self.app.open_link(&url, profile.as_deref()) {
+                    if let Screen::Add(add) = &mut self.screen {
+                        add.link_failed(why);
+                    }
+                }
+            }
             Act::Pair { address, cancelled } => {
                 // One client for the whole of it: the code is bound to the session that
                 // asked, so asking, waiting and reading what was approved are one job.
@@ -437,6 +444,19 @@ impl Reel {
                         Err(e) => return Some(Done::SignedIn(Err(e.to_string()))),
                     };
                     screens::show_code(&offer.code);
+                    // And a link for the same session, where the server gives one: the pairing
+                    // approved in SpatiMesh, here, by whoever's profile the wearer chooses. A
+                    // server that gives none (an older one) leaves the code as the only way.
+                    let link = vibrefy_api::pairing::LinkKey::generate().ok().and_then(|key| match client.request_pairing_link(&key) {
+                        Ok(link) => Some(link),
+                        Err(e) => {
+                            eprintln!("spatireel: no sign-in link from this server ({e}); the code is the way");
+                            None
+                        }
+                    });
+                    if let Some(link) = &link {
+                        screens::show_link(&link.url);
+                    }
                     let started = Instant::now();
                     while started.elapsed() < Duration::from_secs(offer.seconds_left.max(30)) {
                         if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
@@ -453,6 +473,14 @@ impl Reel {
                             Ok(PairingState::Expired) => break,
                             Ok(PairingState::Refused { reason }) => return Some(Done::SignedIn(Err(reason))),
                             Err(e) => return Some(Done::SignedIn(Err(e.to_string()))),
+                        }
+                        // The link's approval is asked after by its own key; only its approval
+                        // matters, the code's wait above being what times the pairing out.
+                        if let Some(link) = &link {
+                            if let Ok(PairingState::Approved { account }) = client.poll_pairing(&link.key) {
+                                let _ = client.browse("");
+                                return Some(Done::SignedIn(Ok(Account::Vibrefy(vibrefy::Server::account_of(&client, account)))));
+                            }
                         }
                     }
                     Some(Done::SignedIn(Err("the code ran out before anybody approved it".into())))
@@ -797,8 +825,11 @@ fn main() {
         if let Ok(add) = std::env::var("SPATIREEL_ADD") {
             let parts: Vec<&str> = add.splitn(4, ',').collect();
             if let ["vibrefy", address] = parts[..] {
-                reel.show(Screen::Add(Add::new(None)));
-                reel.act(Act::Pair { address: address.into(), cancelled: Arc::default() });
+                // As the form itself asks: the pairing screen up, the profiles read, the code asked for.
+                let mut form = Add::new(Some(address.into()));
+                let act = form.pair_again();
+                reel.show(Screen::Add(form));
+                reel.act(act);
             }
             if let [kind, address, user, password] = parts[..] {
                 let flavour = if kind == "emby" { jellyfin::Flavour::Emby } else { jellyfin::Flavour::Jellyfin };

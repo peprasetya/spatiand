@@ -92,6 +92,12 @@ pub struct Spatiand {
     pub arrived_windows: Vec<(usize, Option<u32>, Option<String>)>,
     /// Windows that have gone since the render loop last looked.
     pub departed_windows: Vec<usize>,
+    /// Applications of Spatiand's own that a client asked the room to start (a link for
+    /// SpatiMesh: `crate::own::open_link`), for a backend that starts its applications with
+    /// more than `crate::own::launch` gives them (the Deck's, a place for their sound) and
+    /// takes them from here each frame. `None` where there is no such backend: they are
+    /// started at once.
+    pub own_launches: Option<Vec<spatiand_shell::AppEntry>>,
     pub running: bool,
     pub socket_name: String,
 
@@ -366,6 +372,7 @@ impl Spatiand {
             display_handle: dh,
             arrived_windows: Vec::new(),
             departed_windows: Vec::new(),
+            own_launches: None,
             running: true,
             socket_name,
             compositor_state,

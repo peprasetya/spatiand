@@ -39,7 +39,8 @@ spatiand-ai = { path = "../spatiand-ai" }
 spatiand-voice = { path = "../spatiand-voice" }
 unicode-segmentation = "1"
 png = "0.18"
+# SpatiMesh's profile files (`browser`), and what the room is asked as JSON (`App::open_link`).
+serde_json.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true
-serde_json.workspace = true

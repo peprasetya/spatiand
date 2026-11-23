@@ -129,6 +129,21 @@ has not been in front of anybody's eyes.
 | `crates/spatireel` | **Home**: what is part watched, from every source at once, each with its picture and whose it is; then the sources. **Sources** (`source/`): this machine's folders (up to the root; `.strm` pointers played; where each film was left is kept), Jellyfin and Emby (sign in by name and password; a token is kept, never the password; posters; `static` streams so nothing is transcoded; the server's own word for a 3D film's packing; play, progress and stop reported), Vibrefy (paired by code; browse; streams; progress), DLNA (found by SSDP; browsed; played; no place kept). **A film**: every layout; a menu for layout, sound track, subtitles, speed and sync; resumed where it was left. Tiles are posters or frames by what the folder's pictures mostly are. Lists and pictures are fetched on threads and held in memory only. What is kept is `~/.config/spatiand/spatireel.json`. |
 | `tools/fake-jellyfin.py`, `fake-vibrefy.py`, `fake-dlna.py` | Stand-ins for the servers, to look at SpatiReel without one. |
 
+**Signing in to Vibrefy through SpatiMesh (2026-11-23).** The pairing screen still shows the eight-digit code, for
+a device that is signed in elsewhere; under it, where the server also gives a sign-in link for the same pairing
+(`vibrefy_api::Client::request_pairing_link`, polled by its own key beside the code), it asks "Or sign in here, in
+SpatiMesh. Whose?" with a button for each of SpatiMesh's profiles, by its name and colour. **The profile is asked
+every time and never remembered** (the owner: "keep offer profile selection. I can have more than 2 user with
+different content"). The profiles are read from the shared data (`spatiand_app::browser::profiles`: name, colour and
+whether there is a lock, nothing a profile holds), and the link is opened by the room (`spatiand_xr_v1.ask_system`,
+`{"do": "open_link", "url", "profile"}`, `crate::own::open_link`: SpatiMesh's own start with
+`--profile-directory` and the address, on every platform; on the Deck through the launcher's own way of starting it,
+so its sound has its place). A locked profile is named but not offered: SpatiMesh opens a locked profile only from
+its own profile menu (patch 0012), so a link is never a way round a lock; whoever's profile is locked signs in with
+the code. Opening a link in a locked profile through its own lock window needs a SpatiMesh patch and waits for the
+158 build. Chromium's copy of the protocol (`third_party/wayland-protocols/spatiand`) takes the new description of
+`ask_system` at that build too: the request's shape did not change.
+
 **Checked**, on an Intel Mac with the snapshot backend (`SPATIAND_CLIENT=... spatiand-mac`),
 which runs the real compositor and the real application as two processes and draws one eye to
 a PNG, driven by scripted clicks and keys:

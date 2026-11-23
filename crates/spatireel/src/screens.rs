@@ -32,6 +32,9 @@ pub enum Act {
     SignIn { flavour: Flavour, address: String, user: String, password: String },
     /// Ask a Vibrefy server for a code and wait for it to be approved, until `cancelled`.
     Pair { address: String, cancelled: Arc<AtomicBool> },
+    /// Open the sign-in link a Vibrefy server gave in SpatiMesh, in the profile chosen (none:
+    /// the one SpatiMesh would open itself).
+    OpenLink { url: String, profile: Option<String> },
     /// Pair with this Vibrefy server again, its session having run out: straight to a code.
     Reconnect(String),
     /// Stop offering to pair again.
@@ -766,6 +769,19 @@ pub fn show_code(code: &str) {
     *CODE.lock().unwrap() = Some(code.to_string());
 }
 
+/// The sign-in link the same server gave beside the code, where it gives one: approved in a
+/// browser on this machine, which is SpatiMesh. Set by the thread that asked.
+static LINK: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn show_link(url: &str) {
+    *LINK.lock().unwrap() = Some(url.to_string());
+}
+
+fn forget_pairing() {
+    *CODE.lock().unwrap() = None;
+    *LINK.lock().unwrap() = None;
+}
+
 enum Stage {
     /// Which kind of server.
     Pick,
@@ -790,11 +806,21 @@ pub struct Add {
     pointer: (f32, f32),
     /// The Vibrefy server last paired with, which its address field starts with.
     last: Option<String>,
+    /// **Whose SpatiMesh signs in**: its profiles, read anew for every pairing and asked every
+    /// time -- never remembered, since the people of one machine each have their own profile
+    /// and their own films (the owner, 2026-11-23: "keep offer profile selection. I can have
+    /// more than 2 user with different content"). A button for each that can be opened.
+    profiles: Vec<spatiand_app::browser::Profile>,
+    choices: Vec<Button>,
+    /// Which of them has the keys.
+    choice: usize,
+    /// The link has been handed to SpatiMesh: said under the buttons.
+    handed: Option<String>,
 }
 
 impl Add {
     pub fn new(last: Option<String>) -> Add {
-        *CODE.lock().unwrap() = None;
+        forget_pairing();
         let mut kinds = Strip::default();
         kinds.shape = Shape::Wide;
         kinds.focused = true;
@@ -803,7 +829,7 @@ impl Add {
         fields[1].hint = "Name".into();
         fields[2].hint = "Password".into();
         fields[2].secret = true;
-        Add { stage: Stage::Pick, kinds, fields, focus: 0, go: Button::default(), back: Button::default(), busy: None, cancelled: Arc::default(), trouble: None, pointer: (0.0, 0.0), last }
+        Add { stage: Stage::Pick, kinds, fields, focus: 0, go: Button::default(), back: Button::default(), busy: None, cancelled: Arc::default(), trouble: None, pointer: (0.0, 0.0), last, profiles: Vec::new(), choices: Vec::new(), choice: 0, handed: None }
     }
 
     /// Straight to pairing with the server last paired with: the code is asked for at once.
@@ -827,7 +853,24 @@ impl Add {
     pub fn failed(&mut self, why: String) {
         self.busy = None;
         self.trouble = Some(why);
-        *CODE.lock().unwrap() = None;
+        forget_pairing();
+    }
+
+    /// The link could not be handed to SpatiMesh: the code is still good, and the wait goes on.
+    pub fn link_failed(&mut self, why: String) {
+        self.handed = None;
+        self.trouble = Some(why);
+    }
+
+    /// The profiles a link may be opened in: those without a lock.
+    fn open(&self) -> Vec<&spatiand_app::browser::Profile> {
+        self.profiles.iter().filter(|p| !p.locked).collect()
+    }
+
+    /// How many buttons the link has: one for each profile that can be opened, or one alone
+    /// where SpatiMesh has no profile files yet, or every profile it has is locked.
+    fn choice_count(&self) -> usize {
+        self.open().len().max(1)
     }
 
     /// How many fields this stage has.
@@ -866,6 +909,8 @@ impl Add {
                 let count = self.count();
                 let column = Rect { w: all.w.min(820.0), ..all };
                 let mut column = column;
+                // What is said under the form has the window's whole width: at the form's it was cut short.
+                let wide = all.w;
                 let code = CODE.lock().unwrap().clone();
                 for (index, field) in self.fields.iter_mut().take(count).enumerate() {
                     field.focused = self.focus == index && self.busy.is_none();
@@ -893,14 +938,106 @@ impl Add {
                     p.label(
                         gl,
                         "Type this into Vibrefy on a device that is signed in. This screen goes on by itself.",
-                        column.take_top(theme::DETAIL_EM * 2.0),
+                        Rect { w: wide, ..column.take_top(theme::DETAIL_EM * 2.0) },
                         theme::DETAIL_EM,
                         theme::ink_detail(),
                         0.0,
                     );
+                    if LINK.lock().unwrap().is_some() {
+                        self.draw_link(p, gl, &mut column, wide);
+                    }
                 }
             }
         }
+    }
+
+    /// Under the code: the same pairing approved here, in SpatiMesh, by whoever's profile is chosen.
+    fn draw_link(&mut self, p: &mut Painter, gl: &Gl, column: &mut Rect, wide: f32) {
+        let open: Vec<(String, [u8; 3])> = self.open().iter().map(|pr| (pr.name.clone(), pr.colour)).collect();
+        let locked: Vec<String> = self.profiles.iter().filter(|pr| pr.locked).map(|pr| pr.name.clone()).collect();
+        let count = self.choice_count();
+        self.choices.resize_with(count, Button::default);
+        self.choice = self.choice.min(count - 1);
+        column.take_top(22.0);
+        let ask = match (open.len(), self.profiles.is_empty()) {
+            (0, true) => "Or sign in here, in SpatiMesh:",
+            (0, false) => "Or sign in here, in SpatiMesh (its profiles are all locked, so in the one it opens):",
+            (1, _) if locked.is_empty() => "Or sign in here, in SpatiMesh:",
+            _ => "Or sign in here, in SpatiMesh. Whose?",
+        };
+        p.label(gl, ask, Rect { w: wide, ..column.take_top(theme::DETAIL_EM * 2.0) }, theme::DETAIL_EM, theme::ink_detail(), 0.0);
+        column.take_top(6.0);
+        let mut row = column.take_top(Button::HEIGHT);
+        for index in 0..count {
+            // One alone is the browser's name; several are the people's.
+            let (label, colour) = match open.get(index) {
+                Some((name, colour)) if open.len() > 1 || !locked.is_empty() => (name.clone(), Some(*colour)),
+                _ => ("Sign in with SpatiMesh".to_string(), open.first().map(|(_, c)| *c)),
+            };
+            let dot = if colour.is_some() { Button::HEIGHT * 0.36 + 10.0 } else { 0.0 };
+            let width = Button::width(p, gl, &label) + dot;
+            if row.w < width {
+                column.take_top(10.0);
+                row = column.take_top(Button::HEIGHT);
+            }
+            let area = row.take_left(width);
+            row.take_left(12.0);
+            let button = &mut self.choices[index];
+            button.focused = self.choice == index;
+            // Its label to the right of the profile's colour, as SpatiMesh's own menu shows it.
+            button.draw(p, gl, area, "");
+            let mut inside = area;
+            if let Some([r, g, b]) = colour {
+                let side = Button::HEIGHT * 0.36;
+                let mark = Rect::new(area.x + theme::ROW_INSET * 0.7, area.y + (area.h - side) * 0.5, side, side);
+                p.fill(gl, mark, side * 0.5, [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]);
+                inside = Rect { x: area.x + dot, w: area.w - dot, ..area };
+            }
+            let ink = if button.focused { theme::ink() } else { theme::ink_row() };
+            p.label(gl, &label, inside, theme::ROW_EM * 0.86, ink, 0.5);
+        }
+        if !locked.is_empty() && !open.is_empty() {
+            column.take_top(8.0);
+            let said = format!("Locked, so not offered here: {}. With a locked profile, sign in with the code.", locked.join(", "));
+            p.label(gl, &said, Rect { w: wide, ..column.take_top(theme::DETAIL_EM * 2.0) }, theme::DETAIL_EM, theme::ink_detail(), 0.0);
+        }
+        if let Some(handed) = &self.handed {
+            column.take_top(8.0);
+            p.label(gl, handed, Rect { w: wide, ..column.take_top(theme::DETAIL_EM * 2.0) }, theme::DETAIL_EM, look::TEAL, 0.0);
+        }
+    }
+
+    /// While the code is up: the buttons that hand its link to SpatiMesh.
+    fn link_input(&mut self, input: &Input) -> Act {
+        let Some(url) = LINK.lock().unwrap().clone() else { return Act::Nothing };
+        let count = self.choice_count().min(self.choices.len());
+        if count == 0 {
+            return Act::Nothing;
+        }
+        if let Input::Key { key, modifiers, .. } = input {
+            match key {
+                Key::Left | Key::Up => self.choice = (self.choice + count - 1) % count,
+                Key::Tab if modifiers.shift => self.choice = (self.choice + count - 1) % count,
+                Key::Right | Key::Down | Key::Tab => self.choice = (self.choice + 1) % count,
+                _ => {}
+            }
+        }
+        let mut pressed = None;
+        for index in 0..count {
+            self.choices[index].focused = self.choice == index;
+            if self.choices[index].input(input) {
+                pressed = Some(index);
+            }
+        }
+        let Some(index) = pressed else { return Act::Nothing };
+        self.choice = index;
+        let profile = self.open().get(index).map(|p| (p.id.clone(), p.name.clone()));
+        self.trouble = None;
+        self.handed = Some(match &profile {
+            Some((_, name)) if self.profiles.len() > 1 => format!("Opened in SpatiMesh for {name}. Approve it there; this screen goes on by itself."),
+            _ => "Opened in SpatiMesh. Approve it there; this screen goes on by itself.".to_string(),
+        });
+        Act::OpenLink { url, profile: profile.map(|(id, _)| id) }
     }
 
     fn submit(&mut self) -> Act {
@@ -916,6 +1053,11 @@ impl Add {
             Stage::Form(flavour) => Act::SignIn { flavour, address, user: self.fields[1].text.trim().to_string(), password: self.fields[2].text.clone() },
             Stage::Pair => {
                 self.cancelled = Arc::default();
+                // Whose profiles there are now: read for this pairing, and asked again at the next.
+                self.profiles = spatiand_app::browser::profiles();
+                self.choices.clear();
+                self.choice = 0;
+                self.handed = None;
                 let address = if address.contains("://") { address } else { format!("https://{address}") };
                 Act::Pair { address, cancelled: self.cancelled.clone() }
             }
@@ -928,7 +1070,8 @@ impl Add {
         if leaving {
             // Whoever is waiting for a code to be approved is told to stop.
             self.cancelled.store(true, Ordering::Relaxed);
-            *CODE.lock().unwrap() = None;
+            forget_pairing();
+            self.handed = None;
             if matches!(self.stage, Stage::Pick) {
                 return Act::Home;
             }
@@ -950,7 +1093,7 @@ impl Add {
             return Act::Nothing;
         }
         if self.busy.is_some() {
-            return Act::Nothing;
+            return if matches!(self.stage, Stage::Pair) { self.link_input(input) } else { Act::Nothing };
         }
         let count = self.count();
         // A press on a field gives it the keys.

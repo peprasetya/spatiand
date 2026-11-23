@@ -251,6 +251,52 @@ pub fn adopt(shell: &mut spatiand_shell::Shell) {
     shell.set_own_apps(own, group_icon());
 }
 
+/// A link for SpatiMesh, as a client asks for one to be opened (`spatiand_xr_v1.ask_system`,
+/// `open_link`): SpatiMesh's own start with the address after it, and the profile named where
+/// one is. A SpatiMesh that is running takes the address from the one started and opens it;
+/// one that is not, starts. Only an address of the web, and nothing in it or in the profile's
+/// name that could be read as anything else on a command line.
+///
+/// A profile is named as its folder in the shared data is (`apps/spatimesh/profiles/<id>`):
+/// `default` is Chromium's `Default`, any other its `Spatiand-<id>` (patch 0009). **A locked
+/// profile is not opened by this**: SpatiMesh opens the unlocked one used last instead (patch
+/// 0012), so a link can never be a way round a lock.
+pub fn link_entry(url: &str, profile: Option<&str>) -> Result<AppEntry, String> {
+    let web = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).is_some_and(|rest| !rest.is_empty());
+    if !web || url.len() > 2048 || url.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\\' | '\'' | '`')) {
+        return Err("That is not an address SpatiMesh can be given.".into());
+    }
+    let folder = match profile {
+        None => None,
+        Some("default") => Some("Default".to_string()),
+        Some(id) if !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric()) => Some(format!("Spatiand-{id}")),
+        Some(_) => return Err("That is not one of SpatiMesh's profiles.".into()),
+    };
+    let start = chromium_spatimesh().ok_or("SpatiMesh is not installed here.")?;
+    let profile = folder.map(|f| format!(" --profile-directory={f}")).unwrap_or_default();
+    Ok(AppEntry {
+        name: "SpatiMesh".into(),
+        exec: format!("{start} --ozone-platform=wayland{profile} \"{url}\""),
+        icon: None,
+        categories: Vec::new(),
+    })
+}
+
+/// Open a link in SpatiMesh for a client that asked. What to answer it.
+pub fn open_link(state: &mut crate::state::Spatiand, url: &str, profile: Option<&str>) -> String {
+    match link_entry(url, profile) {
+        Ok(app) => {
+            log::info!("a client asked for a link to be opened in SpatiMesh{}", if profile.is_some() { ", in a profile it named" } else { "" });
+            match &mut state.own_launches {
+                Some(waiting) => waiting.push(app),
+                None => launch(&app, &state.socket_name.clone(), &[]),
+            }
+            r#"{"ok":true}"#.to_string()
+        }
+        Err(why) => serde_json::json!({ "error": why }).to_string(),
+    }
+}
+
 /// Start one, as a client of this compositor.
 pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)]) {
     let mut extra = extra.to_vec();
@@ -810,6 +856,24 @@ pub mod mic {
 #[cfg(test)]
 mod assistant_tests {
     use super::*;
+
+    #[test]
+    fn a_link_for_spatimesh_is_an_address_of_the_web_and_a_profile_is_a_folder_of_its_own() {
+        // Refused before SpatiMesh is looked for, so the same wherever this is run.
+        for url in ["", "https://", "file:///etc/passwd", "javascript:alert(1)", "--remote-debugging-port=9222", "https://a.example/ --no-sandbox", "https://a.example/\"x", "https://a.example/\\x", "chrome://settings"] {
+            assert!(link_entry(url, None).is_err(), "{url:?} is not for SpatiMesh");
+        }
+        for profile in ["", "../Default", "Default --no-sandbox", "a b", "aa11\""] {
+            assert!(link_entry("https://a.example/", Some(profile)).is_err(), "{profile:?} is no profile");
+        }
+        // Where SpatiMesh is, the address is the last word, quoted, and the profile's folder named.
+        if let Ok(app) = link_entry("https://a.example/pair/Ab-_9?x=1&y=2", Some("aa11")) {
+            assert!(app.exec.ends_with(" --profile-directory=Spatiand-aa11 \"https://a.example/pair/Ab-_9?x=1&y=2\""), "{}", app.exec);
+        }
+        if let Ok(app) = link_entry("http://a.example/", Some("default")) {
+            assert!(app.exec.ends_with(" --profile-directory=Default \"http://a.example/\""), "{}", app.exec);
+        }
+    }
 
     #[test]
     fn the_assistant_is_known_by_its_program() {
