@@ -132,17 +132,22 @@ has not been in front of anybody's eyes.
 **Signing in to Vibrefy through SpatiMesh (2026-11-23).** The pairing screen still shows the eight-digit code, for
 a device that is signed in elsewhere; under it, where the server also gives a sign-in link for the same pairing
 (`vibrefy_api::Client::request_pairing_link`, polled by its own key beside the code), it asks "Or sign in here, in
-SpatiMesh. Whose?" with a button for each of SpatiMesh's profiles, by its name and colour. **The profile is asked
-every time and never remembered** (the owner: "keep offer profile selection. I can have more than 2 user with
-different content"). The profiles are read from the shared data (`spatiand_app::browser::profiles`: name, colour and
-whether there is a lock, nothing a profile holds), and the link is opened by the room (`spatiand_xr_v1.ask_system`,
-`{"do": "open_link", "url", "profile"}`, `crate::own::open_link`: SpatiMesh's own start with
-`--profile-directory` and the address, on every platform; on the Deck through the launcher's own way of starting it,
-so its sound has its place). A locked profile is named but not offered: SpatiMesh opens a locked profile only from
-its own profile menu (patch 0012), so a link is never a way round a lock; whoever's profile is locked signs in with
-the code. Opening a link in a locked profile through its own lock window needs a SpatiMesh patch and waits for the
-158 build. Chromium's copy of the protocol (`third_party/wayland-protocols/spatiand`) takes the new description of
-`ask_system` at that build too: the request's shape did not change.
+SpatiMesh. Whose profile?" with a drop-down of SpatiMesh's profiles, by name, and a "Sign in with SpatiMesh" button
+beside it (2026-11-24; buttons, one a profile, before). **The profile is asked every time and never remembered** (the
+owner: "keep offer profile selection. I can have more than 2 user with different content"): the drop-down starts on
+"Choose a profile" at every pairing, and the button opens it until one is chosen. With one profile there is only the
+button. The profiles are read from the shared data (`spatiand_app::browser::profiles`: name, colour and whether there
+is a lock, nothing a profile holds), and the link is opened by the room (`spatiand_xr_v1.ask_system`,
+`{"do": "open_link", "url", "profile"}`, `crate::own::open_link`: SpatiMesh's own start with `--profile-directory`,
+`--ask-profile-lock` and the address, on every platform; on the Deck through the launcher's own way of starting it,
+so its sound has its place). **A locked profile is listed like any other, and nothing in SpatiReel says it is locked**
+(the owner, 2026-11-24): SpatiMesh asks for its PIN or password itself, as for a new window of that profile from the
+profile menu, and opens nothing if that is refused. That is patch 0033: a start that names a locked profile *and*
+says it was chosen (`--ask-profile-lock`) is that profile's, behind its lock window; a start that only names one
+still opens the unlocked profile used last (patch 0012), so nothing opens a locked profile by itself. A SpatiMesh
+without patch 0033 opens the link in that other profile, so SpatiReel's drop-down and patch 0033 go to a machine
+together. Chromium's copy of the protocol (`third_party/wayland-protocols/spatiand`) takes the new description of
+`ask_system` at the 158 build: the request's shape did not change.
 
 **Checked**, on an Intel Mac with the snapshot backend (`SPATIAND_CLIENT=... spatiand-mac`),
 which runs the real compositor and the real application as two processes and draws one eye to

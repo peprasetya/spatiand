@@ -1,0 +1,47 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Tue, 24 Nov 2026 09:00:00 +0700
+Subject: [PATCH] Spatiand: a locked profile that was chosen asks for its lock at the start
+
+A start naming a locked profile opens the unlocked one used last (0012): nothing opens a locked
+profile by itself. But a link the wearer sends to a profile from another application (SpatiReel's
+sign-in to Vibrefy, through the room's open_link) is that profile chosen, and went to somebody
+else's. Such a start says so, --ask-profile-lock, and is then the named profile's, behind its PIN
+window as a new window of it from the profile menu is; refused, the window closes and, with no
+other, the browser goes. A SpatiMesh already running took the profile named and asked its lock
+before this, and still does.
+---
+ chrome/browser/spatiand/profiles_sync.cc | 15 +++++++++++++--
+ 1 file changed, 13 insertions(+), 2 deletions(-)
+
+--- a/chrome/browser/spatiand/profiles_sync.cc
++++ b/chrome/browser/spatiand/profiles_sync.cc
+@@ -264,12 +264,22 @@
+   PrefService* local_state = g_browser_process->local_state();
+   ProfileManager* manager = g_browser_process->profile_manager();
+   const base::FilePath& user_data_dir = manager->user_data_dir();
+-  // A start naming a locked profile opens the last used unlocked one, as a plain start does.
++  // A start naming a locked profile opens the last used unlocked one, as a plain start does --
++  // unless whoever started it chose that profile themselves and says so (--ask-profile-lock, as
++  // the room's open_link gives it for a link the wearer sends to a profile from another
++  // application): then the start is that profile's, behind its PIN window, as a new window of it
++  // from the profile menu is (the owner, 2026-11-24: "when open the locked profile, spatimesh
++  // should be asked the code, as like if open new window with the profile"). Its window waits in
++  // DeferShow; refused, it closes, and with no other window the browser goes.
+   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+   if (const base::FilePath named = command_line->GetSwitchValuePath(switches::kProfileDirectory);
+       !named.empty() && HasLock(user_data_dir.Append(named))) {
+-    LOG(WARNING) << "SpatiMesh: " << named << " has a lock; the start opens the last profile used";
+-    command_line->RemoveSwitch(switches::kProfileDirectory);
++    if (command_line->HasSwitch("ask-profile-lock")) {
++      LOG(WARNING) << "SpatiMesh: " << named << " has a lock, and was chosen: its lock is asked";
++    } else {
++      LOG(WARNING) << "SpatiMesh: " << named << " has a lock; the start opens the last profile used";
++      command_line->RemoveSwitch(switches::kProfileDirectory);
++    }
+   }
+   std::set<base::FilePath> open;
+   if (local_state->HasPrefPath(prefs::kProfilesLastActive)) {
+-- 
+2.43.0
+

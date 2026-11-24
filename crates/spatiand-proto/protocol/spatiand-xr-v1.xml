@@ -112,8 +112,9 @@
           the one that is. `profile`, where given, is one of SpatiMesh's
           profiles as its folder in the shared data is named
           (its folder in `apps/spatimesh/profiles`); without it SpatiMesh opens the
-          profile it would open itself. A profile with a lock is not opened by
-          this: its lock is given only in SpatiMesh's own window for it.
+          profile it would open itself. A profile with a lock is opened behind
+          its lock: SpatiMesh asks for it in its own window, as for a new
+          window of that profile, and opens nothing if it is refused.
           `{"ok": true}` once it is on its way.
 
         An answer of `{"error": "..."}` says what went wrong in words fit to

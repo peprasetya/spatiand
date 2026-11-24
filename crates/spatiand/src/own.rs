@@ -259,8 +259,11 @@ pub fn adopt(shell: &mut spatiand_shell::Shell) {
 ///
 /// A profile is named as its folder in the shared data is (`apps/spatimesh/profiles/<id>`):
 /// `default` is Chromium's `Default`, any other its `Spatiand-<id>` (patch 0009). **A locked
-/// profile is not opened by this**: SpatiMesh opens the unlocked one used last instead (patch
-/// 0012), so a link can never be a way round a lock.
+/// profile asks for its lock**: the profile was chosen by the wearer, which the start says
+/// (`--ask-profile-lock`, patch 0033), so SpatiMesh opens it behind its PIN window as it does
+/// a new window of it from its profile menu; a link is never a way round a lock. (A start
+/// that only names a locked profile, without that, opens the unlocked one used last: patch
+/// 0012.)
 pub fn link_entry(url: &str, profile: Option<&str>) -> Result<AppEntry, String> {
     let web = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).is_some_and(|rest| !rest.is_empty());
     if !web || url.len() > 2048 || url.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\\' | '\'' | '`')) {
@@ -273,7 +276,7 @@ pub fn link_entry(url: &str, profile: Option<&str>) -> Result<AppEntry, String> 
         Some(_) => return Err("That is not one of SpatiMesh's profiles.".into()),
     };
     let start = chromium_spatimesh().ok_or("SpatiMesh is not installed here.")?;
-    let profile = folder.map(|f| format!(" --profile-directory={f}")).unwrap_or_default();
+    let profile = folder.map(|f| format!(" --profile-directory={f} --ask-profile-lock")).unwrap_or_default();
     Ok(AppEntry {
         name: "SpatiMesh".into(),
         exec: format!("{start} --ozone-platform=wayland{profile} \"{url}\""),
@@ -868,10 +871,10 @@ mod assistant_tests {
         }
         // Where SpatiMesh is, the address is the last word, quoted, and the profile's folder named.
         if let Ok(app) = link_entry("https://a.example/pair/Ab-_9?x=1&y=2", Some("aa11")) {
-            assert!(app.exec.ends_with(" --profile-directory=Spatiand-aa11 \"https://a.example/pair/Ab-_9?x=1&y=2\""), "{}", app.exec);
+            assert!(app.exec.ends_with(" --profile-directory=Spatiand-aa11 --ask-profile-lock \"https://a.example/pair/Ab-_9?x=1&y=2\""), "{}", app.exec);
         }
         if let Ok(app) = link_entry("http://a.example/", Some("default")) {
-            assert!(app.exec.ends_with(" --profile-directory=Default \"http://a.example/\""), "{}", app.exec);
+            assert!(app.exec.ends_with(" --profile-directory=Default --ask-profile-lock \"http://a.example/\""), "{}", app.exec);
         }
     }
 

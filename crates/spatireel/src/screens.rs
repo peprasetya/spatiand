@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use spatiand_app::ui::{theme, Button, Confirm, Icon, Field, Grid, Input, Painter, Rect, Shape, Strip, Texture, Tile, Typed};
+use spatiand_app::ui::{theme, Button, Confirm, Icon, Field, Grid, Input, Menu, MenuSaid, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed};
 use spatiand_app::{Gl, Key};
 use spatiand_media::still::Still;
 
@@ -809,11 +809,20 @@ pub struct Add {
     /// **Whose SpatiMesh signs in**: its profiles, read anew for every pairing and asked every
     /// time -- never remembered, since the people of one machine each have their own profile
     /// and their own films (the owner, 2026-11-23: "keep offer profile selection. I can have
-    /// more than 2 user with different content"). A button for each that can be opened.
+    /// more than 2 user with different content"). They are chosen from a drop-down, every one
+    /// of them, and nothing there says which has a lock: SpatiMesh asks for a locked one's
+    /// code itself, as it does for a new window of that profile (the owner, 2026-11-24: "it
+    /// doesn't give any hint if the profile is locked or no").
     profiles: Vec<spatiand_app::browser::Profile>,
-    choices: Vec<Button>,
-    /// Which of them has the keys.
-    choice: usize,
+    /// The drop-down, and the button that opens the link in the profile it names.
+    whose: Button,
+    sign: Button,
+    /// Which profile the drop-down names: none until one is chosen, at every pairing.
+    picked: Option<usize>,
+    /// The drop-down's list, while it is open.
+    menu: Option<Menu>,
+    /// Which of the two has the keys: the drop-down (0) or the button (1).
+    link_focus: usize,
     /// The link has been handed to SpatiMesh: said under the buttons.
     handed: Option<String>,
 }
@@ -829,7 +838,7 @@ impl Add {
         fields[1].hint = "Name".into();
         fields[2].hint = "Password".into();
         fields[2].secret = true;
-        Add { stage: Stage::Pick, kinds, fields, focus: 0, go: Button::default(), back: Button::default(), busy: None, cancelled: Arc::default(), trouble: None, pointer: (0.0, 0.0), last, profiles: Vec::new(), choices: Vec::new(), choice: 0, handed: None }
+        Add { stage: Stage::Pick, kinds, fields, focus: 0, go: Button::default(), back: Button::default(), busy: None, cancelled: Arc::default(), trouble: None, pointer: (0.0, 0.0), last, profiles: Vec::new(), whose: Button::default(), sign: Button::default(), picked: None, menu: None, link_focus: 0, handed: None }
     }
 
     /// Straight to pairing with the server last paired with: the code is asked for at once.
@@ -862,15 +871,10 @@ impl Add {
         self.trouble = Some(why);
     }
 
-    /// The profiles a link may be opened in: those without a lock.
-    fn open(&self) -> Vec<&spatiand_app::browser::Profile> {
-        self.profiles.iter().filter(|p| !p.locked).collect()
-    }
-
-    /// How many buttons the link has: one for each profile that can be opened, or one alone
-    /// where SpatiMesh has no profile files yet, or every profile it has is locked.
-    fn choice_count(&self) -> usize {
-        self.open().len().max(1)
+    /// Whether the wearer is asked whose: with one profile, or none written down yet, the
+    /// link opens in what SpatiMesh opens.
+    fn asks_whose(&self) -> bool {
+        self.profiles.len() > 1
     }
 
     /// How many fields this stage has.
@@ -953,91 +957,131 @@ impl Add {
 
     /// Under the code: the same pairing approved here, in SpatiMesh, by whoever's profile is chosen.
     fn draw_link(&mut self, p: &mut Painter, gl: &Gl, column: &mut Rect, wide: f32) {
-        let open: Vec<(String, [u8; 3])> = self.open().iter().map(|pr| (pr.name.clone(), pr.colour)).collect();
-        let locked: Vec<String> = self.profiles.iter().filter(|pr| pr.locked).map(|pr| pr.name.clone()).collect();
-        let count = self.choice_count();
-        self.choices.resize_with(count, Button::default);
-        self.choice = self.choice.min(count - 1);
+        let asks = self.asks_whose();
+        self.picked = self.picked.filter(|&at| at < self.profiles.len());
+        if !asks {
+            self.link_focus = 1;
+        }
         column.take_top(22.0);
-        let ask = match (open.len(), self.profiles.is_empty()) {
-            (0, true) => "Or sign in here, in SpatiMesh:",
-            (0, false) => "Or sign in here, in SpatiMesh (its profiles are all locked, so in the one it opens):",
-            (1, _) if locked.is_empty() => "Or sign in here, in SpatiMesh:",
-            _ => "Or sign in here, in SpatiMesh. Whose?",
-        };
+        let ask = if asks { "Or sign in here, in SpatiMesh. Whose profile?" } else { "Or sign in here, in SpatiMesh:" };
         p.label(gl, ask, Rect { w: wide, ..column.take_top(theme::DETAIL_EM * 2.0) }, theme::DETAIL_EM, theme::ink_detail(), 0.0);
         column.take_top(6.0);
         let mut row = column.take_top(Button::HEIGHT);
-        for index in 0..count {
-            // One alone is the browser's name; several are the people's.
-            let (label, colour) = match open.get(index) {
-                Some((name, colour)) if open.len() > 1 || !locked.is_empty() => (name.clone(), Some(*colour)),
-                _ => ("Sign in with SpatiMesh".to_string(), open.first().map(|(_, c)| *c)),
-            };
-            let dot = if colour.is_some() { Button::HEIGHT * 0.36 + 10.0 } else { 0.0 };
-            let width = Button::width(p, gl, &label) + dot;
-            if row.w < width {
-                column.take_top(10.0);
-                row = column.take_top(Button::HEIGHT);
+        let mut below = (row.x, row.bottom() + 6.0);
+        if asks {
+            // The drop-down: the chosen profile's colour and name, and the mark that it opens.
+            let side = Button::HEIGHT * 0.36;
+            let mark_room = theme::ROW_EM * 0.9 + 14.0;
+            let mut widest = Button::width(p, gl, "Choose a profile");
+            for profile in &self.profiles {
+                widest = widest.max(Button::width(p, gl, &profile.name));
             }
+            let width = (widest + side + 10.0 + mark_room).min(row.w * 0.6);
             let area = row.take_left(width);
             row.take_left(12.0);
-            let button = &mut self.choices[index];
-            button.focused = self.choice == index;
-            // Its label to the right of the profile's colour, as SpatiMesh's own menu shows it.
-            button.draw(p, gl, area, "");
-            let mut inside = area;
-            if let Some([r, g, b]) = colour {
-                let side = Button::HEIGHT * 0.36;
-                let mark = Rect::new(area.x + theme::ROW_INSET * 0.7, area.y + (area.h - side) * 0.5, side, side);
-                p.fill(gl, mark, side * 0.5, [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]);
-                inside = Rect { x: area.x + dot, w: area.w - dot, ..area };
-            }
-            let ink = if button.focused { theme::ink() } else { theme::ink_row() };
-            p.label(gl, &label, inside, theme::ROW_EM * 0.86, ink, 0.5);
+            below = (area.x, area.bottom() + 6.0);
+            self.whose.focused = self.link_focus == 0 && self.menu.is_none();
+            self.whose.draw(p, gl, area, "");
+            let ink = if self.whose.focused { theme::ink() } else { theme::ink_row() };
+            let mut inside = Rect { x: area.x + theme::ROW_INSET * 0.7, w: area.w - theme::ROW_INSET * 0.7 - mark_room, ..area };
+            let label = match self.picked.and_then(|at| self.profiles.get(at)) {
+                Some(profile) => {
+                    let [r, g, b] = profile.colour;
+                    let dot = Rect::new(inside.x, area.y + (area.h - side) * 0.5, side, side);
+                    p.fill(gl, dot, side * 0.5, [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]);
+                    inside = Rect { x: inside.x + side + 10.0, w: inside.w - side - 10.0, ..inside };
+                    profile.name.as_str()
+                }
+                None => "Choose a profile",
+            };
+            p.label(gl, label, inside, theme::ROW_EM * 0.86, ink, 0.0);
+            let mark = theme::ROW_EM * 0.9;
+            spatiand_app::ui::draw_icon(p, gl, Icon::Disclosed, Rect::new(area.right() - mark - 14.0, area.y + (area.h - mark) * 0.5, mark, mark), ink);
         }
-        if !locked.is_empty() && !open.is_empty() {
-            column.take_top(8.0);
-            let said = format!("Locked, so not offered here: {}. With a locked profile, sign in with the code.", locked.join(", "));
-            p.label(gl, &said, Rect { w: wide, ..column.take_top(theme::DETAIL_EM * 2.0) }, theme::DETAIL_EM, theme::ink_detail(), 0.0);
-        }
+        let label = "Sign in with SpatiMesh";
+        let width = Button::width(p, gl, label);
+        self.sign.focused = self.link_focus == 1 && self.menu.is_none();
+        self.sign.draw(p, gl, row.take_left(width), label);
         if let Some(handed) = &self.handed {
             column.take_top(8.0);
             p.label(gl, handed, Rect { w: wide, ..column.take_top(theme::DETAIL_EM * 2.0) }, theme::DETAIL_EM, look::TEAL, 0.0);
         }
+        // The drop-down's list, over everything under it.
+        if let Some(menu) = self.menu.as_mut() {
+            let rows: Vec<Row> = self.profiles.iter().map(|pr| Row::new(pr.name.clone())).collect();
+            menu.at = below;
+            let within = p.bounds();
+            menu.draw(p, gl, &rows, within);
+        }
     }
 
-    /// While the code is up: the buttons that hand its link to SpatiMesh.
+    /// While the code is up: the drop-down of profiles, and the button that hands the link to
+    /// SpatiMesh in the one chosen.
     fn link_input(&mut self, input: &Input) -> Act {
         let Some(url) = LINK.lock().unwrap().clone() else { return Act::Nothing };
-        let count = self.choice_count().min(self.choices.len());
-        if count == 0 {
+        if let Input::Pointer { x, y } = input {
+            self.pointer = (*x, *y);
+        }
+        let asks = self.asks_whose();
+        // Open, the list has everything.
+        if let Some(menu) = self.menu.as_mut() {
+            match menu.input(input, self.pointer) {
+                Some(MenuSaid::Chose(at)) if at < self.profiles.len() => {
+                    self.picked = Some(at);
+                    self.menu = None;
+                    self.link_focus = 1;
+                    self.trouble = None;
+                }
+                Some(_) => self.menu = None,
+                None => {}
+            }
             return Act::Nothing;
         }
-        if let Input::Key { key, modifiers, .. } = input {
+        if let Input::Key { key, .. } = input {
             match key {
-                Key::Left | Key::Up => self.choice = (self.choice + count - 1) % count,
-                Key::Tab if modifiers.shift => self.choice = (self.choice + count - 1) % count,
-                Key::Right | Key::Down | Key::Tab => self.choice = (self.choice + 1) % count,
+                Key::Left | Key::Right | Key::Tab if asks => self.link_focus = 1 - self.link_focus.min(1),
+                Key::Down | Key::Up if asks && self.link_focus == 0 => {
+                    self.open_whose();
+                    return Act::Nothing;
+                }
                 _ => {}
             }
         }
-        let mut pressed = None;
-        for index in 0..count {
-            self.choices[index].focused = self.choice == index;
-            if self.choices[index].input(input) {
-                pressed = Some(index);
-            }
+        self.whose.focused = asks && self.link_focus == 0;
+        self.sign.focused = !asks || self.link_focus == 1;
+        if asks && self.whose.input(input) {
+            self.link_focus = 0;
+            self.open_whose();
+            return Act::Nothing;
         }
-        let Some(index) = pressed else { return Act::Nothing };
-        self.choice = index;
-        let profile = self.open().get(index).map(|p| (p.id.clone(), p.name.clone()));
+        if !self.sign.input(input) {
+            return Act::Nothing;
+        }
+        self.link_focus = 1;
+        let profile = if asks {
+            // Whose is asked first: none is taken for granted.
+            let Some(profile) = self.picked.and_then(|at| self.profiles.get(at)) else {
+                self.link_focus = 0;
+                self.open_whose();
+                return Act::Nothing;
+            };
+            Some((profile.id.clone(), profile.name.clone()))
+        } else {
+            None
+        };
         self.trouble = None;
         self.handed = Some(match &profile {
-            Some((_, name)) if self.profiles.len() > 1 => format!("Opened in SpatiMesh for {name}. Approve it there; this screen goes on by itself."),
-            _ => "Opened in SpatiMesh. Approve it there; this screen goes on by itself.".to_string(),
+            Some((_, name)) => format!("Opened in SpatiMesh for {name}. Approve it there; this screen goes on by itself."),
+            None => "Opened in SpatiMesh. Approve it there; this screen goes on by itself.".to_string(),
         });
         Act::OpenLink { url, profile: profile.map(|(id, _)| id) }
+    }
+
+    /// The drop-down's list, its keys on the profile named, or the first.
+    fn open_whose(&mut self) {
+        let mut menu = Menu::new((0.0, 0.0));
+        menu.list.cursor = self.picked.unwrap_or(0);
+        self.menu = Some(menu);
     }
 
     fn submit(&mut self) -> Act {
@@ -1055,8 +1099,9 @@ impl Add {
                 self.cancelled = Arc::default();
                 // Whose profiles there are now: read for this pairing, and asked again at the next.
                 self.profiles = spatiand_app::browser::profiles();
-                self.choices.clear();
-                self.choice = 0;
+                self.picked = None;
+                self.menu = None;
+                self.link_focus = 0;
                 self.handed = None;
                 let address = if address.contains("://") { address } else { format!("https://{address}") };
                 Act::Pair { address, cancelled: self.cancelled.clone() }
@@ -1066,6 +1111,11 @@ impl Add {
     }
 
     fn input(&mut self, input: &Input) -> Act {
+        // The drop-down of profiles, open, has everything: Escape puts it away and leaves nothing.
+        if self.menu.is_some() && self.busy.is_some() && matches!(self.stage, Stage::Pair) {
+            return self.link_input(input);
+        }
+        self.menu = None;
         let leaving = self.back.input(input) || matches!(input, Input::Key { key: Key::Escape, .. });
         if leaving {
             // Whoever is waiting for a code to be approved is told to stop.
