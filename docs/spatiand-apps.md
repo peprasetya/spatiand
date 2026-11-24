@@ -264,8 +264,17 @@ them onto the folder under the point they are let go of; SpatiMesh takes files a
 them in a new tab when let go of over its tabs and in the page when over the page. Checked in the
 snapshot compositor: a file dragged from one SpatiShelf's window onto a folder in another's, and
 from SpatiShelf onto SpatiMesh's tabs (Chromium's since 2026-11-10: the Rust window was removed;
-`tools/spatiand-dnd-e2e.py` with `SPATIAND_CHROMIUM_BIN`). Not yet: dragging out of a page, and
-into or out of a Mac's or a host's own windows.
+`tools/spatiand-dnd-e2e.py` with `SPATIAND_CHROMIUM_BIN`). **A picture dragged out of a page**
+(2026-11-24; the owner: "I drag an image from spatimesh... to the a folder in spatishelf the image
+is not saved in the folder") comes as the file's own bytes with its name
+(`application/octet-stream;name="..."`, Chromium's on Wayland) and its address on the web, not as a
+file anywhere: SpatiShelf takes that form when nothing dragged is a file on this machine, reads it
+when it is let go of and puts it in the folder under it by its name (numbered beside one of that
+name; only the name's last part, never hidden), on a disk or a remote -- written to a folder of
+its own in the temporary directory and moved from there as anything else is. Checked in the
+snapshot compositor with the Deck's Chromium (`mesh-to-shelf` of the same script): saved byte for
+byte. A link or text dragged out of a page is still not taken. Not yet: into or out of a Mac's or
+a host's own windows.
 
 ## 2026-11-14: SpatiShelf's list opens folders where they are (Finder's list)
 

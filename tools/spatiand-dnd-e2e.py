@@ -8,6 +8,8 @@ one window to the next as a wearer's would be:
     shelf-to-shelf   a file from one SpatiShelf onto a folder in another: moved there (the same
                      disk), the folder under the drop lit while it is over it
     shelf-to-mesh    a page from SpatiShelf onto SpatiMesh's tabs: opened in a new tab
+    mesh-to-shelf    a picture out of a page in SpatiMesh onto a folder in SpatiShelf: saved there
+                     by its name, byte for byte
     held             a drag still held when the room is photographed: its card in the room
 
     tools/spatiand-dnd-e2e.py [target/debug] [out-folder]
@@ -111,6 +113,34 @@ def main():
         ], os.path.join(out, "room-shelf-to-mesh.png"))
         subprocess.run(["pkill", "-f", f"[u]ser-data-dir={os.path.join(work, 'mesh')}"])
 
+    log4 = None
+    picture = os.path.join(work, "site", "harbour.png")
+    if chromium and os.path.exists(chromium):
+        # A picture filling the page, so that wherever the press lands is on it.
+        os.makedirs(os.path.dirname(picture))
+        import struct, zlib
+
+        def chunk(kind, data):
+            return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+        rows = b"".join(b"\0" + bytes((0x2B, 0x9C, 0x6E)) * 64 for _ in range(64))
+        open(picture, "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0))
+                                  + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+        page = os.path.join(work, "site", "index.html")
+        open(page, "w").write("<!doctype html><title>Pictures</title><body style='margin:0'>"
+                              "<img src='harbour.png' style='width:100vw;height:100vh;display:block'>")
+        mesh = (f"env -u SPATIAND_APP_FD {chromium} --ozone-platform=wayland --no-sandbox --no-first-run "
+                f"--no-default-browser-check --password-store=basic --user-data-dir={os.path.join(work, 'mesh2')} "
+                f"file://{page} 2>{os.path.join(out, 'chromium-out.log')} &\n")
+        log4 = run("mesh-to-shelf", f"{shelf} {b} &\nsleep 2\n{mesh}", [
+            "wait:12", "window:SpatiMesh",
+            "move:0.5,0.6", "down:0.5,0.6", "move:0.51,0.61", "wait:1", "move:0.53,0.63", "wait:1", "move:0.56,0.66", "wait:1",
+            "window:SpatiShelf", f"move:{shelf_at(900, 600)}", "wait:1", f"move:{shelf_at(455, 255)}", "wait:1",
+            f"dump:{os.path.join(out, 'shelf-picture-over.png')}",
+            f"up:{shelf_at(455, 255)}", "wait:4",
+        ], os.path.join(out, "room-mesh-to-shelf.png"))
+        subprocess.run(["pkill", "-f", f"[u]ser-data-dir={os.path.join(work, 'mesh2')}"])
+
     held = os.path.join(out, "room-held.png")
     log3 = run("held", two_shelves, [
         "wait:6", "window:A",
@@ -146,6 +176,14 @@ def main():
             check(f"shelf-to-mesh: the page dropped on the tabs is open ({shown} of {w * h} pixels of it)", shown > w * h // 3)
         else:
             check("shelf-to-mesh: photographed after", False)
+    if log4 is None:
+        print("skip  mesh-to-shelf: no SpatiMesh Chromium (SPATIAND_CHROMIUM_BIN)")
+    else:
+        saved = os.path.join(b, "Inbox", "harbour.png")
+        check("mesh-to-shelf: the room had a drag", "a drag began" in log4)
+        check("mesh-to-shelf: it was taken", "a drag ended: taken" in log4)
+        check("mesh-to-shelf: the picture is in the folder it was let go of over", os.path.exists(saved))
+        check("mesh-to-shelf: byte for byte", os.path.exists(saved) and open(saved, "rb").read() == open(picture, "rb").read())
     if os.path.exists(held):
         w, h, rows = e2e.read_png(held)
         # The card hangs below and right of straight ahead, the middle of the picture: what is

@@ -546,6 +546,9 @@ struct Shelf {
     menu_at: (f32, f32),
     /// Something dragged here from elsewhere in the room.
     incoming: Option<hand::Incoming>,
+    /// Folders of this program's own that files let go of here were written to on their way
+    /// (`save_dropped`): removed once empty.
+    dropped: Vec<std::path::PathBuf>,
     /// What "Open with" knows and remembers (`opening.rs`).
     opening: opening::Opening,
     /// Quitting was asked for and agreed to: the loop ends.
@@ -854,6 +857,8 @@ impl Shelf {
                         tab.doing.insert(id, (what, done, total));
                     }
                     FromTab::Done { id, error } => {
+                        // Only one that is empty goes: what was in it has been moved.
+                        self.dropped.retain(|folder| std::fs::remove_dir(folder).is_err() && folder.exists());
                         tab.doing.remove(&id);
                         tab.unfinished.remove(&id);
                         finished.push((id, error));
@@ -2553,6 +2558,7 @@ fn main() {
             sort: (SortBy::Name, false),
             menu_at: (0.0, 0.0),
             incoming: None,
+            dropped: Vec::new(),
             opening: opening::Opening::new(),
             quitting: false,
             pinned: None,

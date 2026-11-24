@@ -67,13 +67,47 @@ pub struct Incoming {
     pub items: Vec<Place>,
     pub target: Option<Target>,
     /// The form it was read in, which is the one taken.
-    pub form: &'static str,
+    pub form: String,
+    /// A file that is nowhere yet -- a picture dragged out of a page -- by the name it comes
+    /// with: its bytes are read in `form` when it is let go of.
+    pub named: Option<String>,
 }
 
 /// How places are handed between SpatiShelfs, remotes and all: as themselves.
 pub const PLACES_FORM: &str = "application/x-spatiand-places";
 const URI_FORM: &str = "text/uri-list";
 const TEXT_FORM: &str = "text/plain;charset=utf-8";
+/// A file's own bytes, with its name: how a page's picture is dragged out of SpatiMesh
+/// (`application/octet-stream;name="a.jpg"`, Chromium's on Wayland).
+const CONTENTS_FORM: &str = "application/octet-stream";
+
+/// The name a form of a file's own bytes gives it, as a name in a folder: no path, and not
+/// hidden. `None` if the form is not such a one.
+fn contents_name(form: &str) -> Option<String> {
+    let (kind, rest) = form.split_once(';')?;
+    if !kind.trim().eq_ignore_ascii_case(CONTENTS_FORM) {
+        return None;
+    }
+    let value = rest.split(';').find_map(|p| p.trim().strip_prefix("name="))?.trim();
+    let name = match value.strip_prefix('"') {
+        // In quotes, a backslash before a quote or a backslash.
+        Some(quoted) => {
+            let mut name = String::new();
+            let mut chars = quoted.chars();
+            while let Some(c) = chars.next() {
+                match c {
+                    '"' => break,
+                    '\\' => name.extend(chars.next()),
+                    c => name.push(c),
+                }
+            }
+            name
+        }
+        None => value.to_string(),
+    };
+    let name = name.rsplit(['/', '\\']).next().unwrap_or("").trim().trim_start_matches('.').to_string();
+    (!name.is_empty()).then_some(name)
+}
 
 /// A path as a `file:` address, every byte but the plain ones written as `%XX` -- the path's
 /// own bytes, a name's that are not UTF-8 too.
@@ -395,14 +429,22 @@ impl Shelf {
                 }
             }
             Event::DragEntered { x, y, forms, .. } => {
-                let (items, form): (Vec<Place>, &'static str) = if forms.iter().any(|f| f == PLACES_FORM) {
-                    (self.app().drop_data(PLACES_FORM).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default(), PLACES_FORM)
+                let mut incoming = Incoming { items: Vec::new(), target: None, form: URI_FORM.to_string(), named: None };
+                if forms.iter().any(|f| f == PLACES_FORM) {
+                    incoming.items = self.app().drop_data(PLACES_FORM).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+                    incoming.form = PLACES_FORM.to_string();
                 } else if forms.iter().any(|f| f == URI_FORM) {
-                    (self.app().drop_data(URI_FORM).map(|b| uri_paths(&String::from_utf8_lossy(&b)).into_iter().map(Place::Local).collect()).unwrap_or_default(), URI_FORM)
-                } else {
-                    (Vec::new(), URI_FORM)
-                };
-                self.incoming = Some(Incoming { items, target: None, form });
+                    incoming.items = self.app().drop_data(URI_FORM).map(|b| uri_paths(&String::from_utf8_lossy(&b)).into_iter().map(Place::Local).collect()).unwrap_or_default();
+                }
+                // Nothing that is a file somewhere (a page's picture has its address on the
+                // web in the list): the file itself, if it comes along.
+                if incoming.items.is_empty() {
+                    if let Some((form, name)) = forms.iter().find_map(|f| contents_name(f).map(|n| (f.clone(), n))) {
+                        incoming.form = form;
+                        incoming.named = Some(name);
+                    }
+                }
+                self.incoming = Some(incoming);
                 self.incoming_moved(x, y);
             }
             Event::DragMoved { x, y, .. } => self.incoming_moved(x, y),
@@ -420,10 +462,14 @@ impl Shelf {
             }
             Event::Dropped { x, y, .. } => {
                 self.incoming_moved(x, y);
-                if let Some(Incoming { items, target: Some(target), .. }) = self.incoming.take() {
-                    let from = items.first().and_then(|i| i.parent());
-                    let copy = from.as_ref().is_none_or(|f| Self::copying(self.app().modifiers(), f, &target.place));
-                    self.send(items, target.place, copy);
+                match self.incoming.take() {
+                    Some(Incoming { named: Some(name), target: Some(target), form, .. }) => self.save_dropped(&form, &name, target.place),
+                    Some(Incoming { items, target: Some(target), .. }) => {
+                        let from = items.first().and_then(|i| i.parent());
+                        let copy = from.as_ref().is_none_or(|f| Self::copying(self.app().modifiers(), f, &target.place));
+                        self.send(items, target.place, copy);
+                    }
+                    _ => {}
                 }
                 self.app().finish_drop();
             }
@@ -444,8 +490,9 @@ impl Shelf {
     /// Something from elsewhere moved over this window: what it would go into, said to the room.
     fn incoming_moved(&mut self, x: f32, y: f32) {
         self.pointer = (x, y);
-        let Some((items, form)) = self.incoming.as_ref().map(|i| (i.items.clone(), i.form)) else { return };
-        let target = self.drop_target(x, y, &items).filter(|t| tree::allowed(&items, &t.place));
+        let Some((items, form, named)) = self.incoming.as_ref().map(|i| (i.items.clone(), i.form.clone(), i.named.is_some())) else { return };
+        // A file that is nowhere yet goes into any folder but the trash, and is a copy.
+        let target = self.drop_target(x, y, &items).filter(|t| if named { t.place != Place::Trash } else { tree::allowed(&items, &t.place) });
         let answer = target.as_ref().map(|t| {
             let from = items.first().and_then(|i| i.parent());
             from.as_ref().is_none_or(|f| Self::copying(self.app_modifiers(), f, &t.place))
@@ -454,9 +501,33 @@ impl Shelf {
             incoming.target = target;
         }
         match answer {
-            Some(copy) => self.app().accept_drag(Some(form), !copy),
+            Some(copy) => self.app().accept_drag(Some(&form), !copy),
             None => self.app().accept_drag(None, false),
         }
+    }
+
+    /// A file let go of over `to` that is nowhere yet -- a picture out of a page: its bytes
+    /// read from where it comes from, and put there by its name (numbered beside one of that
+    /// name). It is written first to a folder of this program's own and moved from there, so
+    /// that it goes as everything else does, to a remote as to a disk.
+    fn save_dropped(&mut self, form: &str, name: &str, to: Place) {
+        let Some(bytes) = self.app().drop_data(form).filter(|b| !b.is_empty()) else {
+            self.say(format!("{name} did not come: nothing was saved."));
+            return;
+        };
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let folder = std::env::temp_dir().join(format!("spatishelf-dropped-{}-{n}", std::process::id()));
+        let file = folder.join(name);
+        if let Err(e) = std::fs::create_dir_all(&folder).and_then(|_| std::fs::write(&file, &bytes)) {
+            self.say(format!("{name} could not be saved: {e}"));
+            let _ = std::fs::remove_dir_all(&folder);
+            return;
+        }
+        self.dropped.push(folder);
+        let into = to.name();
+        self.send(vec![Place::Local(file.to_string_lossy().into_owned())], to, false);
+        self.say(format!("Saving {name} to {into}\u{2026}"));
     }
 
     fn app_modifiers(&mut self) -> Modifiers {
@@ -1057,6 +1128,17 @@ fn short(place: &Place) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dragged_files_name_is_a_name_in_a_folder() {
+        assert_eq!(contents_name("application/octet-stream;name=\"a b.jpg\"").as_deref(), Some("a b.jpg"));
+        assert_eq!(contents_name("application/octet-stream; name=plain.png").as_deref(), Some("plain.png"));
+        assert_eq!(contents_name("application/octet-stream;name=\"say \\\"hi\\\".png\"").as_deref(), Some("say \"hi\".png"));
+        assert_eq!(contents_name("application/octet-stream;name=\"../../.ssh/keys\"").as_deref(), Some("keys"));
+        assert_eq!(contents_name("application/octet-stream;name=\"..\""), None);
+        assert_eq!(contents_name("application/octet-stream"), None);
+        assert_eq!(contents_name("text/uri-list"), None);
+    }
 
     #[test]
     fn the_name_is_chosen_but_its_ending() {
