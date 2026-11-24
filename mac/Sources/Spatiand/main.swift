@@ -69,6 +69,12 @@ final class App: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handleSignals() {
+        // An application that dies while the room is writing to it (its sound, the microphone's
+        // samples) is an error of that write, not the end of the room: on 2026-11-23 SpatiPal
+        // was killed while it listened, and the room went with it without a word (launchd:
+        // "exited due to SIGPIPE"). A Rust program ignores the signal from its start; this is a
+        // Swift one with the Rust inside it.
+        signal(SIGPIPE, SIG_IGN)
         for number in [SIGTERM, SIGINT, SIGHUP] {
             signal(number, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: number, queue: .main)

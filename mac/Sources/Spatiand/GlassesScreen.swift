@@ -193,9 +193,37 @@ final class GlassesScreen {
         }
     }
 
+    /// The glasses' display is connected but not in use: macOS has made it a mirror of another
+    /// screen, as it remembers the pair -- with Spatiand's virtual screen left from before the
+    /// glasses were unplugged, they came back as "inactive" beside it and were waited for for
+    /// ever (2026-11-23, twice in one evening, until Spatiand was restarted). Told to be a
+    /// screen of its own, as `MacScreens.leadIfAlone` tells it once it is found.
+    private static func part(say: Bool) {
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        guard CGGetOnlineDisplayList(16, &ids, &count) == .success else { return }
+        let online = ids.prefix(Int(count))
+        guard let glasses = online.first(where: { isGlasses($0) }) else { return }
+        if say {
+            let states = online.map { "\($0)\(isGlasses($0) ? " (glasses)" : ""): \(CGDisplayIsActive($0) != 0 ? "active" : "inactive"), mirrors \(CGDisplayMirrorsDisplay($0)), in a mirror set \(CGDisplayIsInMirrorSet($0) != 0)" }
+            print("glasses: their display \(glasses) is connected but not in use; displays: \(states.joined(separator: "; ")). Mirrors are told to be screens of their own")
+        }
+        // Only where there is a mirror to part: arranging the displays for nothing every two
+        // seconds would blink the virtual screen.
+        let mirrors = online.filter { CGDisplayIsInMirrorSet($0) != 0 || CGDisplayMirrorsDisplay($0) != kCGNullDirectDisplay }
+        guard !mirrors.isEmpty else { return }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success else { return }
+        for id in mirrors { CGConfigureDisplayMirrorOfDisplay(config, id, kCGNullDirectDisplay) }
+        if CGCompleteDisplayConfiguration(config, .forSession) != .success { CGCancelDisplayConfiguration(config) }
+    }
+    private var partSaid = false
+
     private func wait(tries: Int) {
         guard opening else { missingSince = nil; return }
         guard let id = Self.findDisplay() else {
+            // Or macOS has the display, and keeps it out of use (`part`).
+            if tries % 4 == 1 { Self.part(say: !partSaid) ; partSaid = true }
             // macOS may be holding the display back behind its question of what to show on it,
             // put where nobody can see it (DisplayPrompt.swift): answered for the wearer.
             DisplayPrompt.answerForHeadset()
@@ -221,6 +249,7 @@ final class GlassesScreen {
             return
         }
         if missingSaid { print("glasses: their display came on after all") }
+        partSaid = false
         missingSince = nil
         missingSaid = false
         open(on: id)
@@ -421,6 +450,7 @@ final class GlassesScreen {
         opening = false
         missingSince = nil
         missingSaid = false
+        partSaid = false
         hide()
         if let captured { CGDisplayRelease(captured) }
         captured = nil

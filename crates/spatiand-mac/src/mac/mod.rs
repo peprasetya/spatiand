@@ -303,6 +303,9 @@ pub fn take_glasses(
 /// keyboard layouts libxkbcommon reads, and a directory for the compositor's socket. Before
 /// anything else, since a compositor with no keymap has no keyboard.
 pub fn prepare() {
+    // A write to an application that has died is an error, never the room's end (see
+    // main.swift's handleSignals): here as well, for every way in.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
     logging::init();
     // Applications' pictures come in private, from Spatiand's own children (spatiand-surfaces):
     // before any is started, so that each is told where.

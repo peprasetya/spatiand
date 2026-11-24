@@ -131,6 +131,10 @@ pub fn run(
     runtime: &mut Runtime,
     shared: &Shared,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // A write to an application that has died is an error, never the room's end: the room is a
+    // library in an Android process here, as it is in a Swift one on the Mac, where a killed
+    // SpatiPal took the room with it (2026-11-23).
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
     // --- renderer ---
     let egl_display = super::egl::open_display()?;
     let egl_context = EGLContext::new_with_config(
