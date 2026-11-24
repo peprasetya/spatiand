@@ -5363,6 +5363,7 @@ dependencies = [
  "gltf",
  "image",
  "kamadak-exif",
+ "libc",
  "log",
  "notify",
  "pdfium-render",

@@ -87,15 +87,39 @@ fn write_beside(path: &Path, bytes: &[u8], like: Option<&Path>) -> Result<PathBu
         let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&part)?;
         file.write_all(bytes)?;
         if let Some(meta) = like.and_then(|like| std::fs::metadata(like).ok()) {
-            file.set_permissions(meta.permissions())?;
+            unless_unsupported(file.set_permissions(meta.permissions()))?;
         }
-        file.sync_all()
+        to_disk(&file)
     })();
     if let Err(e) = written {
         let _ = std::fs::remove_file(&part);
         return Err(e.to_string());
     }
     Ok(part)
+}
+
+/// A step a disk may not have -- a network share's, a camera card's -- is no failure of the
+/// writing: only what it has and fails at is.
+fn unless_unsupported(done: std::io::Result<()>) -> std::io::Result<()> {
+    match done {
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported || e.raw_os_error() == Some(libc::EINVAL) => Ok(()),
+        other => other,
+    }
+}
+
+/// What was written to `file`, on its disk before it takes its place. A Mac's own way of that
+/// (`F_FULLFSYNC`, which is what `sync_all` is there) is refused by disks that are not its own
+/// -- "os error 45" on a network share, 2026-11-24 -- and the plain way is then asked for; a
+/// disk with neither has the file as written.
+fn to_disk(file: &std::fs::File) -> std::io::Result<()> {
+    match file.sync_all() {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            use std::os::fd::AsRawFd;
+            let plain = if unsafe { libc::fsync(file.as_raw_fd()) } == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) };
+            unless_unsupported(plain)
+        }
+    }
 }
 
 /// The folder `path` is in, told that what is in it changed for good.

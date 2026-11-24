@@ -11,6 +11,7 @@ description = "SpatiLoupe: Spatiand's viewer, for pictures, stereo photographs, 
 # AVIF, JPEG 2000) by FFmpeg through `spatiand-media`; PDFs by PDFium, loaded at run time from
 # beside the program (tools/fetch-pdfium.sh); glTF by a small renderer of its own.
 [dependencies]
+libc = "0.2"
 spatiand-app = { path = "../spatiand-app" }
 spatiand-media = { path = "../spatiand-media" }
 spatiand-storage = { path = "../spatiand-storage" }
