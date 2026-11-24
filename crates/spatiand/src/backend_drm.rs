@@ -5000,6 +5000,10 @@ fn send_key_state(state: &mut Spatiand, evdev_code: u32, pressed: bool, time_ms:
     // Typing is attention, even with the head perfectly still and the pointer nowhere near
     // what is being typed into. See `crate::attention`.
     state.attention.stir();
+    // A media key is whatever is playing's, not the focused window's (`crate::media_keys`).
+    if crate::media_keys::key(state, evdev_code, pressed) {
+        return;
+    }
     let Some(keyboard) = state.seat.get_keyboard() else {
         return;
     };

@@ -268,6 +268,8 @@ impl Reel {
         let mut playing = Playing::new(self.app.gl()?, player, play, &item.name, &item.title, item.layout)?;
         playing.hands_said(self.app.says_hands());
         playing.scale = self.film_scale;
+        // A keyboard's play, forward and back keys are the film's while there is one.
+        self.app.set_media_keys(self.window, true);
         self.app.set_title(self.window, &item.title);
         log::info!("{}: playing, from {:.0} s", item.title, item.resume);
         let (told, started) = (source.clone(), item.clone());
@@ -336,6 +338,7 @@ impl Reel {
 
     /// The window the library's again, and what is on show in it listed afresh.
     fn back_to_library(&mut self) {
+        self.app.set_media_keys(self.window, false);
         self.app.resize(self.window, self.home_size);
         self.app.set_title(self.window, "SpatiReel");
         // What was just left is now part watched: a list drawn before is stale.
@@ -637,6 +640,13 @@ impl Reel {
                         }
                     }
                 }
+            }
+            Event::MediaKey { key, pressed, .. } => {
+                if let Some((playing, _)) = self.playing.as_mut() {
+                    playing.media_key(*key, *pressed);
+                    self.dirty = true;
+                }
+                return true;
             }
             // Dictation and the assistant ask what is on show.
             Event::Describe { window } => {

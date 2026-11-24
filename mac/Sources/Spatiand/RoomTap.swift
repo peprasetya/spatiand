@@ -527,6 +527,35 @@ final class RoomTap {
         return AXIsProcessTrustedWithOptions(options)
     }
 
+    /// The system's own events (NX_SYSDEFINED), which the keyboard's media keys arrive as.
+    static let systemDefined: UInt32 = 14
+
+    /// A media key from one of the system's events: the kernel's number for it
+    /// (KEY_PLAYPAUSE, KEY_NEXTSONG, KEY_PREVIOUSSONG, KEY_FASTFORWARD, KEY_REWIND), whether it
+    /// went down, and whether it is the Mac repeating a key held (the room is told a key once).
+    static func mediaKey(_ event: NSEvent) -> (code: UInt32, down: Bool, again: Bool)? {
+        // Subtype 8 is the keyboard's special keys; the key is the high half of `data1`, and
+        // the low half says down (0x0A) or up (0x0B) and whether it is a repeat.
+        guard event.type == .systemDefined, event.subtype.rawValue == 8 else { return nil }
+        let data = event.data1
+        let state = (data & 0xFF00) >> 8
+        guard state == 0x0A || state == 0x0B else { return nil }
+        let code: UInt32
+        switch (data & 0xFFFF_0000) >> 16 {
+        case 16: code = 164 // NX_KEYTYPE_PLAY
+        case 17: code = 163 // NX_KEYTYPE_NEXT
+        case 18: code = 165 // NX_KEYTYPE_PREVIOUS
+        case 19: code = 208 // NX_KEYTYPE_FAST
+        case 20: code = 168 // NX_KEYTYPE_REWIND
+        default: return nil
+        }
+        return (code, state == 0x0A, data & 1 != 0)
+    }
+
+    static func mediaKey(_ event: CGEvent) -> (code: UInt32, down: Bool, again: Bool)? {
+        NSEvent(cgEvent: event).flatMap { mediaKey($0) }
+    }
+
     /// Install the tap. It passes everything through until `hold(true)`.
     @discardableResult
     func install() -> Bool {
@@ -541,6 +570,8 @@ final class RoomTap {
         // press -- which went past to the application under the cursor: a three-finger tap in the
         // room opened Dictionary.
         for raw in [18, 19, 20, 29, 30, 31, 32, 33, 34] as [UInt64] { mask |= 1 << raw }
+        // The keyboard's media keys (F7 to F9): the system's own events, not keys.
+        mask |= 1 << CGEventMask(Self.systemDefined)
         let me = Unmanaged.passUnretained(self).toOpaque()
         guard let made = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
                                            eventsOfInterest: mask, callback: { _, type, event, user in
@@ -648,6 +679,15 @@ final class RoomTap {
         if event.getIntegerValueField(.eventSourceUserData) == spatiandEventMark { return pass }
         if type == .keyDown, event.getIntegerValueField(.keyboardEventAutorepeat) == 0, chord(event) { return nil }
         guard holding else { return pass }
+        // **A media key is the room's**: whatever is playing there has it, and with nothing
+        // playing Play starts SpatiReel (`crate::media_keys`). Not passed on: the Mac would
+        // start Music at every press. The volume and brightness keys, which come the same
+        // way, are the Mac's still.
+        if type.rawValue == Self.systemDefined {
+            guard let media = Self.mediaKey(event) else { return pass }
+            if !media.again { sp_media_key(media.code, media.down) }
+            return nil
+        }
 
         // **A drag in a window of this Mac's is not taken.** The application gets the hand's own
         // events -- the only ones that turn a 3D object, select text or pull a slider as it

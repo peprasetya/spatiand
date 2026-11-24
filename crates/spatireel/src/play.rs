@@ -92,6 +92,12 @@ const WINDOW: (f32, f32) = (1920.0, 1080.0);
 /// The controls on their own, with the film all round.
 const CONTROLS_ALONE: (u32, u32) = (1280, 250);
 const CONTROLS_WITH_MENU: (u32, u32) = (1280, 860);
+/// A forward or back key held: how long before it goes again, how often then, and how long at
+/// the most (a release that never arrives -- the keyboard unplugged -- ends there).
+const SKIP_AFTER: Duration = Duration::from_millis(500);
+const SKIP_EVERY: Duration = Duration::from_millis(250);
+const SKIP_AT_MOST: Duration = Duration::from_secs(30);
+
 /// How far the pointer may go between a press and its release on the picture for the two to be
 /// a tap, rather than the view being turned.
 const TAP_SLACK: f32 = 12.0;
@@ -244,6 +250,9 @@ pub struct Playing {
     /// over the film -- its controls, its subtitles -- is laid out for the window at a scale
     /// of 1 and is larger and smaller with it, and the pointer is reckoned back to that.
     arranged_scale: f32,
+    /// A keyboard's forward or back key is held: the seconds each step goes, when the next
+    /// is due, and when the key went down -- one that never comes up is not followed for ever.
+    skipping: Option<(f64, Instant, Instant)>,
     /// The size the wearer last asked the window to be, to tell which side they are dragging.
     asked: Option<(u32, u32)>,
     /// What the window was last told to be, so it is told again only when that changes.
@@ -369,6 +378,7 @@ impl Playing {
             sky_refused: std::env::var("SPATIREEL_SKY").as_deref() == Ok("off"),
             scale: 1.0,
             arranged_scale: 1.0,
+            skipping: None,
             asked: None,
             arranged: None,
             gaze: Gaze::default(),
@@ -490,9 +500,61 @@ impl Playing {
         self.dirty = true;
     }
 
+    /// A keyboard's media key, which is this film's wherever the keyboard is typing: play and
+    /// pause as Space does; forward and back ten seconds as the arrows do, again and again
+    /// while held (a Mac's keys beside its play key are "next" and "previous" to it, and here
+    /// they are the same: the next episode has its own button, and N).
+    pub fn media_key(&mut self, key: spatiand_app::MediaKey, pressed: bool) {
+        use spatiand_app::MediaKey as K;
+        let now = Instant::now();
+        let step = match key {
+            K::Next | K::FastForward => Some(10.0),
+            K::Previous | K::Rewind => Some(-10.0),
+            _ => None,
+        };
+        if let Some(step) = step {
+            self.skipping = pressed.then(|| (step, now + SKIP_AFTER, now));
+            if pressed {
+                let at = self.player.position();
+                self.player.seek(at + step);
+            }
+        } else if pressed {
+            match key {
+                K::PlayPause => {
+                    let paused = self.player.paused();
+                    self.player.set_paused(!paused);
+                }
+                K::Play => self.player.set_paused(false),
+                _ => self.player.set_paused(true),
+            }
+        } else {
+            return;
+        }
+        self.clock.wake(now);
+        self.dirty = true;
+    }
+
+    /// A forward or back key still held: its next step, when that is due.
+    fn skip(&mut self) {
+        let now = Instant::now();
+        let Some((step, due, since)) = self.skipping else { return };
+        if now.duration_since(since) > SKIP_AT_MOST {
+            self.skipping = None;
+        } else if now >= due {
+            let at = self.player.position();
+            self.player.seek(at + step);
+            self.skipping = Some((step, now + SKIP_EVERY, since));
+            self.clock.wake(now);
+            self.dirty = true;
+        }
+    }
+
     /// When this next needs to be drawn whether or not anything happens: the next picture,
     /// or the controls' clock running out.
     pub fn next_wake(&self) -> Duration {
+        if self.skipping.is_some() {
+            return Duration::from_millis(8);
+        }
         if !self.player.paused() {
             Duration::from_millis(8)
         } else {
@@ -625,6 +687,7 @@ impl Playing {
     /// Draw whatever needs drawing. Returns whether anything was.
     /// Over the film, so in the dark colours whatever the platform is set to.
     pub fn draw(&mut self, app: &mut App, window: WindowId, painter: &mut Option<Painter>) -> Result<bool, String> {
+        self.skip();
         theme::always_dark(|| self.draw_over_film(app, window, painter))
     }
 

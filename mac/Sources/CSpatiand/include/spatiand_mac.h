@@ -96,6 +96,9 @@ void sp_scroll_end(void);
 bool sp_scroll_over_client(void);
 // A key of the Mac's keyboard, by its virtual key code.
 void sp_key(uint16_t mac_code, bool pressed);
+// One of the keyboard's media keys (play, forward, back), by the kernel's number for it
+// (KEY_PLAYPAUSE 164, KEY_NEXTSONG 163, KEY_PREVIOUSSONG 165, KEY_FASTFORWARD 208, KEY_REWIND 168).
+void sp_media_key(uint32_t code, bool pressed);
 // One of the Deck's buttons: 0 STEAM (settings), 1 ... (launcher), 2 A, 3 B, 4 X, 5 Y, 6 up,
 // 7 down, 8 left, 9 right, 10 menu, 11 view.
 void sp_control(int32_t control, bool pressed);
@@ -218,6 +221,7 @@ void sp_desk_leave(uint32_t id);
 void sp_desk_button(uint32_t id, uint32_t button, bool pressed); // 0x110 left, 0x111 right, 0x112 middle
 void sp_desk_scroll(uint32_t id, double dx, double dy, bool wheel); // pixels across and down; a notch is 15
 void sp_desk_key(uint32_t id, uint16_t mac_code, bool pressed);
+void sp_desk_media_key(uint32_t id, uint32_t code, bool pressed); // as sp_media_key
 void sp_desk_focus(uint32_t id, bool focused);
 void sp_desk_pinch(uint32_t id, float scale);
 void sp_desk_resize(uint32_t id, int32_t width, int32_t height);

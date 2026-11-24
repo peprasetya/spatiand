@@ -1049,7 +1049,23 @@ after a half-hour episode, a minute and a half after an hour's, seven minutes af
 was the last 3 %, which the owner found too late). A film's window is resized like any other, by
 a corner in the room or its Mac window in 2D mode: the film keeps its shape, 0.4 to 2 times the
 1920x1080 it fits in at first, its controls and subtitles larger and smaller with it, and the
-next film opens at the size the last was left (while SpatiReel runs; not kept between runs). A raw stream plays at
+next film opens at the size the last was left (while SpatiReel runs; not kept between runs).
+
+**A keyboard's media keys** (play/pause, forward, back) are whatever is playing's, not the
+focused window's (`crates/spatiand/src/media_keys.rs`, the same on every platform). A window
+that plays says so (`spatiand_xr_surface_v1.set_media_keys`, version 12; the SDK's
+`App::set_media_keys`) and is sent them as `media_key` events (`Event::MediaKey`) wherever the
+keyboard is typing. SpatiReel says so while a film is in its window: play/pause as Space,
+forward and back ten seconds, again and again while held (a Mac's F7 and F9 are "previous" and
+"next" to the Mac and are the same here). With nothing playing, Play starts SpatiReel if it has
+no window and does nothing if it has; the other keys do nothing. Each platform turns its own
+keys into the kernel's numbers: libinput's on the Deck; `KEYCODE_MEDIA_*` on the Beam Pro
+(`android/keys.rs`); on the Mac the system's events for F7 to F9, taken by the room's tap in 3D
+and not passed on. **Workaround, Mac 2D mode:** there the keys are read while a Spatiand window
+has the keyboard but the Mac hears them too, and starts Music if nothing of its own plays; the
+proper way is to be the Mac's "now playing" application (MPRemoteCommandCenter) while something
+of Spatiand's plays. Not yet: SpatiMesh saying a page is playing (Chromium's copy of the
+protocol is updated at the 158 build), and remote windows (`spatiand-host`'s protocol is older). A raw stream plays at
 its own pace (above). Interlaced films are made whole by FFmpeg's deinterlacer where the picture
 is (`bwdif` in software, `deinterlace_vaapi` on the Deck; on MediaCodec's and VideoToolbox's
 frames a shader blend, a **workaround**: the proper one is FFmpeg with Metal on the Mac,

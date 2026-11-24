@@ -52,6 +52,15 @@ pub fn from_android(code: i32) -> Option<u32> {
         131..=140 => (code - 131 + 59) as u32, // F1..F10 are 59..68
         141 => 87, // F11
         142 => 88, // F12
+        // A keyboard's keys for what is playing (`crate::media_keys` takes them from there).
+        85 => 164,  // MEDIA_PLAY_PAUSE
+        126 => 207, // MEDIA_PLAY
+        127 => 201, // MEDIA_PAUSE
+        86 => 166,  // MEDIA_STOP
+        87 => 163,  // MEDIA_NEXT
+        88 => 165,  // MEDIA_PREVIOUS
+        90 => 208,  // MEDIA_FAST_FORWARD
+        89 => 168,  // MEDIA_REWIND
         _ => return None,
     })
 }

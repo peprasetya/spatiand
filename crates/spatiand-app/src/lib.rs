@@ -141,6 +141,36 @@ pub enum Key {
     Other,
 }
 
+/// A keyboard's key for what is playing ([`Event::MediaKey`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaKey {
+    /// The one key most keyboards have for both.
+    PlayPause,
+    Play,
+    Pause,
+    Stop,
+    Next,
+    Previous,
+    FastForward,
+    Rewind,
+}
+
+impl MediaKey {
+    pub(crate) fn from_wire(key: u32) -> Option<MediaKey> {
+        Some(match key {
+            1 => MediaKey::PlayPause,
+            2 => MediaKey::Play,
+            3 => MediaKey::Pause,
+            4 => MediaKey::Stop,
+            5 => MediaKey::Next,
+            6 => MediaKey::Previous,
+            7 => MediaKey::FastForward,
+            8 => MediaKey::Rewind,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
     pub shift: bool,
@@ -202,6 +232,10 @@ pub enum Event {
     /// Two fingers pinched over a window that takes pinches ([`App::set_pinch_taken`]): how
     /// much they spread since the last, as a factor -- above one is zooming in.
     Pinch { window: WindowId, scale: f32 },
+    /// A keyboard's media key went down or came up, for a window that says it is playing
+    /// ([`App::set_media_keys`]) -- wherever the keyboard is typing. A key held is not
+    /// repeated: what holding one means is the application's to do between the two.
+    MediaKey { window: WindowId, key: MediaKey, pressed: bool },
     /// The room asks what the window shows: answer with [`App::describe`], promptly. Dictation
     /// leans its spelling towards what is said (a terminal's commands, a page's words), and the
     /// assistant reads a window this way. Not answered, the room makes do with the title.
@@ -258,6 +292,7 @@ impl Event {
             | Event::LayerRefused { window, .. }
             | Event::LayerLost { window, .. }
             | Event::Pinch { window, .. }
+            | Event::MediaKey { window, .. }
             | Event::Describe { window }
             | Event::DragEntered { window, .. }
             | Event::DragMoved { window, .. }
@@ -560,6 +595,14 @@ impl App {
     /// up and down, rather than one way at a time with a lean towards up and down as a page
     /// is. Which way a gesture goes, if either, is then the window's to decide. From the next
     /// picture on; ignored by a room older than this.
+    /// Say the window is playing something -- a film, music -- or no longer is. While it is, a
+    /// keyboard's media keys are its ([`Event::MediaKey`]) whatever window is typed into; when
+    /// nothing says so, the room's play key starts SpatiReel. From the next picture on;
+    /// ignored by a room older than this.
+    pub fn set_media_keys(&mut self, window: WindowId, playing: bool) {
+        self.wire.set_media_keys(window, playing);
+    }
+
     pub fn set_scroll_free(&mut self, window: WindowId, free: bool) {
         self.wire.set_scroll_free(window, free);
     }

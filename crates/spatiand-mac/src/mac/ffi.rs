@@ -426,6 +426,16 @@ pub extern "C" fn sp_key(mac_code: u16, pressed: bool) {
     }
 }
 
+/// One of the Mac keyboard's media keys (F7 to F9, which are not keys with a virtual key code
+/// but the system's own events), as the kernel's number for it: `crate::media_keys` takes it
+/// from the room's keys like any keyboard's.
+#[no_mangle]
+pub extern "C" fn sp_media_key(code: u32, pressed: bool) {
+    if crate::media_keys::of(code).is_some() {
+        controller::input().lock().unwrap().keys.push(Typed::Key { code, pressed });
+    }
+}
+
 #[cfg(test)]
 mod command_tests {
     use super::*;

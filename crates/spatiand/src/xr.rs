@@ -114,6 +114,9 @@ pub struct XrState {
     /// A pad's gesture over this surface is sent both ways at once rather than locked to one.
     /// See `set_scroll_free`.
     pub scroll_free: bool,
+    /// The surface is playing something, and a keyboard's media keys are for it. See
+    /// `set_media_keys`.
+    pub media_keys: bool,
 }
 
 impl XrState {
@@ -269,6 +272,23 @@ pub fn tell_pinch(surface: &WlSurface, scale: f32) -> bool {
     match object.filter(|o| o.is_alive() && o.version() >= 6) {
         Some(object) => {
             object.pinch((scale as f64 * 1e6).round() as i32);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Hand a media key to a surface that said it is playing (`set_media_keys`): `false` when it
+/// did not, or cannot be told.
+pub fn tell_media_key(surface: &WlSurface, key: u32, pressed: bool) -> bool {
+    if !state_of(surface).media_keys {
+        return false;
+    }
+    let object = with_states(surface, |states| states.data_map.get::<Object>().and_then(|o| o.0.lock().ok()?.clone()));
+    match object.filter(|o| o.is_alive() && o.version() >= 12) {
+        Some(object) => {
+            let Ok(key) = spatiand_xr_surface_v1::MediaKey::try_from(key) else { return false };
+            object.media_key(key, pressed as u32);
             true
         }
         None => false,
@@ -667,6 +687,9 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
             }
             spatiand_xr_surface_v1::Request::SetScrollFree { enable } => {
                 pending.next.scroll_free = enable != 0;
+            }
+            spatiand_xr_surface_v1::Request::SetMediaKeys { enable } => {
+                pending.next.media_keys = enable != 0;
             }
             spatiand_xr_surface_v1::Request::SetSoundKey { key } => {
                 // Kept on the surface, not with the rest: a name is not something to copy

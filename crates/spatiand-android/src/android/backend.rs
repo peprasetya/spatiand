@@ -2491,6 +2491,9 @@ fn send_stroke(state: &mut Spatiand, stroke: spatiand_shell::keyboard::Stroke, t
 /// See `backend_drm::send_key_state`.
 fn send_key_state(state: &mut Spatiand, evdev_code: u32, pressed: bool, time_ms: u32) {
     state.attention.stir();
+    if crate::media_keys::key(state, evdev_code, pressed) {
+        return;
+    }
     let Some(keyboard) = state.seat.get_keyboard() else { return };
     let code = smithay::input::keyboard::Keycode::new(evdev_code + 8);
     let key_state = if pressed {

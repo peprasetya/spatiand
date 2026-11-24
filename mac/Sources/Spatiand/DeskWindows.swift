@@ -186,7 +186,7 @@ final class DeskWindows: NSObject, NSWindowDelegate {
         }
         if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         if keyWatch == nil {
-            keyWatch = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+            keyWatch = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged, .systemDefined]) { [weak self] event in
                 self?.key(event) == true ? nil : event
             }
         }
@@ -197,6 +197,15 @@ final class DeskWindows: NSObject, NSWindowDelegate {
     private func key(_ event: NSEvent) -> Bool {
         guard let view = NSApp.keyWindow?.contentView as? DeskView, windows[view.id] != nil else { return false }
         switch event.type {
+        case .systemDefined:
+            // The keyboard's media keys, for whatever of Spatiand's is playing. **The Mac hears
+            // them as well** (an event seen here cannot be kept from it), and starts Music if
+            // nothing of its own is playing -- a workaround's flaw: the proper way on the Mac's
+            // desktop is to be its "now playing" application (MPRemoteCommandCenter) while
+            // something of Spatiand's plays, when the keys are given to Spatiand alone.
+            guard let media = RoomTap.mediaKey(event) else { return false }
+            if !media.again { sp_desk_media_key(view.id, media.code, media.down) }
+            return true
         case .keyDown:
             // The application repeats a held key itself, at the Mac's own rate.
             if !event.isARepeat { sp_desk_key(view.id, KeyMap.place(event.keyCode), true) }

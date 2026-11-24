@@ -1772,6 +1772,11 @@ fn press_key(state: &mut Spatiand, code: u32) {
         return;
     };
     log::info!("pressing evdev key {code}");
+    if crate::media_keys::of(code).is_some() {
+        crate::media_keys::key(state, code, true);
+        crate::media_keys::key(state, code, false);
+        return;
+    }
     for (key_state, time) in [(KeyState::Pressed, 300u32), (KeyState::Released, 360)] {
         keyboard.input::<(), _>(
             state,
@@ -2144,6 +2149,9 @@ fn us_key(c: char) -> Option<(u32, bool)> {
 }
 
 fn key_event(state: &mut Spatiand, code: u32, pressed: bool) {
+    if crate::media_keys::key(state, code, pressed) {
+        return;
+    }
     use smithay::backend::input::KeyState;
     use smithay::input::keyboard::{FilterResult, Keycode};
     use smithay::utils::SERIAL_COUNTER;

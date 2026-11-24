@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="11">
+  <interface name="spatiand_xr_v1" version="12">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -169,7 +169,7 @@
     </enum>
   </interface>
 
-  <interface name="spatiand_xr_surface_v1" version="10">
+  <interface name="spatiand_xr_surface_v1" version="12">
     <description summary="how a surface is drawn for two eyes">
       All state here is double-buffered: it takes effect on the next
       wl_surface.commit, like everything else about a surface. Changing layout
@@ -509,6 +509,40 @@
       <arg name="enable" type="uint" summary="0 or 1"/>
     </request>
 
+    <enum name="media_key" since="12">
+      <description summary="a keyboard's keys for what is playing">
+        The keys a keyboard has for a player, whatever the system it is plugged
+        into calls them. `play_pause` is the one key most keyboards have for
+        both; `play` and `pause` are a keyboard's that has one for each.
+      </description>
+      <entry name="play_pause" value="1"/>
+      <entry name="play" value="2"/>
+      <entry name="pause" value="3"/>
+      <entry name="stop" value="4"/>
+      <entry name="next" value="5"/>
+      <entry name="previous" value="6"/>
+      <entry name="fast_forward" value="7"/>
+      <entry name="rewind" value="8"/>
+    </enum>
+
+    <request name="set_media_keys" since="12">
+      <description summary="this surface is playing something">
+        A surface that is playing something the wearer would pause, or go
+        forward or back in -- a film, music -- says so while it is, and is sent
+        a keyboard's media keys with `media_key`, wherever the keyboard is
+        typing: they are not the focused window's keys, and are never sent as
+        keys. Of several surfaces that say so, the one the keyboard is typing
+        into has them, or else the newest of them.
+
+        When no surface says so, the play key starts SpatiReel if it is not
+        running, and does nothing if it is; the other keys do nothing.
+
+        Off by default; to be turned off when nothing is playing any more.
+        Double-buffered like everything else here.
+      </description>
+      <arg name="enable" type="uint" summary="0 or 1"/>
+    </request>
+
     <event name="pinch" since="6">
       <description summary="the wearer pinched over this surface">
         How much the fingers spread since the last `pinch`: a factor, in
@@ -544,6 +578,17 @@
         to answer with only what is on show.
       </description>
       <arg name="fd" type="fd" summary="where to write the description"/>
+    </event>
+
+    <event name="media_key" since="12">
+      <description summary="a media key was pressed or let go">
+        A keyboard's media key, for this surface because it said it is playing
+        (`set_media_keys`). `pressed` is 1 as the key goes down and 0 as it
+        comes up; a key held is not repeated, and what holding one means -- to
+        keep going forward -- is the client's to do between the two.
+      </description>
+      <arg name="key" type="uint" enum="media_key"/>
+      <arg name="pressed" type="uint" summary="0 or 1"/>
     </event>
   </interface>
 

@@ -69,6 +69,7 @@ mod spatikey;
 mod state;
 mod status;
 mod system;
+mod media_keys;
 mod volume_keys;
 mod waiting;
 mod window;

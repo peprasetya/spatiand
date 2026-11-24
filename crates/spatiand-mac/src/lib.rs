@@ -119,6 +119,8 @@ mod state;
 mod status;
 #[path = "../../spatiand/src/system.rs"]
 mod system;
+#[path = "../../spatiand/src/media_keys.rs"]
+mod media_keys;
 #[path = "../../spatiand/src/volume_keys.rs"]
 mod volume_keys;
 #[path = "../../spatiand/src/waiting.rs"]

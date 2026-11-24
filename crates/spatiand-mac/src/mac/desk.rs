@@ -406,6 +406,9 @@ fn focus(state: &mut crate::Spatiand, desk: &mut Desk, id: u32, window: &smithay
 }
 
 fn key(state: &mut crate::Spatiand, code: u32, pressed: bool, time: u32) {
+    if crate::media_keys::key(state, code, pressed) {
+        return;
+    }
     let Some(keyboard) = state.seat.get_keyboard() else { return };
     let key_state = if pressed { KeyState::Pressed } else { KeyState::Released };
     keyboard.input::<(), _>(state, Keycode::new(code + 8), key_state, SERIAL_COUNTER.next_serial(), time, |_, _, _| FilterResult::Forward);
@@ -522,6 +525,15 @@ pub extern "C" fn sp_desk_key(id: u32, mac_code: u16, pressed: bool) {
             125 | 126 => 97,
             other => other,
         };
+        queue(Input::Key(id, code, pressed));
+    }
+}
+
+/// One of the Mac keyboard's media keys while a window of 2D mode has the keyboard: see
+/// `ffi::sp_media_key`.
+#[no_mangle]
+pub extern "C" fn sp_desk_media_key(id: u32, code: u32, pressed: bool) {
+    if crate::media_keys::of(code).is_some() {
         queue(Input::Key(id, code, pressed));
     }
 }

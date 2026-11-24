@@ -184,7 +184,7 @@ impl Wire {
         let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=11, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=12, ()).ok();
         // Only a process the room gave its assistant's key to has any business here, and it says
         // the key at once: every question before that is refused.
         let assist: Option<spatiand_assist_v1::SpatiandAssistV1> = match std::env::var("SPATIAND_ASSIST_KEY") {
@@ -414,6 +414,15 @@ impl Wire {
         if let Some(xr) = self.xr_of(id) {
             if xr.version() >= 10 {
                 xr.set_scroll_free(free as u32);
+            }
+        }
+    }
+
+    pub(crate) fn set_media_keys(&mut self, id: WindowId, playing: bool) {
+        if let Some(xr) = self.xr_of(id) {
+            // Not to a room older than this request: it would end the connection.
+            if xr.version() >= 12 {
+                xr.set_media_keys(playing as u32);
             }
         }
     }
@@ -1049,6 +1058,11 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, WindowId> for Wire {
             }
             spatiand_xr_surface_v1::Event::Pinch { scale } => {
                 state.events.push(Event::Pinch { window: *id, scale: (scale as f32 / 1e6).clamp(0.2, 5.0) });
+            }
+            spatiand_xr_surface_v1::Event::MediaKey { key, pressed } => {
+                if let Some(key) = crate::MediaKey::from_wire(key.into()) {
+                    state.events.push(Event::MediaKey { window: *id, key, pressed: pressed != 0 });
+                }
             }
             spatiand_xr_surface_v1::Event::Describe { fd } => {
                 // A second asking replaces the first: the room has stopped waiting for it.
