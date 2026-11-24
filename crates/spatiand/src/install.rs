@@ -94,6 +94,16 @@ pub fn drag_started(mime_types: &[String], ask: impl FnOnce(std::os::fd::OwnedFd
     });
 }
 
+/// The files of this machine's that the drag in progress carries, as `file:` addresses one a
+/// line -- once the source has answered, and if there are any.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn dragged_files() -> Option<String> {
+    let dragged = STATE.lock().unwrap().dragged.clone()?;
+    let text = dragged.lock().unwrap().clone()?;
+    let files: Vec<&str> = text.lines().map(str::trim).filter(|l| l.starts_with("file://")).collect();
+    (!files.is_empty()).then(|| files.join("\n"))
+}
+
 /// The drag ended. On the room (no window under the pointer) a package in it is offered.
 pub fn drag_ended(on_room: bool) {
     let dragged = STATE.lock().unwrap().dragged.take();

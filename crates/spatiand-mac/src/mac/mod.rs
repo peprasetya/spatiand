@@ -415,6 +415,84 @@ pub fn size_new_windows(state: &mut crate::Spatiand, _windows: &mut [crate::scen
 /// Descriptions asked of the Mac's applications, by number, waiting for `sp_described`.
 static DESCRIBING: Mutex<Vec<(u32, std::sync::mpsc::Sender<String>)>> = Mutex::new(Vec::new());
 
+// --- drags that end in a window of this Mac's ---
+//
+// A Mac application takes a drop only from the Mac's own drag, which goes where the Mac's own
+// cursor is on the Mac's own screen -- a place that has nothing to do with where its windows hang
+// in the room. So the room says which of this Mac's windows the pointer is over while something
+// is dragged, and the app's side takes the Mac's drag there (`RoomWindows.dragOver`,
+// `MacDragOut`): one begun in another of this Mac's windows, or the files of a drag begun in an
+// application of the room's, which it starts as a drag of the Mac's.
+
+#[derive(Default)]
+struct Dragged {
+    /// A drag begun in one of this Mac's windows has been over another of them.
+    elsewhere: bool,
+    /// The window the files of a room's drag were last said to be over.
+    files_over: Option<u32>,
+}
+
+static DRAGGED: Mutex<Dragged> = Mutex::new(Dragged { elsewhere: false, files_over: None });
+
+/// Which of this Mac's windows a surface is.
+fn window_of(state: &crate::Spatiand, surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> Option<u32> {
+    use smithay::reexports::wayland_server::Resource;
+    use smithay::wayland::seat::WaylandFocus;
+    let prefix = format!("remote.{}.", local::HOST);
+    let window = state.space.elements().find(|w| w.wl_surface().is_some_and(|s| *s == *surface))?;
+    state.app_id_of(window).is_some_and(|a| a.starts_with(&prefix)).then(|| local::id_of(surface.id().protocol_id())).flatten()
+}
+
+/// The pointer has moved, and is on `onto` at `at`: called with every movement.
+pub fn dragged_over(
+    state: &crate::Spatiand,
+    pointer: &smithay::input::pointer::PointerHandle<crate::Spatiand>,
+    onto: Option<&smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+    at: (f64, f64),
+    held: bool,
+) {
+    let mut dragged = DRAGGED.lock().unwrap();
+    if !state.dragging && !held && !dragged.elsewhere && dragged.files_over.is_none() {
+        return;
+    }
+    let on = onto.and_then(|s| window_of(state, s));
+    // An application of the room's is dragging: its files, over a window of this Mac's.
+    if state.dragging {
+        match (on, crate::install::dragged_files()) {
+            (Some(id), Some(files)) => {
+                let first = dragged.files_over != Some(id);
+                dragged.files_over = Some(id);
+                ffi::call_text(ffi::Asked::FilesOver, id, at.0, at.1, 0.0, if first { &files } else { "" });
+            }
+            _ => {
+                if dragged.files_over.take().is_some() {
+                    ffi::tell_window(ffi::Asked::FilesLeave, 0, 0.0, 0.0, 0.0);
+                }
+            }
+        }
+        return;
+    }
+    if !held {
+        dragged.elsewhere = false;
+        return;
+    }
+    // The button is held where it went down, on a window of this Mac's: said while the pointer
+    // is on another of them, or on none (window 0) -- and once more when it is back.
+    let Some(pressed) = pointer.current_focus().and_then(|s| window_of(state, &s)) else { return };
+    if on != Some(pressed) || dragged.elsewhere {
+        dragged.elsewhere = on != Some(pressed);
+        ffi::tell_window(ffi::Asked::WindowDragOver, on.unwrap_or(0), at.0, at.1, pressed as f64);
+    }
+}
+
+/// What an application of the room's was dragging has been let go of, or its drag called off.
+pub fn drag_let_go() {
+    let over = DRAGGED.lock().unwrap().files_over.take();
+    if let Some(id) = over {
+        ffi::tell_window(ffi::Asked::FilesDrop, id, 0.0, 0.0, 0.0);
+    }
+}
+
 /// What one of this Mac's windows in the room shows (`app_id` is its room id): its application,
 /// asked through Accessibility by the app's side, answers on the receiver. `None` for a window
 /// that is not one of this Mac's.

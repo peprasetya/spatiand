@@ -55,6 +55,10 @@ enum {
     SP_FORCE_QUIT = 38,       // force the application with bundle id text to quit
     SP_BLUETOOTH_LIST = 39,   // say the paired Bluetooth devices (sp_bluetooth_begin...)
     SP_BLUETOOTH_DO = 40,     // text is "connect|disconnect|forget AA:BB:.." or "power on|off", id its number; answer sp_bluetooth_done(id, ..)
+    SP_WINDOW_DRAG_OVER = 41, // a drag begun in window c is over window id at (a, b)
+    SP_FILES_OVER = 42,       // files dragged in the room are over window id at (a, b); text: file addresses, a line each, the first time
+    SP_FILES_LEAVE = 43,      // they left this Mac's windows, not let go of
+    SP_FILES_DROP = 44,       // they were let go of over window id
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,

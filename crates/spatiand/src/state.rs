@@ -2092,6 +2092,8 @@ impl ClientDndGrabHandler for Spatiand {
         });
         self.dragging = false;
         self.drag_icon = None;
+        #[cfg(target_os = "macos")]
+        crate::mac::drag_let_go();
         crate::install::drag_ended(target.is_none());
     }
 }

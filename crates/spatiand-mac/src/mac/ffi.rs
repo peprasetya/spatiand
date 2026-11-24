@@ -96,6 +96,19 @@ pub enum Asked {
     /// Do this to a Bluetooth device, answering with `sp_bluetooth_done`: `text` is
     /// `connect AA:BB:..`, `disconnect AA:BB:..`, `forget AA:BB:..`, `power on` or `power off`.
     BluetoothDo = 40,
+    /// Something of this Mac's is being dragged -- the button went down in window `c` and is
+    /// still held -- and the pointer is now at (`a`, `b`) in window `id`, another of this Mac's
+    /// (or `c` again after another), or on none of them (`id` 0): the drag is to go on there,
+    /// or wait where it is (`dragged_over`).
+    WindowDragOver = 41,
+    /// Files dragged out of an application of the room's (SpatiShelf) are over window `id` at
+    /// (`a`, `b`). `text`, the first time for a window, is what is dragged: `file:` addresses,
+    /// one a line. The Mac is to drag them there as its own.
+    FilesOver = 42,
+    /// The files are over no window of this Mac's any more, and were not let go of.
+    FilesLeave = 43,
+    /// The files were let go of over window `id`, where they last were said to be.
+    FilesDrop = 44,
 }
 
 pub type Callback =

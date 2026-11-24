@@ -247,8 +247,10 @@ final class Room {
     private func asked(_ what: Int32, id: UInt32, a: Double, b: Double, c: Double, text: String) {
         switch Int(what) {
         case SP_WINDOW_MOTION, SP_WINDOW_LEAVE, SP_WINDOW_BUTTON, SP_WINDOW_SCROLL, SP_WINDOW_KEY, SP_WINDOW_FOCUS,
-             SP_WINDOW_RESIZE, SP_WINDOW_CLOSE, SP_WINDOW_SHOWN, SP_WINDOW_HIDDEN:
+             SP_WINDOW_RESIZE, SP_WINDOW_CLOSE, SP_WINDOW_SHOWN, SP_WINDOW_HIDDEN, SP_WINDOW_DRAG_OVER:
             RoomWindows.shared.asked(what, id: id, a: a, b: b, c: c)
+        case SP_FILES_OVER, SP_FILES_LEAVE, SP_FILES_DROP:
+            RoomWindows.shared.askedFiles(what, id: id, a: a, b: b, text: text)
         case SP_RETURN_TO_DESKTOP:
             DispatchQueue.main.async { RoomTap.shared.hold(false) }
         case SP_LAUNCH:

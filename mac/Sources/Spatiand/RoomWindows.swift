@@ -93,6 +93,13 @@ final class RoomWindows {
     /// Where the pointer is in each window, in its pixels, as last said.
     private var at: [UInt32: CGPoint] = [:]
     private var down: Set<UInt32> = []
+    /// A drag begun in one of these windows that has gone on over another of them: the one it
+    /// is over now (`dragOver`). Nil while it is in the window the button went down in.
+    private var dragRef: UInt32?
+    /// The drag's pointer is on none of these windows: the Mac's drag waits where it is.
+    private var dragOff = false
+    /// The same, for `dragLag`, which is asked from the tap's thread.
+    private var dragAway = false
     private var lastClick: (Date, CGPoint, Int) = (.distantPast, .zero, 0)
     private let source: CGEventSource? = {
         let source = CGEventSource(stateID: .hidSystemState)
@@ -159,6 +166,12 @@ final class RoomWindows {
 
     /// The window the left button is down in, while it is: a drag there is the real mouse's.
     private var dragIn: UInt32?
+    private func setDragOff(_ off: Bool) {
+        dragOff = off
+        insideLock.lock()
+        dragAway = off
+        insideLock.unlock()
+    }
     private func noteDrag(_ id: UInt32?) {
         insideLock.lock()
         dragIn = id
@@ -174,7 +187,7 @@ final class RoomWindows {
         let at = id.flatMap { pointerNow[$0] }
         let capture = id.flatMap { shownCaptures[$0] }
         insideLock.unlock()
-        guard id != nil, info != nil else { return nil }
+        guard id != nil, info != nil, !dragAway else { return nil }
         guard let at, let capture else { return .zero }
         let inWindow = capture.pixel(at: cursor)
         return CGPoint(x: inWindow.x - at.x, y: inWindow.y - at.y)
@@ -679,6 +692,9 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             putAwayForScreen.removeAll()
             at.removeAll()
             down.removeAll()
+            dragRef = nil
+            setDragOff(false)
+            MacDragOut.shared.leave()
             focused = 0
             raiseDue = nil
             pressedInScreenAt = nil
@@ -703,8 +719,9 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     func asked(_ what: Int32, id: UInt32, a: Double, b: Double, c: Double) {
         if what == SP_WINDOW_RESIZE { wantSize(id, width: a, height: b); return }
         queue.async { [self] in
-            guard what == SP_WINDOW_FOCUS || entries[id] != nil else { return }
+            guard what == SP_WINDOW_FOCUS || what == SP_WINDOW_DRAG_OVER || entries[id] != nil else { return }
             switch Int(what) {
+            case SP_WINDOW_DRAG_OVER: dragOver(id, x: a, y: b, pressed: UInt32(c))
             case SP_WINDOW_SHOWN: shown(id)
             case SP_WINDOW_HIDDEN: hidden(id)
             case SP_WINDOW_FOCUS: focus(id)
@@ -726,6 +743,92 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     /// A key held down and repeating, which only the window that has the keys is told.
     func repeated(_ code: UInt16) {
         queue.async { [self] in if focused != 0, entries[focused] != nil { key(code, down: true, isRepeat: true) } }
+    }
+
+    /// Files dragged out of an application of the room's are over one of these windows, have
+    /// left them, or were let go of over one (`MacDragOut`, which drags them as the Mac's own).
+    func askedFiles(_ what: Int32, id: UInt32, a: Double, b: Double, text: String) {
+        queue.async { [self] in
+            switch Int(what) {
+            case SP_FILES_OVER:
+                guard let capture = entries[id]?.capture else { return }
+                let p = capture.screenPoint(x: a, y: b)
+                let files = text.isEmpty ? nil : text.split(separator: "\n").compactMap { URL(string: String($0)) }.filter { $0.isFileURL }
+                if files != nil {
+                    print("windows: files dragged in the room are over \(entries[id]?.info.app ?? "?") (\(id)); brought to the top for them")
+                    bringUnder(id, at: p)
+                }
+                MacDragOut.shared.over(p, files: files)
+            case SP_FILES_DROP: MacDragOut.shared.drop()
+            default: MacDragOut.shared.leave()
+            }
+        }
+    }
+
+    /// The window is made the one on top at `p` of the Mac's screen, for what is dragged to it:
+    /// macOS lets go of a drag onto whatever is on top under its own cursor. Not when it is
+    /// already, which is every movement but the first.
+    private func bringUnder(_ id: UInt32, at p: CGPoint) {
+        guard let info = entries[id]?.info, info.display == nil else { return }
+        if let top = topWindow(at: p, for: info.pid), top.id == info.windowID { return }
+        raise(id)
+    }
+
+    /// The Mac's own drag taken to `p`: the real cursor put there, and a movement with the
+    /// button held said from there. `always`: even with the hand moving it itself.
+    private func dragTo(_ p: CGPoint, always: Bool) {
+        let here = CGEvent(source: nil)?.location ?? p
+        guard always || (!RoomTap.shared.handIsDragging && hypot(here.x - p.x, here.y - p.y) > 2) else { return }
+        PointerLog.shared.note(String(format: "drag %.1f %.1f from %.1f %.1f (%@)", p.x, p.y, here.x, here.y, always ? "onto another window" : "head"))
+        RoomTap.shared.warp(to: p)
+        let event = CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left)
+        event?.setIntegerValueField(.mouseEventDeltaX, value: Int64((p.x - here.x).rounded()))
+        event?.setIntegerValueField(.mouseEventDeltaY, value: Int64((p.y - here.y).rounded()))
+        post(event)
+    }
+
+    /// **A drag goes on into another of these windows.** The button went down in `pressed` and
+    /// is held, and the room's pointer is at (`x`, `y`) of window `id` -- another, or `pressed`
+    /// again after another. The Mac's drag is where the Mac's cursor is on the Mac's screen,
+    /// where these windows lie as they happen to, one over another: so the window pointed at is
+    /// brought to the top there and the cursor taken to the point of it pointed at, dragging.
+    /// (The room keeps saying the pointer's movements to the window pressed, in this window's
+    /// own measure: `motion` leaves those be while the drag is over another.)
+    private func dragOver(_ id: UInt32, x: Double, y: Double, pressed: UInt32) {
+        guard down.contains(pressed) else { return }
+        // **On none of them**: the room's pointer goes on by itself, and the Mac's drag waits
+        // where it was. (What the room says of the pointer to the window pressed is then no
+        // place in that window at all, and the cursor used to be sent to it.)
+        guard id != 0 else {
+            if !dragOff {
+                setDragOff(true)
+                print("windows: a drag begun in \(entries[pressed]?.info.app ?? "?") (\(pressed)) has left this Mac's windows; it waits where it is")
+            }
+            return
+        }
+        guard entries[id]?.capture != nil else { return }
+        let before = dragRef ?? pressed
+        let wasOff = dragOff
+        if before == id, id == pressed, !wasOff { return }
+        setDragOff(false)
+        at[id] = CGPoint(x: x, y: y)
+        notePointer(id, at[id])
+        guard let p = point(id) else { return }
+        guard before != id || wasOff else { dragTo(p, always: false); return }
+        if before != pressed, before != id { at[before] = nil; notePointer(before, nil) }
+        dragRef = id == pressed ? nil : id
+        noteDrag(id)
+        pressedInScreenAt = nil
+        print("windows: a drag begun in \(entries[pressed]?.info.app ?? "?") (\(pressed)) is over \(entries[id]?.info.app ?? "?") (\(id)) now")
+        bringUnder(id, at: p)
+        dragTo(p, always: true)
+        // And again in a moment: an application hears a drag come in with its first movement
+        // there, and says what it would do with it at the next.
+        queue.asyncAfter(deadline: .now() + 0.06) { [self] in
+            guard down.contains(pressed), !dragOff, (dragRef ?? pressed) == id, let p = point(id) else { return }
+            dragTo(CGPoint(x: p.x + 1, y: p.y), always: true)
+            dragTo(p, always: true)
+        }
     }
 
     private func post(_ event: CGEvent?) {
@@ -818,6 +921,8 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // (It is not brought to the front for being pointed at: that took a quarter of a second
         // each time, and pointing across one window on the way to the room's keyboard made it
         // the Mac's front window, which is where the keys then went. A press brings it forward.)
+        // A drag that has gone on over another window is that window's (`dragOver`).
+        if down.contains(id), dragOff || (dragRef != nil && dragRef != id) { return }
         at[id] = CGPoint(x: x, y: y)
         notePointer(id, at[id])
         setInside(true)
@@ -831,7 +936,6 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // that moves moved with the head; the real cursor is taken there, dragging, so that
         // what is held follows the pointer the wearer sees.
         if down.contains(id) {
-            let here = CGEvent(source: nil)?.location ?? p
             // **In a screen, not until the pointer has left where it was pressed** by more than
             // a head held still, or a finger pressing the trackpad down, moves it. Every press
             // there was a press, a drag of a few points and a release -- macOS steadies its own
@@ -844,14 +948,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
                 if hypot(p.x - pressed.x, p.y - pressed.y) < 4 { return }
                 pressedInScreenAt = nil
             }
-            if !RoomTap.shared.handIsDragging, hypot(here.x - p.x, here.y - p.y) > 2 {
-                PointerLog.shared.note(String(format: "drag %.1f %.1f from %.1f %.1f (head)", p.x, p.y, here.x, here.y))
-                RoomTap.shared.warp(to: p)
-                let event = CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left)
-                event?.setIntegerValueField(.mouseEventDeltaX, value: Int64((p.x - here.x).rounded()))
-                event?.setIntegerValueField(.mouseEventDeltaY, value: Int64((p.y - here.y).rounded()))
-                post(event)
-            }
+            dragTo(p, always: false)
             return
         }
         // **In a screen the pointer is the Mac's real one**: put where the room's is, and moved
@@ -955,7 +1052,12 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             post(event)
         } else {
             let dragged = button == .left && down.contains(id)
-            if button == .left { down.remove(id); noteDrag(nil); pressedInScreenAt = nil }
+            if button == .left {
+                down.remove(id); noteDrag(nil); pressedInScreenAt = nil
+                // Let go of over another window: the room says where its pointer is afresh.
+                if let over = dragRef { dragRef = nil; at[over] = nil; notePointer(over, nil) }
+                setDragOff(false)
+            }
             rescanSoon()
             // Let go where the real cursor is, which is where the drag has taken it.
             let p = dragged ? (CGEvent(source: nil)?.location ?? p) : p

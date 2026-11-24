@@ -273,8 +273,35 @@ when it is let go of and puts it in the folder under it by its name (numbered be
 name; only the name's last part, never hidden), on a disk or a remote -- written to a folder of
 its own in the temporary directory and moved from there as anything else is. Checked in the
 snapshot compositor with the Deck's Chromium (`mesh-to-shelf` of the same script): saved byte for
-byte. A link or text dragged out of a page is still not taken. Not yet: into or out of a Mac's or
-a host's own windows.
+byte. A link or text dragged out of a page is still not taken.
+
+**Onto a Mac's own windows** (2026-11-24; the owner: "I drag files from spatishelf to any mac app in
+the room, seem not function.... drag file from finder in the room to mac app also not work"). A Mac
+application takes a drop only from the Mac's own drag, which goes where the Mac's own cursor is on
+the Mac's own screen -- where its windows lie as they happen to, one over another, nothing like
+where they hang in the room. The room now says which of the Mac's windows the pointer is over while
+something is dragged (`crate::mac::dragged_over`, from `Pointer::motion`; `drag_let_go`):
+
+- *One Mac window to another* (Finder to an application): the window pointed at is brought to the
+  top on the Mac's screen and the Mac's cursor taken to the point of it pointed at, dragging
+  (`RoomWindows.dragOver`). Over none of the Mac's windows the Mac's drag waits where it was and the
+  room's pointer goes on by itself -- before, the cursor was sent to no place in the window pressed.
+- *An application of the room's to a Mac window* (SpatiShelf to an application): the `file:`
+  addresses of the room's drag are dragged there as the Mac's own (`MacDragOut`), copied or opened
+  as the application takes files, never moved; the room's application hears that nothing took its
+  drag. **A workaround, which the owner said yes to**: macOS lets a drag be begun only by a press
+  in a window of the application's own, so a small unseen window is put under the cursor and a
+  press posted into it. There is no proper way: macOS has no drag without a press. A remote's
+  files (WebDAV addresses) are not dragged.
+
+`Spatiand --selftest-drag` (it moves the Mac's real pointer) does all of it with two windows of its
+own, a source and a target lying one over the other on the Mac's screen; passed on littleotter:
+files of the room's let go of over the target arrive, taken away again nothing arrives, and a file
+dragged out of the source across the room onto the target arrives, with the pointer moved as
+fingers move it and as a mouse does. Not seen with Finder, SpatiShelf itself or on the glasses; the
+room's part for SpatiShelf's drag (`state.dragging`, the files read at the drag's start) is run
+only by the real thing. Not yet: out of a Mac's window into an application of the room's, and a
+host's windows.
 
 ## 2026-11-14: SpatiShelf's list opens folders where they are (Finder's list)
 

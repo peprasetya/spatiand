@@ -1098,6 +1098,9 @@ if let at = CommandLine.arguments.firstIndex(of: "--click-target") {
     PointerTest.target(file: CommandLine.arguments.dropFirst(at + 1).first ?? NSTemporaryDirectory() + "spatiand-clicks.txt")
 }
 if CommandLine.arguments.contains("--selftest-pointer") { PointerTest.run() }
+if let at = CommandLine.arguments.firstIndex(of: "--drag-source") { DragTest.source(file: CommandLine.arguments[at + 1]) }
+if let at = CommandLine.arguments.firstIndex(of: "--drop-target") { DragTest.target(report: CommandLine.arguments[at + 1]) }
+if CommandLine.arguments.contains("--selftest-drag") { DragTest.run() }
 if let at = CommandLine.arguments.firstIndex(of: "--trace-pointer") {
     // --trace-pointer [seconds]: the room in a window with this Mac's mouse the room's, and a
     // record kept of every movement of the mouse beside where the room's pointer went, for
