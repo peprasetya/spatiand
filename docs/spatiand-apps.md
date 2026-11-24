@@ -294,14 +294,25 @@ something is dragged (`crate::mac::dragged_over`, from `Pointer::motion`; `drag_
   press posted into it. There is no proper way: macOS has no drag without a press. A remote's
   files (WebDAV addresses) are not dragged.
 
+- *A Mac window to an application of the room's* (Finder to SpatiShelf; the owner, the same evening:
+  "why not build? make it"): once a drag has left the window it began in, the app's side reads what
+  macOS has on its drag pasteboard and tells the room the files (`sp_mac_drag`). Over a surface that
+  is not the Mac's the room then offers them itself, as a drag of the room's own
+  (smithay's `start_dnd`, `ServerDndGrabHandler` -- on the Mac only), `text/uri-list`, to be copied
+  or moved as the application does with files of this machine's; the Mac's own drag waits. Let go of
+  there, the Mac's own is called off (let go of over the unseen window, which takes nothing), so no
+  Mac application is given the files too; back over a Mac window the room's drag ends and the Mac's
+  goes on as above.
+
 `Spatiand --selftest-drag` (it moves the Mac's real pointer) does all of it with two windows of its
-own, a source and a target lying one over the other on the Mac's screen; passed on littleotter:
-files of the room's let go of over the target arrive, taken away again nothing arrives, and a file
-dragged out of the source across the room onto the target arrives, with the pointer moved as
-fingers move it and as a mouse does. Not seen with Finder, SpatiShelf itself or on the glasses; the
-room's part for SpatiShelf's drag (`state.dragging`, the files read at the drag's start) is run
-only by the real thing. Not yet: out of a Mac's window into an application of the room's, and a
-host's windows.
+own, a source and a target lying one over the other on the Mac's screen, and SpatiShelf in a folder
+made for it; passed on littleotter: files of the room's let go of over the target arrive, taken away
+again nothing arrives; a file dragged out of the source across the room onto the target arrives,
+with the pointer moved as fingers move it and as a mouse does; a file dragged out of the source onto
+SpatiShelf is in its folder, and the target given nothing. Not seen with Finder itself or on the
+glasses; the room's part for SpatiShelf's own drag onto a Mac window (`state.dragging`, the files
+read at the drag's start) is run only by the real thing. Not yet: a host's windows; anything but
+files (text, a picture out of a Mac application).
 
 ## 2026-11-14: SpatiShelf's list opens folders where they are (Finder's list)
 

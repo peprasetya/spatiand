@@ -2097,7 +2097,22 @@ impl ClientDndGrabHandler for Spatiand {
         crate::install::drag_ended(target.is_none());
     }
 }
+/// A drag the room itself offers: on the Mac, the files of a drag of the Mac's own that is over
+/// an application of the room's (`crate::mac::dragged_over`). Nowhere else is one begun.
+#[cfg(not(target_os = "macos"))]
 impl ServerDndGrabHandler for Spatiand {}
+#[cfg(target_os = "macos")]
+impl ServerDndGrabHandler for Spatiand {
+    fn send(&mut self, mime_type: String, fd: std::os::fd::OwnedFd, _seat: Seat<Self>) {
+        crate::mac::native_drag_send(&mime_type, fd);
+    }
+    fn finished(&mut self, _seat: Seat<Self>) {
+        crate::mac::native_drag_ended(self, "taken");
+    }
+    fn cancelled(&mut self, _seat: Seat<Self>) {
+        crate::mac::native_drag_ended(self, "not taken");
+    }
+}
 
 delegate_compositor!(Spatiand);
 delegate_shm!(Spatiand);

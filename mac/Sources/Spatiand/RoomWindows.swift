@@ -98,6 +98,14 @@ final class RoomWindows {
     private var dragRef: UInt32?
     /// The drag's pointer is on none of these windows: the Mac's drag waits where it is.
     private var dragOff = false
+    /// The window whose drag is offered to an application of the room's as a drag of the
+    /// room's (`SP_MAC_DRAG_IN_ROOM`): the Mac's own waits, and is called off when that ends.
+    private var roomDrag: UInt32?
+    /// The drag pasteboard's count when the button went down, and whether the room has been
+    /// told what the drag begun since carries (`tellDragged`).
+    private var dragBoardAtPress = 0
+    private var draggedTold = false
+    private var draggedAsked = Date.distantPast
     /// The same, for `dragLag`, which is asked from the tap's thread.
     private var dragAway = false
     private var lastClick: (Date, CGPoint, Int) = (.distantPast, .zero, 0)
@@ -225,6 +233,10 @@ final class RoomWindows {
         pointerNow[id] = p
         insideLock.unlock()
     }
+
+    /// For tests: whether a drag of the Mac's is offered to an application of the room's now.
+    /// Waits for this queue, so not to be called from it.
+    var offeredInRoom: Bool { queue.sync { roomDrag != nil } }
 
     /// For tests: the room's number of a window that is on show.
     func roomID(of windowID: CGWindowID) -> UInt32? {
@@ -693,6 +705,8 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             at.removeAll()
             down.removeAll()
             dragRef = nil
+            roomDrag = nil
+            sp_mac_drag(0, nil)
             setDragOff(false)
             MacDragOut.shared.leave()
             focused = 0
@@ -719,8 +733,21 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
     func asked(_ what: Int32, id: UInt32, a: Double, b: Double, c: Double) {
         if what == SP_WINDOW_RESIZE { wantSize(id, width: a, height: b); return }
         queue.async { [self] in
-            guard what == SP_WINDOW_FOCUS || what == SP_WINDOW_DRAG_OVER || entries[id] != nil else { return }
+            guard what == SP_WINDOW_FOCUS || what == SP_WINDOW_DRAG_OVER || what == SP_MAC_DRAG_END || entries[id] != nil else { return }
             switch Int(what) {
+            case SP_MAC_DRAG_IN_ROOM:
+                roomDrag = id
+                print("windows: the drag begun in \(entries[id]?.info.app ?? "?") (\(id)) carries files and is over an application of the room's: offered to it, the Mac's own waits")
+            case SP_MAC_DRAG_END:
+                // Let go of in the room. The Mac's own is let go of over a window that takes
+                // nothing, so that no application of the Mac's is given the files as well.
+                print("windows: the drag offered in the room was let go of there; the Mac's own is called off")
+                roomDrag = nil
+                MacDragOut.shared.swallow()
+                down.removeAll(); noteDrag(nil); pressedInScreenAt = nil
+                if let over = dragRef { dragRef = nil; at[over] = nil; notePointer(over, nil) }
+                setDragOff(false)
+                draggedTold = false
             case SP_WINDOW_DRAG_OVER: dragOver(id, x: a, y: b, pressed: UInt32(c))
             case SP_WINDOW_SHOWN: shown(id)
             case SP_WINDOW_HIDDEN: hidden(id)
@@ -799,6 +826,11 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // **On none of them**: the room's pointer goes on by itself, and the Mac's drag waits
         // where it was. (What the room says of the pointer to the window pressed is then no
         // place in that window at all, and the cursor used to be sent to it.)
+        tellDragged(pressed)
+        if roomDrag != nil, id != 0 {
+            print("windows: the drag is over a window of this Mac's again, and the Mac's own once more")
+            roomDrag = nil
+        }
         guard id != 0 else {
             if !dragOff {
                 setDragOff(true)
@@ -829,6 +861,21 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             dragTo(CGPoint(x: p.x + 1, y: p.y), always: true)
             dragTo(p, always: true)
         }
+    }
+
+    /// **What the Mac's drag carries, said to the room** once the drag has left the window it
+    /// began in: its files, which are what an application of the room's can be offered. macOS
+    /// keeps what is dragged on a pasteboard of its own, written when the drag begins -- which
+    /// may be a moment after the pointer has left, so it is looked at again until it is there.
+    private func tellDragged(_ pressed: UInt32) {
+        guard !draggedTold, Date().timeIntervalSince(draggedAsked) > 0.1 else { return }
+        draggedAsked = Date()
+        let board = NSPasteboard(name: .drag)
+        guard board.changeCount != dragBoardAtPress else { return }
+        draggedTold = true
+        let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        print("windows: the drag begun in \(entries[pressed]?.info.app ?? "?") (\(pressed)) carries \(urls.count) file(s)")
+        sp_mac_drag(pressed, urls.map { $0.absoluteString }.joined(separator: "\n"))
     }
 
     private func post(_ event: CGEvent?) {
@@ -922,7 +969,7 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
         // each time, and pointing across one window on the way to the room's keyboard made it
         // the Mac's front window, which is where the keys then went. A press brings it forward.)
         // A drag that has gone on over another window is that window's (`dragOver`).
-        if down.contains(id), dragOff || (dragRef != nil && dragRef != id) { return }
+        if !down.isEmpty, dragOff || roomDrag != nil || (dragRef != nil && dragRef != id) { return }
         at[id] = CGPoint(x: x, y: y)
         notePointer(id, at[id])
         setInside(true)
@@ -1041,7 +1088,11 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             let now = Date()
             let near = hypot(p.x - lastClick.1.x, p.y - lastClick.1.y) < 6
             let count = button == .left && near && now.timeIntervalSince(lastClick.0) < NSEvent.doubleClickInterval ? lastClick.2 + 1 : 1
-            if button == .left { lastClick = (now, p, count); down.insert(id); noteDrag(id) }
+            if button == .left {
+                lastClick = (now, p, count); down.insert(id); noteDrag(id)
+                dragBoardAtPress = NSPasteboard(name: .drag).changeCount
+                draggedTold = false
+            }
             let event = CGEvent(mouseEventSource: source, mouseType: downType, mouseCursorPosition: p, mouseButton: button)
             event?.setIntegerValueField(.mouseEventClickState, value: Int64(count))
             PointerLog.shared.note({
@@ -1051,9 +1102,15 @@ abs(a.minX - b.minX) < 3 && abs(a.minY - b.minY) < 60 && abs(a.width - b.width) 
             }())
             post(event)
         } else {
-            let dragged = button == .left && down.contains(id)
+            // Not the wearer's: the window is told its button is up when the pointer is taken
+            // from it for the room's drag.
+            if button == .left, roomDrag != nil { return }
+            // Let go of in whichever window the drag has gone on to: the drag's release.
+            let dragged = button == .left && !down.isEmpty
             if button == .left {
-                down.remove(id); noteDrag(nil); pressedInScreenAt = nil
+                down.removeAll(); noteDrag(nil); pressedInScreenAt = nil
+                if draggedTold || dragRef != nil || dragOff { sp_mac_drag(0, nil) }
+                draggedTold = false
                 // Let go of over another window: the room says where its pointer is afresh.
                 if let over = dragRef { dragRef = nil; at[over] = nil; notePointer(over, nil) }
                 setDragOff(false)

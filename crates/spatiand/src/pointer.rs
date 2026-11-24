@@ -1195,7 +1195,7 @@ impl PointerState {
         );
         // What is dragged goes on to a window of the Mac's own as the Mac's own drag.
         #[cfg(target_os = "macos")]
-        crate::mac::dragged_over(state, &pointer, onto.as_ref(), (location.x, location.y), !self.held.is_empty());
+        crate::mac::dragged_over(state, &pointer, onto.as_ref(), (location.x, location.y), !self.held.is_empty(), time_ms);
         if let Some(surface) = onto {
             grant_constraint(&pointer, &surface, location);
         }

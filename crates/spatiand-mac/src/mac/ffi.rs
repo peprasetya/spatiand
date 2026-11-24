@@ -109,6 +109,13 @@ pub enum Asked {
     FilesLeave = 43,
     /// The files were let go of over window `id`, where they last were said to be.
     FilesDrop = 44,
+    /// The drag begun in window `id` of this Mac's, which carries files, is over an
+    /// application of the room's and offered to it as a drag of the room's (`dragged_over`):
+    /// the Mac's own waits, and the button's release the window is told of is not the wearer's.
+    MacDragInRoom = 45,
+    /// That drag has ended in the room -- let go of there, taken or not: the Mac's own is to be
+    /// called off, let go of over nothing.
+    MacDragEnd = 46,
 }
 
 pub type Callback =
@@ -447,6 +454,17 @@ pub extern "C" fn sp_media_key(code: u32, pressed: bool) {
     if crate::media_keys::of(code).is_some() {
         controller::input().lock().unwrap().keys.push(Typed::Key { code, pressed });
     }
+}
+
+/// A drag begun in window `pressed` of this Mac's has left that window carrying these files
+/// (`file:` addresses, one a line; none: nothing the room can offer) -- or, with `pressed` 0,
+/// the button has been let go of and there is no drag (`mod.rs`, drags).
+///
+/// # Safety
+/// `files` is a C string or null.
+#[no_mangle]
+pub unsafe extern "C" fn sp_mac_drag(pressed: u32, files: *const c_char) {
+    super::mac_drag(pressed, text(files));
 }
 
 #[cfg(test)]

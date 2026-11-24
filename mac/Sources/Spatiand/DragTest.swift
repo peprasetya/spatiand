@@ -7,7 +7,10 @@
 //    2. the same, taken away again and not let go of: the target must be given nothing;
 //    3. a file dragged out of the source by the room's pointer, moved as fingers move it, across
 //       the room onto the target and let go of: the target must be given it (`RoomWindows.dragOver`);
-//    4. the same with the mouse's own travel.
+//    4. the same with the mouse's own travel;
+//    5. a file dragged out of the source onto SpatiShelf, which lies behind both, and let go of
+//       there: it must be in the folder SpatiShelf shows (a folder made for this), and the
+//       target given nothing (`crate::mac::dragged_over`, the room's own drag).
 //  **Moves the Mac's real pointer and drags with it: not for while the Mac is in use.**
 
 import AppKit
@@ -228,10 +231,53 @@ enum DragTest {
             }
         }
 
+        /// A file dragged out of the source, down off it onto SpatiShelf behind, and let go of.
+        let home = NSTemporaryDirectory() + "spatiand-drag-home"
+        func ontoShelf(then: @escaping () -> Void) {
+            try? "dragged\n".write(toFile: dragged, atomically: true, encoding: .utf8)
+            byMouse = false
+            bringSource { there in
+                guard there else { check("onto SpatiShelf: the pointer could not be brought into the source", false); then(); return }
+                button(true)
+                var steps = 0
+                func down() {
+                    steps += 1
+                    travel(steps <= 8 ? 4 : 0, steps <= 8 ? 0 : 8)
+                    let offered = RoomWindows.shared.offeredInRoom
+                    if !offered, steps < 250 { after(0.04) { down() }; return }
+                    // A little further in, and held there a moment, as a hand would.
+                    // (Not far: its folder ends at the line along its foot, which takes nothing.)
+                    for i in 1...3 { after(0.05 * Double(i)) { travel(0, 6) } }
+                    after(0.8) { travel(2, 2) }
+                    after(1.6) {
+                        button(false)
+                        after(3) {
+                            let arrived = FileManager.default.fileExists(atPath: home + "/spatiand-dragged.txt")
+                            let inside = (try? FileManager.default.subpathsOfDirectory(atPath: home)) ?? []
+                            check("a file dragged out of a window of this Mac's onto SpatiShelf and let go of there\(offered ? "" : " (it was never offered in the room)"); the folder SpatiShelf shows now holds: \(inside.joined(separator: ", "))", offered && (arrived || inside.contains { $0.hasSuffix("spatiand-dragged.txt") }) && !given())
+                            then()
+                        }
+                    }
+                }
+                after(0.3) { down() }
+            }
+        }
+        var bringSource: (@escaping (Bool) -> Void) -> Void = { $0(false) }
+
         DispatchQueue.main.async {
             Room.shared.start(preview: true)
             after(1.5) { sp_control(3, true); after(0.1) { sp_control(3, false) } }
-            after(3) {
+            // SpatiShelf first, so that it lies behind the two windows; in a folder of its own.
+            after(2) {
+                try? FileManager.default.removeItem(atPath: home)
+                try? FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+                let real = NSHomeDirectory()
+                setenv("HOME", home, 1)
+                if CommandLine.arguments.contains("--wayland-debug") { setenv("WAYLAND_DEBUG", "client", 1) }
+                sp_desk_launch("SpatiShelf")
+                after(1.5) { setenv("HOME", real, 1); unsetenv("WAYLAND_DEBUG") }
+            }
+            after(5) {
                 Task {
                     let all = await MacWindows.list()
                     guard let source = all.first(where: { $0.title == sourceTitle }), let target = all.first(where: { $0.title == targetTitle }) else {
@@ -246,6 +292,8 @@ enum DragTest {
                         after(4) {
                             guard RoomTap.shared.install() else { print("drag: FAILED, no event tap"); failures += 1; finish(); return }
                             RoomTap.shared.hold(true)
+                            // Its right end, which has SpatiShelf's folder below it (its left has SpatiShelf's side).
+                            bringSource = { then in bring(to: source, (0.92, 0.55), then: then) }
                             guard let id = RoomWindows.shared.roomID(of: target.windowID) else { print("drag: FAILED, the target is not in the room"); failures += 1; finish(); return }
                             let size = pixels(target)
                             let files = "file://" + dragged
@@ -271,7 +319,7 @@ enum DragTest {
                                             byMouse = false
                                             across(source, target, "as fingers move the pointer") {
                                                 byMouse = true
-                                                across(source, target, "as a mouse moves it") { finish() }
+                                                across(source, target, "as a mouse moves it") { ontoShelf { finish() } }
                                             }
                                         }
                                     }

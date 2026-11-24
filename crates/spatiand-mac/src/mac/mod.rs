@@ -424,15 +424,24 @@ static DESCRIBING: Mutex<Vec<(u32, std::sync::mpsc::Sender<String>)>> = Mutex::n
 // `MacDragOut`): one begun in another of this Mac's windows, or the files of a drag begun in an
 // application of the room's, which it starts as a drag of the Mac's.
 
-#[derive(Default)]
+/// A drag of the Mac's own, begun in one of its windows, as the app's side says of it.
+struct Native {
+    pressed: u32,
+    /// The files it carries: `file:` addresses, one a line. Empty: nothing to offer the room.
+    files: String,
+    /// It is over an application of the room's, and offered to it as a drag of the room's.
+    in_room: bool,
+}
+
 struct Dragged {
-    /// A drag begun in one of this Mac's windows has been over another of them.
+    /// A drag begun in one of this Mac's windows has been off it.
     elsewhere: bool,
     /// The window the files of a room's drag were last said to be over.
     files_over: Option<u32>,
+    native: Option<Native>,
 }
 
-static DRAGGED: Mutex<Dragged> = Mutex::new(Dragged { elsewhere: false, files_over: None });
+static DRAGGED: Mutex<Dragged> = Mutex::new(Dragged { elsewhere: false, files_over: None, native: None });
 
 /// Which of this Mac's windows a surface is.
 fn window_of(state: &crate::Spatiand, surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> Option<u32> {
@@ -443,19 +452,47 @@ fn window_of(state: &crate::Spatiand, surface: &smithay::reexports::wayland_serv
     state.app_id_of(window).is_some_and(|a| a.starts_with(&prefix)).then(|| local::id_of(surface.id().protocol_id())).flatten()
 }
 
+/// The app's side says what a drag begun in `pressed` carries, or (0) that there is none.
+fn mac_drag(pressed: u32, files: String) {
+    let mut dragged = DRAGGED.lock().unwrap();
+    if pressed == 0 {
+        dragged.native = None;
+    } else if !dragged.native.as_ref().is_some_and(|n| n.pressed == pressed && n.in_room) {
+        dragged.native = Some(Native { pressed, files, in_room: false });
+    }
+}
+
 /// The pointer has moved, and is on `onto` at `at`: called with every movement.
 pub fn dragged_over(
-    state: &crate::Spatiand,
+    state: &mut crate::Spatiand,
     pointer: &smithay::input::pointer::PointerHandle<crate::Spatiand>,
     onto: Option<&smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
     at: (f64, f64),
     held: bool,
+    time_ms: u32,
 ) {
+    use smithay::utils::SERIAL_COUNTER;
     let mut dragged = DRAGGED.lock().unwrap();
     if !state.dragging && !held && !dragged.elsewhere && dragged.files_over.is_none() {
         return;
     }
     let on = onto.and_then(|s| window_of(state, s));
+    // **A drag of the Mac's own that the room's applications are being offered** (below). Back
+    // over a window of the Mac's it is the Mac's again: the room's drag ends there, untaken,
+    // and the Mac's own -- which has waited -- goes on in that window.
+    if let Some(native) = dragged.native.as_mut().filter(|n| n.in_room) {
+        if let Some(window) = on {
+            native.in_room = false;
+            let pressed = native.pressed;
+            dragged.elsewhere = true;
+            drop(dragged);
+            log::info!("the Mac's drag is over a window of the Mac's again: no longer offered in the room");
+            state.dragging = false;
+            pointer.unset_grab(state, SERIAL_COUNTER.next_serial(), time_ms);
+            ffi::tell_window(ffi::Asked::WindowDragOver, window, at.0, at.1, pressed as f64);
+        }
+        return;
+    }
     // An application of the room's is dragging: its files, over a window of this Mac's.
     if state.dragging {
         match (on, crate::install::dragged_files()) {
@@ -476,12 +513,87 @@ pub fn dragged_over(
         dragged.elsewhere = false;
         return;
     }
-    // The button is held where it went down, on a window of this Mac's: said while the pointer
-    // is on another of them, or on none (window 0) -- and once more when it is back.
-    let Some(pressed) = pointer.current_focus().and_then(|s| window_of(state, &s)) else { return };
+    // The button is held where it went down, on a window of this Mac's (which the app's side
+    // has said, once a drag has left it: the pointer is no longer held to it after the drag
+    // has been the room's for a while).
+    let pressed = dragged.native.as_ref().map(|n| n.pressed).or_else(|| pointer.current_focus().and_then(|s| window_of(state, &s)));
+    let Some(pressed) = pressed else { return };
+    // **Over an application of the room's, carrying files: offered to it as a drag of the
+    // room's**, which is the only kind it takes -- these files, by their addresses. The Mac's
+    // own waits where it is until this one is let go of (then it is called off) or is back over
+    // a window of the Mac's.
+    if on.is_none() && onto.is_some() && dragged.native.as_ref().is_some_and(|n| !n.files.is_empty()) {
+        if let Some(native) = dragged.native.as_mut() {
+            native.in_room = true;
+        }
+        dragged.elsewhere = true;
+        drop(dragged);
+        log::info!("a drag of the Mac's, with files, is over an application of the room's: offered to it");
+        // Said first: the window pressed is told the pointer has left it and its button is up,
+        // which is not the wearer letting go.
+        ffi::tell_window(ffi::Asked::MacDragInRoom, pressed, 0.0, 0.0, 0.0);
+        let start = pointer.grab_start_data().unwrap_or(smithay::input::pointer::GrabStartData {
+            focus: None,
+            button: 0x110,
+            location: (at.0, at.1).into(),
+        });
+        state.dragging = true;
+        state.drag_icon = None;
+        let display = state.display_handle.clone();
+        let seat = state.seat.clone();
+        smithay::wayland::selection::data_device::start_dnd(
+            &display,
+            &seat,
+            state,
+            SERIAL_COUNTER.next_serial(),
+            Some(start),
+            None,
+            smithay::wayland::selection::data_device::SourceMetadata {
+                mime_types: vec!["text/uri-list".into(), "text/plain;charset=utf-8".into()],
+                dnd_action: smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction::Copy
+                    | smithay::reexports::wayland_server::protocol::wl_data_device_manager::DndAction::Move,
+            },
+        );
+        return;
+    }
+    // Said while the pointer is on another of the Mac's windows, or on none (window 0) -- and
+    // once more when it is back.
     if on != Some(pressed) || dragged.elsewhere {
         dragged.elsewhere = on != Some(pressed);
         ffi::tell_window(ffi::Asked::WindowDragOver, on.unwrap_or(0), at.0, at.1, pressed as f64);
+    }
+}
+
+/// An application of the room's asks for what the Mac's drag carries.
+pub fn native_drag_send(mime_type: &str, fd: std::os::fd::OwnedFd) {
+    let files = DRAGGED.lock().unwrap().native.as_ref().map(|n| n.files.clone()).unwrap_or_default();
+    let text = if mime_type == "text/uri-list" {
+        files.lines().map(|l| format!("{l}\r\n")).collect::<String>()
+    } else {
+        files
+    };
+    std::thread::spawn(move || {
+        use std::io::Write;
+        let _ = std::fs::File::from(fd).write_all(text.as_bytes());
+    });
+}
+
+/// The Mac's drag that was offered in the room has been let go of there (taken, or not).
+pub fn native_drag_ended(state: &mut crate::Spatiand, how: &str) {
+    let ended = {
+        let mut dragged = DRAGGED.lock().unwrap();
+        // (Not one that went back to the Mac's windows: ending the room's drag there says
+        // "not taken" too.)
+        if !dragged.native.as_ref().is_some_and(|n| n.in_room) {
+            return;
+        }
+        dragged.elsewhere = false;
+        dragged.native.take()
+    };
+    if let Some(native) = ended {
+        log::info!("the Mac's drag offered in the room ended: {how}");
+        state.dragging = false;
+        ffi::tell_window(ffi::Asked::MacDragEnd, native.pressed, 0.0, 0.0, 0.0);
     }
 }
 

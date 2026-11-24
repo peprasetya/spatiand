@@ -82,6 +82,28 @@ final class MacDragOut: NSObject, NSDraggingSource {
         }
     }
 
+    /// A drag of another application's, which is where the Mac's cursor is, is called off: let
+    /// go of over this application's own window, which takes nothing. (What it carried has been
+    /// let go of in the room, onto an application of the room's.)
+    func swallow() {
+        DispatchQueue.main.async { [self] in
+            guard case .idle = phase else { return }
+            let panel = self.panel ?? made()
+            self.panel = panel
+            let at = CGEvent(source: nil)?.location ?? .zero
+            place(panel, at: at)
+            panel.orderFrontRegardless()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [self] in
+                post(.leftMouseDragged, at: CGPoint(x: at.x + 1, y: at.y), from: at)
+                post(.leftMouseDragged, at: at, from: at)
+                post(.leftMouseUp, at: at, from: at)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+                    if case .idle = phase { panel.orderOut(nil) }
+                }
+            }
+        }
+    }
+
     // MARK: the drag
 
     private func begin() {

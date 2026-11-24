@@ -59,6 +59,8 @@ enum {
     SP_FILES_OVER = 42,       // files dragged in the room are over window id at (a, b); text: file addresses, a line each, the first time
     SP_FILES_LEAVE = 43,      // they left this Mac's windows, not let go of
     SP_FILES_DROP = 44,       // they were let go of over window id
+    SP_MAC_DRAG_IN_ROOM = 45, // the drag begun in window id is offered to an application of the room's; the Mac's own waits
+    SP_MAC_DRAG_END = 46,     // that drag was let go of in the room: call the Mac's own off
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,
@@ -103,6 +105,9 @@ void sp_key(uint16_t mac_code, bool pressed);
 // One of the keyboard's media keys (play, forward, back), by the kernel's number for it
 // (KEY_PLAYPAUSE 164, KEY_NEXTSONG 163, KEY_PREVIOUSSONG 165, KEY_FASTFORWARD 208, KEY_REWIND 168).
 void sp_media_key(uint32_t code, bool pressed);
+// A drag begun in window `pressed` has left it carrying these files (file: addresses, a line each;
+// none: nothing to offer the room's applications); pressed 0: the button is let go of.
+void sp_mac_drag(uint32_t pressed, const char *files);
 // One of the Deck's buttons: 0 STEAM (settings), 1 ... (launcher), 2 A, 3 B, 4 X, 5 Y, 6 up,
 // 7 down, 8 left, 9 right, 10 menu, 11 view.
 void sp_control(int32_t control, bool pressed);
