@@ -325,11 +325,31 @@ fn copy_local(from: &Path, to: &Path, done: &mut u64, total: u64, report: &mut d
     if !kind.is_file() {
         return Err(io::Error::new(io::ErrorKind::Unsupported, format!("{} is not a file or a folder, and is not copied", from.display())));
     }
-    report(*done, total, &from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-    std::fs::copy(from, to)?;
+    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    report(*done, total, &name);
+    if meta.len() < WATCHED_FROM {
+        std::fs::copy(from, to)?;
+    } else {
+        // A large file is copied as any other -- the system's own copy, which keeps what the
+        // file has besides its bytes and shares them where the disk can -- on a thread of its
+        // own, while how much of it has arrived is read off the new file and said.
+        let before = *done;
+        std::thread::scope(|scope| {
+            let copy = scope.spawn(|| std::fs::copy(from, to));
+            while !copy.is_finished() {
+                std::thread::sleep(Duration::from_millis(100));
+                let arrived = to.symlink_metadata().map_or(0, |m| m.len()).min(meta.len());
+                report(before + arrived, total, &name);
+            }
+            copy.join().unwrap_or_else(|_| Err(io::Error::other("the copy stopped")))
+        })?;
+    }
     *done += meta.len();
     Ok(())
 }
+
+/// The size from which a file's copying is watched and said as it goes.
+const WATCHED_FROM: u64 = 8 << 20;
 
 /// Through rclone, waiting for the job and saying how it goes.
 fn rclone_job(storage: &Storage, method: &str, mut input: serde_json::Value, what: &str, report: &mut dyn FnMut(u64, u64, &str)) -> Result<(), String> {
@@ -768,6 +788,27 @@ mod tests {
         // Only its case changed: itself, not something else there.
         run_op(Op::Rename { item: place("a.txt"), name: "A.txt".into() }, &kept, &mut quiet).unwrap();
         assert_eq!(std::fs::read(dir.join("A.txt")).unwrap(), b"a");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_large_files_copy_says_how_far_it_is() {
+        let dir = std::env::temp_dir().join(format!("spatishelf-large-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (from, to) = (dir.join("film.bin"), dir.join("copy.bin"));
+        let size = 400u64 << 20;
+        std::fs::File::create(&from).unwrap().set_len(size).unwrap();
+        if let Ok(real) = std::env::var("SPATISHELF_TEST_REAL_FILE") {
+            std::fs::copy(real, &from).unwrap();
+        }
+        let size = from.metadata().unwrap().len();
+        let mut said = Vec::new();
+        let mut done = 0;
+        copy_local(&from, &to, &mut done, size, &mut |d, t, _| said.push((d, t))).unwrap();
+        assert_eq!((done, to.metadata().unwrap().len()), (size, size));
+        assert!(said.windows(2).all(|w| w[0].0 <= w[1].0) && said.iter().all(|&(d, t)| d <= size && t == size), "never back, never past the end");
+        eprintln!("said {} times, {} different", said.len(), said.iter().map(|s| s.0).collect::<std::collections::BTreeSet<_>>().len());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
