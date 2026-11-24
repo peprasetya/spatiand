@@ -1043,7 +1043,13 @@ chords work on a Russian, Greek or Hebrew layout; the pose channel (above). Pres
 is gone from SpatiPal and SpatiReel: a chat is deleted, a server forgotten, by a question.
 
 **SpatiReel.** Plays the next episode by itself when one ends, till the last, by the rule Vibrefy's
-web player uses (`vibrefy_api::episodes`, for every source with a path). A raw stream plays at
+web player uses (`vibrefy_api::episodes`, for every source with a path). Next Episode is
+offered a minute before the credits usually begin (`next::credits_of`: half a minute of credits
+after a half-hour episode, a minute and a half after an hour's, seven minutes after a film; it
+was the last 3 %, which the owner found too late). A film's window is resized like any other, by
+a corner in the room or its Mac window in 2D mode: the film keeps its shape, 0.4 to 2 times the
+1920x1080 it fits in at first, its controls and subtitles larger and smaller with it, and the
+next film opens at the size the last was left (while SpatiReel runs; not kept between runs). A raw stream plays at
 its own pace (above). Interlaced films are made whole by FFmpeg's deinterlacer where the picture
 is (`bwdif` in software, `deinterlace_vaapi` on the Deck; on MediaCodec's and VideoToolbox's
 frames a shader blend, a **workaround**: the proper one is FFmpeg with Metal on the Mac,

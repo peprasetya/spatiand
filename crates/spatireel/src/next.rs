@@ -60,10 +60,26 @@ pub fn find(source: &dyn Source, current: &Item, held: Option<Listing>) -> (Opti
     (next, Some((folder.key, beside)))
 }
 
-/// How long before the end the next episode is offered: the last 3 % of the film, at least the
-/// last 20 seconds and at most the last five minutes -- about where the credits are.
+/// How long the credits at a film's end usually are, by its length: half a minute after a
+/// half-hour episode, a minute and a half after an hour's (two to three on the dearer serials,
+/// under a minute on older ones), and seven minutes after a film for the cinema (five to ten,
+/// more after the largest). Never more than a tenth of something shorter than these.
+pub fn credits_of(duration: f64) -> f64 {
+    let usual: f64 = if duration < 35.0 * 60.0 {
+        30.0
+    } else if duration < 75.0 * 60.0 {
+        90.0
+    } else {
+        420.0
+    };
+    usual.min(duration * 0.1)
+}
+
+/// How long before the end the next episode is offered: a minute before the credits usually
+/// begin (the owner, 2026-11-24, of the last 3 % it was: "it's too small... how long a credit
+/// used to be... then add one minute"), in no more than the last quarter of something short.
 pub fn offered_for(duration: f64) -> f64 {
-    (duration * 0.03).clamp(20.0, 300.0)
+    (credits_of(duration) + 60.0).min(duration * 0.25)
 }
 
 /// Whether `position` is that near the end of a film whose length is known (not judged from
@@ -75,7 +91,7 @@ pub fn near_end(position: f64, duration: f64, guessed: bool) -> bool {
 /// Where an episode played next starts: where it was left, unless that was at its credits or
 /// past them, when it starts from its beginning.
 pub fn start_at(resume: f64, duration: f64) -> f64 {
-    if duration > 0.0 && resume >= duration - offered_for(duration) {
+    if duration > 0.0 && resume >= duration - credits_of(duration) {
         0.0
     } else {
         resume
@@ -135,13 +151,16 @@ mod tests {
     }
 
     #[test]
-    fn the_button_is_offered_in_the_last_three_percent_within_bounds() {
-        // An hour: the last 108 seconds.
-        assert!(!near_end(3600.0 - 109.0, 3600.0, false));
-        assert!(near_end(3600.0 - 107.0, 3600.0, false));
-        // Short: at least the last 20 seconds. Long: at most the last five minutes.
-        assert_eq!(offered_for(120.0), 20.0);
-        assert_eq!(offered_for(4.0 * 3600.0), 300.0);
+    fn the_button_is_offered_a_minute_before_the_credits_usually_begin() {
+        // A half-hour episode: the last minute and a half. An hour's: two and a half.
+        assert_eq!(offered_for(22.0 * 60.0), 90.0);
+        assert_eq!(offered_for(45.0 * 60.0), 150.0);
+        assert!(!near_end(3600.0 - 151.0, 3600.0, false));
+        assert!(near_end(3600.0 - 149.0, 3600.0, false));
+        // A film: eight minutes.
+        assert_eq!(offered_for(2.0 * 3600.0), 480.0);
+        // Something short: its last quarter at most.
+        assert_eq!(offered_for(120.0), 30.0);
         // Not when the length is not known, or only judged.
         assert!(!near_end(100.0, 0.0, false));
         assert!(!near_end(3590.0, 3600.0, true));
@@ -151,6 +170,8 @@ mod tests {
     fn a_place_kept_at_the_credits_starts_the_episode_from_its_beginning() {
         assert_eq!(start_at(600.0, 2400.0), 600.0);
         assert_eq!(start_at(2380.0, 2400.0), 0.0);
+        // Left in the minute before the credits, where the button already is: from there.
+        assert_eq!(start_at(2400.0 - 120.0, 2400.0), 2400.0 - 120.0);
         // Its length not known yet: where it was left.
         assert_eq!(start_at(600.0, 0.0), 600.0);
     }

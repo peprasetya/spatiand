@@ -100,6 +100,8 @@ struct Reel {
     dirty: bool,
     /// The size the window is when no film is in it: the wearer's, once they have resized it.
     home_size: (u32, u32),
+    /// How large the wearer last made a film's window: the next film's too, while SpatiReel runs.
+    film_scale: f32,
     /// Pictures of a screen that has been replaced, to be let go of at the next drawing.
     stale: Vec<spatiand_app::ui::Texture>,
 }
@@ -265,6 +267,7 @@ impl Reel {
     fn begin(&mut self, ticket: u64, source: Arc<dyn Source>, item: Item, player: spatiand_media::player::Player, play: &source::Play) -> Result<(), String> {
         let mut playing = Playing::new(self.app.gl()?, player, play, &item.name, &item.title, item.layout)?;
         playing.hands_said(self.app.says_hands());
+        playing.scale = self.film_scale;
         self.app.set_title(self.window, &item.title);
         log::info!("{}: playing, from {:.0} s", item.title, item.resume);
         let (told, started) = (source.clone(), item.clone());
@@ -613,15 +616,26 @@ impl Reel {
             Event::CloseRequested { .. } => self.stop(false),
             Event::Ready { window, .. } if *window == self.window => self.ready = true,
             // Resized -- a corner dragged in the room, or a Mac window in 2D mode -- the lists
-            // are laid out again at the new size. Not while a film is in the window: its picture
-            // is the film's own, which the room or the Mac scales to fit.
+            // are laid out again at the new size; a film in the window is made larger or smaller.
             Event::Resized { window, width, height } if *window == self.window => {
                 // The library's size is the wearer's only when it is the library that was
                 // resized: a film's window resized is the film's, and the library came back
                 // at that shape.
-                if self.playing.is_none() {
-                    self.home_size = ((*width).max(640), (*height).max(400));
-                    self.app.resize(self.window, self.home_size);
+                match self.playing.as_mut() {
+                    None => {
+                        self.home_size = ((*width).max(640), (*height).max(400));
+                        self.app.resize(self.window, self.home_size);
+                    }
+                    // A film's window resized is the film larger or smaller, in its own shape
+                    // (the owner, 2026-11-24: nearer and further was the only way, and that
+                    // is not the same as a window of another size where it stands). The next
+                    // film opens at the size this one was left.
+                    Some((playing, _)) => {
+                        if playing.resized((*width, *height)) {
+                            self.film_scale = playing.scale;
+                            self.dirty = true;
+                        }
+                    }
                 }
             }
             // Dictation and the assistant ask what is on show.
@@ -816,6 +830,7 @@ fn main() {
             ready: false,
             dirty: true,
             home_size: WINDOW,
+            film_scale: 1.0,
             stale: Vec::new(),
         };
         reel.gather();

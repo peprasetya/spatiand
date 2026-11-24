@@ -101,11 +101,34 @@ fn is_tap(from: (f32, f32), to: (f32, f32)) -> bool {
     (to.0 - from.0).hypot(to.1 - from.1) <= TAP_SLACK
 }
 
-/// The size a window showing a picture of this shape is: as large as fits in [`WINDOW`].
-fn fitted(aspect: f32) -> (u32, u32) {
-    let (w, h) = if aspect >= WINDOW.0 / WINDOW.1 { (WINDOW.0, WINDOW.0 / aspect) } else { (WINDOW.1 * aspect, WINDOW.1) };
+/// The least and the most of [`WINDOW`] a film's window is made by its wearer: its controls,
+/// which are made smaller and larger with it, can still be pressed at the least, and the most
+/// is two of the glasses' panels wide.
+const SCALES: (f32, f32) = (0.4, 2.0);
+
+/// The size a window showing a picture of this shape is: as large as fits in [`WINDOW`],
+/// `scale` times as large as the wearer has made it.
+fn fitted(aspect: f32, scale: f32) -> (u32, u32) {
+    let within = (WINDOW.0 * scale, WINDOW.1 * scale);
+    let (w, h) = if aspect >= within.0 / within.1 { (within.0, within.0 / aspect) } else { (within.1 * aspect, within.1) };
     // Even, which every scaler and half the world's video paths prefer.
     (((w / 2.0).round() * 2.0) as u32, ((h / 2.0).round() * 2.0) as u32)
+}
+
+/// The scale of a film's window, `whole` at a scale of 1, that its wearer asks to be `asked`
+/// after asking for `before`: by the side they changed -- by the larger, if both, as a corner
+/// dragged does -- the film keeping its own shape whatever was dragged. Reckoned from what was
+/// asked alone, never from the size the window has got to: a drag asks many times before the
+/// first is answered, and the film must not waver between its two sides meanwhile.
+fn rescaled(whole: (f32, f32), before: Option<(u32, u32)>, asked: (u32, u32)) -> f32 {
+    let across = asked.0 as f32 / whole.0.max(1.0);
+    let down = asked.1 as f32 / whole.1.max(1.0);
+    let by = match before {
+        Some(before) if before.0 == asked.0 && before.1 != asked.1 => down,
+        Some(before) if before.1 == asked.1 && before.0 != asked.0 => across,
+        _ => across.max(down),
+    };
+    by.clamp(SCALES.0, SCALES.1)
 }
 
 /// The most of a film's picture worth drawing into a window, per eye: the glasses' own panel,
@@ -215,6 +238,14 @@ pub struct Playing {
     /// The film's own surface while it is the sky.
     sky: Option<WindowId>,
     sky_refused: bool,
+    /// How large the wearer has made the film's window, of [`WINDOW`]: 1 until they resize it.
+    pub scale: f32,
+    /// The scale the window was last arranged at (1 for the controls alone): what is drawn
+    /// over the film -- its controls, its subtitles -- is laid out for the window at a scale
+    /// of 1 and is larger and smaller with it, and the pointer is reckoned back to that.
+    arranged_scale: f32,
+    /// The size the wearer last asked the window to be, to tell which side they are dragging.
+    asked: Option<(u32, u32)>,
     /// What the window was last told to be, so it is told again only when that changes.
     arranged: Option<(Staging, (u32, u32), (u32, u32), bool)>,
     gaze: Gaze,
@@ -336,6 +367,9 @@ impl Playing {
             // `SPATIREEL_SKY=off` keeps a sphere in the window even in the room, to be looked
             // about in by hand.
             sky_refused: std::env::var("SPATIREEL_SKY").as_deref() == Ok("off"),
+            scale: 1.0,
+            arranged_scale: 1.0,
+            asked: None,
             arranged: None,
             gaze: Gaze::default(),
             turning: None,
@@ -491,6 +525,23 @@ impl Playing {
         }
     }
 
+    /// The wearer resized the film's window -- a corner dragged in the room, or its Mac window
+    /// in 2D mode -- to `asked`: the film is that much larger or smaller, in its own shape.
+    /// Not the controls of a film that is all round, which are the size they are. Whether
+    /// anything changed, to be drawn again.
+    pub fn resized(&mut self, asked: (u32, u32)) -> bool {
+        let Some((Staging::Window { .. } | Staging::OneEye | Staging::Look { .. }, _, shape, _)) = self.arranged else { return false };
+        let before = self.asked.replace(asked);
+        if asked == shape {
+            return false;
+        }
+        let whole = (shape.0 as f32 / self.arranged_scale, shape.1 as f32 / self.arranged_scale);
+        let scale = rescaled(whole, before, asked);
+        let changed = scale != self.scale;
+        self.scale = scale;
+        changed
+    }
+
     /// Put the windows the way this film, looked at this way, wants them.
     fn arrange(&mut self, app: &mut App, window: WindowId) {
         // A file with no pictures has only its controls to show.
@@ -499,17 +550,17 @@ impl Playing {
         let (aspect, frame) = self.eye_shape();
         let (picture, shape) = match staging {
             // The file's own frame, and the window the shape of one eye of it.
-            Staging::Window { eyes } => (capped(frame, eyes), fitted(aspect)),
+            Staging::Window { eyes } => (capped(frame, eyes), fitted(aspect, self.scale)),
             // One eye, at the size it is in the file down and its true shape across.
             Staging::OneEye => {
                 let eye_h = if self.layout.stereo == StereoLayout::OverUnder { frame.1 / 2 } else { frame.1 }.max(2);
-                (capped(((eye_h as f32 * aspect / 2.0).round() as u32 * 2, eye_h), EyeLayout::Mono), fitted(aspect))
+                (capped(((eye_h as f32 * aspect / 2.0).round() as u32 * 2, eye_h), EyeLayout::Mono), fitted(aspect, self.scale))
             }
             // With the film all round, the window is the controls -- and grows upwards from
             // its foot, which stays where it was, to hold the menu while that is open.
             Staging::Sky { .. } | Staging::Sound if self.menu.is_some() => (CONTROLS_WITH_MENU, CONTROLS_WITH_MENU),
             Staging::Sky { .. } | Staging::Sound => (CONTROLS_ALONE, CONTROLS_ALONE),
-            Staging::Look { .. } => (fitted(16.0 / 9.0), fitted(16.0 / 9.0)),
+            Staging::Look { .. } => (fitted(16.0 / 9.0, 1.0), fitted(16.0 / 9.0, self.scale)),
         };
         let wanted = (staging, picture, shape, self.swapped);
         if self.arranged == Some(wanted) {
@@ -518,6 +569,7 @@ impl Playing {
         log::info!("the film is now {staging:?}: a picture of {}x{} in a window of {}x{}", picture.0, picture.1, shape.0, shape.1);
         self.staging = staging;
         self.arranged = Some(wanted);
+        self.arranged_scale = if staging.controls_alone() { 1.0 } else { self.scale };
         app.resize(window, picture);
         app.set_shape(window, Some(shape));
         match staging {
@@ -605,7 +657,7 @@ impl Playing {
         let (position, duration, paused) = (self.player.position(), self.player.info().duration, self.player.paused());
         let name = self.name.clone();
         let gaze = self.gaze;
-        let logical = app_shape(self.arranged);
+        let logical = self.laid_out();
         let upright = self.upright();
         self.screen.set_upright(upright);
 
@@ -925,7 +977,22 @@ impl Playing {
         }
     }
 
+    /// The size what is drawn over the film is laid out in: the window's, at a scale of 1.
+    fn laid_out(&self) -> (f32, f32) {
+        let shape = app_shape(self.arranged);
+        (shape.0 / self.arranged_scale, shape.1 / self.arranged_scale)
+    }
+
     pub fn input(&mut self, input: &Input) -> Outcome {
+        // The pointer is told in the window's size; everything here is laid out at a scale of 1.
+        let scaled;
+        let input = match input {
+            Input::Pointer { x, y } if self.arranged_scale != 1.0 => {
+                scaled = Input::Pointer { x: x / self.arranged_scale, y: y / self.arranged_scale };
+                &scaled
+            }
+            other => other,
+        };
         self.dirty = true;
         let now = Instant::now();
         let was_shown = self.controls_shown();
@@ -955,7 +1022,7 @@ impl Playing {
         if let Input::Pointer { x, y } = input {
             // Held down on a sphere seen through the window: the view turns with the hand.
             if let (Some((from_x, from_y)), Staging::Look { .. }) = (self.turning, self.staging) {
-                let per_pixel = self.gaze.field / app_shape(self.arranged).0;
+                let per_pixel = self.gaze.field / self.laid_out().0;
                 self.gaze.yaw -= (x - from_x) * per_pixel;
                 self.gaze.pitch = (self.gaze.pitch + (y - from_y) * per_pixel).clamp(-1.4, 1.4);
                 self.turning = Some((*x, *y));
@@ -1140,9 +1207,27 @@ mod tests {
 
     #[test]
     fn a_window_is_the_films_shape_and_no_larger_than_it_may_be() {
-        assert_eq!(fitted(16.0 / 9.0), (1920, 1080));
-        assert_eq!(fitted(2.39), (1920, 804));
-        assert_eq!(fitted(4.0 / 3.0), (1440, 1080));
+        assert_eq!(fitted(16.0 / 9.0, 1.0), (1920, 1080));
+        assert_eq!(fitted(2.39, 1.0), (1920, 804));
+        assert_eq!(fitted(4.0 / 3.0, 1.0), (1440, 1080));
+    }
+
+    #[test]
+    fn a_resized_film_keeps_its_shape() {
+        let whole = (1920.0, 804.0);
+        // A corner dragged out: the film is as large as the larger side asks, in its shape.
+        let scale = rescaled(whole, None, (2400, 900));
+        assert!((scale - 1.25).abs() < 1e-4);
+        assert_eq!(fitted(2.39, scale), (2400, 1004));
+        // The same asked again and again while the window catches up: the same answer.
+        assert_eq!(rescaled(whole, Some((2390, 900)), (2400, 900)), scale);
+        // Only the foot dragged up, or only a side in.
+        assert!((rescaled(whole, Some((2400, 900)), (2400, 402)) - 0.5).abs() < 1e-4);
+        assert!((rescaled(whole, Some((2400, 900)), (960, 900)) - 0.5).abs() < 1e-4);
+        // No smaller than its controls fit in, no larger than two panels.
+        assert_eq!(rescaled(whole, None, (100, 100)), SCALES.0);
+        assert_eq!(rescaled(whole, None, (9000, 1620)), SCALES.1);
+        assert_eq!(fitted(16.0 / 9.0, SCALES.0), (768, 432));
     }
 
     #[test]
