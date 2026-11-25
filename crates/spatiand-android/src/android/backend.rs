@@ -2170,7 +2170,9 @@ pub fn run(
                     Some(Drag::Resize { edge, .. }) => Some(edge),
                     _ => None,
                 };
-                let room_draws_cursor = |ray: &spatiand_render::Ray| pointers.room_draws_cursor(ray);
+                // Not while a menu of the room's own is open: the pointer is the menu's then.
+                let own_menu_open = shell.menu_is_open() || delivery.radial.is_some();
+                let room_draws_cursor = |ray: &spatiand_render::Ray| !own_menu_open && pointers.room_draws_cursor(ray);
                 // Where the pointer is held while a button is down, not where the head has
                 // trembled to: what is seen is what is clicked.
                 let shown_ray = |ray: &spatiand_render::Ray| pointers.shown(ray);

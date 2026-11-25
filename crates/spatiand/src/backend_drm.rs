@@ -3852,8 +3852,13 @@ pub fn run(
                             // Over a room that draws its own pointer, at the depth only it
                             // knows, draw nothing: a second reticle at the wrong depth is
                             // what that request is there to be rid of.
+                            // Not while a menu of the room's own is open: the pointer is
+                            // the menu's then, and the application is told nothing of it, so
+                            // between the rows there was no pointer at all.
                             if a.hit.is_none()
                                 && on_keys.is_none()
+                                && !shell.menu_is_open()
+                                && delivery.radial.is_none()
                                 && pointers.room_draws_cursor(&a.ray)
                             {
                                 continue;

@@ -4572,6 +4572,10 @@ pub fn sky_surface(
             crate::xr::Layer::Equirect360 => SkyProjection::Equirect360,
             _ => continue,
         };
+        // Put away with the hide button: the wearer's own environment is back.
+        if state.layout.is_hidden(window) {
+            continue;
+        }
         if import_surface_tree(renderer, &surface).is_err() {
             continue;
         }

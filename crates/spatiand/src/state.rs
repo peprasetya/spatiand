@@ -783,6 +783,13 @@ impl Spatiand {
         if !crate::xr::state_of(surface).is_projection() {
             return false;
         }
+        // Put away with the hide button: not drawn and not pointed at, as a window put away is
+        // not, while the application carries on. The wearer's own environment is back at once,
+        // because this is asked every frame. (The owner, 2026-11-25: "the room app never able
+        // to be hid".)
+        if self.layout.is_hidden(window) {
+            return false;
+        }
         if self.quiet_hosts.is_empty() {
             return true;
         }
