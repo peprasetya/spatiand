@@ -636,8 +636,10 @@ character. Like apple preview."; "read automatic"; of translating, "2 language..
 secondary... the selection in primary, translate to secondary. other, translate to primary". What the
 wearer does, and how SpatiLoupe and SpatiReel choose what to read, is in docs/spatiand-apps.md
 ("Live Text"); here, what is asked of hemera, and what the assistant does with it. (A PDF's pages are
-not SpatiLoupe's to read since 2026-11-27: SpatiMesh's viewer shows its PDFs, and reads a scanned
-page with hemera itself, patch 0037, docs/spatimesh.md.)
+not SpatiLoupe's to read since 2026-11-27: SpatiMesh's viewer shows its PDFs, reads a scanned page
+with hemera itself, patch 0037, and translates text chosen -- on any page -- with the same two
+questions, patch 0038, docs/spatimesh.md; the assistant is told a PDF's page through SpatiMesh's own
+account of it, asked with its host's, `embed::ask_description`.)
 
 - **Reading** (`spatiand_voice::hemera::ocr`, hemera's `docs/ocr-api.md`): `POST /v1/ocr`, the picture
   whole in a part `image` -- a photograph as its own file, a screenshot, a frame or a page drawn as a

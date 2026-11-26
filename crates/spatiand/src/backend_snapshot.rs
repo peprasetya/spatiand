@@ -928,12 +928,13 @@ pub fn run(
                             if matches!(step, Scripted::Describe) {
                                 let asked = chosen_window(&runtime.state, &windows)
                                     .and_then(|w| w.window.toplevel().map(|t| t.wl_surface().clone()))
-                                    .and_then(|surface| crate::xr::ask_description(&surface));
+                                    .and_then(|surface| crate::embed::ask_description(&runtime.state, &surface));
                                 if asked.is_none() {
                                     log::warn!("describe: no window to ask, or it cannot be asked");
                                 }
                                 describing = asked;
-                                settle = settle.max(1.5);
+                                // A place's window is asked as well, and waited for alongside.
+                                settle = settle.max(2.0);
                             }
                             // SpatiKey's card, over the others while a finger is wanted: pressed,
                             // nothing, and nothing reaches the card under it -- as in a session.

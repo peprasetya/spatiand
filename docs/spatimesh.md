@@ -351,8 +351,40 @@ by itself" is off), its lines and words back in Chromium's form; a reader still 
 the wait it says. The firewall lets it out under its own annotation (`spatiand_ocr`, in `rules.xml` and
 `annotations.xml` -- without the latter it is aborted as a request of no name). Only how many lines were read is
 logged. Tried in the Deck build's test room with a page that is a photograph of text: hemera read its five lines,
-and select-all and copy in the viewer gave them, line for line. Not there: Live Text's translation between the two
-languages (selected text can be given to SpatiPal).
+and select-all and copy in the viewer gave them, line for line. Live Text's translation, and reading only when
+asked, are patch 0038's.
+
+**Live Text in the page's menu: the text chosen translated, a scan read when asked, a PDF's page told to the room
+(patch 0038; 2026-11-27).** The owner: "build live text into spatimesh pdf viewer". On any page and in the PDF viewer
+alike:
+
+- **Translate**, in the menu of text chosen (`chrome/browser/spatiand/translate.cc`): translated by hemera's everyday
+  model (the AI settings' `models.everyday`) between the wearer's two languages (`text_in_pictures.first_language`,
+  `second_language`) as SpatiLoupe's Live Text did -- the same two questions as
+  `crates/spatiand-voice/src/hemera/translate.rs`: which language the text is in, then the text, its lines numbered,
+  into the one the rule gives (the first into the second, anything else into the first), each line put back where it
+  was, digits kept -- in a window of its own in SpatiMesh's look: "Translating…", then "In <language>", the
+  translation (to be chosen from), **Copy** ("Copied.") and **Done**; what went wrong, in words. The text is kept as
+  the page gave it: Chromium's search item rewrites the menu's text (line breaks to spaces) before any command runs,
+  and the 4B model then took five lines for one sentence. Only lengths, the language and the time are logged. The
+  firewall lets it out under `spatiand_translate` (`rules.xml` and `annotations.xml`, hash 45551160).
+- **Read the text**, with "read text in pictures by itself" off: nothing is sent, as before, but a page whose
+  pictures of text were left unread has the item in its menu; chosen, that page (by its address, in that tab) is read
+  from then on and loaded again, its pictures being asked about once, as it loads. The annotator is now bound by frame
+  (`BindOcrAnnotator(frame, ...)`), its tab keeping what was left unread (`TabReading`).
+- **A full-page PDF's description** for the room's assistant and dictation (`describe.cc`): its page most on show,
+  by the PDF's own text through `pdf::PDFDocumentHelper` (`GetMostVisiblePageIndex`, `GetPageText`; a scan's words
+  too, once read), "Page N" first, where a web page's is its body's text; the page's script reaches none of a PDF's.
+  The room asks the window inside a place as well as its host (`embed::ask_description`), so SpatiLoupe's PDF is
+  described with its page's words again.
+
+Tried in the Deck build's test room (build 74) with the photographed page of patch 0037, hosted by the SDK's embed
+example and by SpatiLoupe: chosen, Translate gave its five lines in Indonesian, line for line (hemera's 4B model in
+1.1 to 7.8 s), Copy put them on the room's clipboard; with reading by itself off nothing was sent, Read the text was in
+the menu, and chosen, hemera read the five lines and select-all and copy gave them; SpatiLoupe's description was its
+own sentence and then "Page 1" and the five lines. Not done: a word hemera was unsure of is not marked in the viewer
+(SpatiLoupe dotted it), and Live Text on pictures in web pages; the Mac's build needs the wip's `IS_MAC_LINUX_UI`
+for these (and 0037's) `IS_LINUX` conditions at the 159 port.
 
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a

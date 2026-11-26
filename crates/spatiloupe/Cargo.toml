@@ -33,7 +33,7 @@ exr = { version = "1.74", default-features = false }
 resvg = "0.50"
 spatiand-render = { path = "../spatiand-render" }
 cosmic-text = "0.19"
-gltf ={ version = "1.4", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_unlit", "extensions"] }
+gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_unlit", "extensions"] }
 glam = "0.34"
 # The folder on show listed again when it changes, as SpatiShelf's are: inotify on Linux and
 # Android, FSEvents on the Mac.

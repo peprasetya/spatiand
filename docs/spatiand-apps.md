@@ -1473,9 +1473,9 @@ done:** the Mac, the Deck, the Beam Pro and the glasses.
 
 *Since 2026-11-27 a PDF's text is SpatiMesh's viewer's, which shows it inside SpatiLoupe's window: a
 page's own text, and a scanned page's words read by hemera with the room's AI settings (SpatiMesh's
-patch 0037, docs/spatimesh.md), chosen, copied and found there. What this section says of PDF pages
-in SpatiLoupe is how it was; of SpatiLoupe's Live Text only the translation between the two
-languages has no counterpart on a PDF now.*
+patch 0037, docs/spatimesh.md), chosen, copied and found there, and translated between the two
+languages, or read when asked, from the viewer's menu (patch 0038). What this section says of PDF
+pages in SpatiLoupe is how it was.*
 
 The owner: "I want it can select text from images (also on image of pdf)... even non latin, unicode
 character. Like apple preview."; "spatireel also can be treated same too... so when play video, any
@@ -1763,9 +1763,10 @@ its remote by choosing that remote's folder there; the copy in the cache is not 
 Saved over on the remote, the PDF is another size or time, and SpatiLoupe fetches it anew next time.
 
 **The room's speech** (`describe`): "The PDF <name>, shown by SpatiMesh's PDF viewer inside SpatiLoupe's
-window." -- or being copied, being opened, closed, not shown and why. SpatiMesh's window inside the place
-is no window of the room's to be asked, so the words of the page in view are no longer told (PDFium gave
-them).
+window." -- or being copied, being opened, closed, not shown and why -- followed by SpatiMesh's own account of
+the page most on show, "Page N" and its words (a scan's too, once read): the room asks the window inside a
+place as well as its host (`embed::ask_description`, 2026-11-27), and SpatiMesh describes a full-page PDF by
+its own text (patch 0038).
 
 **What went with SpatiLoupe's own PDF code** (`pdf.rs`, `annotate.rs`, `pdfium-render`, and the PDF half of
 `view.rs`, `view/lens.rs`, `markup.rs`, `tools.rs` and `ink.rs`):
@@ -1779,9 +1780,9 @@ them).
   viewer asks for the password, and keeps to them, itself.
 - SpatiLoupe's find, contents, page field and zoom keys on a PDF: the viewer's own.
 - Live Text on PDF pages: a page's text -- its own, and a scanned page's, read by hemera -- is chosen,
-  copied and found in SpatiMesh's viewer (patch 0037). Of SpatiLoupe's Live Text only the
-  **translation** between the wearer's two languages has no counterpart on a PDF.
-- The page's words told to the room's speech (above).
+  copied and found in SpatiMesh's viewer (patch 0037), and translated between the wearer's two
+  languages, or read when asked, from its menu (patch 0038). Not there: SpatiLoupe's dots under a
+  word hemera was unsure of.
 - On a desktop without the room (KWin on the Deck), or a room before `spatiand_xr_v1` 13, a PDF is not
   shown: SpatiLoupe says "SpatiLoupe shows a PDF with SpatiMesh's viewer inside its own window, which
   only Spatiand's room can do -- in the room, or on a Mac's desktop. Open it there." Opening it in a

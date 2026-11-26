@@ -344,7 +344,8 @@ fn focus_of(state: &crate::state::Spatiand, ask: bool) -> (Description, Option<u
     let app = state.app_id_of_id(id).unwrap_or_default();
     let title = window.as_ref().and_then(|w| state.title_of(w)).unwrap_or_default();
     let answer = if ask {
-        let own = window.as_ref().and_then(|w| w.toplevel()).and_then(|t| crate::xr::ask_description(t.wl_surface()));
+        // With the windows shown in its places (`embed::ask_description`).
+        let own = window.as_ref().and_then(|w| w.toplevel()).and_then(|t| crate::embed::ask_description(state, t.wl_surface()));
         // A Mac window says nothing through the protocol: its application is asked instead.
         #[cfg(target_os = "macos")]
         let own = own.or_else(|| crate::mac::describe_window(&app));

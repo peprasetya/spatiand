@@ -1,0 +1,1144 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 27 Nov 2026 06:10:02 +0700
+Subject: [PATCH] Spatiand: Live Text in the page's menu -- the text chosen
+ translated, a scan read when asked, a PDF's page told to the room
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The owner, 2026-11-27: "build live text into spatimesh pdf viewer". SpatiLoupe's PDFs are SpatiMesh's
+viewer's now; of SpatiLoupe's Live Text, choosing, copying and finding a page's text and a scan's (patch
+0037) were there, and these come with it, on any page as well as in the PDF viewer:
+
+- Translate, in the menu of text chosen: translated by the room's own model (hemera and its everyday
+  model, from the room's AI settings) between the wearer's two languages -- text in the first into the
+  second, anything else into the first, decided here from the model's word for the language, the lines
+  numbered and put back where they were, digits kept: the questions of
+  crates/spatiand-voice/src/hemera/translate.rs -- in a window of its own in the room's look:
+  "Translating…", then "In <language>", the translation (to be chosen from), Copy and Done. The text is
+  kept as the page gave it, lines and all: the menu's search item rewrites it before any command runs.
+  Let out by the firewall under its own annotation (spatiand_translate).
+- Read the text, with "read text in pictures by itself" off: a page whose pictures of text were left
+  unread offers it; chosen, that page (by its address, in that tab) is read from then on and loaded
+  again for it. The annotator is bound by frame, its tab remembering what was left unread.
+- A full-page PDF's description for the room's assistant and dictation is its page most on show, by
+  the PDF's own text (a scan's too, once read), not the viewer page's script-visible text, which holds
+  none of it.
+---
+ chrome/app/chrome_command_ids.h               |   3 +
+ chrome/browser/BUILD.gn                       |   3 +
+ .../chrome_browser_interface_binders.cc       |  11 +-
+ .../render_view_context_menu.cc               |  38 +-
+ .../render_view_context_menu.h                |   7 +
+ chrome/browser/spatiand/describe.cc           |  50 ++
+ chrome/browser/spatiand/ocr.cc                | 100 ++-
+ chrome/browser/spatiand/ocr.h                 |  23 +-
+ chrome/browser/spatiand/translate.cc          | 603 ++++++++++++++++++
+ chrome/browser/spatiand/translate.h           |  25 +
+ services/firewall/tools/annotations.xml       |   1 +
+ services/firewall/tools/rules.xml             |   1 +
+ 12 files changed, 843 insertions(+), 22 deletions(-)
+ create mode 100644 chrome/browser/spatiand/translate.cc
+ create mode 100644 chrome/browser/spatiand/translate.h
+
+diff --git a/chrome/app/chrome_command_ids.h b/chrome/app/chrome_command_ids.h
+index e7b9327ce3..da5903b58f 100644
+--- a/chrome/app/chrome_command_ids.h
++++ b/chrome/app/chrome_command_ids.h
+@@ -402,6 +402,9 @@
+ #define IDC_CONTENT_CONTEXT_USE_PASSKEY_FROM_ANOTHER_DEVICE 50194
+ // Listen to this page context menu.
+ #define IDC_CONTENT_CONTEXT_LISTEN_TO_THIS_PAGE 50195
++// Spatiand: Live Text's own, in every page's menu (chrome/browser/spatiand).
++#define IDC_CONTENT_CONTEXT_SPATIAND_TRANSLATE 50196
++#define IDC_CONTENT_CONTEXT_SPATIAND_READ_TEXT 50197
+ // Open with items.
+ #define IDC_CONTENT_CONTEXT_OPEN_WITH1 50200
+ // Context menu items that provide fast access to input methods.
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 74660f83c1..fd24a3839b 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1853,6 +1853,8 @@ source_set("core") {
+       "spatiand/spatikey_window.cc",
+       "spatiand/storage_sync.cc",
+       "spatiand/storage_sync.h",
++      "spatiand/translate.cc",
++      "spatiand/translate.h",
+       "spatiand/spatikey_window.h",
+       "spatiand/shared_folder.h",
+       "fullscreen_linux.cc",
+@@ -2139,6 +2141,7 @@ source_set("core") {
+       "//chrome/browser/pdf",
+       "//chrome/browser/pdf:pdf_pref_names",
+       "//chrome/browser/ui/pdf",
++      "//components/pdf/browser",
+       "//components/pdf/browser:interceptors",
+     ]
+   }
+diff --git a/chrome/browser/chrome_browser_interface_binders.cc b/chrome/browser/chrome_browser_interface_binders.cc
+index 061f7c8665..d57823ff4d 100644
+--- a/chrome/browser/chrome_browser_interface_binders.cc
++++ b/chrome/browser/chrome_browser_interface_binders.cc
+@@ -395,15 +395,14 @@ void BindMediaFoundationPreferences(
+ void BindScreenAIAnnotator(
+     content::RenderFrameHost* frame_host,
+     mojo::PendingReceiver<screen_ai::mojom::ScreenAIAnnotator> receiver) {
+-  content::BrowserContext* browser_context =
+-      frame_host->GetProcess()->GetBrowserContext();
+-
+ #if BUILDFLAG(IS_LINUX)
+   // Spatiand: the room's own reader of text in pictures (hemera), not Google's Screen AI
+-  // library, which the room has not got: a scanned PDF's words, to be chosen and found.
+-  spatiand::BindOcrAnnotator(browser_context, std::move(receiver));
+-  return;
++  // library, which the room has not got: a scanned PDF's words, to be chosen and found. By the
++  // frame, whose tab remembers what was left unread for Read the text.
++  spatiand::BindOcrAnnotator(frame_host, std::move(receiver));
+ #else
++  content::BrowserContext* browser_context =
++      frame_host->GetProcess()->GetBrowserContext();
+   screen_ai::ScreenAIServiceRouterFactory::GetForBrowserContext(browser_context)
+       ->BindScreenAIAnnotator(std::move(receiver));
+ #endif
+diff --git a/chrome/browser/renderer_context_menu/render_view_context_menu.cc b/chrome/browser/renderer_context_menu/render_view_context_menu.cc
+index 59f77334c4..3a3dbf5f73 100644
+--- a/chrome/browser/renderer_context_menu/render_view_context_menu.cc
++++ b/chrome/browser/renderer_context_menu/render_view_context_menu.cc
+@@ -104,6 +104,10 @@
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+ #include "chrome/browser/send_tab_to_self/send_tab_to_self_util.h"
+ #include "chrome/browser/sharing_hub/sharing_hub_features.h"
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/ocr.h"
++#include "chrome/browser/spatiand/translate.h"
++#endif
+ #include "chrome/browser/spellchecker/spellcheck_service.h"
+ #include "chrome/browser/supervised_user/supervised_user_url_filtering_service_factory.h"
+ #include "chrome/browser/sync/send_tab_to_self_sync_service_factory.h"
+@@ -675,13 +679,16 @@ int UmaEnumForCommand(int key, UmaEnumIdLookupType type) {
+        {IDC_CONTENT_CONTEXT_ASK_GOOGLE_ABOUT_THIS_PAGE, 170},
+        {IDC_CONTENT_CONTEXT_CONTEXTUAL_TASKS_SUBMENU, 171},
+        {IDC_CONTENT_CONTEXT_GLIC_SMART_SUGGESTION, 172},
++       // Spatiand's own (Live Text): not in tools/metrics, which nothing here sends.
++       {IDC_CONTENT_CONTEXT_SPATIAND_TRANSLATE, 173},
++       {IDC_CONTENT_CONTEXT_SPATIAND_READ_TEXT, 174},
+        // To add new items:
+        //   - Add one more line above this comment block, using the UMA value
+        //     from the line below this comment block.
+        //   - Increment the UMA value in that latter line.
+        //   - Add the new item to the RenderViewContextMenuItem enum in
+        //     tools/metrics/histograms/metadata/ui/enums.xml.
+-       {kUmaMaxValueKey, 173}});
++       {kUmaMaxValueKey, 175}});
+   // LINT.ThenChange(//tools/metrics/histograms/metadata/ui/enums.xml:RenderViewContextMenuItem)
+ 
+   // LINT.IfChange(ContextMenuOptionDesktop)
+@@ -1411,6 +1418,19 @@ void RenderViewContextMenu::InitMenu() {
+     AppendLinkToTextItems();
+   }
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: Live Text's own, by the room's reader and translator (hemera, chrome/browser/
++  // spatiand): the text chosen translated between the wearer's two languages, on any page and in
++  // the PDF viewer; and, reading by itself being off, a page's pictures of text read when asked.
++  if (!params_.selection_text.empty() && !IsPasswordField()) {
++    spatiand_chosen_text_ = params_.selection_text;
++    menu_model_.AddItem(IDC_CONTENT_CONTEXT_SPATIAND_TRANSLATE, u"Translate");
++  }
++  if (spatiand::TextLeftUnread(source_web_contents_)) {
++    menu_model_.AddItem(IDC_CONTENT_CONTEXT_SPATIAND_READ_TEXT, u"Read the text");
++  }
++#endif
++
+   if (content_type_->SupportsGroup(
+           ContextMenuContentType::ITEM_GROUP_EXISTING_LINK_TO_TEXT)) {
+     AppendLinkToTextItems();
+@@ -3755,6 +3775,12 @@ bool RenderViewContextMenu::IsCommandIdEnabled(int id) const {
+     case IDC_CONTENT_CONTEXT_SAVE_TO_MEMORY_BANKS:
+       return true;
+ 
++#if BUILDFLAG(IS_LINUX)
++    case IDC_CONTENT_CONTEXT_SPATIAND_TRANSLATE:
++    case IDC_CONTENT_CONTEXT_SPATIAND_READ_TEXT:
++      return true;
++#endif
++
+     case IDC_CONTENT_PASTE_FROM_CLIPBOARD:
+ #if BUILDFLAG(IS_CHROMEOS)
+       return ash::ClipboardHistoryController::Get()->HasAvailableHistoryItems();
+@@ -4257,6 +4283,16 @@ void RenderViewContextMenu::ExecuteCommand(int id, int event_flags) {
+       source_web_contents_->Copy();
+       break;
+ 
++#if BUILDFLAG(IS_LINUX)
++    case IDC_CONTENT_CONTEXT_SPATIAND_TRANSLATE:
++      spatiand::TranslateChosen(source_web_contents_, spatiand_chosen_text_);
++      break;
++
++    case IDC_CONTENT_CONTEXT_SPATIAND_READ_TEXT:
++      spatiand::ReadTextNow(source_web_contents_);
++      break;
++#endif
++
+     case IDC_CONTENT_CONTEXT_PASTE:
+       source_web_contents_->Paste();
+       break;
+diff --git a/chrome/browser/renderer_context_menu/render_view_context_menu.h b/chrome/browser/renderer_context_menu/render_view_context_menu.h
+index 62f3497f95..79cbc5d749 100644
+--- a/chrome/browser/renderer_context_menu/render_view_context_menu.h
++++ b/chrome/browser/renderer_context_menu/render_view_context_menu.h
+@@ -397,6 +397,13 @@ class RenderViewContextMenu
+   bool IsPasswordField() const;
+   bool ShouldUseSimplifiedTextSelection() const;
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: the text chosen as the page gave it, its lines kept, for Translate:
++  // `params_.selection_text` loses its line breaks to the search item (AppendSearchProvider)
++  // before any command is carried out.
++  std::u16string spatiand_chosen_text_;
++#endif
++
+   std::unique_ptr<ui::DataTransferEndpoint> CreateDataEndpoint(
+       bool notify_if_restricted) const;
+ 
+diff --git a/chrome/browser/spatiand/describe.cc b/chrome/browser/spatiand/describe.cc
+index a4dcc14b09..3af42a7dab 100644
+--- a/chrome/browser/spatiand/describe.cc
++++ b/chrome/browser/spatiand/describe.cc
+@@ -5,6 +5,7 @@
+ 
+ #include <algorithm>
+ #include <map>
++#include <optional>
+ #include <string>
+ #include <utility>
+ #include <vector>
+@@ -15,6 +16,8 @@
+ #include "base/json/json_reader.h"
+ #include "base/json/json_writer.h"
+ #include "base/memory/ref_counted.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/string_number_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/task/thread_pool.h"
+@@ -26,11 +29,16 @@
+ #include "chrome/common/chrome_isolated_world_ids.h"
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/web_contents.h"
++#include "pdf/buildflags.h"
+ #include "third_party/icu/source/common/unicode/uchar.h"
+ #include "ui/aura/window.h"
+ #include "ui/aura/window_tree_host.h"
+ #include "ui/platform_window/platform_window.h"
+ 
++#if BUILDFLAG(ENABLE_PDF)
++#include "components/pdf/browser/pdf_document_helper.h"
++#endif
++
+ namespace spatiand {
+ 
+ namespace {
+@@ -174,6 +182,43 @@ class Asked : public base::RefCounted<Asked> {
+   base::OneShotTimer timer_;
+ };
+ 
++#if BUILDFLAG(ENABLE_PDF)
++// A full-page PDF -- a PDF opened as it is, or SpatiLoupe's in its place: the page most on show,
++// by the PDF's own text (a scan's too, once the room's reader has read it), where a web page's is
++// its body's; the page's script cannot reach a PDF's text. False when it is not one.
++bool DescribePdf(content::WebContents* contents, scoped_refptr<Asked> asked) {
++  pdf::PDFDocumentHelper* pdf = pdf::PDFDocumentHelper::MaybeGetForFullPagePdf(*contents);
++  if (!pdf || !pdf->IsDocumentLoadComplete()) {
++    return false;
++  }
++  pdf->GetMostVisiblePageIndex(base::BindOnce(
++      [](base::WeakPtr<content::WebContents> contents, scoped_refptr<Asked> asked,
++         std::optional<uint32_t> index) {
++        pdf::PDFDocumentHelper* pdf =
++            contents ? pdf::PDFDocumentHelper::MaybeGetForFullPagePdf(*contents) : nullptr;
++        if (!pdf || !index) {
++          asked->Answer(std::string());
++          return;
++        }
++        pdf->GetPageText(
++            static_cast<int32_t>(*index),
++            base::BindOnce(
++                [](scoped_refptr<Asked> asked, uint32_t index, const std::u16string& page_text) {
++                  // PDFium ends a line with a carriage return as well.
++                  std::u16string text = page_text;
++                  base::ReplaceSubstringsAfterOffset(&text, 0, u"\r\n", u"\n");
++                  base::DictValue said;
++                  said.Set("text", "Page " + base::NumberToString(index + 1) + "\n" +
++                                       base::UTF16ToUTF8(text));
++                  asked->Answer(base::WriteJson(said).value_or(std::string()));
++                },
++                asked, *index));
++      },
++      contents->GetWeakPtr(), asked));
++  return true;
++}
++#endif
++
+ content::WebContents* ShownIn(uint32_t surface_id) {
+   content::WebContents* found = nullptr;
+   ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+@@ -200,6 +245,11 @@ void Describe(uint32_t surface_id, base::ScopedFD fd) {
+   auto asked = base::MakeRefCounted<Asked>(std::move(fd), base::UTF16ToUTF8(contents->GetTitle()),
+                                            contents->GetLastCommittedURL().spec());
+   asked->Wait();
++#if BUILDFLAG(ENABLE_PDF)
++  if (DescribePdf(contents, asked)) {
++    return;
++  }
++#endif
+   contents->GetPrimaryMainFrame()->ExecuteJavaScriptInIsolatedWorld(
+       base::UTF8ToUTF16(std::string_view(kPageDescription)),
+       base::BindOnce(
+diff --git a/chrome/browser/spatiand/ocr.cc b/chrome/browser/spatiand/ocr.cc
+index f196de1368..1e6d6815b2 100644
+--- a/chrome/browser/spatiand/ocr.cc
++++ b/chrome/browser/spatiand/ocr.cc
+@@ -26,7 +26,13 @@
+ #include "base/values.h"
+ #include "chrome/browser/spatiand/shared_folder.h"
+ #include "content/public/browser/browser_context.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/reload_type.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/render_process_host.h"
+ #include "content/public/browser/storage_partition.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_user_data.h"
+ #include "mojo/public/cpp/bindings/self_owned_receiver.h"
+ #include "net/base/net_errors.h"
+ #include "net/http/http_response_headers.h"
+@@ -218,10 +224,50 @@ screen_ai::mojom::VisualAnnotationPtr AnnotationOf(const base::DictValue& answer
+   return annotation;
+ }
+ 
++// A tab's reading, with "read text in pictures by itself" off: the page whose pictures were left
++// unread, and the page the wearer asked to have read (Live Text's Read the text), each by the
++// tab's address as it was then -- another page in the tab is another question.
++class TabReading : public content::WebContentsUserData<TabReading> {
++ public:
++  ~TabReading() override = default;
++
++  void LeftUnread(const GURL& page) {
++    if (page != unread_page_) {
++      unread_page_ = page;
++      unread_ = 0;
++    }
++    ++unread_;
++  }
++  bool Unread(const GURL& page) const { return unread_ > 0 && page == unread_page_; }
++  void Asked(const GURL& page) {
++    asked_page_ = page;
++    unread_ = 0;
++  }
++  bool WasAsked(const GURL& page) const { return !asked_page_.is_empty() && page == asked_page_; }
++
++ private:
++  explicit TabReading(content::WebContents* contents)
++      : content::WebContentsUserData<TabReading>(*contents) {}
++  friend class content::WebContentsUserData<TabReading>;
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++
++  GURL unread_page_;
++  int unread_ = 0;
++  GURL asked_page_;
++};
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(TabReading);
++
++// The tab a frame is in: the outermost, which a menu, a reload and an address are the tab's.
++content::WebContents* TabOf(content::WebContents* contents) {
++  return contents ? contents->GetOutermostWebContents() : nullptr;
++}
++
+ class Annotator : public screen_ai::mojom::ScreenAIAnnotator {
+  public:
+-  explicit Annotator(scoped_refptr<network::SharedURLLoaderFactory> factory)
+-      : factory_(std::move(factory)) {}
++  Annotator(scoped_refptr<network::SharedURLLoaderFactory> factory,
++            base::WeakPtr<content::WebContents> tab)
++      : factory_(std::move(factory)), tab_(std::move(tab)) {}
+   Annotator(const Annotator&) = delete;
+   Annotator& operator=(const Annotator&) = delete;
+   ~Annotator() override = default;
+@@ -252,10 +298,24 @@ class Annotator : public screen_ai::mojom::ScreenAIAnnotator {
+   void Read(const SkBitmap& image,
+             PerformOcrAndReturnAnnotationCallback callback,
+             std::optional<Reader> reader) {
+-    if (!reader || !reader->by_itself) {
++    if (!reader) {
+       std::move(callback).Run(screen_ai::mojom::VisualAnnotation::New());
+       return;
+     }
++    // Reading by itself off: nothing is sent, unless the wearer asked for this page; else the
++    // tab remembers it left a picture unread, and its menu offers Read the text.
++    if (!reader->by_itself) {
++      content::WebContents* tab = tab_.get();
++      const GURL page = tab ? tab->GetLastCommittedURL() : GURL();
++      TabReading* reading = tab ? TabReading::GetOrCreateForWebContents(tab) : nullptr;
++      if (!reading || !reading->WasAsked(page)) {
++        if (reading) {
++          reading->LeftUnread(page);
++        }
++        std::move(callback).Run(screen_ai::mojom::VisualAnnotation::New());
++        return;
++      }
++    }
+     std::optional<std::vector<uint8_t>> png =
+         gfx::PNGCodec::EncodeBGRASkBitmap(image, /*discard_transparency=*/true);
+     if (!png) {
+@@ -362,19 +422,43 @@ class Annotator : public screen_ai::mojom::ScreenAIAnnotator {
+   }
+ 
+   scoped_refptr<network::SharedURLLoaderFactory> factory_;
++  // The tab whose pages it reads, for reading by itself being off.
++  base::WeakPtr<content::WebContents> tab_;
+   Loaders loaders_;
+   base::WeakPtrFactory<Annotator> weak_factory_{this};
+ };
+ 
+ }  // namespace
+ 
+-void BindOcrAnnotator(
+-    content::BrowserContext* context,
+-    mojo::PendingReceiver<screen_ai::mojom::ScreenAIAnnotator> receiver) {
++void BindOcrAnnotator(content::RenderFrameHost* frame,
++                      mojo::PendingReceiver<screen_ai::mojom::ScreenAIAnnotator> receiver) {
++  content::WebContents* tab = TabOf(content::WebContents::FromRenderFrameHost(frame));
+   mojo::MakeSelfOwnedReceiver(
+-      std::make_unique<Annotator>(
+-          context->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess()),
++      std::make_unique<Annotator>(frame->GetProcess()
++                                      ->GetBrowserContext()
++                                      ->GetDefaultStoragePartition()
++                                      ->GetURLLoaderFactoryForBrowserProcess(),
++                                  tab ? tab->GetWeakPtr() : base::WeakPtr<content::WebContents>()),
+       std::move(receiver));
+ }
+ 
++bool TextLeftUnread(content::WebContents* contents) {
++  content::WebContents* tab = TabOf(contents);
++  if (!tab) {
++    return false;
++  }
++  TabReading* reading = TabReading::FromWebContents(tab);
++  return reading && reading->Unread(tab->GetLastCommittedURL());
++}
++
++void ReadTextNow(content::WebContents* contents) {
++  content::WebContents* tab = TabOf(contents);
++  if (!tab) {
++    return;
++  }
++  TabReading::GetOrCreateForWebContents(tab)->Asked(tab->GetLastCommittedURL());
++  // A page's pictures are asked about once, as it is loaded: loaded again, they are asked again.
++  tab->GetController().Reload(content::ReloadType::NORMAL, /*check_for_repost=*/false);
++}
++
+ }  // namespace spatiand
+diff --git a/chrome/browser/spatiand/ocr.h b/chrome/browser/spatiand/ocr.h
+index 14521a47c9..265f50ab35 100644
+--- a/chrome/browser/spatiand/ocr.h
++++ b/chrome/browser/spatiand/ocr.h
+@@ -8,18 +8,27 @@
+ #include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"
+ 
+ namespace content {
+-class BrowserContext;
++class RenderFrameHost;
++class WebContents;
+ }  // namespace content
+ 
+ namespace spatiand {
+ 
+ // The text in a picture, read by the room's own reader -- hemera, as Spatiand's AI settings name
+-// it (apps/ai.json) -- for what asks Chromium's OCR service: above all the PDF viewer, which
+-// gives a page that is only a picture (a scan) the words read in it, to be chosen and found as a
+-// page's own (searchify). In place of Google's Screen AI library, which the room has not got.
+-void BindOcrAnnotator(
+-    content::BrowserContext* context,
+-    mojo::PendingReceiver<screen_ai::mojom::ScreenAIAnnotator> receiver);
++// it (apps/ai.json) -- for what asks Chromium's OCR service in `frame`: above all the PDF viewer,
++// which gives a page that is only a picture (a scan) the words read in it, to be chosen and found
++// as a page's own (searchify). In place of Google's Screen AI library, which the room has not got.
++// With "read text in pictures by itself" off, nothing is sent until the wearer asks for that page
++// (`ReadTextNow`).
++void BindOcrAnnotator(content::RenderFrameHost* frame,
++                      mojo::PendingReceiver<screen_ai::mojom::ScreenAIAnnotator> receiver);
++
++// Whether the page on show in `contents` has pictures of text left unread, reading by itself
++// being off: its menu then offers Read the text (Live Text's own).
++bool TextLeftUnread(content::WebContents* contents);
++
++// Read the text: the page on show in `contents` is read from now on, and loaded again for it.
++void ReadTextNow(content::WebContents* contents);
+ 
+ }  // namespace spatiand
+ 
+diff --git a/chrome/browser/spatiand/translate.cc b/chrome/browser/spatiand/translate.cc
+new file mode 100644
+index 0000000000..9ef99668ff
+--- /dev/null
++++ b/chrome/browser/spatiand/translate.cc
+@@ -0,0 +1,603 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/translate.h"
++
++#include <algorithm>
++#include <list>
++#include <map>
++#include <memory>
++#include <optional>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/functional/callback.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/logging.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_split.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/storage_partition.h"
++#include "content/public/browser/web_contents.h"
++#include "net/base/net_errors.h"
++#include "net/http/http_response_headers.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/shared_url_loader_factory.h"
++#include "services/network/public/cpp/simple_url_loader.h"
++#include "services/network/public/mojom/url_response_head.mojom.h"
++#include "ui/base/clipboard/scoped_clipboard_writer.h"
++#include "ui/base/metadata/metadata_header_macros.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/base/mojom/dialog_button.mojom.h"
++#include "ui/base/mojom/ui_base_types.mojom-shared.h"
++#include "ui/gfx/font.h"
++#include "ui/native_theme/native_theme.h"
++#include "ui/views/controls/button/md_text_button.h"
++#include "ui/views/controls/label.h"
++#include "ui/views/controls/scroll_view.h"
++#include "ui/views/layout/box_layout.h"
++#include "ui/views/view.h"
++#include "ui/views/widget/widget.h"
++#include "ui/views/window/dialog_client_view.h"
++#include "ui/views/window/dialog_delegate.h"
++#include "url/gurl.h"
++
++namespace spatiand {
++
++namespace {
++
++// The languages Spatiand's AI settings offer, by their two letters, with their names in English
++// (crates/spatiand-ai: LANGUAGES).
++constexpr std::pair<const char*, const char*> kLanguages[] = {
++    {"en", "English"},  {"id", "Indonesian"}, {"ms", "Malay"},     {"jv", "Javanese"},
++    {"su", "Sundanese"}, {"zh", "Chinese"},   {"ja", "Japanese"},  {"ko", "Korean"},
++    {"th", "Thai"},      {"vi", "Vietnamese"}, {"tl", "Tagalog"},  {"hi", "Hindi"},
++    {"ta", "Tamil"},     {"te", "Telugu"},    {"ar", "Arabic"},    {"tr", "Turkish"},
++    {"ru", "Russian"},   {"el", "Greek"},     {"es", "Spanish"},   {"fr", "French"},
++    {"de", "German"},    {"nl", "Dutch"},     {"pt", "Portuguese"}, {"it", "Italian"},
++};
++
++// A language's name in English, or its code where it has none here.
++std::string LanguageName(const std::string& code) {
++  for (const auto& [known, name] : kLanguages) {
++    if (base::EqualsCaseInsensitiveASCII(code, known)) {
++      return name;
++    }
++  }
++  return code;
++}
++
++// More than this is not sent: a model's window is not a book's.
++constexpr size_t kMostCharacters = 20000;
++
++// Who translates, from the room's AI settings, with the settings' own defaults where they say
++// nothing (crates/spatiand-ai: Models, TextInPictures).
++struct Translator {
++  std::string hemera;
++  std::string model = "neohorse-1:4b";
++  std::string first = "en";
++  std::string second = "id";
++};
++
++// Read off the UI thread: a file.
++std::optional<Translator> LoadTranslator() {
++  std::optional<base::Value> value = ReadJson(SharedDir().DirName().Append("ai.json"));
++  if (!value || !value->is_dict()) {
++    return std::nullopt;
++  }
++  const base::DictValue& dict = value->GetDict();
++  Translator translator;
++  if (const std::string* hemera = dict.FindString("hemera")) {
++    translator.hemera = *hemera;
++  }
++  while (!translator.hemera.empty() && translator.hemera.back() == '/') {
++    translator.hemera.pop_back();
++  }
++  if (translator.hemera.empty()) {
++    return std::nullopt;
++  }
++  if (const base::DictValue* models = dict.FindDict("models")) {
++    const std::string* everyday = models->FindString("everyday");
++    if (everyday && !everyday->empty()) {
++      translator.model = *everyday;
++    }
++  }
++  if (const base::DictValue* pictures = dict.FindDict("text_in_pictures")) {
++    const std::string* first = pictures->FindString("first_language");
++    if (first && !first->empty()) {
++      translator.first = *first;
++    }
++    const std::string* second = pictures->FindString("second_language");
++    if (second && !second->empty()) {
++      translator.second = *second;
++    }
++  }
++  return translator;
++}
++
++// The language the translation goes into: text in the first language goes into the second,
++// anything else -- the second, or a third -- into the first. `said` is the model's word for the
++// text's language: a code, as asked, or now and then a name ("Indonesian", "Bahasa").
++std::string Target(const std::string& said, const Translator& translator) {
++  std::string written = base::ToLowerASCII(said);
++  size_t begin = 0;
++  while (begin < written.size() && !base::IsAsciiAlpha(written[begin])) {
++    ++begin;
++  }
++  size_t end = written.size();
++  while (end > begin && !base::IsAsciiAlpha(written[end - 1])) {
++    --end;
++  }
++  written = written.substr(begin, end - begin);
++  std::string code;
++  for (const auto& [known, name] : kLanguages) {
++    if (base::EqualsCaseInsensitiveASCII(written, name)) {
++      code = known;
++    }
++  }
++  if (code.empty()) {
++    code = written == "bahasa" ? "id" : written.substr(0, 2);
++  }
++  return base::EqualsCaseInsensitiveASCII(code, translator.first) ? translator.second
++                                                                  : translator.first;
++}
++
++// A text's lines, a line's carriage return taken off.
++std::vector<std::string> Lines(const std::string& text) {
++  std::vector<std::string> lines =
++      base::SplitString(text, "\n", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
++  for (std::string& line : lines) {
++    if (!line.empty() && line.back() == '\r') {
++      line.pop_back();
++    }
++  }
++  return lines;
++}
++
++std::string Trimmed(std::string_view text) {
++  return std::string(base::TrimWhitespaceASCII(text, base::TRIM_ALL));
++}
++
++// The text's lines that have something in them, numbered from 1: "1| first line".
++std::string Numbered(const std::string& text) {
++  std::string numbered;
++  int n = 0;
++  for (const std::string& line : Lines(text)) {
++    std::string trimmed = Trimmed(line);
++    if (trimmed.empty()) {
++      continue;
++    }
++    if (!numbered.empty()) {
++      numbered += "\n";
++    }
++    numbered += base::NumberToString(++n) + "| " + trimmed;
++  }
++  return numbered;
++}
++
++// A chat request, thinking off, as both questions are asked.
++base::DictValue Question(const std::string& model,
++                         const std::string& system,
++                         const std::string& user,
++                         int max_tokens) {
++  return base::DictValue()
++      .Set("model", model)
++      .Set("messages", base::ListValue()
++                           .Append(base::DictValue().Set("role", "system").Set("content", system))
++                           .Append(base::DictValue().Set("role", "user").Set("content", user)))
++      .Set("temperature", 0)
++      .Set("max_tokens", max_tokens)
++      .Set("stream", false)
++      .Set("chat_template_kwargs", base::DictValue().Set("enable_thinking", false));
++}
++
++// The first question: which language the text is in.
++base::DictValue AskedLanguage(const std::string& model, const std::string& text) {
++  return Question(model,
++                  "Which language is the text written in? Answer with its two-letter ISO 639-1 "
++                  "code only (en, id, ja, zh, ar, ...), nothing else.",
++                  text, 8);
++}
++
++// The second question: the text, its lines numbered, into `target`.
++base::DictValue AskedTranslation(const std::string& model,
++                                 const std::string& text,
++                                 const std::string& target) {
++  // Enough for the translation of a page, and a little over what a language that takes more
++  // words than the other needs; never without end.
++  const int most = static_cast<int>(
++      std::min<size_t>(base::UTF8ToUTF16(text).size() * 4 + 256, 8192));
++  return Question(
++      model,
++      "Translate the text into " + LanguageName(target) +
++          ", line by line. Its lines are numbered: answer with the same numbered lines, "
++          "\"<number>| <translation>\", one for each line, nothing else. Translate every word, "
++          "a form's labels and field names too. Never change a digit: numbers, times, dates and "
++          "codes stay exactly as they are written (3 pm stays 3 pm).",
++      Numbered(text), most);
++}
++
++// A model's reply's text, thinking taken off.
++std::optional<std::string> ReplyText(const std::string& answer) {
++  std::optional<base::DictValue> dict = base::JSONReader::ReadDict(answer, base::JSON_PARSE_RFC);
++  if (!dict) {
++    return std::nullopt;
++  }
++  const base::ListValue* choices = dict->FindList("choices");
++  if (!choices || choices->empty() || !(*choices)[0].is_dict()) {
++    return std::nullopt;
++  }
++  const std::string* content = (*choices)[0].GetDict().FindStringByDottedPath("message.content");
++  if (!content) {
++    return std::nullopt;
++  }
++  std::string text = Trimmed(*content);
++  if (base::StartsWith(text, "<think>")) {
++    const size_t close = text.find("</think>");
++    if (close != std::string::npos) {
++      text = Trimmed(std::string_view(text).substr(close + 8));
++    }
++  }
++  return text;
++}
++
++// The translation of `text`, from the numbered lines the model said: each line where its line
++// was, empty lines where there were empty lines; a line it left out, as it was. A reply that is not
++// numbered lines at all is taken as the translation, quotation marks round it taken off.
++std::optional<std::string> TranslationOf(const std::string& said, const std::string& text) {
++  std::map<size_t, std::string> lines;
++  for (const std::string& line : Lines(said)) {
++    const size_t bar = line.find('|');
++    if (bar == std::string::npos) {
++      continue;
++    }
++    size_t n = 0;
++    if (base::StringToSizeT(Trimmed(std::string_view(line).substr(0, bar)), &n)) {
++      lines[n] = Trimmed(std::string_view(line).substr(bar + 1));
++    }
++  }
++  size_t wanted = 0;
++  for (const std::string& line : Lines(text)) {
++    if (!Trimmed(line).empty()) {
++      ++wanted;
++    }
++  }
++  if (wanted > 0 && lines.size() * 2 >= wanted) {
++    std::vector<std::string> back;
++    size_t n = 0;
++    for (const std::string& line : Lines(text)) {
++      std::string trimmed = Trimmed(line);
++      if (trimmed.empty()) {
++        back.emplace_back();
++        continue;
++      }
++      ++n;
++      auto it = lines.find(n);
++      back.push_back(it != lines.end() ? it->second : trimmed);
++    }
++    std::string joined = Trimmed(base::JoinString(back, "\n"));
++    if (joined.empty()) {
++      return std::nullopt;
++    }
++    return joined;
++  }
++  std::string whole = Trimmed(said);
++  // "...", “...”, 「...」
++  constexpr std::pair<std::string_view, std::string_view> kQuotes[] = {
++      {"\"", "\""}, {"\xE2\x80\x9C", "\xE2\x80\x9D"}, {"\xE3\x80\x8C", "\xE3\x80\x8D"}};
++  for (const auto& [open, close] : kQuotes) {
++    if (whole.size() >= open.size() + close.size() && base::StartsWith(whole, open) &&
++        base::EndsWith(whole, close)) {
++      std::string_view inner = std::string_view(whole).substr(
++          open.size(), whole.size() - open.size() - close.size());
++      if (inner.find(open) == std::string_view::npos &&
++          inner.find(close) == std::string_view::npos) {
++        whole = Trimmed(inner);
++        break;
++      }
++    }
++  }
++  if (whole.empty()) {
++    return std::nullopt;
++  }
++  return whole;
++}
++
++constexpr net::NetworkTrafficAnnotationTag kTraffic =
++    net::DefineNetworkTrafficAnnotation("spatiand_translate", R"(
++        semantics {
++          sender: "Spatiand"
++          description:
++            "The text the wearer chose and asked to have translated is sent to the room's own "
++            "translator (hemera, on the wearer's own network), which says which language it is "
++            "in and then translates it into the other of the wearer's two languages."
++          trigger: "The wearer chooses Translate in a page's menu."
++          data: "The text chosen."
++          destination: OTHER
++          destination_other: "The wearer's own hemera, as Spatiand's AI settings name it."
++        }
++        policy {
++          cookies_allowed: NO
++          setting: "Only when the wearer asks."
++          policy_exception_justification: "Spatiand's own."
++        })");
++
++// A dialog's client view at its own size, so its window says so and the room offers it that size
++// (as the profile lock's, chrome/browser/spatiand/profile_lock_dialog.cc).
++class TranslationClientView : public views::DialogClientView {
++  METADATA_HEADER(TranslationClientView, views::DialogClientView)
++
++ public:
++  using views::DialogClientView::DialogClientView;
++
++  gfx::Size GetMinimumSize() const override { return GetPreferredSize({}); }
++  gfx::Size GetMaximumSize() const override { return GetPreferredSize({}); }
++};
++
++BEGIN_METADATA(TranslationClientView)
++END_METADATA
++
++// A window in the colours of SpatiMesh's own: light or dark as the Spatiand look is.
++class TranslationWidget : public views::Widget {
++ public:
++  const ui::NativeTheme* GetNativeTheme() const override {
++    return ui::NativeTheme::GetInstanceForNativeUi();
++  }
++};
++
++// The translation, in a window of its own: "Translating…", then the language it went into, the
++// translation (to be chosen from as well), Copy and Done. It owns its window and itself, both gone
++// when the window closes, and what it asked of hemera with them.
++class TranslationWindow : public views::DialogDelegate {
++ public:
++  TranslationWindow(scoped_refptr<network::SharedURLLoaderFactory> factory, std::string text)
++      : factory_(std::move(factory)), text_(std::move(text)) {
++    SetTitle(u"Translate");
++    SetModalType(ui::mojom::ModalType::kNone);
++    SetShowCloseButton(true);
++    SetButtons(static_cast<int>(ui::mojom::DialogButton::kOk));
++    SetButtonLabel(ui::mojom::DialogButton::kOk, u"Done");
++    views::View* contents = SetContentsView(std::make_unique<views::View>());
++    auto* layout = contents->SetLayoutManager(std::make_unique<views::BoxLayout>(
++        views::BoxLayout::Orientation::kVertical, gfx::Insets(16), 10));
++    // Wide enough for its title beside the room's buttons on its frame, however short the
++    // translation.
++    layout->set_minimum_cross_axis_size(440);
++    heading_ = contents->AddChildView(std::make_unique<views::Label>(u"Translating…"));
++    heading_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    heading_->SetFontList(heading_->font_list().DeriveWithWeight(gfx::Font::Weight::BOLD));
++    auto* scroll = contents->AddChildView(std::make_unique<views::ScrollView>());
++    scroll->SetHorizontalScrollBarMode(views::ScrollView::ScrollBarMode::kDisabled);
++    scroll->ClipHeightTo(0, 420);
++    translation_ = scroll->SetContents(std::make_unique<views::Label>());
++    translation_->SetMultiLine(true);
++    translation_->SetMaximumWidth(520);
++    translation_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    translation_->SetSelectable(true);
++    translation_->SetVisible(false);
++    said_ = contents->AddChildView(std::make_unique<views::Label>());
++    said_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
++    said_->SetMultiLine(true);
++    said_->SetMaximumWidth(520);
++    said_->SetVisible(false);
++    copy_ = SetExtraView(std::make_unique<views::MdTextButton>(
++        base::BindRepeating(&TranslationWindow::Copy, base::Unretained(this)), u"Copy"));
++    copy_->SetEnabled(false);
++  }
++  TranslationWindow(const TranslationWindow&) = delete;
++  TranslationWindow& operator=(const TranslationWindow&) = delete;
++  ~TranslationWindow() override = default;
++
++  // Shows it, and asks.
++  void Start() {
++    SetOwnershipOfNewWidget(views::Widget::InitParams::CLIENT_OWNS_WIDGET);
++    window_ = std::make_unique<TranslationWidget>();
++    window_->Init(views::DialogDelegate::GetDialogWidgetInitParams(
++        this, /*context=*/gfx::NativeWindow(), /*parent=*/gfx::NativeView(), gfx::Rect()));
++    window_->MakeCloseSynchronous(
++        base::BindOnce(&TranslationWindow::Closed, base::Unretained(this)));
++    window_->Show();
++    if (base::UTF8ToUTF16(text_).size() > kMostCharacters) {
++      Fail(u"Too much is chosen to translate at once: choose less.");
++      return;
++    }
++    started_ = base::TimeTicks::Now();
++    base::ThreadPool::PostTaskAndReplyWithResult(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++        base::BindOnce(&LoadTranslator),
++        base::BindOnce(&TranslationWindow::Loaded, weak_factory_.GetWeakPtr()));
++  }
++
++  // views::DialogDelegate:
++  views::ClientView* CreateClientView(views::Widget* widget) override {
++    return new TranslationClientView(widget, TransferOwnershipOfContentsView());
++  }
++
++ private:
++  using Loaders = std::list<std::unique_ptr<network::SimpleURLLoader>>;
++  using Then = base::OnceCallback<void(std::string)>;
++
++  void Loaded(std::optional<Translator> translator) {
++    if (!translator) {
++      Fail(u"No translator is set: name hemera in Spatiand's AI settings.");
++      return;
++    }
++    translator_ = std::move(*translator);
++    Ask(AskedLanguage(translator_.model, text_),
++        base::BindOnce(&TranslationWindow::Written, weak_factory_.GetWeakPtr()));
++  }
++
++  void Written(std::string said) {
++    into_ = Target(said, translator_);
++    written_ = said.substr(0, 12);
++    Ask(AskedTranslation(translator_.model, text_, into_),
++        base::BindOnce(&TranslationWindow::Translated, weak_factory_.GetWeakPtr()));
++  }
++
++  void Translated(std::string said) {
++    std::optional<std::string> translation = TranslationOf(said, text_);
++    if (!translation) {
++      Fail(u"hemera's answer had no text in it.");
++      return;
++    }
++    // How much, which way and how long; never what.
++    LOG(INFO) << "Spatiand: translate: " << base::UTF8ToUTF16(text_).size() << " characters in "
++              << std::ranges::count(Numbered(text_), '\n') + 1 << " lines, written in \""
++              << written_ << "\", into " << into_ << ": "
++              << base::UTF8ToUTF16(*translation).size() << " characters, with "
++              << translator_.model << " in " << (base::TimeTicks::Now() - started_).InSecondsF()
++              << " s";
++    done_ = base::UTF8ToUTF16(*translation);
++    heading_->SetText(u"In " + base::UTF8ToUTF16(LanguageName(into_)));
++    translation_->SetText(done_);
++    translation_->SetVisible(true);
++    copy_->SetEnabled(true);
++    Refit();
++  }
++
++  // One question, on a request of its own; a 503 (hemera's model starting) waited out once for
++  // its Retry-After, as the room's other callers do.
++  void Ask(base::DictValue question, Then then, int tries_left = 2) {
++    std::string body;
++    base::JSONWriter::Write(question, &body);
++    auto request = std::make_unique<network::ResourceRequest>();
++    request->url = GURL(translator_.hemera + "/v1/chat/completions");
++    request->method = "POST";
++    request->credentials_mode = network::mojom::CredentialsMode::kOmit;
++    std::unique_ptr<network::SimpleURLLoader> loader =
++        network::SimpleURLLoader::Create(std::move(request), kTraffic);
++    loader->AttachStringForUpload(body, "application/json");
++    loader->SetAllowHttpErrorResults(true);
++    loader->SetTimeoutDuration(base::Seconds(60));
++    loaders_.push_front(std::move(loader));
++    auto it = loaders_.begin();
++    (*it)->DownloadToString(
++        factory_.get(),
++        base::BindOnce(&TranslationWindow::Answered, weak_factory_.GetWeakPtr(), it,
++                       std::move(question), std::move(then), tries_left),
++        /*max_body_size=*/4 * 1024 * 1024);
++  }
++
++  void Answered(Loaders::iterator it,
++                base::DictValue question,
++                Then then,
++                int tries_left,
++                std::optional<std::string> answer) {
++    std::unique_ptr<network::SimpleURLLoader> loader = std::move(*it);
++    loaders_.erase(it);
++    const int status = loader->ResponseInfo() && loader->ResponseInfo()->headers
++                           ? loader->ResponseInfo()->headers->response_code()
++                           : 0;
++    if (status == 503 && tries_left > 1) {
++      int wait = 2;
++      if (std::optional<std::string> after =
++              loader->ResponseInfo()->headers->GetNormalizedHeader("retry-after")) {
++        base::StringToInt(*after, &wait);
++      }
++      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++          FROM_HERE,
++          base::BindOnce(&TranslationWindow::Ask, weak_factory_.GetWeakPtr(), std::move(question),
++                         std::move(then), tries_left - 1),
++          base::Seconds(std::clamp(wait, 1, 30)));
++      return;
++    }
++    if (status == 0) {
++      Fail(u"hemera could not be reached (" +
++           base::UTF8ToUTF16(net::ErrorToShortString(loader->NetError())) + u").");
++      return;
++    }
++    if (status != 200 || !answer) {
++      Fail(u"hemera did not translate it (status " + base::NumberToString16(status) + u").");
++      return;
++    }
++    std::optional<std::string> said = ReplyText(*answer);
++    if (!said) {
++      Fail(u"hemera's answer was not readable.");
++      return;
++    }
++    std::move(then).Run(std::move(*said));
++  }
++
++  void Fail(const std::u16string& words) {
++    heading_->SetText(u"Not translated");
++    said_->SetText(words);
++    said_->SetVisible(true);
++    Refit();
++  }
++
++  void Copy() {
++    if (done_.empty()) {
++      return;
++    }
++    ui::ScopedClipboardWriter(ui::ClipboardBuffer::kCopyPaste).WriteText(done_);
++    said_->SetText(u"Copied.");
++    said_->SetVisible(true);
++    Refit();
++  }
++
++  // What it shows has grown or shrunk: the window takes its new size.
++  void Refit() {
++    if (!window_) {
++      return;
++    }
++    window_->OnSizeConstraintsChanged();
++    window_->SetSize(window_->non_client_view()->GetPreferredSize({}));
++  }
++
++  void Closed(views::Widget::ClosedReason) {
++    // Nothing more is asked or heard: the requests go with their loaders.
++    weak_factory_.InvalidateWeakPtrs();
++    loaders_.clear();
++    heading_ = nullptr;
++    translation_ = nullptr;
++    said_ = nullptr;
++    copy_ = nullptr;
++    window_.reset();
++    delete this;
++  }
++
++  scoped_refptr<network::SharedURLLoaderFactory> factory_;
++  const std::string text_;
++  Translator translator_;
++  std::string into_;
++  std::string written_;
++  std::u16string done_;
++  base::TimeTicks started_;
++  Loaders loaders_;
++  raw_ptr<views::Label> heading_ = nullptr;
++  raw_ptr<views::Label> translation_ = nullptr;
++  raw_ptr<views::Label> said_ = nullptr;
++  raw_ptr<views::MdTextButton> copy_ = nullptr;
++  std::unique_ptr<views::Widget> window_;
++  base::WeakPtrFactory<TranslationWindow> weak_factory_{this};
++};
++
++}  // namespace
++
++void TranslateChosen(content::WebContents* contents, const std::u16string& text) {
++  if (!contents || text.empty()) {
++    return;
++  }
++  // Its own: it deletes itself when its window closes.
++  (new TranslationWindow(contents->GetBrowserContext()
++                             ->GetDefaultStoragePartition()
++                             ->GetURLLoaderFactoryForBrowserProcess(),
++                         base::UTF16ToUTF8(text)))
++      ->Start();
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/translate.h b/chrome/browser/spatiand/translate.h
+new file mode 100644
+index 0000000000..25368b75ef
+--- /dev/null
++++ b/chrome/browser/spatiand/translate.h
+@@ -0,0 +1,25 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_TRANSLATE_H_
++#define CHROME_BROWSER_SPATIAND_TRANSLATE_H_
++
++#include <string>
++
++namespace content {
++class WebContents;
++}  // namespace content
++
++namespace spatiand {
++
++// Live Text's Translate, for the text chosen on any page and in the PDF viewer alike: translated by
++// the room's own model (hemera and its everyday model, as Spatiand's AI settings name them, apps/
++// ai.json) between the wearer's two languages -- text in the first goes into the second, anything
++// else into the first, decided here and not by the model, its lines and digits as they were (the
++// same two questions as crates/spatiand-voice/src/hemera/translate.rs) -- and shown in a window of
++// its own with Copy and Done. Nothing of the text is logged: lengths and times.
++void TranslateChosen(content::WebContents* contents, const std::u16string& text);
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_TRANSLATE_H_
+diff --git a/services/firewall/tools/annotations.xml b/services/firewall/tools/annotations.xml
+index eca24c32a7..8c06d5e61f 100644
+--- a/services/firewall/tools/annotations.xml
++++ b/services/firewall/tools/annotations.xml
+@@ -501,4 +501,5 @@ TO PRODUCE:
+  <item id="blink_resource_loader_dictionary" added_in_milestone="126" hash_code="72296456" content_hash_code="04fa88f8" os_list="linux,windows,android" file_path="third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc" />
+  <item id="blink_extension_resource_loader_embed" added_in_milestone="126" hash_code="95145213" content_hash_code="03788d28" os_list="linux,windows,android" file_path="third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc" />
+  <item id="spatiand_ocr" added_in_milestone="157" hash_code="4410058" content_hash_code="00000000" os_list="linux" file_path="chrome/browser/spatiand/ocr.cc"/>
++ <item id="spatiand_translate" added_in_milestone="157" hash_code="45551160" content_hash_code="00000000" os_list="linux" file_path="chrome/browser/spatiand/translate.cc"/>
+ </annotations>
+diff --git a/services/firewall/tools/rules.xml b/services/firewall/tools/rules.xml
+index 0a6ed37b6c..85034b7170 100644
+--- a/services/firewall/tools/rules.xml
++++ b/services/firewall/tools/rules.xml
+@@ -99,4 +99,5 @@
+  <item id="spellcheck_hunspell_dictionary" allowed="1"/>
+  <!-- Spatiand: a scanned PDF page's picture to the room's own reader of text in pictures (hemera) -->
+  <item id="spatiand_ocr" allowed="1"/>
++ <item id="spatiand_translate" allowed="1"/>
+ </rules>

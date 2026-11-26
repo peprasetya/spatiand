@@ -287,6 +287,53 @@ pub fn guests_of(state: &Spatiand, host: &WlSurface) -> Vec<(Rect, WlSurface)> {
         .collect()
 }
 
+/// A window's own account of itself, as the assistant and dictation ask for it
+/// ([`crate::xr::ask_description`]), with the accounts of the windows shown in its places: a PDF
+/// SpatiLoupe shows through SpatiMesh is SpatiMesh's to describe, its page's words included, which
+/// the host's own account cannot give. Without places, the window's own answer as it comes.
+pub fn ask_description(state: &Spatiand, surface: &WlSurface) -> Option<std::sync::mpsc::Receiver<String>> {
+    let own = crate::xr::ask_description(surface);
+    let insides: Vec<_> = guests_of(state, surface).into_iter().filter_map(|(_, guest)| crate::xr::ask_description(&guest)).collect();
+    if insides.is_empty() {
+        return own;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("describe-insides".into())
+        .spawn(move || {
+            // Each is read by a thread of its own, with a second's patience: these only wait.
+            let patience = std::time::Duration::from_millis(1200);
+            let host = own.and_then(|r| r.recv_timeout(patience).ok());
+            let said: Vec<String> = insides.into_iter().filter_map(|r| r.recv_timeout(patience).ok()).collect();
+            let _ = tx.send(with_insides(host.as_deref(), &said));
+        })
+        .ok()?;
+    Some(rx)
+}
+
+/// A host's account with those of the windows inside its places: their words after its own, an
+/// empty line apart, and their vocabulary after its own; the rest is the host's.
+pub fn with_insides(host: Option<&str>, insides: &[String]) -> String {
+    use serde_json::{json, Value};
+    let mut said = host.and_then(|h| serde_json::from_str::<Value>(h).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    for inside in insides {
+        let Some(inner) = serde_json::from_str::<Value>(inside).ok().filter(Value::is_object) else { continue };
+        if let Some(text) = inner.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+            let joined = match said.get("text").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) {
+                Some(own) => format!("{own}\n\n{text}"),
+                None => text.to_string(),
+            };
+            said["text"] = json!(joined);
+        }
+        if let Some(words) = inner.get("vocabulary").and_then(Value::as_array) {
+            let mut all = said.get("vocabulary").and_then(Value::as_array).cloned().unwrap_or_default();
+            all.extend(words.iter().filter(|w| !all.contains(w)).cloned().collect::<Vec<_>>());
+            said["vocabulary"] = Value::Array(all);
+        }
+    }
+    said.to_string()
+}
+
 /// The host of the window inside a place.
 pub fn host_of(state: &Spatiand, guest: &WlSurface) -> Option<WlSurface> {
     state.embeds.slots.iter().find(|s| s.guest.as_ref() == Some(guest)).map(|s| s.host.clone())
@@ -381,5 +428,46 @@ pub fn tidy(state: &mut Spatiand) {
     }
     if state.embeds.focus.as_ref().is_some_and(|g| !g.is_alive()) {
         state.embeds.focus = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::with_insides;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn a_hosts_account_has_its_insides_words_after_its_own() {
+        let host = json!({
+            "kind": "viewer", "app": "SpatiLoupe", "title": "report.pdf",
+            "text": "The PDF report.pdf, shown by SpatiMesh's PDF viewer inside SpatiLoupe's window.",
+            "vocabulary": ["SpatiLoupe"],
+        })
+        .to_string();
+        let inside = json!({
+            "kind": "web", "app": "SpatiMesh", "title": "report.pdf",
+            "text": "Page 1\nScanned invoice 4471", "vocabulary": ["SpatiLoupe", "Spatiand"],
+        })
+        .to_string();
+        let said: Value = serde_json::from_str(&with_insides(Some(&host), &[inside])).unwrap();
+        assert_eq!(said["app"], "SpatiLoupe");
+        assert_eq!(said["kind"], "viewer");
+        assert_eq!(
+            said["text"],
+            "The PDF report.pdf, shown by SpatiMesh's PDF viewer inside SpatiLoupe's window.\n\nPage 1\nScanned invoice 4471"
+        );
+        assert_eq!(said["vocabulary"], json!(["SpatiLoupe", "Spatiand"]), "each word once");
+    }
+
+    #[test]
+    fn a_host_that_said_nothing_is_told_by_its_insides() {
+        let inside = json!({"text": "Page 2\nTerima kasih"}).to_string();
+        let said: Value = serde_json::from_str(&with_insides(None, &[inside, "not json".into()])).unwrap();
+        assert_eq!(said["text"], "Page 2\nTerima kasih");
+        assert!(said.get("vocabulary").is_none());
+        // Nothing inside said anything: the host's account as it was.
+        let host = json!({"app": "SpatiLoupe", "text": "a picture"}).to_string();
+        let said: Value = serde_json::from_str(&with_insides(Some(&host), &[json!({"text": "  "}).to_string()])).unwrap();
+        assert_eq!(said["text"], "a picture");
     }
 }
