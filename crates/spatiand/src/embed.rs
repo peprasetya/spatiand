@@ -161,7 +161,10 @@ fn go_in(state: &mut Spatiand, guest: &WlSurface, token: &str) {
     slot.guest = Some(guest.clone());
     slot.object.attached();
     let host = slot.host.clone();
-    let rect = slot.rect;
+    // The rectangle in effect, or else the one the host has asked for and not yet committed with
+    // a picture: a host that draws slowly (its GPU's first picture) is still to have its window
+    // inside offered the place's size first, not the room's.
+    let rect = slot.rect.or(slot.pending_rect);
     // Not a window of the room: it was given a place and the keyboard as it arrived, as every
     // new window is, and both go -- the keyboard back to the host, which stays in front.
     if let Some(window) = window_of(state, guest) {

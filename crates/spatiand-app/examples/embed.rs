@@ -15,13 +15,16 @@
 
 use spatiand_app::{App, EmbedId, Event, WindowId};
 
-/// One colour over the whole window, blue, green, red, alpha.
+/// One colour over the whole window, blue, green, red, alpha. Drawn by the GPU, as Spatiand's
+/// applications draw: on a Mac's desktop (2D mode) a window is shown only from a GPU's picture.
 fn fill(app: &mut App, window: WindowId, bgra: [u8; 4]) {
-    if let Err(e) = app.show_pixels(window, |pixels| {
-        for pixel in pixels.chunks_exact_mut(4) {
-            pixel.copy_from_slice(&bgra);
-        }
-    }) {
+    let [b, g, r, a] = bgra.map(|c| c as f32 / 255.0);
+    let drawn = app.draw(window, |gl, _| unsafe {
+        use spatiand_app::glow::HasContext;
+        gl.api().clear_color(r, g, b, a);
+        gl.api().clear(spatiand_app::glow::COLOR_BUFFER_BIT);
+    });
+    if let Err(e) = drawn {
         log::warn!("could not draw: {e}");
     }
 }
@@ -59,6 +62,9 @@ fn host() -> Result<(), String> {
                         let (w, h) = app.size(window);
                         let (x, y, pw, ph) = place_of(w as i32, h as i32);
                         app.set_embed_rect(place, x, y, pw, ph);
+                        // In effect now, before the window inside arrives, not with this window's
+                        // first picture, which the GPU may be a while making.
+                        app.commit(window);
                         let token = app.embed_token(place).unwrap_or_default();
                         log::info!("host: a place, its token {} long", token.len());
                         if let Some(page) = page.as_deref() {

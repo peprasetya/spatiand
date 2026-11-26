@@ -721,9 +721,12 @@ impl App {
         self.wire.ask_frame(window);
     }
 
-    /// Put into effect what has been said about a window without drawing it again.
+    /// Put into effect what has been said about a window without drawing it again -- now: sent at
+    /// once, not with the next round of events, so that a program started just after (the window
+    /// for a place, [`App::embed`]) finds it done.
     pub fn commit(&mut self, window: WindowId) {
         self.wire.commit(window);
+        let _ = self.queue.flush();
     }
 
     /// The application's GL context, made the first time it is wanted.
