@@ -196,6 +196,45 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   closing it was a cancel. Android's own shared storage (Download, Pictures) is offered, and downloads go to its
   Download folder (`run-android.sh`), only once Spatiand has "All files access", which the app asks for on Android's
   own page (`MainActivity.askForAccess`; android/setup.sh grants it from a computer).
+
+  **The remotes** (2026-11-27; the owner: "do make this for 159. spatimesh is spatiand app"). The chooser is the
+  same program on all three platforms, carried beside the storage service, and offers SpatiShelf's remotes (SMB,
+  SFTP, cloud drives: the storage service's, `storage/`) under the places: asked for on a thread of the chooser's
+  own, so that its window is there at once and the remotes come when the service has said (one quiet line where it
+  cannot be reached). A remote's folder is listed the same way, "Loading..." until it comes, and found in, filtered
+  by kind, marked in and gone up from as this machine's are; `remote:path` typed goes there, and `--dir remote:path`
+  begins there. Chromium understands only paths of this machine, so the chooser does the transfers, with rclone,
+  and writes paths of this machine as ever:
+  - **Opened** from a remote, a file, the files marked (several may be here and there) or a folder with all that is
+    in it are fetched into `$XDG_RUNTIME_DIR/spatiand-choose/fetched/<choice>/` (the temporary folder's where there
+    is no runtime folder), the window saying what, from where and how far, with a Cancel (or Escape) that stops
+    rclone's job, takes away what came and goes back to choosing. A fetch is kept a day, for a page that uploads
+    what it was given a while later, and taken away by the next chooser to start.
+  - **Saved** to a remote (Replace asked first where the name is taken there, as here), the path written is
+    `.../spatiand-choose/outbox/<choice>/<name>`, and a sender is started on its own (`spatiand-choose --send <file>
+    <remote:path>`: its own process group, no standard stream, so that Chromium's reading of the chooser's output
+    ends with the chooser). It waits until Chromium has written the file there -- a download or Save as as
+    `<name>.crdownload`, a page's File System Access write as `<name>.crswap`, each renamed to `<name>` when whole --
+    and nothing in the folder has changed for two seconds; while a temporary file is there it waits as long as that
+    takes; an empty `<name>` that nothing was written through (the File System Access API makes it as it is chosen)
+    is waited on half a minute; nothing at all in half an hour, the save was cancelled. Then it moves what is there
+    to the remote (`operations/movefile`; a page saved complete with its `_files`, or under a name Chromium gave it,
+    goes beside it), trying again four times over three minutes. What it could not move stays where it is for a
+    week, and its log, `.../spatiand-choose/send.log`, says where: Spatiand's applications have no way to tell the
+    wearer in the room themselves (the room's notice card is for the platform's notifications), so nothing is shown.
+  - Chromium asking to begin where its last choice was -- one of these folders -- begins in the remote that folder
+    stands for (`.spatiand-place` in it).
+
+  **Tried** on deepmagpie: the chooser's tests with a stand-in remote (listing, finding, kinds, marks across places,
+  the cursor kept where the remotes come in over it, fetches stopped and the window closed while fetching, Replace,
+  the sender's waiting on `.crdownload` and `.crswap` files, an empty file, nothing written, tries again); the same
+  with the real storage service on an rclone `alias` remote (`with_the_real_storage_service`: a slowed fetch told
+  as it goes, a folder whole, a download written in parts and renamed, sent byte for byte); and
+  `tools/spatiand-choose-e2e.py` in the snapshot room, the chooser's output read through a pipe as Chromium reads it
+  (the remotes' marks, "Loading..." for a WebDAV remote that does not answer, a remote folder, the progress, a fetch
+  stopped, a folder chosen, Replace and a save sent by its sender after a simulated download, no service to be had).
+  **Not tried:** SpatiMesh itself asking it with remotes (its Chromium side is changed separately), a real cloud or
+  SMB remote, the Mac, the Beam Pro, the glasses.
 * **Crashes leave minidumps** (`android-libc/0018`): Chromium's crash handler is carried as `libspatimesh_crashpad.so`;
   a tab crashed on purpose (`chrome://crash`) left its `.dmp` in `$XDG_CONFIG_HOME/chromium/Crash Reports/pending`.
 
