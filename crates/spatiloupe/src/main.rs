@@ -3,7 +3,9 @@
 //! Like Preview on a Mac (docs/spatiand-apps.md): pictures of every common kind, stereo
 //! photographs shown to each eye, PDFs, and 3D objects drawn with their materials, in true
 //! stereo in the room and flat on a flat screen. A folder's things are tiles to choose from;
-//! one is looked at full window, and the folder's others are along its foot.
+//! one is looked at full window, and the folder's others are along its foot. A PDF is shown by
+//! SpatiMesh's own viewer -- Chromium's, with its tools -- in a place in SpatiLoupe's window: the
+//! room's web view (`spatiand_xr_embed_v1`), kept here ([`Loupe::keep_place`]).
 //!
 //! ```text
 //! spatiloupe                 the pictures folder
@@ -11,14 +13,12 @@
 //! spatiloupe <file>          that file, with its folder behind it
 //! ```
 
-mod annotate;
 mod depth;
 mod folder;
 mod gainmap;
 mod ink;
 mod markup;
 mod model;
-mod pdf;
 mod picture;
 mod place;
 mod save;
@@ -31,10 +31,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use spatiand_app::ui::{look, theme, Input, Painter, Rect};
-use spatiand_app::{App, EyeLayout, Event, Mode, WindowId};
+use spatiand_app::{App, EmbedId, EyeLayout, Event, Mode, WindowId};
 
 use folder::{Arrived, Chose, Folder, Kind};
 use model::Eye;
@@ -49,7 +49,33 @@ enum Done {
     Model { ticket: u64, result: Result<model::Scene, String> },
     /// A picture marked up, written: where, or why not.
     Saved { ticket: u64, result: Result<PathBuf, String> },
+    /// A remote's PDF coming onto this machine, for SpatiMesh to show: how far.
+    Fetching { ticket: u64, done: u64, total: u64 },
+    /// It has come -- where its copy is -- or why not; `None`, stopped, the wearer having moved on.
+    Fetched { ticket: u64, result: Result<Option<PathBuf>, String> },
 }
+
+/// The place in the window that SpatiMesh's viewer of the PDF looked at is in
+/// (`spatiand_xr_embed_v1`): for which view and which try, the rectangle it was last given,
+/// whether SpatiMesh's window has come into it, and when SpatiMesh was asked for it.
+struct Place {
+    embed: EmbedId,
+    ticket: u64,
+    tries: u32,
+    rect: (i32, i32, i32, i32),
+    attached: bool,
+    asked: Instant,
+}
+
+/// How long a place let go of before SpatiMesh's window came into it is kept, hidden, waiting for
+/// that window to close it with: SpatiMesh slow to start, or never starting.
+const LEFT_WAITS: Duration = Duration::from_secs(120);
+
+/// How long SpatiMesh's window may take to come into its place. A SpatiMesh without the web view
+/// (patch 0035, which comes with the 159 build) takes no notice of the place it is started for and
+/// opens the PDF in a window of its own; past this, SpatiLoupe takes it for one, lets the place go
+/// -- leaving that window be -- and says so ([`Loupe::keep_place`]).
+const NOT_INSIDE: Duration = Duration::from_secs(10);
 
 /// A picture read before it is looked at: the one the carousel is heading for.
 struct Ahead {
@@ -109,7 +135,7 @@ fn worker(name: &str, done: Sender<Done>) -> Sender<Job> {
     jobs
 }
 
-/// A tile's picture: a picture made small, or a PDF's first page.
+/// A tile's picture: a picture made small. (A PDF's tile is a document, an object's a cube.)
 fn tile_picture(path: &Path, kind: Kind, index: usize) -> Option<Arrived> {
     match kind {
         Kind::Picture => {
@@ -131,30 +157,8 @@ fn tile_picture(path: &Path, kind: Kind, index: usize) -> Option<Arrived> {
             }
             Some(Arrived { index, width: w, height: h, rgba, word, seen: Some(seen) })
         }
-        // A page whole, on a square of the window's ground: a tile shows a square's middle,
-        // and a page's middle is not what it looks like.
-        Kind::Pdf => pdf::first_page(path, 300).and_then(|(w, h, rgba)| {
-            let (side, rgba) = squared(w as usize, h as usize, &rgba)?;
-            Some(Arrived { index, width: side as u32, height: side as u32, rgba, word: None, seen: Some(Seen { aspect: 1.0, height: f32::MAX, stereo: false }) })
-        }),
         _ => None,
     }
-}
-
-/// A page `w` by `h` in the middle of a square of the window's ground, as wide as its longer side:
-/// `None` if that is more than a tile could ever want, or the page is not what it says.
-fn squared(w: usize, h: usize, rgba: &[u8]) -> Option<(usize, Vec<u8>)> {
-    let side = w.max(h);
-    if side == 0 || side > 2048 || rgba.len() < w * h * 4 {
-        return None;
-    }
-    let mut square = [11u8, 13, 18, 255].repeat(side * side);
-    let (x0, y0) = ((side - w) / 2, (side - h) / 2);
-    for y in 0..h {
-        let to = ((y0 + y) * side + x0) * 4;
-        square[to..to + w * 4].copy_from_slice(&rgba[y * w * 4..(y + 1) * w * 4]);
-    }
-    Some((side, square))
 }
 
 struct Loupe {
@@ -168,6 +172,8 @@ struct Loupe {
     painter: Option<Painter>,
     calls: Sender<Job>,
     pictures: Sender<Job>,
+    /// What threads of their own answer on: a remote's PDF being copied here.
+    tell: Sender<Done>,
     done: Receiver<Done>,
     folder: Folder,
     view: Option<View>,
@@ -183,9 +189,6 @@ struct Loupe {
     size: (u32, u32),
     /// What a file opened at the start is, to open once its folder is listed.
     opening: Option<PathBuf>,
-    /// A locked PDF just written (or its copy), and the password it was opened with: given to it
-    /// when it is opened again, and let go of then whatever is opened.
-    unlocking: Option<(PathBuf, pdf::Secret)>,
     left: Vec<View>,
     /// Which of the folder's tiles the viewer's strip was last made from (`Folder::generation`).
     strip: Option<u64>,
@@ -196,6 +199,16 @@ struct Loupe {
     relisted: std::time::Instant,
     /// What was done, to be said by the next file's view: a save, whose file is shown afresh.
     saying: Option<String>,
+    /// The place SpatiMesh's viewer of the PDF looked at is in.
+    place: Option<Place>,
+    /// Places let go of before SpatiMesh's window came into them -- the wearer moved on while it
+    /// started -- kept, hidden, until it comes, and closed then with it: a window naming a place
+    /// that is gone would be left a window of its own in the room. Since when each waits.
+    leaving: Vec<(EmbedId, Instant)>,
+    /// A place's rectangle changed while nothing else is to be drawn: committed on its own.
+    commit_due: bool,
+    /// The remote's PDF being copied here: for which view, and which try of it.
+    fetching: Option<(u64, u32)>,
 }
 
 /// Something to say when the folder at `path`, on this machine, changes: what is in it, not what
@@ -298,14 +311,163 @@ impl Loupe {
                 let job = Job::new(move || still_wanted().then(|| Done::Model { ticket, result: model::Scene::read(&path) }));
                 self.calls.send(job.or(move |e| Done::Model { ticket, result: Err(e) })).ok();
             }
-            Kind::Pdf => {
-                let password = self.unlocking.take().filter(|(written, _)| *written == entry.path).map(|(_, password)| password);
-                view.open_pdf(password);
-            }
+            // Shown by SpatiMesh, in a place in the window ([`Loupe::keep_place`]): a remote's
+            // copied onto this machine first ([`Loupe::keep_fetch`]), SpatiMesh being given only
+            // this machine's files.
+            Kind::Pdf => view.open_pdf(),
             Kind::Folder => return,
         }
         self.app.set_title(self.window, &format!("{} \u{2014} SpatiLoupe", entry.name));
         self.view = Some(view);
+        self.dirty = true;
+    }
+
+    /// A remote's PDF copied onto this machine when the view looked at wants it (`View::fetch_wanted`):
+    /// once for each try, on a thread of its own -- a large one is no reason for pictures to wait
+    /// -- told how far it has come, and stopped once another file is looked at.
+    fn keep_fetch(&mut self) {
+        let Some(view) = self.view.as_ref() else { return };
+        let Some(tries) = view.fetch_wanted() else { return };
+        if self.fetching == Some((view.ticket, tries)) {
+            return;
+        }
+        self.fetching = Some((view.ticket, tries));
+        let (path, size, modified, ticket) = (view.entry.path.clone(), view.entry.size, view.entry.modified.clone(), view.ticket);
+        let (tell, current) = (self.tell.clone(), self.current.clone());
+        let _ = std::thread::Builder::new().name("fetch".into()).spawn(move || {
+            let wanted = || current.load(Ordering::Relaxed) == ticket;
+            let going = |done, total| {
+                let _ = tell.send(Done::Fetching { ticket, done, total });
+                wanted()
+            };
+            let result = place::fetched(&path, size, &modified, going);
+            if let Err(e) = &result {
+                log::warn!("{}: not copied here: {e}", path.display());
+            }
+            let _ = tell.send(Done::Fetched { ticket, result });
+        });
+    }
+
+    /// The place SpatiMesh's viewer of a PDF is in, kept as the view looked at wants it
+    /// (`View::place_wanted`): made, and SpatiMesh asked to show the PDF in it (`App::show_page`,
+    /// its `file:` address); moved with the window's every change, hidden while the carousel takes
+    /// it away; and let go of -- SpatiMesh's window asked to close -- when another file is looked
+    /// at, the folder is gone back to, or SpatiMesh is to be asked again. One page to a place.
+    fn keep_place(&mut self) {
+        if !self.ready {
+            return;
+        }
+        let have = self.place.as_ref().is_some_and(|p| self.view.as_ref().is_some_and(|v| v.ticket == p.ticket && v.place_wanted(true).is_some_and(|w| w.tries == p.tries)));
+        let wanted = self.view.as_ref().and_then(|v| v.place_wanted(have));
+        if let Some(place) = self.place.take() {
+            match &wanted {
+                Some(w) if w.ticket == place.ticket && w.tries == place.tries => self.place = Some(place),
+                _ => self.let_go(place),
+            }
+        }
+        // Those let go of before their window came, and waited for too long: closed anyway.
+        let mut gone = Vec::new();
+        self.leaving.retain(|(embed, since)| {
+            let waited = since.elapsed() > LEFT_WAITS;
+            if waited {
+                gone.push(*embed);
+            }
+            !waited
+        });
+        for embed in gone {
+            self.app.close_embed(embed);
+        }
+        // SpatiMesh asked, and no window come into the place: a SpatiMesh without the web view,
+        // which has opened the PDF in a window of its own. That window is left be -- the place,
+        // with none inside it, is let go of at once, so that it is not closed later -- and
+        // SpatiLoupe goes back to the folder, which says so.
+        // (Only with the PDF on show: one being slid away from is let go of anyway on arrival.)
+        let on_show = wanted.as_ref().is_some_and(|w| w.rect.2 > 0 && w.rect.3 > 0);
+        if on_show && self.place.as_ref().is_some_and(|p| !p.attached && p.asked.elapsed() >= NOT_INSIDE) {
+            if let Some(place) = self.place.take() {
+                self.app.close_embed(place.embed);
+            }
+            let name = self.view.as_ref().map(|v| v.entry.name.clone()).unwrap_or_default();
+            log::warn!("SpatiMesh's window did not come into its place in {} s: a SpatiMesh without the web view, which opens the PDF in a window of its own", NOT_INSIDE.as_secs());
+            self.leave();
+            self.folder.say(format!("SpatiMesh opened {name} in a window of its own: this SpatiMesh cannot show it inside SpatiLoupe yet."));
+            return;
+        }
+        let Some(wanted) = wanted else { return };
+        if let Some(place) = self.place.as_mut() {
+            if place.rect != wanted.rect {
+                place.rect = wanted.rect;
+                let (x, y, w, h) = wanted.rect;
+                self.app.set_embed_rect(place.embed, x, y, w, h);
+                self.commit_due = true;
+            }
+            return;
+        }
+        let Some(embed) = self.app.embed(self.window) else {
+            if let Some(view) = self.view.as_mut() {
+                view.place_refused("SpatiLoupe shows a PDF with SpatiMesh's viewer inside its own window, which only Spatiand's room can do -- in the room, or on a Mac's desktop. Open it there.".into(), false);
+            }
+            return;
+        };
+        let (x, y, w, h) = wanted.rect;
+        self.app.set_embed_rect(embed, x, y, w, h);
+        // In effect before SpatiMesh's window arrives, which is offered the place's size.
+        self.app.commit(self.window);
+        match self.app.show_page(embed, &wanted.url, None) {
+            Ok(()) => {
+                log::info!("SpatiMesh asked to show a PDF in a place in the window");
+                self.place = Some(Place { embed, ticket: wanted.ticket, tries: wanted.tries, rect: wanted.rect, attached: false, asked: Instant::now() });
+            }
+            Err(why) => {
+                log::warn!("SpatiMesh could not be asked to show a PDF: {why}");
+                self.app.close_embed(embed);
+                if let Some(view) = self.view.as_mut() {
+                    view.place_refused(format!("SpatiMesh could not be asked to show it: {}.", why.trim_end_matches('.')), true);
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// A place no longer wanted: SpatiMesh's window in it asked to close with it, or -- if it has
+    /// not come yet -- the place kept hidden until it does, and closed then.
+    fn let_go(&mut self, place: Place) {
+        if place.attached {
+            self.app.close_embed(place.embed);
+        } else {
+            self.app.set_embed_rect(place.embed, 0, 0, 0, 0);
+            self.commit_due = true;
+            self.leaving.push((place.embed, Instant::now()));
+        }
+    }
+
+    /// The room says a window has come into a place in the window, or gone from it.
+    fn placed(&mut self, embed: EmbedId, attached: bool) {
+        if let Some(at) = self.leaving.iter().position(|(e, _)| *e == embed) {
+            // Come into a place let go of: closed with it, as it was asked to be.
+            log::info!("SpatiMesh's window came into a place let go of; closed with it");
+            self.leaving.remove(at);
+            self.app.close_embed(embed);
+            return;
+        }
+        let Some(place) = self.place.as_mut().filter(|p| p.embed == embed) else { return };
+        let ticket = place.ticket;
+        let view = self.view.as_mut().filter(|v| v.ticket == ticket);
+        if attached {
+            place.attached = true;
+            if let Some(view) = view {
+                view.pdf_attached();
+            }
+        } else {
+            // Closed or ended while it was the PDF looked at: the place goes with it, and the view
+            // says so, with a way to open it again (in a new place).
+            if let Some(place) = self.place.take() {
+                self.app.close_embed(place.embed);
+            }
+            if let Some(view) = view {
+                view.pdf_detached();
+            }
+        }
         self.dirty = true;
     }
 
@@ -377,8 +539,6 @@ impl Loupe {
                             }
                         }
                     }
-                    // Given to the file written if that is what opened; let go of either way.
-                    self.unlocking = None;
                 }
                 Done::Tile { ticket, tile } => self.folder.pictured(ticket, tile),
                 Done::Picture { ticket, result } => {
@@ -401,19 +561,28 @@ impl Loupe {
                 }
                 Done::Saved { ticket, result } => {
                     if let Some(view) = self.view.as_mut().filter(|v| v.ticket == ticket) {
-                        view.saved(result, None);
+                        view.saved(result);
+                    }
+                }
+                Done::Fetching { ticket, done, total } => {
+                    if let Some(view) = self.view.as_mut().filter(|v| v.ticket == ticket) {
+                        view.fetching(done, total);
+                    }
+                }
+                Done::Fetched { ticket, result } => {
+                    if let Some(view) = self.view.as_mut().filter(|v| v.ticket == ticket) {
+                        // Stopped, it is no longer looked at: nothing to say.
+                        if let Some(result) = result.transpose() {
+                            view.fetched(result);
+                        }
                     }
                 }
             }
         }
-        if let Some(view) = self.view.as_mut() {
-            self.dirty |= view.answers();
-        }
         // A file written -- the one looked at, or its copy -- shown afresh as it now is: listed
         // again, the folder perhaps holding a new file, and opened as it comes.
-        if let Some(view::Want::Saved { path, said, password }) = self.view.as_mut().and_then(|v| v.take_wanted()) {
+        if let Some(view::Want::Saved { path, said }) = self.view.as_mut().and_then(|v| v.take_wanted()) {
             self.saying = Some(said);
-            self.unlocking = password.map(|password| (path.clone(), password));
             self.opening = Some(path);
             self.relist();
             self.dirty = true;
@@ -479,11 +648,20 @@ impl Loupe {
                 }
                 return true;
             }
-            // The right button: the menu of the text in the picture or the page.
+            // The right button: the menu of the text in the picture.
             Event::Button { button: spatiand_app::Button::Right, pressed: true, .. } => {
                 if let Some(view) = self.view.as_mut() {
                     self.dirty |= view.text_menu();
                 }
+                return true;
+            }
+            // SpatiMesh's window come into the place a PDF is shown in, or gone from it.
+            Event::EmbedAttached { embed, .. } => {
+                self.placed(*embed, true);
+                return true;
+            }
+            Event::EmbedDetached { embed, .. } => {
+                self.placed(*embed, false);
                 return true;
             }
             _ => {}
@@ -520,7 +698,15 @@ impl Loupe {
         let names: Vec<String> = self.folder.entries.iter().map(|e| e.name.clone()).take(150).collect();
         let (title, text) = match self.view.as_mut() {
             Some(view) => view.describe(),
-            None => (place::name(&self.folder.path), names.iter().take(200).cloned().collect::<Vec<_>>().join("\n")),
+            None => {
+                let names = names.iter().take(200).cloned().collect::<Vec<_>>().join("\n");
+                // What the folder says at its foot first: what became of the file looked at.
+                let text = match self.folder.saying() {
+                    Some(said) => format!("{said}\n\n{names}"),
+                    None => names,
+                };
+                (place::name(&self.folder.path), text)
+            }
         };
         spatiand_app::Description {
             kind: "viewer".into(),
@@ -557,6 +743,8 @@ impl Loupe {
         if !self.ready {
             return Ok(());
         }
+        // What the folder said, over: drawn again without it.
+        self.dirty |= self.folder.tick();
         // The tiles wanted: the folder's on show, or the strip's around what is being looked at.
         let wanted = match self.view.as_ref() {
             Some(view) => self.folder.wanted_near(view.index, 14),
@@ -585,8 +773,14 @@ impl Loupe {
         }
         let animating = self.view.as_ref().map_or(self.folder.animating(), |v| v.animating());
         if !std::mem::take(&mut self.dirty) && !animating {
+            // A place moved, or hidden, with nothing else to draw: it takes effect with a commit
+            // of its own (the window's picture is committed with it otherwise).
+            if std::mem::take(&mut self.commit_due) {
+                self.app.commit(self.window);
+            }
             return Ok(());
         }
+        self.commit_due = false;
         self.stage();
         let clear = self.view.as_ref().is_some_and(|v| v.see_through());
         if self.clear != clear {
@@ -637,7 +831,11 @@ impl Loupe {
         loop {
             let animating = self.view.as_ref().map_or(self.folder.animating(), |v| v.animating());
             let mut wait = Duration::from_millis(if animating { 16 } else { 120 });
-            if let Some(next) = self.view.as_ref().and_then(|v| v.next_wake()) {
+            let next = match self.view.as_ref() {
+                Some(view) => view.next_wake(),
+                None => self.folder.next_wake(),
+            };
+            if let Some(next) = next {
                 wait = wait.min(next.max(Duration::from_millis(4)));
             }
             for event in self.app.wait(Some(wait))? {
@@ -647,6 +845,8 @@ impl Loupe {
             }
             self.answers();
             self.read_ahead();
+            self.keep_fetch();
+            self.keep_place();
             self.draw()?;
         }
     }
@@ -714,7 +914,8 @@ fn main() {
             window,
             painter: None,
             calls: worker("calls", done.clone()),
-            pictures: worker("pictures", done),
+            pictures: worker("pictures", done.clone()),
+            tell: done,
             done: answers,
             folder: Folder::new(PathBuf::new(), 0),
             view: None,
@@ -726,7 +927,6 @@ fn main() {
             clear: false,
             size: WINDOW,
             opening: None,
-            unlocking: None,
             left: Vec::new(),
             strip: None,
             changed: channel(),
@@ -734,6 +934,10 @@ fn main() {
             change_due: false,
             relisted: std::time::Instant::now(),
             saying: None,
+            place: None,
+            leaving: Vec::new(),
+            commit_due: false,
+            fetching: None,
         };
         match asked {
             Some(Asked::Folder(path)) => loupe.list(path, None),
@@ -799,15 +1003,5 @@ mod tests {
         std::env::set_current_dir(cwd).unwrap();
         assert_eq!(relative, (Asked::File(dir.join("trip/x:y.jpg")), Asked::Folder(dir.join("trip/real")), Asked::Folder(dir.join("trip"))));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn a_page_is_put_on_its_square_and_a_huge_one_is_not() {
-        let (side, square) = squared(2, 4, &[255u8; 2 * 4 * 4]).unwrap();
-        assert_eq!(side, 4);
-        // A column of ground either side of the page.
-        assert_eq!(&square[..4], &[11, 13, 18, 255]);
-        assert_eq!(&square[4..8], &[255, 255, 255, 255]);
-        assert_eq!(squared(10, 432_000, &[]), None);
     }
 }

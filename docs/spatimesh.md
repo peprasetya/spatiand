@@ -325,7 +325,10 @@ SpatiMesh) with the window's creation (`BrowserWindowCreateParams`) to its Wayla
 the room's own, and offered the place's size from the start. The protocol is bound at the newest both sides
 know (13), every event of it listened for; patch 0020's copy of the protocol is the room's version 13.
 Tried in the Deck build's test room: the SDK's `examples/embed --page file:///...pdf` showed the PDF in its
-place, no tabs, no bar.
+place, no tabs, no bar. SpatiLoupe shows its PDFs this way (docs/spatiand-apps.md, "SpatiLoupe's PDFs, shown
+by SpatiMesh's viewer"; `tools/spatiloupe-pdf-e2e.py`); a SpatiMesh without this patch -- the installed
+ones until the 159 build -- takes no notice of `--spatiand-embed` and opens the PDF in a window of its own,
+which SpatiLoupe, its place still empty after 10 s, leaves be and says so.
 
 **The PDF viewer in the room's own look, and no Google Drive button (patch 0036; 2026-11-27).** The owner,
 of SpatiLoupe's PDFs shown through SpatiMesh with Chromium's own tools: "yes restyle", one design language

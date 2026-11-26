@@ -371,8 +371,8 @@ pub fn open_link(state: &mut crate::state::Spatiand, url: &str, profile: Option<
 pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)]) {
     let mut extra = extra.to_vec();
     extra.extend(xr_runtime_environment());
-    // On Android the programs and the libraries they need (FFmpeg, PDFium) are all in the
-    // APK's library folder, and nothing tells the dynamic linker so but this.
+    // On Android the programs and the libraries they need (FFmpeg's) are all in the APK's
+    // library folder, and nothing tells the dynamic linker so but this.
     if let Some(native) = native_library_dir() {
         let dir = native.to_string_lossy().into_owned();
         extra.push(("SPATIAND_APPS_DIR".into(), dir.clone()));

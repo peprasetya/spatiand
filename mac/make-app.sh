@@ -74,11 +74,6 @@ else
   echo "the storage service did not build (is Go on the PATH?); SPATIAND_WITHOUT_STORAGE=1 builds without it" >&2
   exit 1
 fi
-# PDFium, which SpatiLoupe draws PDFs with, beside the programs that load it.
-case "$(uname -m)" in arm64) pdfium=mac-arm64 ;; *) pdfium=mac-x64 ;; esac
-../tools/fetch-pdfium.sh "$pdfium" && mkdir -p "$app/Contents/Frameworks" \
-  && cp "../third_party/pdfium/$pdfium/lib/libpdfium.dylib" "$app/Contents/Frameworks/" \
-  || echo "warning: no PDFium; SpatiLoupe will not open PDFs"
 # The measured head: the library that reads SOFA files and the dataset (built once; see tools/build-hrtf.sh).
 ./tools/build-hrtf.sh || echo "warning: no measured head; sound will be placed by the parametric one"
 if [ -f Resources/hrtf/libmysofa.1.dylib ]; then

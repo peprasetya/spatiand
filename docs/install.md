@@ -38,10 +38,10 @@ What is in the folder
 
 The programs are the room (`spatiand`), SpatiShelf (files), SpatiReel (video),
 SpatiLoupe (pictures, PDFs and 3D objects), SpatiQuill (terminal), SpatiMesh
-(the web browser: Chromium, in spatiand/lib/spatimesh), SpatiPal (the
-companion), SpatiKey (passwords and passkeys), the file chooser and the storage
-service, with the libraries they need that SteamOS does not have: FFmpeg's and
-PDFium.
+(the web browser: Chromium, in spatiand/lib/spatimesh, whose PDF viewer
+SpatiLoupe shows PDFs with), SpatiPal (the companion), SpatiKey (passwords and
+passkeys), the file chooser and the storage service, with the libraries they
+need that SteamOS does not have: FFmpeg's.
 
 Installing
 ----------

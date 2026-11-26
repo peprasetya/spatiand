@@ -1,7 +1,7 @@
 //! A picture marked up, written: drawn on at its own size and its own depth (`depth`), cropped,
 //! and written in its own format where SpatiLoupe writes that format as it was read -- over the
-//! file, whole or not at all -- or as a copy beside it. A PDF is written by `annotate`, on the
-//! PDF's own thread.
+//! file, whole or not at all -- or as a copy beside it. (A PDF is marked up and saved in
+//! SpatiMesh's viewer, which shows it.)
 
 use std::path::PathBuf;
 
@@ -378,7 +378,7 @@ pub fn save(saving: &Saving) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markup::{Area, Brush, Face, Ink, Note, Pick, Shape, HIGHLIGHTER_COLOURS, PEN_COLOURS};
+    use crate::markup::{Area, Brush, Face, Note, Pick, Shape, HIGHLIGHTER_COLOURS, PEN_COLOURS};
     use image::RgbaImage;
 
     #[test]
@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(copy_name("a.png", None, |n| taken.contains(&n)), "a (edited 3).png");
         assert_eq!(copy_name("notes", None, none), "notes (edited)");
         assert_eq!(copy_name(".hidden", Some("png"), none), ".hidden (edited).png");
-        assert_eq!(copy_name("trip.2024.pdf", None, none), "trip.2024 (edited).pdf");
+        assert_eq!(copy_name("trip.2024.png", None, none), "trip.2024 (edited).png");
     }
 
     #[test]
@@ -511,8 +511,9 @@ mod tests {
         dir
     }
 
+    /// A box in the pen's Red 2.
     fn red_box(area: Area, size: f32) -> Note {
-        Note::new(0, Shape::Box(area), Ink::Red.colour(), size)
+        Note::new(0, Shape::Box(area), PEN_COLOURS[10].colour, size)
     }
 
     fn reddish(p: &image::Rgba<u8>) -> bool {
@@ -600,7 +601,7 @@ mod tests {
         // Turned a quarter clockwise: shown 10 wide and 30 tall, the see-through part now at the
         // foot. An arrow down its middle, ending in the clear part.
         let marks = Marks {
-            notes: vec![Note::new(0, Shape::Arrow { from: (5.0, 2.0), to: (5.0, 28.0) }, Ink::Red.colour(), 2.0)],
+            notes: vec![Note::new(0, Shape::Arrow { from: (5.0, 2.0), to: (5.0, 28.0) }, PEN_COLOURS[10].colour, 2.0)],
             crops: Vec::new(),
             turns: 1,
         };
@@ -645,7 +646,7 @@ mod tests {
         let dir = folder("words");
         let path = dir.join("plain.png");
         RgbaImage::from_pixel(400, 120, image::Rgba([255, 255, 255, 255])).save(&path).unwrap();
-        let words = Note::new(0, Shape::Text { at: (10.0, 10.0), words: "Hello Привет 你好".into(), extent: (0.0, 0.0), face: Face::default() }, Ink::Blue.colour(), 40.0);
+        let words = Note::new(0, Shape::Text { at: (10.0, 10.0), words: "Hello Привет 你好".into(), extent: (0.0, 0.0), face: Face::default() }, PEN_COLOURS[13].colour, 40.0);
         let marks = Marks { notes: vec![words], ..Marks::default() };
         save(&Saving { source: path.clone(), marks, frame: (400.0, 120.0), copy: false }).unwrap();
         let read = image::open(&path).unwrap().to_rgba8();
@@ -708,7 +709,7 @@ pub(crate) mod pictures {
 mod copies {
     use super::pictures::{near, put, stored};
     use super::*;
-    use crate::markup::{Area, Ink, Note, Shape};
+    use crate::markup::{Area, Note, Shape, PEN_COLOURS};
 
     fn folder(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("spatiloupe-copies-{name}-{}", std::process::id()));
@@ -740,7 +741,7 @@ mod copies {
             let own = dir.join(name.replace('.', "-"));
             std::fs::create_dir_all(&own).unwrap();
             let path = put(&own, name);
-            let marks = Marks { notes: vec![Note::new(0, Shape::Box(area), Ink::Red.colour(), 6.0)], ..Marks::default() };
+            let marks = Marks { notes: vec![Note::new(0, Shape::Box(area), PEN_COLOURS[10].colour, 6.0)], ..Marks::default() };
             // Not written over: only copied.
             let refused = save(&Saving { source: path.clone(), marks: marks.clone(), frame: (w as f32, h as f32), copy: false });
             assert!(refused.unwrap_err().contains("Save a copy"), "{name}");

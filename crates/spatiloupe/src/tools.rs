@@ -1,12 +1,10 @@
-//! Markup mode: the tools to draw with over a picture or a PDF's pages, and what they do as the
-//! wearer presses, drags and types. A picture's are Chromium's PDF viewer's -- its pen, its
-//! highlighter, its eraser and its words, with their typeface, size, styles and alignment, in its
-//! own colours and sizes (`markup`) -- and SpatiLoupe's own Select, Box, Circle, Arrow and Crop,
-//! in the room's own look. A PDF's are Preview's set as they were (choose, crop, words, a box, a
-//! circle, an arrow, seven colours and three weights), until PDFs are shown by SpatiMesh. Undo and
-//! redo for both. The marks are `markup`'s; they are painted by `ink` on the CPU into a picture
-//! laid over what is shown, the same painting a saved picture gets, so that the window shows them
-//! as the file will have them.
+//! Markup mode: the tools to draw with over a picture, and what they do as the wearer presses,
+//! drags and types. Chromium's PDF viewer's -- its pen, its highlighter, its eraser and its words,
+//! with their typeface, size, styles and alignment, in its own colours and sizes (`markup`) -- and
+//! SpatiLoupe's own Select, Box, Circle, Arrow and Crop, in the room's own look; undo and redo. A
+//! PDF has Chromium's own, in SpatiMesh's viewer, which shows it. The marks are `markup`'s; they
+//! are painted by `ink` on the CPU into a picture laid over what is shown, the same painting a
+//! saved picture gets, so that the window shows them as the file will have them.
 //!
 //! A press and a drag draw only here. Outside Markup mode they keep their meaning (move about in
 //! a picture, slide to the next), and a later job is to make a press-drag over a picture's words
@@ -16,13 +14,13 @@ use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
 use spatiand_app::glow::{self, HasContext};
-use spatiand_app::ui::{look, theme, Button, Field, Icon, Input, Menu, MenuSaid, Painter, Rect, Row, Texture, Typed, DOUBLE_CLICK, DOUBLE_CLICK_SLOP};
+use spatiand_app::ui::{look, theme, Button, Field, Icon, Input, Painter, Rect, Texture, Typed, DOUBLE_CLICK, DOUBLE_CLICK_SLOP};
 use spatiand_app::{Gl, Key, Modifiers};
 
 use crate::ink::{self, Map};
 use crate::markup::{
-    corner_to, held_at, left_of, on_picture, Alignment, Area, Brush, Colour, Face, Handle, Ink, Markup, Marks, Note, Pick, Point, Shape, Size, Swatch, Typeface, Weight, ERASER, HIGHLIGHTER,
-    HIGHLIGHTER_COLOURS, HIGHLIGHTER_SIZES, PEN, PEN_COLOURS, PEN_SIZES, TEXT_COLOURS, TEXT_SIZES, WORDS,
+    corner_to, held_at, left_of, on_picture, Alignment, Area, Brush, Colour, Face, Handle, Markup, Marks, Note, Pick, Point, Shape, Size, Swatch, Typeface, ERASER, HIGHLIGHTER, HIGHLIGHTER_COLOURS,
+    HIGHLIGHTER_SIZES, PEN, PEN_COLOURS, PEN_SIZES, TEXT_COLOURS, TEXT_SIZES, WORDS,
 };
 
 /// The toolbar's height: a row of buttons, and room round them.
@@ -46,8 +44,6 @@ impl Tool {
     /// A picture's tools, in the bar's order: choosing, Chromium's four, then SpatiLoupe's shapes
     /// and its crop.
     pub const PICTURE: [Tool; 9] = [Tool::Select, Tool::Pen, Tool::Highlighter, Tool::Eraser, Tool::Text, Tool::Box, Tool::Circle, Tool::Arrow, Tool::Crop];
-    /// A PDF's, as they were.
-    pub const PDF: [Tool; 6] = [Tool::Select, Tool::Crop, Tool::Text, Tool::Box, Tool::Circle, Tool::Arrow];
 
     fn icon(self) -> Icon {
         match self {
@@ -130,14 +126,10 @@ pub struct Lettering {
 enum Hand {
     /// Nothing with a colour or a size: Select with nothing chosen, the eraser, Crop.
     Nothing,
-    /// A pen's line, or a box, an oval or an arrow on a picture: the pen's colours and sizes.
+    /// A pen's line, or a box, an oval or an arrow: the pen's colours and sizes.
     Pen,
     Highlighter,
-    /// Words on a picture.
     Words,
-    /// A PDF's lines and words, as they are marked up for now: seven inks and three weights.
-    PdfLines,
-    PdfWords,
 }
 
 /// What a press and a drag are doing.
@@ -177,14 +169,12 @@ pub struct Typing {
 
 /// The colours, sizes or words' face to choose from, open under their button.
 enum Popup {
-    /// Colours `columns` across: Chromium's grids of five, or a PDF's seven in a row.
+    /// Colours `columns` across: Chromium's grids of five.
     Colours { cursor: usize, buttons: Vec<Button>, area: Rect, columns: usize },
     /// A brush's five sizes in a row, or words' sixteen four across.
     Sizes { cursor: usize, buttons: Vec<Button>, area: Rect, columns: usize },
     /// Words' typeface, bold and italic, and alignment: the buttons in that order.
     Face { cursor: usize, buttons: Vec<Button>, area: Rect },
-    /// A PDF's three weights.
-    Weights(Menu),
 }
 
 /// The face panel's buttons: three typefaces, bold, italic, three alignments.
@@ -192,7 +182,7 @@ const FACE_BUTTONS: usize = 8;
 
 /// The marks laid over the window, as a picture of its own -- and what the highlighters
 /// multiply the picture under it by, as another: painted again only when they, or where the
-/// pages are, change.
+/// picture is, change.
 #[derive(Default)]
 struct Overlay {
     texture: Option<Texture>,
@@ -219,18 +209,12 @@ pub struct Desk {
     pub markup: Markup,
     /// The tools are out.
     pub on: bool,
-    /// A picture's tools, Chromium's; or a PDF's, as they were.
-    pub picture: bool,
     pub tool: Tool,
-    /// A picture's pen -- which a box, an oval and an arrow are drawn with too -- its
-    /// highlighter and its words, each as it was last set.
+    /// The pen -- which a box, an oval and an arrow are drawn with too -- the highlighter and the
+    /// words, each as it was last set.
     pub pen: Brushing,
     pub highlighter: Brushing,
     pub lettering: Lettering,
-    /// A PDF's colour, the weight of its lines, and the size of its words.
-    pub ink: Ink,
-    pub line: Weight,
-    pub words: Weight,
     gesture: Option<Gesture>,
     /// A crop drawn and not yet made (Enter or the Crop button make it).
     pub cropping: Option<(usize, Area)>,
@@ -249,32 +233,25 @@ pub struct Desk {
     colour_at: Rect,
     size_at: Rect,
     face_at: Rect,
-    /// Each page's part shown, in its units -- the whole of it or its crop -- by its number: what
-    /// a size is a share of.
+    /// The picture's part shown, in its pixels -- the whole of it or its crop -- as page 0: what a
+    /// size is a share of.
     pub regions: Vec<Area>,
     pointer: (f32, f32),
     shift: bool,
     last_press: Option<(Instant, (f32, f32))>,
     overlay: Overlay,
-    /// Whether Crop is offered: not for a PDF whose owner does not allow its pages changed.
-    pub may_crop: bool,
 }
 
 impl Desk {
-    /// The tools, out, on a picture (`picture`) or a PDF shown turned `turns` quarters from how
-    /// it was read.
-    pub fn new(turns: u8, picture: bool) -> Desk {
+    /// The tools, out, on a picture shown turned `turns` quarters from how it was read.
+    pub fn new(turns: u8) -> Desk {
         Desk {
             markup: Markup::new(turns),
             on: true,
-            picture,
             tool: Tool::Select,
             pen: Brushing { colour: PEN.0, size: PEN.1 },
             highlighter: Brushing { colour: HIGHLIGHTER.0, size: HIGHLIGHTER.1 },
             lettering: Lettering { colour: WORDS.0, size: WORDS.1, face: Face::default() },
-            ink: Ink::default(),
-            line: Weight::default(),
-            words: Weight::default(),
             gesture: None,
             cropping: None,
             typing: None,
@@ -295,13 +272,12 @@ impl Desk {
             shift: false,
             last_press: None,
             overlay: Overlay::default(),
-            may_crop: true,
         }
     }
 
     /// The tools on offer, in the bar's order.
     pub fn offered(&self) -> &'static [Tool] {
-        if self.picture { &Tool::PICTURE } else { &Tool::PDF }
+        &Tool::PICTURE
     }
 
     /// Whether anything is drawn or cut that the file has not got.
@@ -344,7 +320,7 @@ impl Desk {
 
     /// A tool chosen from the bar.
     pub fn choose(&mut self, tool: Tool) {
-        if (tool == Tool::Crop && !self.may_crop) || !self.offered().contains(&tool) {
+        if !self.offered().contains(&tool) {
             return;
         }
         self.finish_typing();
@@ -361,26 +337,22 @@ impl Desk {
     /// What the colour and size buttons are for: what is being typed, the note chosen, or what
     /// the tool in hand draws.
     fn hand(&self) -> Hand {
-        let of_shape = |shape: &Shape| match (self.picture, shape) {
-            (true, Shape::Text { .. }) => Hand::Words,
-            (true, Shape::Stroke { brush: Brush::Highlighter, .. }) => Hand::Highlighter,
-            (true, _) => Hand::Pen,
-            (false, Shape::Text { .. }) => Hand::PdfWords,
-            (false, _) => Hand::PdfLines,
+        let of_shape = |shape: &Shape| match shape {
+            Shape::Text { .. } => Hand::Words,
+            Shape::Stroke { brush: Brush::Highlighter, .. } => Hand::Highlighter,
+            _ => Hand::Pen,
         };
         if self.typing.is_some() {
-            return if self.picture { Hand::Words } else { Hand::PdfWords };
+            return Hand::Words;
         }
         if let Some(note) = self.chosen_note() {
             return of_shape(&note.shape);
         }
-        match (self.picture, self.tool) {
-            (true, Tool::Pen | Tool::Box | Tool::Circle | Tool::Arrow) => Hand::Pen,
-            (true, Tool::Highlighter) => Hand::Highlighter,
-            (true, Tool::Text) => Hand::Words,
-            (true, _) => Hand::Nothing,
-            (false, Tool::Text) => Hand::PdfWords,
-            (false, _) => Hand::PdfLines,
+        match self.tool {
+            Tool::Pen | Tool::Box | Tool::Circle | Tool::Arrow => Hand::Pen,
+            Tool::Highlighter => Hand::Highlighter,
+            Tool::Text => Hand::Words,
+            _ => Hand::Nothing,
         }
     }
 
@@ -392,19 +364,17 @@ impl Desk {
             Hand::Pen => of(&PEN_COLOURS, false),
             Hand::Highlighter => of(&HIGHLIGHTER_COLOURS, true),
             Hand::Words => of(&TEXT_COLOURS, false),
-            Hand::PdfLines | Hand::PdfWords => Ink::ALL.iter().map(|i| (i.colour(), false, i.name())).collect(),
             Hand::Nothing => Vec::new(),
         }
     }
 
-    /// The sizes there are to choose from now, Chromium's numbers: none for a PDF, whose are
-    /// its three weights.
+    /// The sizes there are to choose from now, Chromium's numbers.
     fn sizes(&self) -> Vec<f32> {
         match self.hand() {
             Hand::Pen => PEN_SIZES.iter().map(|s| s.value).collect(),
             Hand::Highlighter => HIGHLIGHTER_SIZES.iter().map(|s| s.value).collect(),
             Hand::Words => TEXT_SIZES.to_vec(),
-            _ => Vec::new(),
+            Hand::Nothing => Vec::new(),
         }
     }
 
@@ -420,7 +390,6 @@ impl Desk {
             Hand::Pen => Some(self.pen.colour),
             Hand::Highlighter => Some(self.highlighter.colour),
             Hand::Words => Some(self.lettering.colour),
-            Hand::PdfLines | Hand::PdfWords => Some(self.ink.colour()),
             Hand::Nothing => None,
         }
     }
@@ -437,8 +406,6 @@ impl Desk {
             Hand::Pen => Some(Pick::Chromium(self.pen.size)),
             Hand::Highlighter => Some(Pick::Chromium(self.highlighter.size)),
             Hand::Words => Some(Pick::Chromium(self.lettering.size)),
-            Hand::PdfLines => Some(Pick::Weight(self.line)),
-            Hand::PdfWords => Some(Pick::Weight(self.words)),
             Hand::Nothing => None,
         }
     }
@@ -460,7 +427,6 @@ impl Desk {
             Hand::Pen => self.pen.colour = colour,
             Hand::Highlighter => self.highlighter.colour = colour,
             Hand::Words => self.lettering.colour = colour,
-            Hand::PdfLines | Hand::PdfWords => self.ink = Ink::of(colour).unwrap_or(self.ink),
             Hand::Nothing => return,
         }
         if let Some(typing) = &mut self.typing {
@@ -475,13 +441,13 @@ impl Desk {
         }
     }
 
-    /// One of Chromium's sizes chosen, on a picture: for what is drawn next, and the note chosen.
+    /// One of Chromium's sizes chosen: for what is drawn next, and the note chosen.
     pub fn set_size(&mut self, value: f32) {
         match self.hand() {
             Hand::Pen => self.pen.size = value,
             Hand::Highlighter => self.highlighter.size = value,
             Hand::Words => self.lettering.size = value,
-            _ => return,
+            Hand::Nothing => return,
         }
         if let Some(typing) = &mut self.typing {
             typing.pick = Pick::Chromium(value);
@@ -494,29 +460,6 @@ impl Desk {
         self.refit(i, |note| {
             note.size = size;
             note.pick = Pick::Chromium(value);
-        });
-    }
-
-    /// The weight chosen, on a PDF: for lines or words, whichever is in hand, and for the note
-    /// chosen.
-    pub fn set_weight(&mut self, weight: Weight) {
-        let words = self.hand() == Hand::PdfWords;
-        if words {
-            self.words = weight;
-        } else {
-            self.line = weight;
-        }
-        if let Some(typing) = &mut self.typing {
-            typing.pick = Pick::Weight(weight);
-            typing.size = weight.text(self.regions.get(typing.page).map_or(1000.0, |r| r.w().min(r.h())));
-            return;
-        }
-        let Some(i) = self.markup.chosen else { return };
-        let Some(page) = self.chosen_note().map(|n| n.page) else { return };
-        let short = self.short(page);
-        self.refit(i, |note| {
-            note.pick = Pick::Weight(weight);
-            note.size = if words { weight.text(short) } else { weight.line(short) };
         });
     }
 
@@ -637,11 +580,7 @@ impl Desk {
                     Tool::Arrow => Shape::Arrow { from: *start, to: if self.shift { snapped(*start, *now) } else { *now } },
                     _ => return None,
                 };
-                Some(if self.picture {
-                    Note { page: *page, shape, colour: self.pen.colour, size: on_picture(self.pen.size, self.short(*page)), pick: Pick::Chromium(self.pen.size) }
-                } else {
-                    Note { page: *page, shape, colour: self.ink.colour(), size: self.line.line(self.short(*page)), pick: Pick::Weight(self.line) }
-                })
+                Some(Note { page: *page, shape, colour: self.pen.colour, size: on_picture(self.pen.size, self.short(*page)), pick: Pick::Chromium(self.pen.size) })
             }
             Some(Gesture::Stroking { page, brush, points, tail }) => {
                 let mut points = points.clone();
@@ -744,17 +683,6 @@ impl Desk {
             }
         };
         match self.popup.as_mut()? {
-            Popup::Weights(menu) => {
-                match menu.input(input, pointer) {
-                    Some(MenuSaid::Chose(row)) => {
-                        self.popup = None;
-                        self.set_weight(Weight::ALL[row.min(2)]);
-                    }
-                    Some(MenuSaid::Closed) => self.popup = None,
-                    None => {}
-                }
-                Some(Said::Taken)
-            }
             Popup::Colours { cursor, buttons, area, columns } | Popup::Sizes { cursor, buttons, area, columns } => {
                 let mut chose = None;
                 for (i, button) in buttons.iter_mut().enumerate() {
@@ -847,26 +775,15 @@ impl Desk {
             if !list.is_empty() {
                 let now = self.colour_now();
                 let cursor = list.iter().position(|c| Some(c.0) == now).unwrap_or(0);
-                let columns = if self.picture { 5 } else { list.len() };
-                self.popup = Some(Popup::Colours { cursor, buttons: list.iter().map(|_| Button::default()).collect(), area: Rect::default(), columns });
+                self.popup = Some(Popup::Colours { cursor, buttons: list.iter().map(|_| Button::default()).collect(), area: Rect::default(), columns: 5 });
             }
         } else if sizes {
-            if self.picture {
-                let list = self.sizes();
-                if !list.is_empty() {
-                    let now = self.size_now();
-                    let cursor = list.iter().position(|v| Some(Pick::Chromium(*v)) == now).unwrap_or(0);
-                    let columns = if list.len() > 5 { 4 } else { list.len() };
-                    self.popup = Some(Popup::Sizes { cursor, buttons: list.iter().map(|_| Button::default()).collect(), area: Rect::default(), columns });
-                }
-            } else {
-                let mut menu = Menu::new((self.size_at.x, self.bar.bottom() + 8.0));
-                let now = match self.size_now() {
-                    Some(Pick::Weight(w)) => w,
-                    _ => Weight::Medium,
-                };
-                menu.list.cursor = Weight::ALL.iter().position(|w| *w == now).unwrap_or(1);
-                self.popup = Some(Popup::Weights(menu));
+            let list = self.sizes();
+            if !list.is_empty() {
+                let now = self.size_now();
+                let cursor = list.iter().position(|v| Some(Pick::Chromium(*v)) == now).unwrap_or(0);
+                let columns = if list.len() > 5 { 4 } else { list.len() };
+                self.popup = Some(Popup::Sizes { cursor, buttons: list.iter().map(|_| Button::default()).collect(), area: Rect::default(), columns });
             }
         } else if faces {
             if self.hand() == Hand::Words {
@@ -922,7 +839,7 @@ impl Desk {
                     }
                     None => {
                         // Nothing there: let go of what was chosen, and the press is the view's
-                        // (a drag moves about in a zoomed picture, or along the pages).
+                        // (a drag moves about in a zoomed picture).
                         if self.markup.chosen.take().is_some() {
                             self.markup.generation += 1;
                         }
@@ -953,12 +870,8 @@ impl Desk {
                         let mut field = Field::default();
                         field.focused = true;
                         let short = self.short(place.page);
-                        self.typing = Some(if self.picture {
-                            let l = self.lettering;
-                            Typing { page: place.page, anchor: at, index: None, field, size: on_picture(l.size, short), colour: l.colour, face: l.face, pick: Pick::Chromium(l.size) }
-                        } else {
-                            Typing { page: place.page, anchor: at, index: None, field, size: self.words.text(short), colour: self.ink.colour(), face: Face::default(), pick: Pick::Weight(self.words) }
-                        });
+                        let l = self.lettering;
+                        self.typing = Some(Typing { page: place.page, anchor: at, index: None, field, size: on_picture(l.size, short), colour: l.colour, face: l.face, pick: Pick::Chromium(l.size) });
                     }
                 }
                 Said::Taken
@@ -1150,8 +1063,8 @@ impl Desk {
                 Said::Taken
             }
             // The chosen note nudged: a logical pixel at a time, ten with Shift. With nothing
-            // chosen they are the view's (along a document, about a zoomed picture), which keeps to
-            // this file while the tools are out.
+            // chosen they are the view's (about a zoomed picture), which keeps to this file while
+            // the tools are out.
             Key::Left | Key::Right | Key::Up | Key::Down => {
                 let Some(i) = self.markup.chosen else { return Said::Pass };
                 let page = self.markup.marks().notes.get(i).map_or(0, |n| n.page);
@@ -1314,11 +1227,11 @@ impl Desk {
         square * Button::HEIGHT + gaps + crop + 24.0
     }
 
-    /// The toolbar's square buttons and the room between them: the tools, then the colour and
-    /// size (and on a picture the face), then undo and redo.
+    /// The toolbar's square buttons and the room between them: the tools, then the colour, the
+    /// size and the words' face, then undo and redo.
     fn bar_room(&self) -> (f32, f32) {
         let tools = self.offered().len() as f32;
-        let options = if self.picture { 3.0 } else { 2.0 };
+        let options = 3.0;
         (tools + options + 2.0, (tools - 1.0) * 8.0 + 20.0 + (options - 1.0) * 8.0 + 20.0 + 8.0)
     }
 
@@ -1342,8 +1255,8 @@ impl Desk {
         let tool_rects: Vec<Rect> = (0..offered.len()).map(|i| next(if i + 1 == offered.len() { 20.0 } else { 8.0 })).collect();
         let hand = self.hand();
         let colour_rect = next(8.0);
-        let size_rect = next(if self.picture { 8.0 } else { 20.0 });
-        let face_rect = if self.picture { next(20.0) } else { Rect::default() };
+        let size_rect = next(8.0);
+        let face_rect = next(20.0);
         let undo_rect = next(8.0);
         let redo_rect = next(20.0);
         let crop_rect = Rect::new(inner.right() - crop_w, y, crop_w, side);
@@ -1354,7 +1267,7 @@ impl Desk {
             (true, tool_rects.last().copied().unwrap_or_default()),
             (colour_now.is_some(), colour_rect),
             (size_now.is_some(), size_rect),
-            (self.picture && hand == Hand::Words, face_rect),
+            (hand == Hand::Words, face_rect),
             (self.markup.can_undo(), undo_rect),
             (self.markup.can_redo(), redo_rect),
             (self.cropping.is_some(), crop_rect),
@@ -1364,11 +1277,6 @@ impl Desk {
         look::glass(p, gl, self.bar, 22.0, 1.0);
         for (i, tool) in offered.iter().enumerate() {
             let r = tool_rects[i];
-            // Not offered: its place left empty, and nothing there to press.
-            if *tool == Tool::Crop && !self.may_crop {
-                self.tools[i] = Button::default();
-                continue;
-            }
             // Lit to show the tool in hand, as a state only: not left focused for Enter.
             let button = &mut self.tools[i];
             button.focused = *tool == self.tool;
@@ -1385,40 +1293,24 @@ impl Desk {
             }
             None => self.colour_button = Button::default(),
         }
-        // The size: a line that thick, the words' number, or a PDF's weight.
+        // The size: a line that thick, or the words' number.
         let r = size_rect;
         self.size_at = r;
         match (hand, size_now) {
             (Hand::Nothing, _) | (_, None) => self.size_button = Button::default(),
-            (Hand::PdfLines | Hand::PdfWords, Some(pick)) => {
-                let weight = match pick {
-                    Pick::Weight(w) => w,
-                    Pick::Chromium(_) => Weight::Medium,
-                };
-                let icon = if hand == Hand::PdfWords { Icon::Text } else { [Icon::LineThin, Icon::LineMedium, Icon::LineThick][Weight::ALL.iter().position(|w| *w == weight).unwrap_or(1)] };
-                self.size_button.draw_icon(p, gl, r, icon, "");
-            }
-            (Hand::Words, Some(pick)) => {
+            (Hand::Words, Some(Pick::Chromium(value))) => {
                 let ink = self.size_button.draw_bare(p, gl, r);
-                let value = match pick {
-                    Pick::Chromium(v) => v,
-                    Pick::Weight(_) => WORDS.1,
-                };
                 p.label(gl, &number(value), r, theme::DETAIL_EM, ink, 0.5);
             }
-            (_, Some(pick)) => {
+            (_, Some(Pick::Chromium(value))) => {
                 let ink = self.size_button.draw_bare(p, gl, r);
-                let value = match pick {
-                    Pick::Chromium(v) => v,
-                    Pick::Weight(_) => PEN.1,
-                };
                 let highlighter = hand == Hand::Highlighter;
                 size_mark(p, gl, r, size_thickness(value, highlighter), highlighter, ink);
             }
         }
         // Words' face.
         self.face_at = face_rect;
-        if self.picture && hand == Hand::Words {
+        if hand == Hand::Words {
             self.face_button.draw_icon(p, gl, face_rect, Icon::Typeface, "");
         } else {
             self.face_button = Button::default();
@@ -1453,7 +1345,7 @@ impl Desk {
         area
     }
 
-    /// The colours, the sizes, the words' face or a PDF's weights, open over everything in `all`.
+    /// The colours, the sizes or the words' face, open over everything in `all`.
     pub fn draw_popup(&mut self, p: &mut Painter, gl: &Gl, all: Rect) {
         let hand = self.hand();
         let (colours, sizes, colour_now, size_now, face) = (self.colours(), self.sizes(), self.colour_now(), self.size_now(), self.face_now());
@@ -1461,15 +1353,6 @@ impl Desk {
         let side = Button::HEIGHT;
         let gap = 6.0;
         match &mut self.popup {
-            Some(Popup::Weights(menu)) => {
-                let words = hand == Hand::PdfWords;
-                let rows: Vec<Row> = Weight::ALL
-                    .iter()
-                    .zip([Icon::LineThin, Icon::LineMedium, Icon::LineThick])
-                    .map(|(w, icon)| if words { Row::new(w.text_name()).icon(Icon::Text) } else { Row::new(w.line_name()).icon(icon) })
-                    .collect();
-                menu.draw(p, gl, &rows, all);
-            }
             Some(Popup::Colours { cursor, buttons, area, columns }) => {
                 let columns = (*columns).max(1);
                 let rows = buttons.len().div_ceil(columns);
@@ -1563,7 +1446,7 @@ impl Desk {
         }
     }
 
-    /// The marks over the pages `placed` on the window `all`, and what goes with the tools: the
+    /// The marks over the picture `placed` on the window `all`, and what goes with the tools: the
     /// chosen note's handles, the crop being drawn, the words being typed, the brush's tip.
     pub fn paint(&mut self, p: &mut Painter, gl: &Gl, all: Rect, placed: &[Placed]) {
         self.paint_marks(p, gl, all, placed);
@@ -1793,7 +1676,7 @@ mod tests {
     const PLACED: [Placed; 1] = [Placed { page: 0, rect: Rect::new(100.0, 200.0, 1190.0, 595.0), region: Area { x0: 0.0, y0: 0.0, x1: 2380.0, y1: 1190.0 } }];
 
     fn picture() -> Desk {
-        let mut desk = Desk::new(0, true);
+        let mut desk = Desk::new(0);
         desk.regions = vec![PLACED[0].region];
         desk
     }
@@ -1816,16 +1699,11 @@ mod tests {
     }
 
     #[test]
-    fn a_picture_has_chromium_s_tools_and_a_pdf_keeps_its_own() {
+    fn a_picture_has_chromium_s_tools_and_spatiloupe_s_shapes() {
         let desk = picture();
         assert_eq!(desk.offered(), &Tool::PICTURE);
         assert_eq!(desk.offered().iter().map(|t| t.name()).collect::<Vec<_>>(), ["Select", "Pen", "Highlighter", "Eraser", "Text", "Box", "Circle", "Arrow", "Crop"]);
-        let mut pdf = Desk::new(0, false);
-        assert_eq!(pdf.offered(), &Tool::PDF);
-        pdf.choose(Tool::Pen);
-        assert_eq!(pdf.tool, Tool::Select, "no pen for a PDF, for now");
-        // A PDF's colours are its seven, a picture's pen Chromium's twenty, its highlighter ten.
-        assert_eq!(pdf.colours().len(), 7);
+        // The pen's colours are Chromium's twenty, its highlighter's ten.
         let mut desk = picture();
         desk.choose(Tool::Pen);
         assert_eq!((desk.colours().len(), desk.sizes(), desk.colour_now()), (20, vec![1.0, 2.0, 3.0, 6.0, 8.0], Some(Colour::BLACK)));

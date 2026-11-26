@@ -29,7 +29,7 @@ SpatiandOS; that is far off and not a goal here.
 | Remote storage | **A storage service inside Spatiand** holds an rclone **fork, kept easy to rebase and linked in** (not a separate rclone driven from outside) and the list of remotes. Every app asks it for files; it also serves the WebDAV proxy for native apps. |
 | No cache | **Nothing on disk.** Folder listings and thumbnails already fetched are held in memory while the app is open, with a refresh, and gone when it closes. File contents are always streamed from the remote. |
 | SpatiReel's code | **The Vibrefy Rust port moves into the Spatiand repository** and becomes SpatiReel; Vibrefy is one server type among Jellyfin, Emby, DLNA and local. vibrefyApp keeps its Android app. |
-| Viewer engine | **PDFium** for PDF; **our own small glTF PBR renderer** for 3D objects. |
+| Viewer engine | **SpatiMesh's own PDF viewer** -- Chromium's, with its tools -- for PDF, inside SpatiLoupe's window (the room's web view; PDFium of SpatiLoupe's own until 2026-11-27); **our own small glTF PBR renderer** for 3D objects. |
 | Beam Pro storage | All shared storage, through the "all files access" permission granted once. No root. |
 | First app | **SpatiReel.** |
 | Packaging | All apps ship inside Spatiand on each platform. SpatiWorld stays separate. |
@@ -54,8 +54,10 @@ SpatiandOS; that is far off and not a goal here.
 ### SpatiLoupe — media viewer
 - Like Preview on a Mac: PDF, JPEG, PNG, HEIF, JPEG 2000, GLB — any still media that is not
   video or audio.
-- Markup, as Preview's: crop, words, a box, a circle, an arrow, on pictures and PDFs, saved over
-  the file (asked first) or as a copy beside it (2026-11-19; see below).
+- Markup, as Preview's: crop, words, a box, a circle, an arrow, on pictures, saved over the file
+  (asked first) or as a copy beside it (2026-11-19; see below), with Chromium's pen, highlighter
+  and eraser besides (2026-11-27). A PDF is shown, marked up and saved by SpatiMesh's viewer
+  inside SpatiLoupe's window (2026-11-27).
 - Stereo photographs (samples to come from the Beam Pro's album).
 - 3D objects with textures and PBR, in true stereo in the 3D room and flat in 2D.
 
@@ -201,11 +203,11 @@ snapshot backend, pictures going over as dmabufs.
 | `storage/` (`spatiand-storage`) | Go (the toolchain pinned by the `toolchain` line in `storage/go.mod`, which `go` fetches on any machine), with **rclone v1.76 linked in as a library** (every backend). Remotes in Spatiand's own `~/.config/spatiand/rclone.conf`; the user's own rclone remotes are copied in only when asked ("From rclone"). Answers on 127.0.0.1 behind a token kept in `storage.token` beside the remotes: `/rc/<method>` is rclone's remote control (lists, copies, moves, deletes, `config/create` and its questions); `/dav/<remote>/...` is each remote as WebDAV, for streaming and for native applications. rclone's file cache is **off**: nothing is kept on disk. Where it is: `$XDG_RUNTIME_DIR/spatiand-storage.json`. Started by the first application that wants it, detached; a second start finds the first. `storage/build.sh mac|linux|android` builds it from the Mac for all three (no cgo). *Upstream v1.76 as a Go module, not a fork: no patch has been needed; a `replace` line in `go.mod` makes it a fork the day one is.* |
 | `crates/spatiand-storage` | Its Rust client. `remote:path` is a **virtual place** to every application; files stream by URL (FFmpeg) or are read into memory. |
 | `crates/spatishelf` | **Every tab a process** (`spatishelf --tab`): it lists, makes pictures (images, film frames, HEIF; remote pictures read into memory) and copies. Sidebar of places (per platform; `/sdcard` places on Android) and remotes; tiles or a list; several chosen (click with Control/Shift, Space, Control-A); path bar; back, forward, up; type to jump, Control-F to filter; copy, cut, paste (local by itself, anything with a remote through rclone, as a job with a progress bar); rename, new folder, the trash (see "2026-11-15" below: each system's own, a Trash place, put back, empty; remotes delete after asking); a menu on the right button; open with SpatiLoupe, SpatiReel, SpatiQuill (folders) or any of the platform's applications ("Open with", 2026-11-15). **Add remote**: every kind rclone has, searchable, its main options as a form, then rclone's own questions one at a time (OAuth kinds open the browser and wait). "Other apps": the WebDAV address, name and password, and a button that mounts it in Finder (Mac) or opens it in the file manager (Linux). |
-| `crates/spatiloupe` | Pictures by the `image` crate, and HEIF (a phone's tile grid put together), AVIF and JPEG 2000 by FFmpeg; SVG by resvg; moving GIF, APNG, WebP; EXIF shown; zoom about the pointer, pan, rotate, a strip of the folder's other files, an info pane; controls on glass that fade. **Stereo photographs**: MPO pairs, side by side, crossed, over and under, told by name (`_sbs`, `.jps`...) or by the picture itself (the two halves' detail compared), squeezed pairs recognised by a film's shape; in the room each eye is given its view, flat the left one; the packing can be changed, eyes swapped, depth moved (`,` `.`). **PDF** by PDFium (`tools/fetch-pdfium.sh`, shipped beside the programs): pages down a column drawn at the size shown, search with the results marked, the outline. **glTF/GLB** by its own renderer: metallic-roughness PBR (base colour, metal-rough, normal, occlusion, emission, cut-out and see-through), lit by three lights and a studio sky, a soft shadow, 4x MSAA; in the room drawn for each eye with off-axis frusta; drag to turn, scroll to near. Remote files (`remote:path`) and folders open as local ones do. |
+| `crates/spatiloupe` | Pictures by the `image` crate, and HEIF (a phone's tile grid put together), AVIF and JPEG 2000 by FFmpeg; SVG by resvg; moving GIF, APNG, WebP; EXIF shown; zoom about the pointer, pan, rotate, a strip of the folder's other files, an info pane; controls on glass that fade. **Stereo photographs**: MPO pairs, side by side, crossed, over and under, told by name (`_sbs`, `.jps`...) or by the picture itself (the two halves' detail compared), squeezed pairs recognised by a film's shape; in the room each eye is given its view, flat the left one; the packing can be changed, eyes swapped, depth moved (`,` `.`). **PDF** by PDFium (`tools/fetch-pdfium.sh`, shipped beside the programs): pages down a column drawn at the size shown, search with the results marked, the outline *(so until 2026-11-27; since then SpatiMesh's viewer shows them inside SpatiLoupe's window, and PDFium is gone: "2026-11-27: SpatiLoupe's PDFs, shown by SpatiMesh's viewer" below)*. **glTF/GLB** by its own renderer: metallic-roughness PBR (base colour, metal-rough, normal, occlusion, emission, cut-out and see-through), lit by three lights and a studio sky, a soft shadow, 4x MSAA; in the room drawn for each eye with off-axis frusta; drag to turn, scroll to near. Remote files (`remote:path`) and folders open as local ones do. |
 | `crates/spatiquill` | **Every tab a process** (`spatiquill --tab`) holding a pseudo-terminal and alacritty's emulator (`alacritty_terminal` 0.26), sending its screen to the window; one process holds every window, and a second start opens a window in it. Glyphs from the platform's monospaced face through cosmic-text into one atlas, the whole screen one draw: colour (16, 256, true), bold, italic, underline, emoji, wide CJK. Tabs named by the running program or the folder; dragged along the bar to reorder, **off the window into a window of its own, or onto another SpatiQuill window**. Copy and paste by keys, through the room's clipboard (see "SpatiQuill's copy and paste" below); scrollback with a marker; mouse to programs that ask for it; a crashed tab offers a new shell and the others go on. |
 | SDK | `App::watch(fd)`: an application woken for its own files. `ui::look` (backdrop, rule, glass, chip) shared by all four. |
 | Snapshot backend | `SPATIAND_STEPS`: clicks, drags (past the window's edge too), clicks through the room's own pointer under a trembling aim (`shaky:u,v,degrees,clicks`), scrolls, keys with modifiers (`rctrl` the right Control, which is how a Mac's Command reaches the clients), typed text, waits, `window:<title>`, `dump:<png>` of the window's own picture at any point, and `clipboard`, which logs what is on the room's clipboard -- how all of the above was driven. |
-| Packaging | **Mac**: `mac/make-app.sh` puts all four, the storage service and PDFium in the bundle. **Deck**: all four build in the `holo` container; PDFium and the storage service are copied beside them. **Beam Pro**: `android/build.sh` builds FFmpeg 7.1 for Android (`android/ffmpeg/`, MediaCodec), the four as `lib<name>.so`, PDFium and the storage service into the APK; the compositor finds them in the APK's library folder and gives them `LD_LIBRARY_PATH`; `android/setup.sh` grants all-files access and switches the phantom-process monitor off. |
+| Packaging | **Mac**: `mac/make-app.sh` puts all four, the storage service and PDFium in the bundle. **Deck**: all four build in the `holo` container; PDFium and the storage service are copied beside them. **Beam Pro**: `android/build.sh` builds FFmpeg 7.1 for Android (`android/ffmpeg/`, MediaCodec), the four as `lib<name>.so`, PDFium and the storage service into the APK; the compositor finds them in the APK's library folder and gives them `LD_LIBRARY_PATH`; `android/setup.sh` grants all-files access and switches the phantom-process monitor off. *(PDFium is in no package since 2026-11-27.)* |
 
 **Checked** (Mac, snapshot backend with `SPATIAND_STEPS`, the real compositor and the
 applications as their own processes): SpatiLoupe's folder grid, JPEG, HEIC, JPEG 2000, SVG,
@@ -1166,6 +1168,11 @@ raw AV1 (`.obu`) cannot be seeked; the Android frame handover (docs/beam-pro.md)
 
 ## 2026-11-19: SpatiLoupe's markup
 
+*Since 2026-11-27 a PDF is shown, marked up and saved by SpatiMesh's viewer inside SpatiLoupe's
+window, and SpatiLoupe's own PDF code (`pdf.rs`, `annotate.rs`, PDFium) is gone: what this section
+and the next say of PDFs is how it was ("2026-11-27: SpatiLoupe's PDFs, shown by SpatiMesh's
+viewer", below).*
+
 The owner: "like apple preview, I want it to able to simple edit and annotate, cropping, add text,
 box, circle, arrow." Pictures and PDFs both; "Save" asks before replacing the original, "Save a
 copy" writes a new file beside it, with no hidden backups. The same code on the Deck, the Beam Pro
@@ -1388,7 +1395,10 @@ The owner: "webview, chromium tools. spatiloupe tools match chromium, if not exi
 arrow crop, add for pictures. but uniform design language" -- and then of PDFs, which SpatiMesh is
 to show with Chromium's own panel restyled: "yes restyle". So a **picture** is marked up with the
 tools of Chromium 157's PDF viewer, in its colours and sizes, with SpatiLoupe's own besides, all in
-the SDK's look; a **PDF keeps the tools it had** (below) until it moves to SpatiMesh.
+the SDK's look; a **PDF keeps the tools it had** (below) until it moves to SpatiMesh -- which it did
+the same day: a PDF's tools are now Chromium's own, in SpatiMesh's viewer inside SpatiLoupe's window,
+and what this section says of PDFs is how it was ("2026-11-27: SpatiLoupe's PDFs, shown by
+SpatiMesh's viewer", below).
 
 | Tool (bar order) | On a picture |
 |---|---|
@@ -1460,6 +1470,12 @@ CPU's) at six places: within one level. A PDF marked up and saved as a copy as b
 done:** the Mac, the Deck, the Beam Pro and the glasses.
 
 ## 2026-11-19: Live Text -- the text in pictures, PDF pages and paused films
+
+*Since 2026-11-27 a PDF's text is SpatiMesh's viewer's, which shows it inside SpatiLoupe's window: a
+page's own text, and a scanned page's words read by hemera with the room's AI settings (SpatiMesh's
+patch 0037, docs/spatimesh.md), chosen, copied and found there. What this section says of PDF pages
+in SpatiLoupe is how it was; of SpatiLoupe's Live Text only the translation between the two
+languages has no counterpart on a PDF now.*
 
 The owner: "I want it can select text from images (also on image of pdf)... even non latin, unicode
 character. Like apple preview."; "spatireel also can be treated same too... so when play video, any
@@ -1653,7 +1669,8 @@ host and inside) passes its thirteen checks -- the place, the size offered first
 messages both ways, the room's picture with the inside at the place; `examples/embed --page file:///…pdf`
 shows SpatiMesh's PDF viewer in the place on the Deck build of Chromium 157; on littleotter, `Spatiand
 --selftest-desk <examples/embed>` showed the inside in its host's Mac window in 2D mode, following a resize.
-**Not yet:** the Beam Pro's and the Mac's builds of SpatiMesh with patch 0035, the glasses.
+SpatiLoupe shows its PDFs this way (the next section but one). **Not yet:** the Beam Pro's and the Mac's
+builds of SpatiMesh with patch 0035, the glasses.
 
 ## 2026-11-27: a notice from an application
 
@@ -1672,3 +1689,130 @@ kept.
 Saved report.pdf -- from the SDK's example" on the card; `tools/spatiand-choose-e2e.py` saw the sender's
 own notice reach the card once it had sent a browser's saved file to a remote. Type-checked for the Beam
 Pro and on littleotter for the Mac. **Not yet:** the Mac and the Beam Pro run, the glasses.
+
+## 2026-11-27: SpatiLoupe's PDFs, shown by SpatiMesh's viewer
+
+The owner: "the build true webview, spatiloupe use webview for chromium best for", and of the tools:
+"webview, chromium tools. spatiloupe tools match chromium, if not exists box circle arrow crop, add for
+pictures. but uniform design language". A PDF in SpatiLoupe is shown by SpatiMesh's own PDF viewer --
+Chromium's, in the room's look (patch 0036), with its tools -- inside SpatiLoupe's window, in a place of
+the room's web view ("a window inside another's", above). SpatiLoupe's own PDF code and PDFium are gone:
+the only PDFium in the project is the one inside SpatiMesh's Chromium.
+
+**What the wearer sees.** SpatiLoupe's bar stays along the top: Folder, the name, "PDF" and its size, its
+place among the folder's files ("1 / 3") and the info button -- no Markup button and no Save, the viewer
+having its own. Under the bar, from 12 below its foot to the window's edges, SpatiMesh's viewer: its
+toolbar (pages, zoom, fit, a quarter turn, annotate -- pen, highlighter, eraser, words -- undo, redo,
+download, print), the pages' thumbnails, the pages. While SpatiMesh starts, "Opening in SpatiMesh…",
+quiet, with the dots, where its window will be. If SpatiMesh's window goes while the PDF is still the one
+looked at (closed, ended, crashed): "SpatiMesh has closed <name>." and **Open again**, which asks
+SpatiMesh again, in a new place. The info pane, opened, takes its column at the right and the viewer
+leaves it (Name, Folder, Size, "Shown by: SpatiMesh's PDF viewer", and a remote's copy). The window
+resized, the place follows it in the same frame. Another file (the arrows, Home, End), the folder, or
+SpatiLoupe closed: the place is let go of, and SpatiMesh's window with it. In the folder a PDF's tile is a
+document.
+
+**The keyboard.** SpatiLoupe's keys -- Escape to the folder, the arrows, Home, End, I -- act while
+SpatiLoupe has the keyboard, as it has when a PDF is opened. A press in SpatiMesh's viewer gives the keys
+to SpatiMesh (the room's doing, `embed::pressed`): its arrows turn its pages, its Control-F finds. A press
+on SpatiLoupe's bar gives them back.
+
+**How** (`view.rs` `Paper`, `main.rs` `Loupe::keep_place`). The view says the place it wants
+(`View::place_wanted`): the PDF's `file:` address -- `place::file_url`, the whole path with every byte but
+letters, digits, `-._~` and `/` written `%XX`, so that a space, a quote, `#` or `?` in a name stays the
+name's and the room takes the address -- and the rectangle, in the window's own coordinates. The program
+keeps it: `App::embed`, `set_embed_rect`, `App::commit`, then `App::show_page(place, address, None)`
+(SpatiMesh in the profile it would open itself), and `close_embed` when another file is looked at, the
+folder is gone back to, or SpatiMesh is asked again: one page to a place. SpatiMesh is asked only once the
+PDF has stayed the one looked at for 0.3 s, at rest: one slid past on the way to another starts nothing.
+While the carousel takes the PDF away or brings it, the place is hidden (a rectangle of no size keeps its
+window) and the PDF's tile slides as any file's does. A place let go of before SpatiMesh's window came
+into it is kept, hidden, until the window comes, and closed with it then (two minutes at most): the room
+leaves a window that names a place already gone a window of its own, as the protocol says, so the wearer
+going back to the folder at once would otherwise have been left a stray SpatiMesh window. `EmbedAttached`
+and `EmbedDetached` say what the view shows.
+
+**A SpatiMesh without the web view.** Until the 159 build, the installed SpatiMesh on the Deck, the Mac
+and the Beam Pro has no patch 0035: given `--spatiand-embed` it takes no notice and opens the PDF as an
+application window of its own. So when no window has come into the place 10 s after SpatiMesh was asked
+(`NOT_INSIDE`), SpatiLoupe lets the place go -- at once, so that the window of its own, or a SpatiMesh
+slower than that, is left be -- goes back to the folder, the PDF's tile chosen, and says at its foot for
+15 s: "SpatiMesh opened <name> in a window of its own: this SpatiMesh cannot show it inside SpatiLoupe
+yet." (`describe` says it too). *A workaround, named:* SpatiLoupe cannot know whether the SpatiMesh it
+gets has the web view, and judges by the time; a patched SpatiMesh that takes longer than 10 s to start
+(a cold start on a slow machine) is taken for an unpatched one and shows the PDF in a window of its own.
+The proper way is to know: the room answering `open_embedded` that the SpatiMesh it would start cannot
+be put in a place (from the build's own version, which the 159 package would say) -- or, once every
+machine has the 159 build, nothing.
+
+**A remote's PDF** (`place::fetched`). SpatiMesh is given files of this machine only, so a remote's PDF is
+copied here first by the storage service's rclone (`operations/copyfile`, as the room's chooser fetches),
+into the wearer's cache folder on the disk -- `~/.cache/spatiloupe/remote/<key>/<name>`, the Mac's
+`~/Library/Caches/...`, Android's runtime folder, which is the app's own cache on the disk there (the
+chooser's own rule, `spatiand-choose`'s `own::base`) -- "Copying it here from <remote>… 40%" said
+meanwhile, and stopped if the wearer moves on. It is made in a folder of its own and moved into place
+whole; keyed by the remote's path and its size and time as listed, so that the same file opened again is
+not fetched again; kept a day from its last opening, swept at the next copy. The info pane says where the
+copy is. *Named:* this is the one thing SpatiLoupe keeps on disk, against the "No cache" decision at the
+top; the alternative is SpatiMesh reading the file at the storage service's own address
+(`Storage::url`), as its viewer reads a PDF on the web.
+
+**Saving** is SpatiMesh's: its viewer's Save (the PDF with its annotations, or as it was) asks the room's
+chooser (patch 0034), which reaches the storage service's remotes -- so a remote's PDF is saved back to
+its remote by choosing that remote's folder there; the copy in the cache is not written back by itself.
+Saved over on the remote, the PDF is another size or time, and SpatiLoupe fetches it anew next time.
+
+**The room's speech** (`describe`): "The PDF <name>, shown by SpatiMesh's PDF viewer inside SpatiLoupe's
+window." -- or being copied, being opened, closed, not shown and why. SpatiMesh's window inside the place
+is no window of the room's to be asked, so the words of the page in view are no longer told (PDFium gave
+them).
+
+**What went with SpatiLoupe's own PDF code** (`pdf.rs`, `annotate.rs`, `pdfium-render`, and the PDF half of
+`view.rs`, `view/lens.rs`, `markup.rs`, `tools.rs` and `ink.rs`):
+
+- SpatiLoupe's Box, Circle, Arrow and Crop, its seven inks and three weights, on a PDF: a PDF is marked
+  up with Chromium's pen, highlighter, eraser and words, which Chromium writes into the PDF itself; shapes
+  and a crop are pictures' only now. Annotations SpatiLoupe wrote before (Square, Circle, Line, FreeText)
+  are shown by Chromium as the PDF has them.
+- The PDF thumbnails in the folder grid and the strip: a PDF's tile is a document.
+- SpatiLoupe's own password prompt for a locked PDF, and its keeping to a PDF's permissions: Chromium's
+  viewer asks for the password, and keeps to them, itself.
+- SpatiLoupe's find, contents, page field and zoom keys on a PDF: the viewer's own.
+- Live Text on PDF pages: a page's text -- its own, and a scanned page's, read by hemera -- is chosen,
+  copied and found in SpatiMesh's viewer (patch 0037). Of SpatiLoupe's Live Text only the
+  **translation** between the wearer's two languages has no counterpart on a PDF.
+- The page's words told to the room's speech (above).
+- On a desktop without the room (KWin on the Deck), or a room before `spatiand_xr_v1` 13, a PDF is not
+  shown: SpatiLoupe says "SpatiLoupe shows a PDF with SpatiMesh's viewer inside its own window, which
+  only Spatiand's room can do -- in the room, or on a Mac's desktop. Open it there." Opening it in a
+  SpatiMesh window of its own there would be the way, which SpatiLoupe would have to start itself, there
+  being no room to ask; not done.
+
+**Packaging.** PDFium is in no package: `tools/fetch-pdfium.sh` removed; `mac/make-app.sh` no longer puts
+`libpdfium.dylib` in the bundle's Frameworks, `android/build.sh` no `libpdfium.so` in the APK,
+`tools/make-release.sh` no `lib/libpdfium.so`, licence or source note (SpatiMesh's entry names its PDF
+viewer's PDFium among Chromium's parts), and `third_party/NOTICES.md` no row of it. A `third_party/pdfium/`
+left in a checkout (deepmagpie's main one has android-arm64 and mac-x64) is no longer used and may be
+deleted; `.gitignore` keeps it out of the history meanwhile.
+
+**Checked** (deepmagpie): SpatiLoupe's tests, 148 (the PDFium ones and the PDF view's and Live Text's PDF
+tests gone; new: the place's address and rectangle following the window and the info pane, hidden while
+the carousel slides and not asked while it moves; no markup on a PDF; what is described; closed, and Open
+again in a new place; a remote's PDF copied, failed and copied again; a PDF's tile a document; what the
+folder says at its foot, and for how long; a file's address percent-encoded; a remote's copy made whole,
+stopped, failed, kept, found again and swept); the workspace's apps built and `cargo check --workspace
+--tests`; the Android type-check of SpatiLoupe. `tools/spatiloupe-pdf-e2e.py`, in the snapshot room with
+the Deck build of Chromium 157 (`/media/shared/Linux/App/spatimesh-linux`, patches 0035 and 0036) as
+SpatiMesh and a storage service of its own over an rclone alias remote: its 33 checks pass, and the
+pictures were looked at -- the PDF in SpatiMesh's viewer under SpatiLoupe's bar; Right to a picture (the
+place gone, the picture shown) and back (a new place); past the picture to the next PDF; the window made
+1000 by 700 (the place followed); the info pane beside the viewer; a press in the viewer and the arrow key
+turning its page, a press on the bar and the arrow key going on to the picture; the annotate button
+opening Chromium's tools; SpatiMesh killed under it ("SpatiMesh has closed", then Open again, which showed
+it again); back to the folder before SpatiMesh's window had come (SpatiMesh slowed by 8 s): it came into
+the place kept for it and was closed with it, no window of its own; a SpatiMesh started without the place's switch, as one
+without patch 0035: the PDF in its own window, left be, and SpatiLoupe back at the folder saying so; one
+that opens nothing: the same; a remote's PDF copied into the cache and shown from its copy. **Not done:**
+the Mac and the Beam Pro (their SpatiMesh with patch 0035 comes with the 159 build), the Deck itself, the
+glasses; the light look; a real cloud or SMB remote, and a large PDF's copy; SpatiMesh's Save into a
+remote; a locked PDF in SpatiMesh's viewer.

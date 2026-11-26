@@ -8,13 +8,16 @@ repository.workspace = true
 description = "SpatiLoupe: Spatiand's viewer, for pictures, stereo photographs, PDFs and 3D objects"
 
 # See docs/spatiand-apps.md. Pictures by the `image` crate, and what it cannot read (HEIF,
-# AVIF, JPEG 2000) by FFmpeg through `spatiand-media`; PDFs by PDFium, loaded at run time from
-# beside the program (tools/fetch-pdfium.sh); glTF by a small renderer of its own.
+# AVIF, JPEG 2000) by FFmpeg through `spatiand-media`; PDFs by SpatiMesh's own viewer, inside
+# SpatiLoupe's window (the room's web view), so nothing here reads one; glTF by a small renderer
+# of its own.
 [dependencies]
 libc = "0.2"
 spatiand-app = { path = "../spatiand-app" }
 spatiand-media = { path = "../spatiand-media" }
 spatiand-storage = { path = "../spatiand-storage" }
+# A remote's PDF copied here by the storage service's rclone, asked in its own words.
+serde_json.workspace = true
 log.workspace = true
 env_logger.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "tga", "pnm", "qoi", "hdr", "exr"] }
@@ -30,10 +33,7 @@ exr = { version = "1.74", default-features = false }
 resvg = "0.50"
 spatiand-render = { path = "../spatiand-render" }
 cosmic-text = "0.19"
-pdfium-render = { version = "0.9.5", default-features = false, features = ["pdfium_latest", "thread_safe"] }
-# A locked PDF's password, wiped from memory when the document is closed (as SpatiKey's secrets).
-zeroize = "1"
-gltf = { version = "1.4", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_unlit", "extensions"] }
+gltf ={ version = "1.4", default-features = false, features = ["import", "utils", "names", "KHR_materials_emissive_strength", "KHR_texture_transform", "KHR_materials_unlit", "extensions"] }
 glam = "0.34"
 # The folder on show listed again when it changes, as SpatiShelf's are: inotify on Linux and
 # Android, FSEvents on the Mac.

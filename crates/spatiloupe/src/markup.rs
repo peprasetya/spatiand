@@ -1,19 +1,17 @@
-//! Markup: what the wearer draws over a picture or a PDF's pages -- lines drawn by hand with a
-//! pen or a highlighter, boxes, ovals, arrows and words -- and what is cropped away, kept as
-//! shapes while the file is open, every change one that can be undone. Nothing here draws or
-//! writes: `ink` paints these, `save` writes a picture with them and `annotate` a PDF.
+//! Markup: what the wearer draws over a picture -- lines drawn by hand with a pen or a
+//! highlighter, boxes, ovals, arrows and words -- and what is cropped away, kept as shapes while
+//! the file is open, every change one that can be undone. Nothing here draws or writes: `ink`
+//! paints these, and `save` writes a picture with them.
 //!
-//! Each shape is in its page's own units: a picture's own pixels, the picture as it is shown
-//! (turned as it is turned); a PDF page's points from its top left, as PDFium shows the page. A
-//! picture is page 0.
+//! Each shape is in the picture's own pixels, the picture as it is shown (turned as it is
+//! turned): its page, page 0, the only one a picture has.
 //!
 //! A picture is drawn on with the tools of Chromium's PDF viewer (the owner, 2026-11-27:
 //! "chromium tools. spatiloupe tools match chromium, if not exists box circle arrow crop, add
 //! for pictures"): its pen, highlighter and eraser and its words, in its own colours and sizes,
 //! kept as its own values -- a colour's hex, a size's number, a typeface's, a style's and an
-//! alignment's names -- from Chromium 157's `chrome/browser/resources/pdf` and `pdf/`. A PDF keeps
-//! the seven colours and three weights it was marked up with before, until PDFs are shown by
-//! SpatiMesh, Chromium itself.
+//! alignment's names -- from Chromium 157's `chrome/browser/resources/pdf` and `pdf/`. A PDF is
+//! marked up with those tools themselves, in SpatiMesh's viewer, which shows it.
 
 /// A point on a page, in its units, down from its top left.
 pub type Point = (f32, f32);
@@ -92,7 +90,8 @@ impl Colour {
         self.0
     }
 
-    /// As Chromium writes it: "#f28b82".
+    /// As Chromium writes it: "#f28b82". What the palettes are held to against Chromium's source.
+    #[cfg(test)]
     pub fn hex(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.0[0], self.0[1], self.0[2])
     }
@@ -269,6 +268,8 @@ pub enum Typeface {
 impl Typeface {
     pub const ALL: [Typeface; 3] = [Typeface::SansSerif, Typeface::Serif, Typeface::Monospace];
 
+    /// Chromium's own name for it, which the tests hold it to.
+    #[cfg(test)]
     pub fn value(self) -> &'static str {
         match self {
             Typeface::SansSerif => "sans-serif",
@@ -301,6 +302,8 @@ pub enum Alignment {
 impl Alignment {
     pub const ALL: [Alignment; 3] = [Alignment::Left, Alignment::Center, Alignment::Right];
 
+    /// Chromium's own name for it, which the tests hold it to.
+    #[cfg(test)]
     pub fn value(self) -> &'static str {
         match self {
             Alignment::Left => "left",
@@ -348,99 +351,6 @@ pub fn held_at(x0: f32, width: f32, alignment: Alignment) -> f32 {
     x0 + width * alignment.share()
 }
 
-/// A colour to draw with on a PDF, as PDFs are marked up for now: Preview's few, red to begin
-/// with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Ink {
-    #[default]
-    Red,
-    Orange,
-    Yellow,
-    Green,
-    Blue,
-    Black,
-    White,
-}
-
-impl Ink {
-    pub const ALL: [Ink; 7] = [Ink::Red, Ink::Orange, Ink::Yellow, Ink::Green, Ink::Blue, Ink::Black, Ink::White];
-
-    pub fn rgb(self) -> [u8; 3] {
-        match self {
-            Ink::Red => [235, 51, 36],
-            Ink::Orange => [245, 140, 30],
-            Ink::Yellow => [250, 210, 25],
-            Ink::Green => [50, 180, 75],
-            Ink::Blue => [35, 115, 235],
-            Ink::Black => [20, 20, 22],
-            Ink::White => [255, 255, 255],
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Ink::Red => "Red",
-            Ink::Orange => "Orange",
-            Ink::Yellow => "Yellow",
-            Ink::Green => "Green",
-            Ink::Blue => "Blue",
-            Ink::Black => "Black",
-            Ink::White => "White",
-        }
-    }
-
-    pub fn colour(self) -> Colour {
-        Colour(self.rgb())
-    }
-
-    /// The ink of this colour, if it is one.
-    pub fn of(colour: Colour) -> Option<Ink> {
-        Ink::ALL.into_iter().find(|ink| ink.colour() == colour)
-    }
-}
-
-/// How heavy a line is drawn on a PDF, or how large words are set there, as PDFs are marked up
-/// for now: three steps, each a share of the page's shorter side, so that "thin" looks thin on a
-/// phone's photograph and on a page alike.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Weight {
-    Light,
-    #[default]
-    Medium,
-    Heavy,
-}
-
-impl Weight {
-    pub const ALL: [Weight; 3] = [Weight::Light, Weight::Medium, Weight::Heavy];
-
-    fn step(self) -> usize {
-        match self {
-            Weight::Light => 0,
-            Weight::Medium => 1,
-            Weight::Heavy => 2,
-        }
-    }
-
-    /// A line's width on a page whose shorter side is `short`: an A4 page's lines are 1.5, 3 and
-    /// 6 points, a 12-megapixel photograph's 7.5, 15 and 30 pixels.
-    pub fn line(self, short: f32) -> f32 {
-        (short * [0.0025, 0.005, 0.01][self.step()]).max([1.0, 2.0, 3.0][self.step()])
-    }
-
-    /// Words' size (their em) on such a page: an A4 page's 15, 24 and 39 points.
-    pub fn text(self, short: f32) -> f32 {
-        (short * [0.025, 0.04, 0.065][self.step()]).max([10.0, 14.0, 20.0][self.step()])
-    }
-
-    pub fn line_name(self) -> &'static str {
-        ["Thin", "Medium", "Thick"][self.step()]
-    }
-
-    pub fn text_name(self) -> &'static str {
-        ["Small", "Medium", "Large"][self.step()]
-    }
-}
-
 /// What is drawn.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Shape {
@@ -458,20 +368,11 @@ pub enum Shape {
     Stroke { brush: Brush, points: Vec<Point> },
 }
 
-/// What a mark's size was chosen as.
+/// What a mark's size was chosen as: one of Chromium's sizes, as its own number ([`PEN_SIZES`],
+/// [`HIGHLIGHTER_SIZES`], [`TEXT_SIZES`]), which the size painted is made from on the picture.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Pick {
-    /// One of Chromium's sizes, as its own number ([`PEN_SIZES`], [`HIGHLIGHTER_SIZES`],
-    /// [`TEXT_SIZES`]): a picture's marks.
     Chromium(f32),
-    /// One of the three weights a PDF is marked up with, for now.
-    Weight(Weight),
-}
-
-impl Default for Pick {
-    fn default() -> Pick {
-        Pick::Weight(Weight::Medium)
-    }
 }
 
 /// One thing drawn on a page.
@@ -479,8 +380,7 @@ impl Default for Pick {
 pub struct Note {
     pub page: usize,
     pub shape: Shape,
-    /// Its colour, exactly as it was chosen: one of Chromium's on a picture, one of the seven
-    /// inks on a PDF.
+    /// Its colour, exactly as it was chosen: one of Chromium's.
     pub colour: Colour,
     /// A line's width, or the words' size, in the page's units: what is painted.
     pub size: f32,
@@ -489,9 +389,10 @@ pub struct Note {
 }
 
 impl Note {
+    /// A note `size` large, its size as chosen not said: Chromium's pen's medium.
     #[cfg(test)]
     pub fn new(page: usize, shape: Shape, colour: Colour, size: f32) -> Note {
-        Note { page, shape, colour, size, pick: Pick::default() }
+        Note { page, shape, colour, size, pick: Pick::Chromium(PEN.1) }
     }
 
     /// The brush that drew it, if it was drawn by hand.
@@ -642,7 +543,7 @@ fn ellipse_points(a: &Area, n: usize) -> Vec<Point> {
 
 /// An arrow's head, for a line of `width` from `from` to `to`: where the line stops under it,
 /// and its three corners (the tip first). Shared by every way an arrow is drawn, so that it is
-/// the same on the window, in a saved picture and in a PDF.
+/// the same on the window and in a saved picture.
 pub fn arrow_head(from: Point, to: Point, width: f32) -> (Point, [Point; 3]) {
     let (dx, dy) = (to.0 - from.0, to.1 - from.1);
     let length = (dx * dx + dy * dy).sqrt().max(1e-3);
@@ -858,14 +759,6 @@ impl Marks {
         before - self.notes.len()
     }
 
-    /// The pages anything is drawn on or cut from, in order.
-    pub fn pages(&self) -> Vec<usize> {
-        let mut pages: Vec<usize> = self.notes.iter().map(|n| n.page).chain(self.crops.iter().map(|(p, _)| *p)).collect();
-        pages.sort_unstable();
-        pages.dedup();
-        pages
-    }
-
     /// The marks on a picture `size` across and down, turned a quarter with it: every note, the
     /// crop, and the count of turns.
     pub fn turned(&self, size: (f32, f32), clockwise: bool) -> Marks {
@@ -1035,7 +928,7 @@ mod tests {
     use super::*;
 
     fn note(shape: Shape) -> Note {
-        Note::new(0, shape, Ink::Red.colour(), 4.0)
+        Note::new(0, shape, PEN_COLOURS[10].colour, 4.0)
     }
 
     fn boxed(x0: f32, y0: f32, x1: f32, y1: f32) -> Note {
@@ -1204,16 +1097,6 @@ mod tests {
     }
 
     #[test]
-    fn weights_scale_with_the_page_and_never_vanish() {
-        assert_eq!(Weight::Medium.line(595.0), 2.975);
-        assert_eq!(Weight::Heavy.line(3024.0), 30.24);
-        assert_eq!(Weight::Light.line(100.0), 1.0, "a small picture's thin line is still a pixel");
-        assert!(Weight::Light.text(595.0) < Weight::Medium.text(595.0) && Weight::Medium.text(595.0) < Weight::Heavy.text(595.0));
-        assert_eq!(Weight::Light.text(40.0), 10.0);
-        assert_eq!((Weight::Light.line_name(), Weight::Heavy.text_name()), ("Thin", "Large"));
-    }
-
-    #[test]
     fn an_even_rectangle_goes_the_way_it_was_dragged() {
         assert_eq!(corner_to((10.0, 10.0), (0.0, 30.0), true), Area::new(-10.0, 10.0, 10.0, 30.0));
         assert_eq!(corner_to((10.0, 10.0), (12.0, 13.0), false), Area::new(10.0, 10.0, 12.0, 13.0));
@@ -1247,9 +1130,6 @@ mod tests {
         // A highlighter's colour as Chromium shows it on white: 40 per cent of it.
         assert_eq!(Colour::of(0xf28b82).on_white(), Colour([250, 209, 205]));
         assert_eq!(Colour::of(0x000000).on_white(), Colour([153, 153, 153]));
-        // The old seven are a PDF's, as they were.
-        assert_eq!(Ink::of(Ink::Blue.colour()), Some(Ink::Blue));
-        assert_eq!(Ink::of(Colour::BLACK), None, "Preview's black is not quite black");
     }
 
     #[test]

@@ -1,9 +1,8 @@
-//! Marks painted: one painting for the window, at the size a page is shown, and for a picture
+//! Marks painted: one painting for the window, at the size a picture is shown, and for a picture
 //! saved, at its own size -- so that what is saved is what was seen, on the CPU and so with no
 //! GPU's limit on a picture's size. Lines and shapes by tiny-skia (resvg's); words by
 //! cosmic-text with the room's own fonts and their fallbacks for every script
-//! (`spatiand_render::text::font_system`), in the typeface, weight and slant chosen, whose glyph
-//! outlines are also a PDF's words (`annotate`).
+//! (`spatiand_render::text::font_system`), in the typeface, weight and slant chosen.
 //!
 //! A pen's line is drawn with a round tip, round at its ends and where it turns, as Chromium's
 //! pen is (`GetCornerRounding` 1, pdf_ink_brush.cc). A highlighter's tip is an upright square
@@ -18,7 +17,7 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Metrics, Shaping, Style, SwashCache, SwashContent, Weight};
+use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Family, FontSystem, Metrics, Shaping, Style, SwashCache, SwashContent, Weight};
 use resvg::tiny_skia::{FillRule, LineCap, LineJoin, Mask, Paint, Path, PathBuilder, PixmapMut, Rect as SkRect, Stroke, Transform};
 
 use crate::markup::{arrow_head, highlighter_shapes, stroke_line, Area, Brush, Colour, Face, Note, Point, Shape, Typeface};
@@ -108,46 +107,6 @@ pub fn measure(fonts: &mut Fonts, words: &str, size: f32, face: &Face) -> (f32, 
     }
     let scale = size / REFERENCE;
     (width * scale, lines.max(1) as f32 * REFERENCE * LEADING * scale)
-}
-
-/// One step of a glyph's outline.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Segment {
-    Move(Point),
-    Line(Point),
-    Quad(Point, Point),
-    Cubic(Point, Point, Point),
-    Close,
-}
-
-/// The outlines of `words` set `size` large in `face`, their box's top left at (0, 0), down the
-/// page as a page's units are: what a PDF's words are drawn with, which then need no font in the
-/// PDF. A glyph with no outline (a colour emoji's picture) is left out.
-pub fn outlines(fonts: &mut Fonts, words: &str, size: f32, face: &Face) -> Vec<Segment> {
-    let buffer = set(fonts, words, REFERENCE, face);
-    let starts = line_starts(&buffer, face);
-    let scale = size / REFERENCE;
-    let mut out = Vec::new();
-    for (run, start) in buffer.layout_runs().zip(starts) {
-        for glyph in run.glyphs.iter() {
-            // Where the glyph's origin is, as `LayoutGlyph::physical` puts it, but not rounded.
-            let (gx, gy) = (start + glyph.x + glyph.font_size * glyph.x_offset, run.line_y + glyph.y - glyph.font_size * glyph.y_offset);
-            let key = glyph.physical((0.0, 0.0), 1.0).cache_key;
-            let Some(commands) = fonts.cache.get_outline_commands_uncached(&mut fonts.system, key) else { continue };
-            // The outline's y is up from the baseline; the page's is down.
-            let p = |x: f32, y: f32| ((gx + x) * scale, (gy - y) * scale);
-            for command in commands.iter() {
-                out.push(match *command {
-                    Command::MoveTo(v) => Segment::Move(p(v.x, v.y)),
-                    Command::LineTo(v) => Segment::Line(p(v.x, v.y)),
-                    Command::QuadTo(c, v) => Segment::Quad(p(c.x, c.y), p(v.x, v.y)),
-                    Command::CurveTo(a, b, v) => Segment::Cubic(p(a.x, a.y), p(b.x, b.y), p(v.x, v.y)),
-                    Command::Close => Segment::Close,
-                });
-            }
-        }
-    }
-    out
 }
 
 /// A colour as tiny-skia draws it.
@@ -463,10 +422,16 @@ pub fn paint_over(rgba: &mut [u8], width: u32, height: u32, notes: &[&Note], map
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markup::{Alignment, Ink, Typeface, HIGHLIGHTER_COLOURS, PEN_COLOURS};
+    use crate::markup::{Alignment, Typeface, HIGHLIGHTER_COLOURS, PEN_COLOURS};
 
-    fn note(shape: Shape, ink: Ink, size: f32) -> Note {
-        Note::new(0, shape, ink.colour(), size)
+    const RED: Colour = Colour([235, 51, 36]);
+    const GREEN: Colour = Colour([50, 180, 75]);
+    const BLUE: Colour = Colour([35, 115, 235]);
+    const WHITE: Colour = Colour([255, 255, 255]);
+    const INK: Colour = Colour([20, 20, 22]);
+
+    fn note(shape: Shape, colour: Colour, size: f32) -> Note {
+        Note::new(0, shape, colour, size)
     }
 
     fn words(at: Point, words: &str) -> Shape {
@@ -488,7 +453,7 @@ mod tests {
     fn a_red_box_s_edge_is_where_it_should_be_and_its_inside_is_untouched() {
         let (w, h) = (200u32, 100u32);
         let mut rgba = [255u8, 255, 255, 255].repeat((w * h) as usize);
-        let boxed = note(Shape::Box(Area::new(20.0, 10.0, 120.0, 60.0)), Ink::Red, 4.0);
+        let boxed = note(Shape::Box(Area::new(20.0, 10.0, 120.0, 60.0)), RED, 4.0);
         // Two pixels to a unit, moved: the units (20, 10)..(120, 60) are the pixels
         // (20, 10)..(220, 110), and the line 8 wide. The left edge is at x 20, from 16 to 24;
         // the top at y 10; the right and the foot are off the picture.
@@ -505,9 +470,9 @@ mod tests {
         let (w, h) = (300u32, 200u32);
         let mut rgba = [0u8, 0, 0, 255].repeat((w * h) as usize);
         let notes = [
-            note(Shape::Oval(Area::new(10.0, 10.0, 110.0, 60.0)), Ink::Green, 3.0),
-            note(Shape::Arrow { from: (150.0, 150.0), to: (290.0, 150.0) }, Ink::Blue, 4.0),
-            note(words((10.0, 100.0), "Grüße 你好"), Ink::White, 30.0),
+            note(Shape::Oval(Area::new(10.0, 10.0, 110.0, 60.0)), GREEN, 3.0),
+            note(Shape::Arrow { from: (150.0, 150.0), to: (290.0, 150.0) }, BLUE, 4.0),
+            note(words((10.0, 100.0), "Grüße 你好"), WHITE, 30.0),
         ];
         let refs: Vec<&Note> = notes.iter().collect();
         paint_over(&mut rgba, w, h, &refs, ONE).unwrap();
@@ -526,53 +491,61 @@ mod tests {
         assert!(inked(10 + width as u32 + 2, 300) > 40, "the Chinese drawn too ({width})");
     }
 
+    /// Words painted in black on white, `w` by `h`, from the top left: where they inked, as the
+    /// leftmost, topmost, rightmost and lowest pixels with ink, those below `below` only.
+    fn inked(text: &str, size: f32, face: Face, (w, h): (u32, u32), below: u32) -> (Vec<u8>, [u32; 4]) {
+        let mut rgba = [255u8, 255, 255, 255].repeat((w * h) as usize);
+        let written = Note::new(0, Shape::Text { at: (0.0, 0.0), words: text.into(), extent: (0.0, 0.0), face }, INK, size);
+        paint_over(&mut rgba, w, h, &[&written], ONE).unwrap();
+        let mut bounds = [u32::MAX, u32::MAX, 0, 0];
+        for y in below..h {
+            for x in 0..w {
+                if pixel(&rgba, w, x, y)[0] < 160 {
+                    bounds = [bounds[0].min(x), bounds[1].min(y), bounds[2].max(x), bounds[3].max(y)];
+                }
+            }
+        }
+        (rgba, bounds)
+    }
+
     #[test]
-    fn words_measure_in_proportion_to_their_size_and_their_outlines_fill_that_box() {
-        let mut fonts = fonts();
+    fn words_measure_in_proportion_to_their_size_and_are_painted_within_that_box() {
         let plain = Face::default();
-        let small = measure(&mut fonts, "Arrow here", 20.0, &plain);
-        let large = measure(&mut fonts, "Arrow here", 40.0, &plain);
+        let (small, large, two) = {
+            let mut fonts = fonts();
+            (measure(&mut fonts, "Arrow here", 20.0, &plain), measure(&mut fonts, "Arrow here", 40.0, &plain), measure(&mut fonts, "a\nb", 20.0, &plain))
+        };
         assert!((large.0 - small.0 * 2.0).abs() < 0.01 && (large.1 - small.1 * 2.0).abs() < 0.01, "{small:?} {large:?}");
         assert!(small.0 > 60.0 && small.0 < 200.0 && (small.1 - 25.0).abs() < 0.01, "{small:?}");
         // Two lines are twice as tall.
-        assert!((measure(&mut fonts, "a\nb", 20.0, &plain).1 - 50.0).abs() < 0.01);
-        let outline = outlines(&mut fonts, "Arrow here", 20.0, &plain);
-        assert!(outline.len() > 40, "{}", outline.len());
-        let points: Vec<Point> = outline
-            .iter()
-            .filter_map(|s| match s {
-                Segment::Move(p) | Segment::Line(p) | Segment::Quad(_, p) | Segment::Cubic(_, _, p) => Some(*p),
-                Segment::Close => None,
-            })
-            .collect();
-        let (x0, x1) = points.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
-        let (y0, y1) = points.iter().fold((f32::MAX, f32::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
-        // Within the box, and down the page: the capital's top above its baseline.
-        assert!(x0 >= -0.5 && x1 <= small.0 + 0.5, "{x0} {x1} {small:?}");
-        assert!(y0 >= 0.0 && y1 <= small.1 && y1 - y0 > 10.0, "{y0} {y1}");
+        assert!((two.1 - 50.0).abs() < 0.01);
+        // Painted, the ink is within the box measured -- give or take its edge's pixel -- and fills
+        // most of its width and the capital's height of it.
+        let (_, [x0, y0, x1, y1]) = inked("Arrow here", 20.0, plain, (240, 60), 0);
+        assert!(x0 <= 3 && (x1 as f32) <= small.0 + 1.0 && x1 as f32 > small.0 * 0.8, "{x0} {x1} {small:?}");
+        assert!((y1 as f32) <= small.1 + 1.0 && y1 - y0 > 10, "{y0} {y1} {small:?}");
     }
 
     #[test]
     fn a_typeface_bold_and_italic_set_words_otherwise() {
-        let mut fonts = fonts();
         let face = |typeface, bold, italic| Face { typeface, bold, italic, alignment: Alignment::Left };
-        let width = |fonts: &mut Fonts, f: Face| measure(fonts, "Illuminated minimum", 20.0, &f).0;
-        let sans = width(&mut fonts, face(Typeface::SansSerif, false, false));
-        let mono = width(&mut fonts, face(Typeface::Monospace, false, false));
-        let bold = width(&mut fonts, face(Typeface::SansSerif, true, false));
+        let (sans, mono, bold) = {
+            let mut fonts = fonts();
+            let mut width = |f: Face| measure(&mut fonts, "Illuminated minimum", 20.0, &f).0;
+            (width(face(Typeface::SansSerif, false, false)), width(face(Typeface::Monospace, false, false)), width(face(Typeface::SansSerif, true, false)))
+        };
         // A monospaced font gives the narrow letters as much room as the wide; bold is wider.
         assert!(mono > sans * 1.1, "{mono} {sans}");
         assert!(bold > sans * 1.02, "{bold} {sans}");
-        // Italic is slanted: its outlines are not the upright ones.
-        let upright = outlines(&mut fonts, "l", 20.0, &face(Typeface::SansSerif, false, false));
-        let italic = outlines(&mut fonts, "l", 20.0, &face(Typeface::SansSerif, false, true));
+        // Italic is slanted: painted, it is not the upright letter.
+        let (upright, _) = inked("l", 40.0, face(Typeface::SansSerif, false, false), (60, 60), 0);
+        let (italic, _) = inked("l", 40.0, face(Typeface::SansSerif, false, true), (60, 60), 0);
         assert_ne!(upright, italic);
         // Lines of a centred note lie about its middle: the short one in from the left.
         let centred = Face { alignment: Alignment::Center, ..Face::default() };
-        let left_of = |segments: Vec<Segment>| segments.iter().filter_map(|s| if let Segment::Move(p) = s { (p.1 > 25.0).then_some(p.0) } else { None }).fold(f32::MAX, f32::min);
-        let shifted = left_of(outlines(&mut fonts, "WWWWWW\ni", 20.0, &centred));
-        let plain = left_of(outlines(&mut fonts, "WWWWWW\ni", 20.0, &Face::default()));
-        assert!(shifted > plain + 20.0, "{shifted} {plain}");
+        let (_, shifted) = inked("WWWWWW\ni", 20.0, centred, (300, 60), 26);
+        let (_, plain) = inked("WWWWWW\ni", 20.0, Face::default(), (300, 60), 26);
+        assert!(shifted[0] > plain[0] + 20, "{shifted:?} {plain:?}");
     }
 
     #[test]
@@ -633,7 +606,7 @@ mod tests {
         let notes = [
             stroke(Brush::Pen, &[(10.0, 20.0), (110.0, 20.0)], PEN_COLOURS[13].colour, 6.0),
             stroke(Brush::Highlighter, &[(60.0, 5.0), (60.0, 75.0)], HIGHLIGHTER_COLOURS[0].colour, 16.0),
-            note(words((5.0, 40.0), "Hi"), Ink::Black, 20.0),
+            note(words((5.0, 40.0), "Hi"), INK, 20.0),
         ];
         let refs: Vec<&Note> = notes.iter().collect();
         let mut direct = picture.clone();
@@ -662,8 +635,8 @@ mod tests {
         let (w, h) = (100u32, 100u32);
         let mut data = vec![0u8; (w * h * 4) as usize];
         let mut tint = vec![255u8; (w * h * 4) as usize];
-        let boxed = note(Shape::Box(Area::new(10.0, 10.0, 90.0, 90.0)), Ink::Red, 6.0);
-        let written = note(words((0.0, 40.0), "WWWWWWWW"), Ink::Red, 30.0);
+        let boxed = note(Shape::Box(Area::new(10.0, 10.0, 90.0, 90.0)), RED, 6.0);
+        let written = note(words((0.0, 40.0), "WWWWWWWW"), RED, 30.0);
         let marker = stroke(Brush::Highlighter, &[(0.0, 70.0), (100.0, 70.0)], HIGHLIGHTER_COLOURS[3].colour, 12.0);
         {
             let mut pixmap = PixmapMut::from_bytes(&mut data, w, h).unwrap();

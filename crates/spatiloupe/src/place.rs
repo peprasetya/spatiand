@@ -1,10 +1,12 @@
 //! Where a file is: on this machine, or on a remote (`remote:folder/file`), reached through
 //! the storage service. Everything that reads a file or a folder asks here, so that a remote's
 //! pictures are looked at exactly as this machine's are -- read into memory as they are
-//! wanted, and kept nowhere.
+//! wanted, and kept nowhere. A remote's PDF is the one thing copied onto this machine: SpatiMesh,
+//! which shows it, is given files of this machine only ([`fetched`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, SystemTime};
 
 use spatiand_storage::Storage;
 
@@ -329,9 +331,224 @@ pub fn modified(meta: &std::fs::Metadata) -> String {
     }
 }
 
+/// A file of this machine as an address for SpatiMesh: `file://` and its whole path, every byte of
+/// it but the letters, the digits, `-._~` and `/` written as `%XX` -- a space, a quote, a `#` or a
+/// `?` in a name is the name's, not the address's (and the room takes no address with a space or
+/// a quote in it), and a name that is not UTF-8 is its bytes, as a file's address is.
+pub fn file_url(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let whole = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut url = String::from("file://");
+    for &byte in whole.as_os_str().as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => url.push(byte as char),
+            _ => url.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    url
+}
+
+/// The wearer's cache folder, on the disk, as the room's chooser keeps what it fetches from a remote
+/// (`crates/spatiand-choose/src/own.rs`): `~/.cache` (or `XDG_CACHE_HOME`), a Mac's
+/// `~/Library/Caches`, and on Android the app's runtime folder, which is its own cache on the disk
+/// there. Not the runtime folder elsewhere: on the Deck that is in memory, and a tenth of it.
+fn cache_base() -> PathBuf {
+    let var = |name: &str| std::env::var_os(name).filter(|d| !d.is_empty()).map(PathBuf::from);
+    let cache = if cfg!(target_os = "android") {
+        var("XDG_RUNTIME_DIR")
+    } else if cfg!(target_os = "macos") {
+        var("HOME").map(|home| home.join("Library/Caches"))
+    } else {
+        var("XDG_CACHE_HOME").or_else(|| var("HOME").map(|home| home.join(".cache")))
+    };
+    cache.unwrap_or_else(std::env::temp_dir)
+}
+
+/// Where SpatiLoupe keeps its copies of remotes' PDFs: a folder of its own in the cache.
+pub fn copies() -> PathBuf {
+    cache_base().join("spatiloupe").join("remote")
+}
+
+/// How long a copy of a remote's PDF is kept after it was last opened: a day, as the chooser keeps
+/// what it fetched.
+const KEPT_FOR: Duration = Duration::from_secs(24 * 3600);
+
+/// The name a copy is kept under: the place it is a copy of, and its size and time as the remote's
+/// listing gave them -- another file there since is another copy. FNV-1a, which is the same from
+/// one build to the next.
+fn copy_key(path: &Path, size: u64, modified: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let said = format!("{}\0{size}\0{modified}", path.to_string_lossy());
+    for byte in said.bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// The copy `name` in `root`'s folder `key`, if it is there whole: as long as the remote said
+/// (`size`, where it said one). Marked used now, so that it is kept a day from now: its folder's
+/// time is changed by a file arriving in it, which `.used` does, made anew.
+fn kept_copy(root: &Path, key: &str, name: &str, size: u64) -> Option<PathBuf> {
+    let file = root.join(key).join(name);
+    let meta = std::fs::metadata(&file).ok()?;
+    if !meta.is_file() || (size > 0 && meta.len() != size) {
+        return None;
+    }
+    let used = root.join(key).join(".used");
+    let _ = std::fs::remove_file(&used);
+    let _ = std::fs::write(&used, b"");
+    Some(file)
+}
+
+/// The copies in `root` last used longer than `kept` ago, taken away: a folder's own time is when
+/// something last arrived in it (a copy, or its `.used`). Half-made ones too (`.<key>-...`), left
+/// by a SpatiLoupe that ended while it copied.
+fn sweep(root: &Path, kept: Duration) {
+    let Ok(read) = std::fs::read_dir(root) else { return };
+    let now = SystemTime::now();
+    for entry in read.flatten() {
+        let old = entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| now.duration_since(t).ok()).is_some_and(|age| age > kept);
+        if old {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// A copy made in `root` as `key`/`name` by `fetch`, which is given the folder to write `name` into
+/// and says whether it finished (false: it was stopped). Made in a folder of its own and moved
+/// into its place whole, so that a copy there is never half one; another SpatiLoupe's that got
+/// there first is taken.
+fn make_copy(root: &Path, key: &str, name: &str, fetch: impl FnOnce(&Path) -> Result<bool, String>) -> Result<Option<PathBuf>, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(root).map_err(|e| format!("{}: {e}", root.display()))?;
+    let making = root.join(format!(".{key}-{}-{}", std::process::id(), COUNT.fetch_add(1, Ordering::Relaxed)));
+    std::fs::DirBuilder::new().mode(0o700).create(&making).map_err(|e| e.to_string())?;
+    let done = fetch(&making);
+    if !matches!(done, Ok(true)) || !making.join(name).is_file() {
+        let _ = std::fs::remove_dir_all(&making);
+        return match done {
+            Ok(true) => Err("the copy did not arrive".into()),
+            Ok(false) => Ok(None),
+            Err(e) => Err(e),
+        };
+    }
+    let place = root.join(key);
+    // One there already, whole, is as good; one that is not is made way for.
+    if place.join(name).is_file() {
+        let _ = std::fs::remove_dir_all(&making);
+        return Ok(Some(place.join(name)));
+    }
+    let _ = std::fs::remove_dir_all(&place);
+    if std::fs::rename(&making, &place).is_err() && !place.join(name).is_file() {
+        let _ = std::fs::remove_dir_all(&making);
+        return Err("the copy could not be put in its place".into());
+    }
+    let _ = std::fs::remove_dir_all(&making);
+    Ok(Some(place.join(name)))
+}
+
+/// A remote's file copied onto this machine, for SpatiMesh, which is given only this machine's
+/// files: into SpatiLoupe's folder in the wearer's cache ([`copies`]) by the storage service's
+/// rclone, as the room's chooser fetches (`operations/copyfile`), told how far it has come
+/// (`going(done, total)`) and stopped when that says no. `size` and `modified` are what the
+/// remote's listing said of it: a copy of the same, made in the last day, is opened again rather
+/// than fetched again. `None` if it was stopped.
+pub fn fetched(path: &Path, size: u64, modified: &str, mut going: impl FnMut(u64, u64) -> bool) -> Result<Option<PathBuf>, String> {
+    let (remote, inside) = remote(path).ok_or("it is not a remote's")?;
+    let name = self::name(path);
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+        return Err("it has no name to be copied by".into());
+    }
+    let root = copies();
+    let key = copy_key(path, size, modified);
+    if let Some(kept) = kept_copy(&root, &key, &name, size) {
+        return Ok(Some(kept));
+    }
+    sweep(&root, KEPT_FOR);
+    let storage = storage()?;
+    let inside = inside.trim_matches('/');
+    let (dir, leaf) = inside.rsplit_once('/').unwrap_or(("", inside));
+    make_copy(&root, &key, &name, |into| {
+        let asked = serde_json::json!({ "srcFs": format!("{remote}:{dir}"), "srcRemote": leaf, "dstFs": into.to_string_lossy(), "dstRemote": name });
+        storage.job("operations/copyfile", asked, Duration::from_millis(250), |p| going(p.done, p.total.max(size)))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_s_address_has_its_whole_path_and_nothing_a_name_holds_is_taken_for_the_address_s() {
+        assert_eq!(file_url(Path::new("/home/me/Documents/report.pdf")), "file:///home/me/Documents/report.pdf");
+        // A space, quotes, a hash, a question mark, a percent and a backslash: the name's own.
+        assert_eq!(file_url(Path::new("/tmp/a b/it's \"x\" #2?.pdf")), "file:///tmp/a%20b/it%27s%20%22x%22%20%232%3F.pdf");
+        assert_eq!(file_url(Path::new("/tmp/100%\\x.pdf")), "file:///tmp/100%25%5Cx.pdf");
+        // Other scripts as their UTF-8, and a name that is not UTF-8 as its bytes.
+        assert_eq!(file_url(Path::new("/tmp/Grüße 你好.pdf")), "file:///tmp/Gr%C3%BC%C3%9Fe%20%E4%BD%A0%E5%A5%BD.pdf");
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(file_url(Path::new(std::ffi::OsStr::from_bytes(b"/tmp/caf\xe9.pdf"))), "file:///tmp/caf%E9.pdf");
+        // Nothing the room refuses in an address is left in one.
+        let url = file_url(Path::new("/x/ a'b`c\"d\\e\n.pdf"));
+        assert!(!url.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\\' | '\'' | '`')), "{url}");
+    }
+
+    #[test]
+    fn a_remote_s_copy_is_made_whole_kept_and_found_again_and_an_old_one_swept_away() {
+        let root = std::env::temp_dir().join(format!("spatiloupe-copies-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let key = copy_key(Path::new("Drive:Docs/report.pdf"), 9, "2026-11-27T10:00:00Z");
+        // Another time or size there is another copy.
+        assert_ne!(key, copy_key(Path::new("Drive:Docs/report.pdf"), 9, "2026-11-27T10:00:01Z"));
+        assert_ne!(key, copy_key(Path::new("Drive:Docs/report.pdf"), 10, "2026-11-27T10:00:00Z"));
+        assert_eq!(kept_copy(&root, &key, "report.pdf", 9), None);
+        // Stopped part way: nothing of it left.
+        let stopped = make_copy(&root, &key, "report.pdf", |into| {
+            std::fs::write(into.join("report.pdf"), b"%PDF").unwrap();
+            Ok(false)
+        });
+        assert_eq!(stopped, Ok(None));
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0, "no half copy left");
+        // Failed: said, and nothing left either.
+        assert_eq!(make_copy(&root, &key, "report.pdf", |_| Err("the remote is gone".into())), Err("the remote is gone".to_string()));
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        // Made: in its place, under its own name, whole.
+        let made = make_copy(&root, &key, "report.pdf", |into| {
+            std::fs::write(into.join("report.pdf"), b"%PDF-1.7").unwrap();
+            Ok(true)
+        });
+        let file = root.join(&key).join("report.pdf");
+        assert_eq!(made, Ok(Some(file.clone())));
+        assert_eq!(std::fs::read(&file).unwrap(), b"%PDF-1.7");
+        let names: Vec<String> = std::fs::read_dir(&root).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, [key.clone()]);
+        // Found again as it is; not if the remote's is another size now.
+        assert_eq!(kept_copy(&root, &key, "report.pdf", 8), Some(file.clone()));
+        assert_eq!(kept_copy(&root, &key, "report.pdf", 0), Some(file.clone()), "a size not known");
+        assert_eq!(kept_copy(&root, &key, "report.pdf", 9), None);
+        // A day old: swept away. A fresh one stays.
+        sweep(&root, Duration::from_secs(3600));
+        assert!(file.is_file());
+        std::thread::sleep(Duration::from_millis(20));
+        sweep(&root, Duration::from_millis(1));
+        assert!(!root.join(&key).exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copies_are_kept_in_the_wearer_s_cache_on_the_disk() {
+        let copies = copies();
+        assert!(copies.ends_with("spatiloupe/remote"), "{}", copies.display());
+        if cfg!(target_os = "macos") {
+            assert!(copies.to_string_lossy().contains("/Library/Caches/"));
+        } else if cfg!(target_os = "linux") {
+            let cache = std::env::var_os("XDG_CACHE_HOME").filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cache"));
+            assert_eq!(copies, cache.join("spatiloupe/remote"));
+        }
+    }
 
     #[test]
     fn remote_places_go_up_to_the_remote_and_no_further() {

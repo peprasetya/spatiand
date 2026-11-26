@@ -24,7 +24,6 @@
 #   SPATIAND_COMMIT     the commit this is (git's, where this is a checkout)
 #   SPATIAND_FFMPEG     Spatiand's FFmpeg, `third_party/ffmpeg/build.sh linux`'s out/linux
 #   SPATIAND_FFMPEG_SOURCE  that FFmpeg's source, for its licence texts (its src/ffmpeg-<version>)
-#   SPATIAND_PDFIUM     PDFium, `tools/fetch-pdfium.sh linux-x64` (third_party/pdfium/linux-x64)
 #   SPATIAND_CHROMIUM   SpatiMesh, `third_party/chromium/build.sh`'s package (~/spatiand-chromium)
 #   SPATIAND_STORAGE    the storage service, `storage/build.sh linux`: built here when Go is on the
 #                       PATH; else the program, with what `tools/release-licences.py go` wrote of it
@@ -50,11 +49,9 @@ pick() { local d; for d in "$@"; do [ -d "$d" ] && { echo "$d"; return; }; done;
 COMMIT="${SPATIAND_COMMIT:-$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)}"
 [ -n "$COMMIT" ] || die "which commit is this? Set SPATIAND_COMMIT"
 . third_party/ffmpeg/versions.sh
-PDFIUM_VERSION=$(sed -n 's/^VERSION=//p' tools/fetch-pdfium.sh)
 CHROMIUM_VERSION=$(sed -n 's/^CHROMIUM_VERSION=\([^ ]*\).*/\1/p' third_party/chromium/build.sh)
 FFMPEG="${SPATIAND_FFMPEG:-$(pick "$REPO/third_party/ffmpeg/out/linux" "$HOME/spatiand/third_party/ffmpeg/out/linux")}"
 FFMPEG_SOURCE="${SPATIAND_FFMPEG_SOURCE:-$(pick "$REPO/third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION" "$HOME/spatiand/third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION")}"
-PDFIUM="${SPATIAND_PDFIUM:-$(pick "$REPO/third_party/pdfium/linux-x64" "$HOME/spatiand/third_party/pdfium/linux-x64")}"
 CHROMIUM="${SPATIAND_CHROMIUM:-$HOME/spatiand-chromium}"
 LIBVA_HEADERS="${SPATIAND_LIBVA_HEADERS:-$HOME/spatiand-build/libva-headers}"
 LINK_DIR="${SPATIAND_LINK_DIR:-$HOME/spatiand-build/valib}"
@@ -79,9 +76,6 @@ esac
 # The BoringSSL inside FFmpeg's libraries: its licence, and the commit it was built from, come with them.
 [ -f "$FFMPEG/share/boringssl/LICENSE" ] || die "no BoringSSL licence in $FFMPEG/share/boringssl: an FFmpeg built before its https was BoringSSL's? third_party/ffmpeg/build.sh linux"
 BORINGSSL_REVISION=$(sed -n 's/.* boringssl \([^ ]*\).*/\1/p' "$FFMPEG/.version")
-[ -f "$PDFIUM/lib/libpdfium.so" ] || die "no PDFium at $PDFIUM: tools/fetch-pdfium.sh linux-x64, or set SPATIAND_PDFIUM"
-[ "$(cat "$PDFIUM/.version" 2>/dev/null)" = "$PDFIUM_VERSION" ] ||
-    die "PDFium at $PDFIUM is $(cat "$PDFIUM/.version" 2>/dev/null || echo unknown), and this tree's is $PDFIUM_VERSION (tools/fetch-pdfium.sh)"
 [ -x "$CHROMIUM/spatimesh" ] && [ -f "$CHROMIUM/run.sh" ] || die "no SpatiMesh at $CHROMIUM: third_party/chromium/build.sh's package, or set SPATIAND_CHROMIUM"
 # Read, not run: the container has not the libraries a browser needs.
 grep -qaF "$CHROMIUM_VERSION" "$CHROMIUM/spatimesh" ||
@@ -143,7 +137,7 @@ if [ "${SPATIAND_STRIP:-1}" != 0 ]; then
 fi
 
 # FFmpeg's libraries that the programs and the browser load, and the ones those load in turn,
-# under the names they are loaded by; PDFium, which SpatiLoupe loads by its path (pdf.rs).
+# under the names they are loaded by.
 needed() { readelf -d "$@" 2>/dev/null | sed -n 's/.*(NEEDED).*\[\(lib\(av\|sw\)[^]]*\)\]/\1/p' | sort -u; }
 want=$(needed "$P"/bin/* "$P/lib/spatimesh/spatimesh")
 while :; do
@@ -155,7 +149,6 @@ while :; do
     want=$(sort -u <(echo "$want") <(echo "$more"))
 done
 chmod 755 "$P"/lib/lib*.so.*
-install -m 755 "$PDFIUM/lib/libpdfium.so" "$P/lib/libpdfium.so"
 # The browser's own place for them (patch 0003's $ORIGIN/ffmpeg), pointing at the one copy.
 mkdir "$P/lib/spatimesh/ffmpeg"
 for l in "$P"/lib/lib*.so.*; do ln -s "../../$(basename "$l")" "$P/lib/spatimesh/ffmpeg/"; done
@@ -183,9 +176,6 @@ cp third_party/NOTICES.md "$P/licences/NOTICES.md"
 cp "$FFMPEG_SOURCE/COPYING.LGPLv3" "$P/licences/FFmpeg-COPYING.LGPLv3"
 cp "$FFMPEG/share/boringssl/LICENSE" "$P/licences/BoringSSL-LICENSE.txt"
 cp third_party/chromium/patches/base/COPYING "$P/licences/COPYING.GPLv3"
-mkdir -p "$P/licences/pdfium"
-cp "$PDFIUM/LICENSE" "$P/licences/pdfium/LICENSE"
-[ -d "$PDFIUM/licenses" ] && cp "$PDFIUM"/licenses/* "$P/licences/pdfium/"
 "$CARGO" metadata --format-version 1 --locked --filter-platform x86_64-unknown-linux-gnu >"$TARGET/metadata.json"
 python3 -I tools/release-licences.py rust "$TARGET/metadata.json" $PACKAGES \
     --list "$TARGET/rust-crates.list" --texts "$P/licences/rust-crates.txt"
@@ -223,16 +213,13 @@ BoringSSL -- inside FFmpeg's libraries (libavformat.so.*, libavutil.so.*), for i
     Chromium's DEPS names (https://boringssl.googlesource.com/boringssl), with SpatiMesh's patch
     to it (third_party/chromium/patches/sub/boringssl) committed on it.
 
-PDFium $PDFIUM_VERSION -- spatiand/lib/libpdfium.so, which SpatiLoupe draws PDFs with
-    BSD 3-clause and the licences of its parts (licences/pdfium/), as built by
-    https://github.com/bblanchon/pdfium-binaries.
-
-SpatiMesh, the web browser -- spatiand/lib/spatimesh/
+SpatiMesh, the web browser -- spatiand/lib/spatimesh/ -- which also shows SpatiLoupe's PDFs
     Chromium $CHROMIUM_VERSION, with the patches in third_party/chromium of Spatiand's
     repository:
       * Chromium: BSD 3-Clause and the licences of its parts, which the browser lists at
-        chrome://credits (among them ANGLE's libEGL.so and libGLESv2.so, SwiftShader's
-        libvk_swiftshader.so and the Vulkan loader libvulkan.so.1, carried beside it).
+        chrome://credits (among them its PDF viewer's PDFium, ANGLE's libEGL.so and
+        libGLESv2.so, SwiftShader's libvk_swiftshader.so and the Vulkan loader libvulkan.so.1,
+        carried beside it).
       * Cromite's patches, taken over at Chromium 153 (patches/base, patches/sub), with eyeo's
         Chromium SDK (the ad blocker) among them: GPL-3.0 (licences/COPYING.GPLv3).
       * Spatiand's own patches: MIT, as the rest of Spatiand; where one changes a GPL file of the
@@ -295,12 +282,6 @@ FFmpeg $FFMPEG_VERSION (spatiand/lib/libav*, libsw*)
     has none), built by third_party/ffmpeg/build.sh linux (versions in third_party/ffmpeg/versions.sh),
     configured as:
         $FFMPEG_CONFIGURATION
-
-PDFium $PDFIUM_VERSION (spatiand/lib/libpdfium.so)
-    https://github.com/bblanchon/pdfium-binaries/releases/tag/$PDFIUM_VERSION (pdfium-linux-x64.tgz),
-    fetched by tools/fetch-pdfium.sh; PDFium's source is
-    https://pdfium.googlesource.com/pdfium/+/refs/heads/$PDFIUM_VERSION, built as that
-    repository's workflow says.
 
 SpatiMesh (spatiand/lib/spatimesh) -- GPL-3.0, so this is its corresponding source
     Chromium $CHROMIUM_VERSION: https://chromium.googlesource.com/chromium/src/+/refs/tags/$CHROMIUM_VERSION

@@ -521,7 +521,7 @@ pub fn hdr_bytes(image: &DynamicImage, original: &[u8]) -> Result<Vec<u8>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markup::{Area, Ink, Marks, Note, Shape};
+    use crate::markup::{Area, Colour, Marks, Note, Shape};
     use crate::save::{save, Saving};
     use std::path::PathBuf;
 
@@ -532,9 +532,9 @@ mod tests {
         dir
     }
 
-    /// A red box, its line 4 wide, round `area`.
+    /// A red box, (235, 51, 36), its line 4 wide, round `area`.
     fn boxed(area: Area) -> Marks {
-        Marks { notes: vec![Note::new(0, Shape::Box(area), Ink::Red.colour(), 4.0)], ..Marks::default() }
+        Marks { notes: vec![Note::new(0, Shape::Box(area), Colour([235, 51, 36]), 4.0)], ..Marks::default() }
     }
 
     /// Whether (x, y) is clear of a box's line round `area` (4 wide, and its soft edge).

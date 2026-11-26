@@ -1,5 +1,5 @@
-//! Live Text in SpatiLoupe: the text in a picture or a PDF's page, chosen, copied and translated
-//! as text (`spatiand_app::live_text`, the same piece as SpatiReel's).
+//! Live Text in SpatiLoupe: the text in a picture, chosen, copied and translated as text
+//! (`spatiand_app::live_text`, the same piece as SpatiReel's).
 //!
 //! **A picture** is read by itself when it has settled on the window (the AI settings' "read text
 //! in pictures by itself", on unless the wearer turned it off) -- not while it slides through the
@@ -11,10 +11,8 @@
 //! and an object are not read. What was read is kept for the session by the file's path, size and
 //! time, in memory only, so coming back to a picture shows its text at once.
 //!
-//! **A PDF's page** with text of its own is its own characters and their boxes (PDFium's: nothing
-//! is read); a page without (a scan), or one turned by its /Rotate, is drawn at 300 dots to the
-//! inch -- small print stays readable -- within what hemera reads, and read, the page on show
-//! only.
+//! **A PDF**'s text is SpatiMesh's viewer's, which shows it: its own text, and a scanned page's
+//! words read by hemera there too (SpatiMesh's patch 0037), chosen, copied and found in it.
 //!
 //! **Markup** draws on the picture: while its tools are out, the text is not chosen.
 
@@ -27,7 +25,7 @@ use spatiand_app::live_text::{self, turned_size, Kind, LiveText, Mapping, Pictur
 use spatiand_app::ui::{Input, Painter, Rect};
 use spatiand_app::Gl;
 
-use super::{Doc, Paper, Shown, View, Want};
+use super::{Doc, Shown, View, Want};
 use crate::model::Eye;
 use crate::stereo::Eyes;
 
@@ -93,22 +91,6 @@ impl Lens {
         self.reading.is_some()
     }
 
-    /// Whether pictures are read by themselves (the AI settings' switch), rather than when asked.
-    pub fn by_itself(&self) -> bool {
-        self.by_itself
-    }
-}
-
-/// A PDF page's text: its own characters, or read from it drawn.
-#[derive(Default)]
-pub struct PageText {
-    pub live: LiveText,
-    /// It has no text of its own (a scan), or is turned: it is read from a picture of it.
-    pub scanned: bool,
-    /// Drawn to be read, and asked for.
-    pub asked_scan: bool,
-    /// Its picture being read, and how many of its points one of the picture's pixels is.
-    pub reading: Option<(Reading, f32)>,
 }
 
 /// Say what went wrong, unless it was said last.
@@ -205,26 +187,6 @@ impl View {
                     changed |= start_picture(&mut self.lens, shown, &self.entry);
                 }
             }
-            Doc::Pdf(paper) => {
-                let current = if paper.pages.is_empty() { None } else { Some(paper.current(self.bounds)) };
-                for (page, text) in paper.texts.iter_mut() {
-                    changed |= text.live.tick(now);
-                    // The page on show only: a page scrolled past is let go of, to be read when it is.
-                    if Some(*page) != current && text.reading.is_some() {
-                        text.reading = None;
-                        text.asked_scan = false;
-                    }
-                }
-                if let Some(page) = current {
-                    let by_itself = self.lens.by_itself;
-                    if let Some(text) = paper.texts.get_mut(&page) {
-                        if text.scanned && !text.asked_scan && text.reading.is_none() && !text.live.has_text() && by_itself {
-                            text.asked_scan = true;
-                            paper.pdf.ask(crate::pdf::Ask::Scan { page });
-                        }
-                    }
-                }
-            }
             _ => {}
         }
         changed
@@ -254,46 +216,19 @@ impl View {
                     }
                 }
             }
-            Doc::Pdf(paper) => {
-                let pages: Vec<(usize, f32, f32)> = paper.pages.iter().enumerate().map(|(i, p)| (i, p.width, p.height)).collect();
-                for (page, text) in paper.texts.iter_mut() {
-                    let came = text.reading.as_ref().and_then(|(reading, _)| reading.poll());
-                    let Some(result) = came else { continue };
-                    let (_, points) = text.reading.take().unwrap();
-                    changed = true;
-                    match result {
-                        Ok(read) => {
-                            let (pw, ph) = pages.get(*page).map_or((1.0, 1.0), |p| (p.1, p.2));
-                            text.live.set_text(Some(read.mapped(&Mapping { m: [points, 0.0, 0.0, 0.0, points, 0.0] }, (pw, ph))));
-                            *TOLD.lock().unwrap() = None;
-                        }
-                        Err(words) => tell(&mut self.trouble, &mut self.trouble_at, words),
-                    }
-                }
-            }
             _ => {}
         }
         changed
     }
 
-    /// The live text that has the wearer's input now: one with a menu, a pane or a press going on;
-    /// else the picture's, or of a PDF's pages: for a key the one with something chosen, for a
-    /// press the one under (`x`, `y`).
-    fn text_target(&mut self, x: f32, y: f32, key: bool) -> Option<&mut LiveText> {
+    /// The live text that has the wearer's input now: the picture's, while markup's tools are not
+    /// out.
+    fn text_target(&mut self) -> Option<&mut LiveText> {
         if self.marking() {
             return None;
         }
         match &mut self.doc {
             Doc::Picture(_) => Some(&mut self.lens.live),
-            Doc::Pdf(paper) => {
-                if let Some(page) = paper.texts.iter().find(|(_, t)| t.live.busy() || t.live.holding()).map(|(p, _)| *p) {
-                    return paper.texts.get_mut(&page).map(|t| &mut t.live);
-                }
-                let chosen = paper.texts.iter().find(|(_, t)| t.live.has_selection()).map(|(p, _)| *p);
-                let under = paper.placed.iter().find(|(_, rect)| rect.contains(x, y)).map(|(page, _)| *page);
-                let page = if key { chosen.or(under) } else { under.or(chosen) }?;
-                paper.texts.get_mut(&page).map(|t| &mut t.live)
-            }
             _ => None,
         }
     }
@@ -302,7 +237,6 @@ impl View {
     pub(super) fn text_busy(&self) -> bool {
         match &self.doc {
             Doc::Picture(_) => self.lens.live.busy(),
-            Doc::Pdf(paper) => paper.texts.values().any(|t| t.live.busy()),
             _ => false,
         }
     }
@@ -319,15 +253,7 @@ impl View {
         if !busy && matches!(input, Input::Press { pressed: true, .. }) && on_controls {
             return None;
         }
-        // Over a PDF, the pointer goes to every page's text: each lights its own line, or none.
-        if let (Input::Pointer { .. }, Doc::Pdf(paper)) = (input, &mut self.doc) {
-            let mut took = false;
-            for text in paper.texts.values_mut() {
-                took |= text.live.input(input) != Said::Pass;
-            }
-            return took.then_some(Want::Nothing);
-        }
-        let live = self.text_target(x, y, matches!(input, Input::Key { .. }))?;
+        let live = self.text_target()?;
         match live.input(input) {
             Said::Pass => None,
             Said::Read => {
@@ -345,7 +271,7 @@ impl View {
         if self.over_controls(x, y) || self.asking.is_some() || self.saving.is_some() {
             return false;
         }
-        let opened = self.text_target(x, y, false).is_some_and(|live| live.context(x, y));
+        let opened = self.text_target().is_some_and(|live| live.context(x, y));
         if opened {
             self.stir();
         }
@@ -354,23 +280,10 @@ impl View {
 
     /// Read what is shown now, asked for from its menu (the settings having it read only so).
     fn read_now(&mut self) {
-        match &mut self.doc {
-            Doc::Picture(shown) => {
-                self.lens.asked = true;
-                self.lens.live.can_read = false;
-                start_picture(&mut self.lens, shown, &self.entry);
-            }
-            Doc::Pdf(paper) => {
-                let page = paper.current(self.bounds);
-                if let Some(text) = paper.texts.get_mut(&page) {
-                    text.live.can_read = false;
-                    if text.scanned && !text.asked_scan {
-                        text.asked_scan = true;
-                        paper.pdf.ask(crate::pdf::Ask::Scan { page });
-                    }
-                }
-            }
-            _ => {}
+        if let Doc::Picture(shown) = &mut self.doc {
+            self.lens.asked = true;
+            self.lens.live.can_read = false;
+            start_picture(&mut self.lens, shown, &self.entry);
         }
     }
 
@@ -385,7 +298,6 @@ impl View {
                 let settling = (readable && !self.lens.asked && self.lens.by_itself).then(|| self.lens.still.map_or(poll, |at| SETTLE.saturating_sub(at.elapsed())));
                 [self.lens.live.next_wake(), reading, settling].into_iter().flatten().min()
             }
-            Doc::Pdf(paper) => paper.texts.values().flat_map(|t| [t.live.next_wake(), t.reading.as_ref().map(|_| poll)]).flatten().min(),
             _ => None,
         }
     }
@@ -405,19 +317,8 @@ impl View {
         // What was done is said over the strip, where it is on show.
         let foot = (self.foot.h > 0.0 && self.chrome() > 0.05).then_some(self.foot.y - 12.0);
         self.lens.live.note_foot = foot;
-        if let Doc::Pdf(paper) = &mut self.doc {
-            for text in paper.texts.values_mut() {
-                text.live.note_foot = foot;
-            }
-        }
-        match &mut self.doc {
-            Doc::Picture(_) => self.lens.live.draw_over(p, gl, all),
-            Doc::Pdf(paper) => {
-                for text in paper.texts.values_mut() {
-                    text.live.draw_over(p, gl, all);
-                }
-            }
-            _ => {}
+        if let Doc::Picture(_) = &self.doc {
+            self.lens.live.draw_over(p, gl, all);
         }
     }
 
@@ -425,20 +326,14 @@ impl View {
     pub(super) fn text_reading(&self) -> bool {
         match &self.doc {
             Doc::Picture(_) => self.lens.reading(),
-            Doc::Pdf(paper) => paper.texts.values().any(|t| t.reading.is_some()),
             _ => false,
         }
     }
 
-    /// The text of what is shown, for the room's speech: a picture's, or a scanned page's read
-    /// (a page's own text is told already, as it always was).
+    /// The text of what is shown, for the room's speech: a picture's, read.
     pub(super) fn text_described(&self) -> Option<String> {
         match &self.doc {
             Doc::Picture(_) => self.lens.live.described(),
-            Doc::Pdf(paper) => {
-                let page = paper.current(self.bounds);
-                paper.texts.get(&page).filter(|t| t.scanned).and_then(|t| t.live.described())
-            }
             _ => None,
         }
     }
@@ -448,11 +343,6 @@ impl View {
         let by_itself = spatiand_app::live_text::reads_by_itself(&spatiand_app::ai::settings());
         self.lens.by_itself = by_itself;
         self.lens.live.can_read = !by_itself && !self.lens.live.has_text();
-        if let Doc::Pdf(paper) = &mut self.doc {
-            for text in paper.texts.values_mut() {
-                text.live.can_read = !by_itself && text.scanned && !text.live.has_text();
-            }
-        }
     }
 
     /// A stereo pair turned: its text, read in an eye as it was, is let go of.
@@ -563,50 +453,6 @@ fn start_picture(lens: &mut Lens, shown: &Shown, entry: &crate::folder::Entry) -
     log::info!("{}: its text being read", entry.name);
     lens.reading = Some((reading, basis));
     true
-}
-
-impl Paper {
-    /// Each page near the window has its text asked for once: its own characters, or that it has
-    /// none.
-    pub(super) fn ask_letters(&mut self, page: usize) {
-        if let std::collections::hash_map::Entry::Vacant(text) = self.texts.entry(page) {
-            text.insert(PageText::default());
-            self.pdf.ask(crate::pdf::Ask::Letters { page });
-        }
-    }
-
-    /// Where page `page` is on the window this frame: its text placed there and drawn.
-    pub(super) fn text_draw_page(&mut self, p: &mut Painter, gl: &Gl, page: usize, rect: Rect) {
-        let Some((pw, ph)) = self.pages.get(page).map(|pg| (pg.width.max(1.0), pg.height.max(1.0))) else { return };
-        let region = self.region(page);
-        let Some(text) = self.texts.get_mut(&page) else { return };
-        text.live.place(Mapping::cut_onto((pw, ph), [region.x0 / pw, region.y0 / ph, region.x1 / pw, region.y1 / ph], rect));
-        text.live.draw(p, gl);
-    }
-
-    /// A page's own characters have come -- or word that it has none, and is to be read.
-    pub(super) fn lettered(&mut self, page: usize, lines: Option<Vec<crate::pdf::Lettered>>, by_itself: bool) {
-        let Some((pw, ph)) = self.pages.get(page).map(|pg| (pg.width, pg.height)) else { return };
-        let text = self.texts.entry(page).or_default();
-        match lines {
-            Some(lines) => {
-                let lines = lines.into_iter().map(|l| live_text::Line::across(&l.text, 0, l.rect, &l.places)).collect();
-                text.live.set_text(Some(ReadText::new((pw, ph), lines)));
-            }
-            None => {
-                text.scanned = true;
-                text.live.can_read = !by_itself;
-            }
-        }
-    }
-
-    /// A scanned page drawn to be read: its reading begins.
-    pub(super) fn scanned(&mut self, page: usize, width: u32, height: u32, rgba: Vec<u8>) {
-        let Some(pw) = self.pages.get(page).map(|pg| pg.width) else { return };
-        let Some(text) = self.texts.get_mut(&page) else { return };
-        let points = pw / width.max(1) as f32;
-        text.reading = Some((Reading::start(move || Sent::png(&rgba, width, height, true)), points));
-    }
 }
 
 #[cfg(test)]
@@ -725,32 +571,14 @@ mod tests {
     }
 
     #[test]
-    fn a_page_s_own_characters_are_its_text_and_a_scan_on_show_is_asked_to_be_drawn_to_be_read() {
-        use crate::pdf::{Answer, Ask, Lettered, Page};
-        let (pdf, tell, asked) = crate::pdf::Pdf::played();
+    fn a_pdf_s_text_is_its_viewer_s_and_none_of_it_is_read_here() {
         let mut view = View::new(Entry { kind: FileKind::Pdf, ..entry("scan.pdf") }, 0, 1, vec![0]);
-        view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
-        tell.send(Answer::Opened { pages: vec![Page { width: 595.0, height: 842.0 }, Page { width: 595.0, height: 842.0 }], outline: Vec::new(), title: None, rights: crate::pdf::Rights::ALL }).unwrap();
-        view.answers();
-        // Page 1 has text of its own: its characters, where they are.
-        let text = "Total 42";
-        let places = text.char_indices().map(|(i, c)| (i..i + c.len_utf8(), 72.0 + i as f32 * 6.0, 78.0 + i as f32 * 6.0)).collect();
-        tell.send(Answer::Letters { page: 1, lines: Some(vec![Lettered { text: text.into(), rect: [72.0, 100.0, 120.0, 112.0], places }]) }).unwrap();
-        // Page 0 has none: a scan.
-        tell.send(Answer::Letters { page: 0, lines: None }).unwrap();
-        view.answers();
-        let Doc::Pdf(paper) = &view.doc else { unreachable!() };
-        assert_eq!(paper.texts[&1].live.text().map(ReadText::all).as_deref(), Some("Total 42"));
-        assert!(paper.texts[&0].scanned && !paper.texts[&0].live.has_text());
-        // Read by itself: the page on show, a scan, is asked to be drawn to be read -- once.
+        view.open_pdf();
         view.lens.by_itself = true;
-        while asked.try_recv().is_ok() {}
         view.text_tick();
-        view.text_tick();
-        let scans: Vec<usize> = asked.try_iter().filter_map(|a| if let Ask::Scan { page } = a { Some(page) } else { None }).collect();
-        assert_eq!(scans, [0]);
-        // The room is told a scanned page's text only once read: nothing yet.
-        assert_eq!(view.text_described(), None);
+        assert!(view.lens.reading.is_none() && !view.text_reading() && view.text_described().is_none());
+        // The right button over it opens no menu of SpatiLoupe's: the text is SpatiMesh's to choose.
+        assert!(!view.text_menu());
     }
 
     #[test]

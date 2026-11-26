@@ -167,7 +167,13 @@ pub struct Folder {
     /// Moved on whenever a tile changes -- the listing, a picture come or let go of -- so that
     /// the viewer's strip is made again from them then, and only then.
     pub generation: u64,
+    /// What became of the file looked at, said at the foot in place of the folder's path for a
+    /// while: SpatiMesh showing a PDF in a window of its own.
+    said: Option<(String, Instant)>,
 }
+
+/// How long what is said at a folder's foot stays.
+const SAID_FOR: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// How many entries beyond those in view keep their tiles' pictures on the GPU: further off, they
 /// are let go of, and made again if they are scrolled back to.
@@ -203,7 +209,33 @@ impl Folder {
             left: Vec::new(),
             up: Button::default(),
             generation: 0,
+            said: None,
         }
+    }
+
+    /// Something to say at the foot, where the folder's path is, for a while.
+    pub fn say(&mut self, words: String) {
+        self.said = Some((words, Instant::now()));
+    }
+
+    /// What is said at the foot, while it is.
+    pub fn saying(&self) -> Option<&str> {
+        self.said.as_ref().filter(|(_, at)| at.elapsed() < SAID_FOR).map(|(words, _)| words.as_str())
+    }
+
+    /// What was said let go of once its while is over: whether it was, and the folder is to be
+    /// drawn again.
+    pub fn tick(&mut self) -> bool {
+        let over = self.said.as_ref().is_some_and(|(_, at)| at.elapsed() >= SAID_FOR);
+        if over {
+            self.said = None;
+        }
+        over
+    }
+
+    /// When what is said is over, for the program to wake then.
+    pub fn next_wake(&self) -> Option<std::time::Duration> {
+        self.said.as_ref().map(|(_, at)| SAID_FOR.saturating_sub(at.elapsed()))
     }
 
     /// This folder is giving way to `next`: its tiles' pictures go with it, for `next` to let go
@@ -290,7 +322,8 @@ impl Folder {
         }
     }
 
-    /// The pictures wanted for what is on show, each asked for once: (index, path, kind).
+    /// The pictures wanted for what is on show, each asked for once: (index, path, kind). Only a
+    /// picture's tile has a picture of it; a PDF's is a document, an object's a cube.
     pub fn wanted(&mut self) -> Vec<(usize, PathBuf, Kind)> {
         let mut wanted = Vec::new();
         if !matches!(self.state, State::Ready) {
@@ -298,7 +331,7 @@ impl Folder {
         }
         for index in self.grid.in_view() {
             let Some(entry) = self.entries.get(index) else { break };
-            if matches!(entry.kind, Kind::Picture | Kind::Pdf) && !std::mem::replace(&mut self.asked[index], true) {
+            if entry.kind == Kind::Picture && !std::mem::replace(&mut self.asked[index], true) {
                 wanted.push((index, entry.path.clone(), entry.kind));
             }
         }
@@ -329,7 +362,7 @@ impl Folder {
         }
         for at in index.saturating_sub(reach)..(index + reach + 1).min(self.entries.len()) {
             let entry = &self.entries[at];
-            if matches!(entry.kind, Kind::Picture | Kind::Pdf) && !std::mem::replace(&mut self.asked[at], true) {
+            if entry.kind == Kind::Picture && !std::mem::replace(&mut self.asked[at], true) {
                 wanted.push((at, entry.path.clone(), entry.kind));
             }
         }
@@ -389,7 +422,16 @@ impl Folder {
         } else {
             look::top_with(p, gl, &mut all, &name, &beside, |_, _| {});
         }
-        look::foot(p, gl, &mut all, &self.path.display().to_string(), None);
+        match self.saying() {
+            // What became of the file looked at, wrapped, in the ink of what is read, where the
+            // path is.
+            Some(words) => {
+                let wrapped = p.measure(gl, words, theme::FOOTER_EM, all.w).1;
+                let line = all.take_bottom((theme::FOOTER_EM * 1.9).max(wrapped + theme::FOOTER_EM * 0.5));
+                p.text(gl, words, line.x, line.y + (line.h - wrapped) * 0.5, theme::FOOTER_EM, line.w, theme::ink());
+            }
+            None => look::foot(p, gl, &mut all, &self.path.display().to_string(), None),
+        }
         match &self.state {
             State::Loading(since) => look::waiting(p, gl, all, *since),
             State::Failed(why) => look::message(p, gl, all, why, look::trouble()),
@@ -465,6 +507,32 @@ mod tests {
         // c is new as it is now, and asked for again; b, with no picture yet, too.
         assert_eq!(folder.asked, [false, false, false, false]);
         assert_eq!(folder.tiles.len(), 4);
+    }
+
+    #[test]
+    fn a_pdf_s_tile_is_a_document_and_no_picture_of_it_is_asked_for() {
+        let mut folder = Folder::new(PathBuf::from("/f"), 1);
+        folder.listed(Ok(vec![entry("a.jpg", 1), entry("b.pdf", 2_000_000), entry("c.glb", 1)]));
+        let wanted: Vec<usize> = folder.wanted_near(1, 5).into_iter().map(|(index, _, _)| index).collect();
+        assert_eq!(wanted, [0], "the picture's only");
+        assert_eq!(folder.tiles[1].icon, Some(Icon::Document));
+        assert!(folder.tiles[1].detail.as_deref().is_some_and(|d| d.starts_with("PDF")), "{:?}", folder.tiles[1].detail);
+    }
+
+    #[test]
+    fn what_became_of_a_file_is_said_at_the_foot_for_a_while() {
+        let mut folder = Folder::new(PathBuf::from("/f"), 1);
+        assert_eq!((folder.saying(), folder.next_wake()), (None, None));
+        folder.say("SpatiMesh opened a.pdf in a window of its own.".into());
+        assert_eq!(folder.saying(), Some("SpatiMesh opened a.pdf in a window of its own."));
+        assert!(!folder.tick(), "not over yet");
+        assert!(folder.next_wake().is_some_and(|d| d > SAID_FOR - std::time::Duration::from_secs(1)));
+        // Its while over: no longer said, and the folder drawn again without it.
+        if let Some((_, at)) = folder.said.as_mut() {
+            *at = Instant::now() - SAID_FOR;
+        }
+        assert_eq!(folder.saying(), None);
+        assert!(folder.tick() && folder.said.is_none() && folder.next_wake().is_none());
     }
 
     #[test]

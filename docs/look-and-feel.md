@@ -244,7 +244,7 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 | Cmd-S | - | - | - | - | - | with markup: save (asks); Shift: save a copy |
 | Cmd-T / Cmd-W | new tab / close tab | new tab / close tab | - | - | - | - |
 | Cmd-Q | quit (`Event::Quit`, the SDK's) in all six | | | | | |
-| Cmd-F | find in folder | - | - | - (field always on show) | - | find in a PDF (also `/`) |
+| Cmd-F | find in folder | - | - | - (field always on show) | - | - (a PDF's find is SpatiMesh's viewer's, inside SpatiLoupe's window, once a press there has given it the keys) |
 | Cmd-N | Shift: new folder | new window | - | new login | - | - |
 | + / - / 0 | - | with Cmd: text size | - | - | - | plain: zoom, reset |
 | Escape | closes menu, dialog, field; else clears the choice | closes menu / question | drops an edit | back; empties the search | back / Home; closes the player | closes a field or pane; else back to the folder |
@@ -288,7 +288,8 @@ letters. Every app does this today; none reads a raw layout letter for a shortcu
 
 ### 17. Controls that hide themselves
 
-SpatiReel's player and SpatiLoupe's picture and object views (a PDF's controls stay):
+SpatiReel's player and SpatiLoupe's picture and object views (a PDF's bar stays, over SpatiMesh's
+viewer of it):
 
 - `ui::AutoHide`: they stay **3 seconds** (`ui::CONTROLS_SHOWN`) after the wearer last did
   something (`wake`), then go; SpatiLoupe fades them over half a second (`off_since`).
@@ -620,7 +621,7 @@ show:
 - **Strings that begin in lower case were not listed by the search** and so were seen only
   where the code round them was read: lower-case status words and error texts made deep in
   `shelf/tab.rs`, `shelf/trash.rs`, `reel/source/*`, `pal/brain.rs`, `pal/ears.rs`,
-  `loupe/pdf.rs`, `quill/main.rs` (its `failed` sites) may hold more departures from rule 13's
+  `quill/main.rs` (its `failed` sites) may hold more departures from rule 13's
   wording. Quill row 12 and Pal row 4 say how to treat them.
 - **Not read at all**: `shelf/ds_store.rs`, `shelf/proto.rs`, `shelf/watch.rs`,
   `shelf/openwith_*.rs` beyond their strings, `shelf/tree.rs`, `shelf/setup.rs` beyond its
@@ -628,7 +629,7 @@ show:
   their colours; `pal/brain.rs`, `pal/ears.rs`, `pal/voice.rs`, `pal/tools.rs`, `pal/store.rs`,
   `pal/warm.rs` beyond their strings (what the assistant says aloud and its prompts are out of
   this list); `key/demo.rs`, `key/host.rs`, `key/ask.rs`, `key/generate.rs`; `loupe/model.rs`,
-  `loupe/pdf.rs`, `loupe/picture.rs`, `loupe/place.rs`, `loupe/swipe.rs` beyond their
+  `loupe/picture.rs`, `loupe/place.rs`, `loupe/swipe.rs` beyond their
   constants; `app/ui/paint.rs`, `app/ui/icons.rs` beyond their signatures and the stroke;
   `app/lib.rs`, `app/keys.rs`, `app/wire.rs` beyond the lines quoted.
 - **The room**: `room/scene.rs` (4686 lines: how the launcher, cards, notices and the keyboard

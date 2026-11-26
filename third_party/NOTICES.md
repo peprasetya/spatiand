@@ -9,7 +9,6 @@ software below, each under its own licence. This file goes inside every build (o
 | **FFmpeg** (libavcodec, libavformat, libavutil, libavfilter, libavdevice, libswscale, libswresample) | 9.1 | **LGPL 3.0 or later** (`COPYING.LGPLv3`) | https://ffmpeg.org/releases/ffmpeg-9.1.tar.xz, built by `third_party/ffmpeg/build.sh` (its configure line is there) with the patch in `third_party/ffmpeg/patches/ffmpeg/` (its TLS code on BoringSSL) |
 | **BoringSSL** (libssl, libcrypto), inside FFmpeg's libraries, for its https | the revision SpatiMesh's Chromium pins; each build names the commit it was built from (`third_party/ffmpeg/out/<platform>/.version`) | Apache 2.0 (`BoringSSL-LICENSE.txt`) | https://boringssl.googlesource.com/boringssl at the `boringssl_revision` of that Chromium's `DEPS`, with SpatiMesh's own patch to it (`third_party/chromium/patches/sub/boringssl/`): the checkout in SpatiMesh's Chromium tree, built by `third_party/ffmpeg/build.sh` |
 | rsmpeg (Rust bindings to FFmpeg, compiled into the programs) | 0.18.0, patched | MIT | `third_party/rsmpeg/` in Spatiand's repository, with `PATCHES.md` |
-| PDFium | chromium/8152 | BSD 3-clause and others | https://github.com/bblanchon/pdfium-binaries |
 | ANGLE (libEGL, libGLESv2) | see `mac/fetch-angle.sh` | BSD 3-clause | https://chromium.googlesource.com/angle/angle |
 | libmysofa | 1.3.5 | BSD 3-clause (`mysofa-NOTICE.txt`) | https://github.com/hoene/libmysofa/releases/tag/v1.3.5 |
 | rclone (in the storage service, linked in as a Go module, unchanged: no `replace` in `storage/go.mod`) | v1.76.0 | MIT | https://github.com/rclone/rclone/releases/tag/v1.76.0 (the module and its dependencies: `storage/go.mod`, `storage/go.sum`) |
@@ -23,7 +22,8 @@ not 2.1. The build refuses to finish if FFmpeg ever comes out GPL or non-free.
 ## SpatiMesh (third_party/chromium)
 
 SpatiMesh is built from Chromium's source (fetched at build time, not kept here) with the patches
-in `third_party/chromium`:
+in `third_party/chromium`. Its PDF viewer, with Chromium's PDFium, is also what SpatiLoupe shows
+PDFs with, inside its own window: Spatiand carries no PDFium of its own.
 
 | What | Where | Licence | From |
 |---|---|---|---|

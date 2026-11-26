@@ -32,8 +32,8 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
 # APK's library folder as lib<name>.so -- the only name Android extracts there -- and started
 # by the compositor (crates/spatiand/src/own.rs). Four decode with FFmpeg -- the one Spatiand
 # ships on every platform (third_party/ffmpeg), built here once for Android with MediaCodec in
-# it; SpatiLoupe draws PDFs with PDFium; SpatiShelf reaches remotes through the storage
-# service, which is Go and built for Android from this Mac.
+# it; SpatiLoupe's PDFs are shown by SpatiMesh's viewer, in SpatiLoupe's window; SpatiShelf
+# reaches remotes through the storage service, which is Go and built for Android from this Mac.
 ../third_party/ffmpeg/build.sh android
 FF=$(cd ../third_party/ffmpeg/out/android && pwd)
 [ "$(uname -s)" = Darwin ] && export LIBCLANG_PATH=${LIBCLANG_PATH:-/Library/Developer/CommandLineTools/usr/lib}
@@ -47,7 +47,6 @@ PATH=$HOME/.cargo/bin:$PATH ANDROID_NDK_HOME=$NDK \
     RUSTFLAGS="-L native=$(pwd)/xkbcommon/out -L native=$FF/lib -C link-arg=-lc++abi" \
     env "BINDGEN_EXTRA_CLANG_ARGS_aarch64-linux-android=--target=aarch64-linux-android34 --sysroot=$SYSROOT -I$SYSROOT/usr/include/aarch64-linux-android" \
     cargo ndk -t arm64-v8a -P 34 build --release -p spatireel -p spatiloupe -p spatiquill -p spatishelf -p spatipal -p spatikey -p spatiand-choose
-../tools/fetch-pdfium.sh android-arm64
 STORAGE=$(pwd)/$OUT-storage
 mkdir -p "$STORAGE"
 # Go where these machines keep it, for a build started from a shell that has not read a profile.
@@ -127,7 +126,6 @@ cp ../target/aarch64-linux-android/release/spatiand-choose $OUT/apk/lib/arm64-v8
 for lib in avcodec avdevice avfilter avformat avutil swresample swscale; do
     cp "$FF/lib/lib$lib.so" $OUT/apk/lib/arm64-v8a/
 done
-cp ../third_party/pdfium/android-arm64/lib/libpdfium.so $OUT/apk/lib/arm64-v8a/
 [ -f "$STORAGE/libspatiand-storage.so" ] && cp "$STORAGE/libspatiand-storage.so" $OUT/apk/lib/arm64-v8a/
 if [ -f "$CR/spatimesh" ]; then
     cp "$CR/spatimesh" $OUT/apk/lib/arm64-v8a/libspatimesh_chromium.so

@@ -635,7 +635,9 @@ The owner: "I want it can select text from images (also on image of pdf)... even
 character. Like apple preview."; "read automatic"; of translating, "2 language... primary and
 secondary... the selection in primary, translate to secondary. other, translate to primary". What the
 wearer does, and how SpatiLoupe and SpatiReel choose what to read, is in docs/spatiand-apps.md
-("Live Text"); here, what is asked of hemera, and what the assistant does with it.
+("Live Text"); here, what is asked of hemera, and what the assistant does with it. (A PDF's pages are
+not SpatiLoupe's to read since 2026-11-27: SpatiMesh's viewer shows its PDFs, and reads a scanned
+page with hemera itself, patch 0037, docs/spatimesh.md.)
 
 - **Reading** (`spatiand_voice::hemera::ocr`, hemera's `docs/ocr-api.md`): `POST /v1/ocr`, the picture
   whole in a part `image` -- a photograph as its own file, a screenshot, a frame or a page drawn as a

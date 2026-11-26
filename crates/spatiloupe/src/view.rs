@@ -3,7 +3,9 @@
 //! What is looked at fills the window; the controls float over it on glass and fade when the
 //! wearer has been still for a while, coming back at a touch. Everything is drawn by
 //! [`View::paint`] for one eye at a time, so that in the room a stereo photograph or an object
-//! gets two pictures and the controls are the same in both.
+//! gets two pictures and the controls are the same in both. A PDF is SpatiMesh's to show, with
+//! Chromium's own viewer and tools, in a place in the window under the bar ([`Paper`]); the bar
+//! stays SpatiLoupe's.
 //!
 //! The folder's other files are beside it, a page each, as a phone's photographs are: a picture
 //! at its fitted size goes sideways under the hand to the next or the one before
@@ -11,24 +13,22 @@
 //! file is read, its tile from the folder stands in for it -- beside this one as it comes in, and
 //! in its own view while its picture is read.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use spatiand_app::glow::{self, HasContext};
-use spatiand_app::ui::{draw_icon, look, theme, AutoHide, Button, Color, Confirm, Field, Icon, Input, List, Painter, Rect, Row, Shape, Strip, Texture, Tile, Typed, DOUBLE_CLICK, TILE_TINT};
+use spatiand_app::ui::{draw_icon, look, theme, AutoHide, Button, Color, Confirm, Icon, Input, Painter, Rect, Shape, Strip, Texture, Tile, DOUBLE_CLICK, TILE_TINT};
 use spatiand_app::{Gl, Key};
 
 use crate::folder::{Entry, Kind};
 use crate::markup::Area;
 use crate::model::{self, Eye, Orbit, Renderer};
-use crate::pdf::{self, Ask, Pdf};
 use crate::picture::Picture;
 use crate::stereo::Eyes;
 use crate::swipe::{Carousel, Glide, Reach, Scrolled};
 use crate::tools::{Desk, Placed, Said, BAR};
 
-/// Live Text: the text in a picture or a page, chosen, copied and translated.
+/// Live Text: the text in a picture, chosen, copied and translated.
 mod lens;
 
 /// The gap between the file looked at and the one beside it on the carousel, beyond the window's
@@ -388,8 +388,16 @@ impl Shown {
     }
 }
 
-/// How far down the window the room for a picture or a page begins: under the bar.
+/// How far down the window the room for a picture begins: under the bar.
 const HEAD: f32 = 96.0;
+
+/// How far down the window SpatiMesh's viewer of a PDF begins: under the bar's foot (24 down, its
+/// row and 12 round it) and 12 more, so that the bar's glass is whole above it.
+const PLACE_TOP: f32 = 24.0 + theme::ROW_HEIGHT + 24.0 + 12.0;
+
+/// The column at the window's right that the info pane takes while it is open (492 wide, 28 in from
+/// the edge), and 28 between it and SpatiMesh's viewer of a PDF.
+const INFO_COLUMN: f32 = 28.0 + 492.0 + 28.0;
 
 /// The part of the window a picture is fitted to: all of it but the bar along the top.
 fn stage(all: Rect) -> Rect {
@@ -407,193 +415,90 @@ fn squeezed(aspect: f32) -> bool {
     (1.65..=1.95).contains(&aspect)
 }
 
-/// A PDF, as pages laid out down a column.
+/// A PDF, shown by SpatiMesh's own viewer -- Chromium's, with its tools -- in a place in the
+/// window under the bar: the room's web view (the owner, 2026-11-27: "the build true webview,
+/// spatiloupe use webview for chromium best for"). The program around the view keeps the place
+/// ([`View::place_wanted`]); the view says where, and draws what is under it -- what is being done
+/// until SpatiMesh's window is there, and what became of it if it goes.
 pub struct Paper {
-    pdf: Pdf,
-    pages: Vec<pdf::Page>,
-    outline: Vec<pdf::Heading>,
-    title: Option<String>,
-    /// Each page drawn so far, and the width it was drawn at.
-    drawn: HashMap<usize, (Texture, u32)>,
-    asked: HashMap<usize, u32>,
-    /// How far down the column the top of the window is, in logical pixels.
-    scroll: f32,
-    /// How far the column is moved sideways from the middle, in logical pixels: a page zoomed
-    /// wider than the window is moved about in.
-    across: f32,
-    zoom: f32,
-    /// Which search is the one wanted: a search's answer under an older number -- one asked
-    /// before the text was changed, or the field closed -- is not this one's.
-    finds: u64,
-    contents: Option<List>,
-    find: Option<Field>,
-    /// The page number being typed, after `p`.
-    page_field: Option<Field>,
-    found: Vec<pdf::Found>,
-    found_at: usize,
-    finding: bool,
-    /// The page the wearer last asked to see, which the column is moved to once it is laid out.
-    go_to: Option<usize>,
-    stale: Vec<Texture>,
-    /// The words on each page asked for, once they have come: what the room's speech is told
-    /// is being read. `None` while asked for.
-    words: HashMap<usize, Option<String>>,
-    /// Pages drawn by the PDF's thread, waiting for the GL thread to put them on the GPU: this
-    /// document's own.
-    pending: Vec<(usize, u32, u32, Vec<u8>)>,
-    /// Pages markup has cropped: what is kept of each, in its points as it is shown.
-    cuts: HashMap<usize, Area>,
-    /// How far down the column the first page begins: under the bar, and under markup's tools
-    /// while they are out.
-    head: f32,
-    /// Where each page near the window was drawn last, for markup to draw on.
-    placed: Vec<(usize, Rect)>,
-    /// The question a locked document asks, until it opens.
-    lock: Option<Lock>,
-    /// What its owner allows done to it: what markup offers.
-    rights: pdf::Rights,
-    /// Each page's text, for Live Text: its own characters, or read from a picture of it.
-    texts: HashMap<usize, lens::PageText>,
+    /// The PDF as a file of this machine, which is what SpatiMesh is given: the file itself, or a
+    /// remote's copied into SpatiLoupe's cache (`place::fetched`). `None` while that is copied.
+    pub local: Option<PathBuf>,
+    pub stage: Stage,
+    /// Since when it has been at this stage.
+    since: Instant,
+    /// How many times SpatiMesh has been asked for it: another try is another place.
+    pub tries: u32,
+    /// Open again, or Try again, while there is nothing in the place.
+    again: Button,
 }
 
-/// A locked PDF's question: its password, typed into a field that shows dots, given to the PDF's
-/// thread with Enter and not kept here after.
-struct Lock {
-    field: Field,
-    /// The password given did not open it.
-    wrong: bool,
-    /// One given, and being tried.
-    trying: bool,
+/// Where a PDF's showing is.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stage {
+    /// A remote's PDF being copied onto this machine: so many bytes of so many (none known yet).
+    Fetching { done: u64, total: u64 },
+    /// SpatiMesh asked for, its window not yet in the place.
+    Opening,
+    /// SpatiMesh's viewer is in the place.
+    Shown,
+    /// SpatiMesh's window went while the PDF was the one looked at: closed, or ended.
+    Closed,
+    /// It could not be shown, and why; whether trying again could make a difference.
+    Failed { why: String, again: bool },
 }
 
-impl Lock {
-    fn new(wrong: bool) -> Lock {
-        let mut field = Field::default();
-        field.secret = true;
-        field.focused = true;
-        field.hint = "Password".into();
-        Lock { field, wrong, trying: false }
-    }
-
-    /// What was typed, wiped from memory.
-    fn forget(&mut self) {
-        let mut typed = std::mem::take(&mut self.field.text);
-        zeroize::Zeroize::zeroize(&mut typed);
-        self.field.set("");
-    }
+/// The place a view showing a PDF wants SpatiMesh's viewer in.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Wanted {
+    /// The view's ticket, and the PDF's tries: another of either is another place.
+    pub ticket: u64,
+    pub tries: u32,
+    /// What SpatiMesh is to show: the PDF's `file:` address.
+    pub url: String,
+    /// Where, in the window's own coordinates (as its pointer is), x, y, width and height; no size
+    /// hides what is inside and keeps it, while the carousel takes the PDF away or brings it.
+    pub rect: (i32, i32, i32, i32),
 }
 
-impl Drop for Lock {
-    fn drop(&mut self) {
-        self.forget();
-    }
-}
-
-const PAGE_GAP: f32 = 28.0;
+/// How long a PDF has to have stayed the one looked at before SpatiMesh is asked for it: one
+/// slid past on the way to another is not opened.
+const PLACE_SETTLE: Duration = Duration::from_millis(300);
 
 impl Paper {
-    fn new(pdf: Pdf) -> Paper {
-        Paper {
-            pdf,
-            pages: Vec::new(),
-            outline: Vec::new(),
-            title: None,
-            drawn: HashMap::new(),
-            asked: HashMap::new(),
-            scroll: 0.0,
-            across: 0.0,
-            zoom: 1.0,
-            finds: 0,
-            contents: None,
-            find: None,
-            page_field: None,
-            found: Vec::new(),
-            found_at: 0,
-            finding: false,
-            go_to: None,
-            stale: Vec::new(),
-            words: HashMap::new(),
-            pending: Vec::new(),
-            cuts: HashMap::new(),
-            head: HEAD,
-            placed: Vec::new(),
-            lock: None,
-            rights: pdf::Rights::ALL,
-            texts: HashMap::new(),
+    /// A PDF of this machine (`Some`), to be shown at once; or a remote's, to be copied first,
+    /// `size` bytes of it as its listing said.
+    fn new(local: Option<PathBuf>, size: u64) -> Paper {
+        let stage = if local.is_some() { Stage::Opening } else { Stage::Fetching { done: 0, total: size } };
+        Paper { local, stage, since: Instant::now(), tries: 0, again: Button::default() }
+    }
+
+    fn set_stage(&mut self, stage: Stage) {
+        if self.stage != stage {
+            self.stage = stage;
+            self.since = Instant::now();
         }
     }
 
-    /// What is shown of page `page`, in its points: all of it, or its crop.
-    fn region(&self, page: usize) -> Area {
-        self.cuts.get(&page).copied().unwrap_or_else(|| self.pages.get(page).map_or(Area::new(0.0, 0.0, 1.0, 1.0), |p| Area::new(0.0, 0.0, p.width, p.height)))
+    /// Whether it is being done: copied, or opening.
+    fn busy(&self) -> bool {
+        matches!(self.stage, Stage::Fetching { .. } | Stage::Opening)
     }
 
-    /// The words on `page`, if they have come; asked for, if they have not been.
-    fn words_on(&mut self, page: usize) -> Option<&str> {
-        if !self.words.contains_key(&page) {
-            self.words.insert(page, None);
-            self.pdf.ask(Ask::Text { page });
-        }
-        self.words.get(&page).and_then(|w| w.as_deref())
+    /// Whether there is a button to try again with: it closed, or it could not be shown for a
+    /// reason that may pass. (SpatiMesh slow to come into its place is the program's to see to:
+    /// `NOT_INSIDE`, main.rs.)
+    fn can_try_again(&self) -> bool {
+        matches!(self.stage, Stage::Closed | Stage::Failed { again: true, .. })
     }
 
-    fn width(&self, area: Rect) -> f32 {
-        (area.w * 0.62).min(1000.0) * self.zoom
-    }
-
-    /// Where each page is down the column: top, height. A page cropped by markup is what is kept
-    /// of it, as wide as the others.
-    fn layout(&self, area: Rect) -> Vec<(f32, f32)> {
-        let width = self.width(area);
-        let mut y = self.head;
-        (0..self.pages.len())
-            .map(|page| {
-                let shown = self.region(page);
-                let h = width * shown.h() / shown.w().max(1.0);
-                let at = (y, h);
-                y += h + PAGE_GAP;
-                at
-            })
-            .collect()
-    }
-
-    fn length(&self, area: Rect) -> f32 {
-        self.layout(area).last().map_or(0.0, |(y, h)| y + h + 140.0)
-    }
-
-    /// The page most of the window is showing.
-    fn current(&self, area: Rect) -> usize {
-        let middle = self.scroll + area.h * 0.4;
-        self.layout(area).iter().position(|(y, h)| middle < y + h + PAGE_GAP).unwrap_or(self.pages.len().saturating_sub(1))
-    }
-
-    fn scroll_by(&mut self, by: f32, area: Rect) {
-        self.scroll = (self.scroll + by).clamp(0.0, (self.length(area) - area.h).max(0.0));
-    }
-
-    /// How far the column may be moved sideways either way: a page wider than the window to its
-    /// edges and a little more, one that fits not at all.
-    fn across_room(&self, area: Rect) -> f32 {
-        let width = self.width(area);
-        if width > area.w { (width - area.w) * 0.5 + PAGE_GAP } else { 0.0 }
-    }
-
-    /// Whether the pages are wider than the window: moved about in sideways.
-    fn wide(&self, area: Rect) -> bool {
-        self.across_room(area) > 0.0
-    }
-
-    /// Move the column sideways by `by`: more than nought shows more of the pages' right.
-    fn pan_by(&mut self, by: f32, area: Rect) {
-        let room = self.across_room(area);
-        self.across = (self.across - by).clamp(-room, room);
-    }
-
-    fn show_page(&mut self, page: usize, area: Rect) {
-        if let Some((y, _)) = self.layout(area).get(page) {
-            self.scroll = (y - 72.0).max(0.0);
-            self.scroll_by(0.0, area);
-        }
+    /// SpatiMesh asked for it again, in a place of its own; a remote's copied again if the copy
+    /// was what failed.
+    fn try_again(&mut self, size: u64) {
+        self.tries += 1;
+        self.again = Button::default();
+        self.stage = if self.local.is_some() { Stage::Opening } else { Stage::Fetching { done: 0, total: size } };
+        self.since = Instant::now();
     }
 }
 
@@ -628,8 +533,8 @@ pub enum Want {
     /// A picture marked up, to be written (by a worker: it is read whole and drawn on).
     Save(Box<crate::save::Saving>),
     /// A file written -- the one looked at, or its copy beside it -- to be shown as it now is,
-    /// with what was done said; a locked PDF with the password it opens with.
-    Saved { path: PathBuf, said: String, password: Option<pdf::Secret> },
+    /// with what was done said.
+    Saved { path: PathBuf, said: String },
 }
 
 /// What follows the yes of a question.
@@ -710,7 +615,7 @@ pub struct View {
     saving: Option<(Instant, bool)>,
     /// What was done, said at the foot for five seconds.
     said: Option<(String, Instant)>,
-    /// Where the pages shown are on the window, as last drawn: what markup draws on.
+    /// Where the picture shown is on the window, as last drawn: what markup draws on.
     placed: Vec<Placed>,
     /// What the program is to do, come of something done between inputs (a save).
     wanted: Option<Want>,
@@ -774,12 +679,12 @@ impl View {
 
     // --- markup ---
 
-    /// Whether markup can draw on what is shown: a still flat picture, or a PDF's pages. Not an
-    /// object, a stereo pair or a moving picture, whose button is not there.
+    /// Whether markup can draw on what is shown: a still flat picture. Not an object, a stereo
+    /// pair or a moving picture, whose button is not there -- nor a PDF, which is marked up with
+    /// the tools of SpatiMesh's viewer, and saved by its own Save.
     fn markable(&self) -> bool {
         match &self.doc {
             Doc::Picture(shown) => shown.markable(),
-            Doc::Pdf(paper) => !paper.pages.is_empty(),
             _ => false,
         }
     }
@@ -794,11 +699,10 @@ impl View {
         self.desk.as_ref().is_some_and(|d| d.edited())
     }
 
-    /// Whether this file can be written over in its own format (a PDF always; a picture in what
-    /// SpatiLoupe writes, as it was read), or only copied.
+    /// Whether this picture can be written over in its own format (what SpatiLoupe writes, as it
+    /// was read), or only copied.
     fn can_save_in_place(&self) -> bool {
         match &self.doc {
-            Doc::Pdf(_) => true,
             Doc::Picture(shown) => crate::save::in_place(&self.entry.name).is_some() && shown.picture.saves.not_over.is_none(),
             _ => crate::save::in_place(&self.entry.name).is_some(),
         }
@@ -813,15 +717,6 @@ impl View {
         crate::save::copy_only(&self.entry.name, why.filter(|_| crate::save::in_place(&self.entry.name).is_some()), depth)
     }
 
-    /// Why markup does not draw on this file, though there is something to draw on: a PDF whose
-    /// owner does not allow annotating it (its permissions, as Preview keeps to them).
-    fn forbidden(&self) -> Option<String> {
-        match &self.doc {
-            Doc::Pdf(paper) if !paper.rights.annotate => Some(format!("The owner of {} does not allow marking it up: its permissions keep notes out.", self.entry.name)),
-            _ => None,
-        }
-    }
-
     /// The tools out, or put away; put away with nothing drawn, markup is let go of altogether.
     fn toggle_markup(&mut self) {
         if self.marking() {
@@ -831,22 +726,14 @@ impl View {
             if !self.unsaved() {
                 self.desk = None;
             }
-        } else if let Some(why) = self.forbidden().filter(|_| self.markable()) {
-            // Not offered: said why, at the foot.
-            self.trouble = Some(why);
-            self.trouble_at = Some(Instant::now());
-            return;
         } else if self.markable() {
-            // A picture is drawn on with Chromium's tools; a PDF with its own, for now.
-            let (turns, may_crop, picture) = match &self.doc {
-                Doc::Picture(shown) => (shown.orientation, true, true),
-                Doc::Pdf(paper) => (0, paper.rights.modify, false),
-                _ => (0, true, false),
+            // Drawn on with Chromium's tools, and SpatiLoupe's shapes and crop.
+            let turns = match &self.doc {
+                Doc::Picture(shown) => shown.orientation,
+                _ => 0,
             };
-            let desk = self.desk.get_or_insert_with(|| Box::new(Desk::new(turns, picture)));
+            let desk = self.desk.get_or_insert_with(|| Box::new(Desk::new(turns)));
             desk.on = true;
-            // A PDF whose pages its owner does not allow changed is not cropped.
-            desk.may_crop = may_crop;
             self.info = false;
             // The room's fonts read now, beside the window's thread, rather than at the first
             // word painted.
@@ -855,8 +742,8 @@ impl View {
         self.sync_markup();
     }
 
-    /// What is shown made to agree with the marks: a picture turned and cropped as they say, a
-    /// PDF's pages cropped; and the room for it under the tools, while they are out.
+    /// What is shown made to agree with the marks: a picture turned and cropped as they say; and
+    /// the room for it under the tools, while they are out.
     fn sync_markup(&mut self) {
         // Under the tools: the bar's foot (108), their 12 above and 12 below.
         let head = if self.marking() { HEAD + BAR + 36.0 } else { HEAD };
@@ -880,25 +767,11 @@ impl View {
                     shown.centre = (0.5, 0.5);
                 }
             }
-            Doc::Pdf(paper) => {
-                if head != paper.head {
-                    // The pages stay where they were on the window as the tools come and go -- but
-                    // for the first page's top, which comes out from under them.
-                    if paper.scroll > 0.0 {
-                        paper.scroll = (paper.scroll + head - paper.head).max(0.0);
-                    }
-                    paper.head = head;
-                }
-                let cuts: HashMap<usize, Area> = marks.map(|m| m.crops.iter().copied().collect()).unwrap_or_default();
-                if cuts != paper.cuts {
-                    paper.cuts = cuts;
-                }
-            }
             _ => {}
         }
     }
 
-    /// Each page's part shown, in its units, by its number: what markup's weights are a share of.
+    /// The picture's part shown, in its pixels, as page 0: what markup's sizes are a share of.
     fn regions(&self) -> Vec<Area> {
         match &self.doc {
             Doc::Picture(shown) => {
@@ -906,12 +779,11 @@ impl View {
                 let c = shown.cut;
                 vec![Area::new(c[0] * w, c[1] * h, c[2] * w, c[3] * h)]
             }
-            Doc::Pdf(paper) => (0..paper.pages.len()).map(|page| paper.region(page)).collect(),
             _ => Vec::new(),
         }
     }
 
-    /// Where the pages shown are on the window `all`.
+    /// Where the picture shown is on the window `all`, for markup to draw on.
     fn placements(&self, all: Rect) -> Vec<Placed> {
         match &self.doc {
             Doc::Picture(shown) if shown.markable() => {
@@ -919,7 +791,6 @@ impl View {
                 let region = self.regions()[0];
                 vec![Placed { page: 0, rect: Rect { x: at.x + self.slid, ..at }, region }]
             }
-            Doc::Pdf(paper) => paper.placed.iter().map(|&(page, rect)| Placed { page, rect, region: paper.region(page) }).collect(),
             _ => Vec::new(),
         }
     }
@@ -934,10 +805,7 @@ impl View {
         let name = &self.entry.name;
         let text = match then {
             Then::Replace if self.loses_hdr() => format!("Replace {name} with the edited picture? Its HDR layer will be lost: SpatiLoupe cannot carry it over. This cannot be undone."),
-            Then::Replace => {
-                let what = if matches!(self.doc, Doc::Pdf(_)) { "PDF" } else { "picture" };
-                format!("Replace {name} with the edited {what}? This cannot be undone.")
-            }
+            Then::Replace => format!("Replace {name} with the edited picture? This cannot be undone."),
             Then::Copy => format!("Save a copy of {name} without its HDR layer? SpatiLoupe cannot carry it over."),
             _ => format!("Discard your changes to {name}?"),
         };
@@ -1004,19 +872,14 @@ impl View {
         let marks = desk.markup.marks().clone();
         let want = match &self.doc {
             Doc::Picture(shown) => Want::Save(Box::new(crate::save::Saving { source: self.entry.path.clone(), marks, frame: shown.frame_size(), copy })),
-            Doc::Pdf(paper) => {
-                paper.pdf.ask(Ask::Save { marks, copy });
-                Want::Nothing
-            }
             _ => return Want::Nothing,
         };
         self.saving = Some((Instant::now(), copy));
         want
     }
 
-    /// What came of a save: the file shown again as it now is -- a locked PDF opened with the
-    /// `password` it was opened with -- or why it was not written.
-    pub fn saved(&mut self, result: Result<PathBuf, String>, password: Option<pdf::Secret>) {
+    /// What came of a save: the file shown again as it now is, or why it was not written.
+    pub fn saved(&mut self, result: Result<PathBuf, String>) {
         let copy = self.saving.take().is_some_and(|(_, copy)| copy);
         match result {
             Ok(path) => {
@@ -1024,7 +887,7 @@ impl View {
                 if let Some(desk) = self.desk.as_mut() {
                     desk.markup.saved();
                 }
-                self.wanted = Some(Want::Saved { path, said, password });
+                self.wanted = Some(Want::Saved { path, said });
             }
             Err(e) => {
                 log::warn!("{}: not saved: {e}", self.entry.path.display());
@@ -1063,10 +926,109 @@ impl View {
         self.text_turned();
     }
 
-    /// The PDF opened; `password` one it was opened with before (saved, or its copy written),
-    /// tried first.
-    pub fn open_pdf(&mut self, password: Option<pdf::Secret>) {
-        self.doc = Doc::Pdf(Box::new(Paper::new(Pdf::open(&self.entry.path, password))));
+    // --- a PDF, in SpatiMesh's viewer ---
+
+    /// The PDF to be shown by SpatiMesh: this machine's at once, a remote's once it is copied
+    /// here ([`View::fetching`], [`View::fetched`]).
+    pub fn open_pdf(&mut self) {
+        let local = crate::place::remote(&self.entry.path).is_none().then(|| self.entry.path.clone());
+        self.doc = Doc::Pdf(Box::new(Paper::new(local, self.entry.size)));
+    }
+
+    /// How far a remote's PDF has come onto this machine.
+    pub fn fetching(&mut self, done: u64, total: u64) {
+        if let Doc::Pdf(paper) = &mut self.doc {
+            if matches!(paper.stage, Stage::Fetching { .. }) {
+                paper.stage = Stage::Fetching { done, total };
+            }
+        }
+    }
+
+    /// Whether a remote's PDF is to be copied onto this machine now, and for which try: once it has
+    /// stayed the one looked at a moment, as SpatiMesh is asked for one only then.
+    pub fn fetch_wanted(&self) -> Option<u32> {
+        let Doc::Pdf(paper) = &self.doc else { return None };
+        (matches!(paper.stage, Stage::Fetching { .. }) && paper.local.is_none() && self.at_rest() && paper.since.elapsed() >= PLACE_SETTLE).then_some(paper.tries)
+    }
+
+    /// Whether what is looked at is in its place, the carousel not taking it away or bringing it.
+    /// (A scroll being made out on the bar is not a slide until it is one.)
+    fn at_rest(&self) -> bool {
+        self.carousel.resting() && self.slid == 0.0
+    }
+
+    /// A remote's PDF copied onto this machine, to be shown from there -- or why it was not.
+    pub fn fetched(&mut self, result: Result<PathBuf, String>) {
+        let name = self.entry.name.clone();
+        let Doc::Pdf(paper) = &mut self.doc else { return };
+        match result {
+            Ok(copy) => {
+                paper.local = Some(copy);
+                paper.set_stage(Stage::Opening);
+            }
+            Err(e) => {
+                log::warn!("{}: not copied here: {e}", self.entry.path.display());
+                paper.set_stage(Stage::Failed { why: format!("SpatiLoupe could not copy {name} here to be shown: {}.", e.trim_end_matches('.')), again: true });
+            }
+        }
+    }
+
+    /// The place SpatiMesh's viewer is to be in, while a PDF is the one looked at, and for which
+    /// try: `have` says whether the program has one for it already. Not asked for until the PDF
+    /// has stayed a moment, nor while the carousel is moving -- one slid past is not opened -- and
+    /// hidden, once had, while the carousel takes it away or brings it back.
+    pub fn place_wanted(&self, have: bool) -> Option<Wanted> {
+        let Doc::Pdf(paper) = &self.doc else { return None };
+        let local = paper.local.as_ref()?;
+        if !matches!(paper.stage, Stage::Opening | Stage::Shown) {
+            return None;
+        }
+        let resting = self.at_rest();
+        if !have && (!resting || paper.since.elapsed() < PLACE_SETTLE) {
+            return None;
+        }
+        let rect = if resting {
+            let r = self.place_rect();
+            (r.x.round() as i32, r.y.round() as i32, r.w.round().max(0.0) as i32, r.h.round().max(0.0) as i32)
+        } else {
+            (0, 0, 0, 0)
+        };
+        Some(Wanted { ticket: self.ticket, tries: paper.tries, url: crate::place::file_url(local), rect })
+    }
+
+    /// Where SpatiMesh's viewer is in the window: all of it under the bar, to its edges -- but for
+    /// the column the info pane takes, while it is open, which SpatiMesh's window would be over.
+    fn place_rect(&self) -> Rect {
+        let all = self.bounds;
+        let top = (all.y + PLACE_TOP).min(all.bottom());
+        let right = if self.info { (all.right() - INFO_COLUMN).max(all.x) } else { all.right() };
+        Rect::new(all.x, top, right - all.x, all.bottom() - top)
+    }
+
+    /// The room could not keep a place for SpatiMesh's viewer, or SpatiMesh could not be asked:
+    /// said in the window, with a way to try again where that might help.
+    pub fn place_refused(&mut self, why: String, again: bool) {
+        if let Doc::Pdf(paper) = &mut self.doc {
+            paper.set_stage(Stage::Failed { why, again });
+        }
+    }
+
+    /// SpatiMesh's window is in the place: its viewer shows the PDF.
+    pub fn pdf_attached(&mut self) {
+        if let Doc::Pdf(paper) = &mut self.doc {
+            paper.set_stage(Stage::Shown);
+        }
+    }
+
+    /// SpatiMesh's window has gone from the place, closed or ended, while the PDF is still the one
+    /// looked at: said, with a way to open it again.
+    pub fn pdf_detached(&mut self) {
+        if let Doc::Pdf(paper) = &mut self.doc {
+            if matches!(paper.stage, Stage::Opening | Stage::Shown) {
+                log::info!("{}: SpatiMesh's window has gone from its place", self.entry.name);
+                paper.set_stage(Stage::Closed);
+            }
+        }
     }
 
     pub fn pictured(&mut self, result: Result<Picture, String>) {
@@ -1131,8 +1093,8 @@ impl View {
 
     /// How much of the controls is to be seen, 0 to 1.
     fn chrome(&self) -> f32 {
-        // A document is read, not looked at: its controls stay. So do they while there is markup,
-        // or a question.
+        // A document is read, not looked at: its bar stays, above SpatiMesh's viewer. So do the
+        // controls while there is markup, or a question.
         if matches!(self.doc, Doc::Pdf(_) | Doc::Loading(_) | Doc::Failed(_)) || self.info || self.desk.is_some() || self.asking.is_some() || self.saving.is_some() || self.said.is_some() || self.text_busy() {
             return 1.0;
         }
@@ -1150,7 +1112,9 @@ impl View {
             // when its next frame is due, and `tick` says it is to be drawn.
             Doc::Picture(shown) => shown.faded_in() < 1.0,
             Doc::Model(object) => object.turning || object.renderer.is_none(),
-            Doc::Pdf(paper) => paper.pages.is_empty() || paper.finding,
+            // The dots, while it is copied or SpatiMesh opens it (under SpatiMesh's window, once
+            // that is drawn there).
+            Doc::Pdf(paper) => paper.busy(),
             Doc::Failed(_) => false,
         };
         let sliding = !self.carousel.resting() || self.carousel.busy();
@@ -1166,93 +1130,14 @@ impl View {
                 Some(length.saturating_sub(shown.frame_since.elapsed()))
             }
             Doc::Model(object) if object.turning => Some(Duration::from_millis(16)),
+            // The moment SpatiMesh is to be asked for it.
+            Doc::Pdf(paper) if paper.stage == Stage::Opening => Some(PLACE_SETTLE.saturating_sub(paper.since.elapsed())).filter(|left| !left.is_zero()),
             _ => None,
         };
         let carousel = self.carousel.deadline().map(|at| at.saturating_duration_since(Instant::now()));
         let trouble = self.trouble_at.map(|at| TROUBLE_SHOWN.saturating_sub(at.elapsed()));
         let said = self.said.as_ref().map(|(_, at)| SAID_SHOWN.saturating_sub(at.elapsed()));
         [doc, carousel, trouble, said, self.text_wake()].into_iter().flatten().min()
-    }
-
-    /// What has come back from the PDF's thread.
-    pub fn answers(&mut self) -> bool {
-        let by_itself = self.lens.by_itself();
-        let Doc::Pdf(paper) = &mut self.doc else { return false };
-        let mut any = false;
-        loop {
-            let answer = match paper.pdf.answers.try_recv() {
-                Ok(answer) => answer,
-                // Its thread has gone -- panicked in PDFium -- before the document was open: said,
-                // rather than waiting for ever.
-                Err(std::sync::mpsc::TryRecvError::Disconnected) if paper.pages.is_empty() => {
-                    self.doc = Doc::Failed("This PDF would not open: SpatiLoupe failed reading it.".into());
-                    return true;
-                }
-                Err(_) => break,
-            };
-            any = true;
-            match answer {
-                pdf::Answer::Opened { pages, outline, title, rights } => {
-                    if pages.is_empty() {
-                        self.doc = Doc::Failed("This PDF has no pages.".into());
-                        return true;
-                    }
-                    paper.pages = pages;
-                    paper.outline = outline;
-                    paper.title = title;
-                    paper.rights = rights;
-                    paper.lock = None;
-                }
-                // Its password asked for -- again, if the one given was wrong: what was typed is
-                // not kept either way.
-                pdf::Answer::Locked { wrong } => {
-                    let lock = paper.lock.get_or_insert_with(|| Lock::new(wrong));
-                    lock.forget();
-                    lock.wrong = wrong;
-                    lock.trying = false;
-                    lock.field.focused = true;
-                }
-                pdf::Answer::Failed(why) => {
-                    self.doc = Doc::Failed(why);
-                    return true;
-                }
-                // A page drawn is always wanted: its texture is what it waited for, and it is no
-                // longer asked for once it has come.
-                pdf::Answer::Drawn { page, width, height, rgba } => {
-                    paper.asked.remove(&page);
-                    paper.drawn_pending(page, width, height, rgba);
-                }
-                // Left as asked, so that it is not asked for again and again: it stays paper.
-                pdf::Answer::Undrawn { page } => log::warn!("page {} of {} would not draw", page + 1, self.entry.path.display()),
-                pdf::Answer::Text { page, text } => {
-                    // A few pages' worth kept: they are asked for as they are read.
-                    if paper.words.len() > 64 {
-                        paper.words.retain(|p, _| p.abs_diff(page) <= 8);
-                    }
-                    paper.words.insert(page, Some(text));
-                }
-                pdf::Answer::Found { found, ticket } => {
-                    if ticket != paper.finds {
-                        continue;
-                    }
-                    paper.finding = false;
-                    paper.found = found;
-                    paper.found_at = 0;
-                    if let Some(first) = paper.found.first() {
-                        paper.go_to = Some(first.page);
-                    }
-                }
-                pdf::Answer::Saved { result, password } => {
-                    self.saved(result, password);
-                    return true;
-                }
-                // Live Text: a page's own characters, or word that it has none and is to be read;
-                // and a page drawn to be read.
-                pdf::Answer::Letters { page, lines } => paper.lettered(page, lines, by_itself),
-                pdf::Answer::Scanned { page, width, height, rgba } => paper.scanned(page, width, height, rgba),
-            }
-        }
-        any
     }
 
     /// Move the carousel on, and a frame of a moving picture, or turn an object, if it is time.
@@ -1332,8 +1217,9 @@ impl View {
     }
 
     /// Whether a hand may take what is shown sideways to the next: a picture at its fitted size,
-    /// and one still being read or that would not open. A zoomed picture is moved about in, a
-    /// document's pages scroll, and an object turns.
+    /// one still being read or that would not open, and a PDF where its window has nothing over it
+    /// (SpatiMesh's viewer, over it, has the hand's drags itself). A zoomed picture is moved about
+    /// in, and an object turns.
     fn slides(&self) -> bool {
         // With markup -- its tools out, or something drawn not yet saved -- a drag draws, or moves
         // about in the picture; leaving it is asked about first.
@@ -1342,8 +1228,8 @@ impl View {
         }
         match &self.doc {
             Doc::Picture(shown) => shown.zoom.is_none(),
-            Doc::Loading(_) | Doc::Failed(_) => true,
-            Doc::Pdf(_) | Doc::Model(_) => false,
+            Doc::Loading(_) | Doc::Failed(_) | Doc::Pdf(_) => true,
+            Doc::Model(_) => false,
         }
     }
 
@@ -1425,6 +1311,7 @@ impl View {
             None => look::backdrop(p, gl),
         }
         let chrome = self.chrome();
+        let place = self.place_rect();
         p.clip(gl, seen_here);
         // Where the picture is drawn this frame, for its text to be drawn over it.
         let mut picture_at = None;
@@ -1490,14 +1377,23 @@ impl View {
                     picture_at = Some(at);
                 }
             }
-            Doc::Pdf(paper) => draw_paper(p, gl, paper, here, seen_here, &self.entry.name),
+            Doc::Pdf(paper) => {
+                // At rest, what is under SpatiMesh's viewer: what is being done until it is drawn
+                // there, or what became of it. Taken away or brought by the carousel, with the
+                // place hidden, its tile, as anything of no picture of its own.
+                if self.slid == 0.0 {
+                    draw_pdf(p, gl, paper, place, &self.entry);
+                } else if let Some(own) = &own {
+                    draw_stand_in(p, gl, here, own);
+                }
+            }
             Doc::Model(_) => {}
         }
         if let Some(at) = picture_at {
             self.text_draw_picture(p, gl, at);
         }
         p.unclip(gl);
-        // Markup: where the pages are on the window, and what is drawn on them.
+        // Markup: where the picture is on the window, and what is drawn on it.
         self.placed = self.placements(all);
         if self.desk.is_some() {
             let regions = self.regions();
@@ -1559,13 +1455,8 @@ impl View {
                     detail.push(format!("{} frames", shown.picture.frames.len() + 1));
                 }
             }
-            Doc::Pdf(paper) if !paper.pages.is_empty() => {
-                let page = paper.current(self.bounds) + 1;
-                detail.push(format!("Page {page} of {}", paper.pages.len()));
-                if (paper.zoom - 1.0).abs() > 0.01 {
-                    detail.push(format!("{:.0}%", paper.zoom * 100.0));
-                }
-            }
+            // Its pages and zoom are SpatiMesh's viewer's, which says them in its own bar.
+            Doc::Pdf(_) => detail.push("PDF".to_string()),
             Doc::Model(object) => {
                 if let Some(n) = &object.name {
                     detail.push(n.clone());
@@ -1652,14 +1543,13 @@ impl View {
         }
 
         // The folder's other files, along the foot -- not while markup's tools are out, which keep
-        // to this file; then which keys do what, as on a document always.
+        // to this file, nor under a PDF, whose foot is SpatiMesh's viewer's; then which keys do
+        // what.
         self.foot = Rect::default();
         let hint = if self.saving.is_some() {
             Some("Saving\u{2026}".to_string())
         } else if marking {
             self.desk.as_ref().map(|d| d.hint())
-        } else if let Doc::Pdf(paper) = &self.doc {
-            Some(paper_hint(paper).to_string())
         } else {
             None
         };
@@ -1720,28 +1610,20 @@ impl View {
         }
     }
 
-    /// What this shows, for the room's speech (`Event::Describe`): the words being typed into
-    /// the find field or the page number if one is open, the current page's words of a PDF --
-    /// as far as they have come, never waited for -- and what is known of a picture or an object.
+    /// What this shows, for the room's speech (`Event::Describe`): for a PDF, that it is one and
+    /// shown by SpatiMesh's viewer (whose window inside this one is no window of the room's to be
+    /// asked), and its name; what is known of a picture or an object.
     pub fn describe(&mut self) -> (String, String) {
         let title = self.title_words().0;
-        let all = self.bounds;
-        let text = match &mut self.doc {
+        let text = match &self.doc {
             Doc::Pdf(paper) => {
-                // Never what is typed into the password's field.
-                if paper.lock.is_some() {
-                    "This PDF is locked with a password, which it asks for.".to_string()
-                } else if let Some(field) = paper.find.as_ref().or(paper.page_field.as_ref()) {
-                    field.text.clone()
-                } else if paper.pages.is_empty() {
-                    String::new()
-                } else {
-                    let page = paper.current(all);
-                    // The next page asked for too: it is the one read next.
-                    if page + 1 < paper.pages.len() {
-                        paper.words_on(page + 1);
-                    }
-                    paper.words_on(page).unwrap_or_default().to_string()
+                let name = &self.entry.name;
+                match &paper.stage {
+                    Stage::Fetching { .. } => format!("The PDF {name}, being copied here from its remote to be shown by SpatiMesh's PDF viewer."),
+                    Stage::Opening => format!("The PDF {name}, being opened in SpatiMesh's PDF viewer, inside SpatiLoupe's window."),
+                    Stage::Shown => format!("The PDF {name}, shown by SpatiMesh's PDF viewer inside SpatiLoupe's window."),
+                    Stage::Closed => format!("The PDF {name}: SpatiMesh's viewer of it has closed."),
+                    Stage::Failed { why, .. } => format!("The PDF {name}, not shown: {why}"),
                 }
             }
             _ => self.about().into_iter().map(|(what, value)| format!("{what}: {value}")).collect::<Vec<_>>().join("\n"),
@@ -1752,7 +1634,7 @@ impl View {
             Some(read) => format!("{text}\n\n{read}"),
             None => text,
         };
-        // Markup: the words being typed onto the page, or that its tools are out, and which.
+        // Markup: the words being typed onto the picture, or that its tools are out, and which.
         let text = match self.desk.as_ref().filter(|d| d.on) {
             Some(desk) => match &desk.typing {
                 Some(typing) => typing.field.text.clone(),
@@ -1777,21 +1659,11 @@ impl View {
                 rows.extend(shown.picture.about.iter().cloned());
             }
             Doc::Pdf(paper) => {
-                if let Some(title) = &paper.title {
-                    rows.push(("Title".to_string(), title.clone()));
-                }
-                rows.push(("Pages".to_string(), paper.pages.len().to_string()));
-                if let Some(page) = paper.pages.first() {
-                    rows.push(("Page size".to_string(), format!("{:.0} \u{d7} {:.0} mm", page.width / 72.0 * 25.4, page.height / 72.0 * 25.4)));
-                }
-                let rights = paper.rights;
-                if rights.encrypted {
-                    let allowed = match (rights.annotate, rights.modify) {
-                        (true, true) => "Encrypted; marking up allowed",
-                        (true, false) => "Encrypted; notes allowed, its pages not to be changed (no crop)",
-                        (false, _) => "Encrypted; its owner does not allow marking it up",
-                    };
-                    rows.push(("Security".to_string(), allowed.to_string()));
+                rows.push(("Shown by".to_string(), "SpatiMesh's PDF viewer".to_string()));
+                // A remote's: where the copy SpatiMesh shows is. Saved with SpatiMesh's own Save,
+                // which asks the room's chooser, which reaches the remote.
+                if let Some(copy) = paper.local.as_ref().filter(|_| crate::place::remote(&self.entry.path).is_some()) {
+                    rows.push(("Copy shown".to_string(), copy.display().to_string()));
                 }
             }
             Doc::Model(object) => {
@@ -1968,104 +1840,17 @@ impl View {
         if matches!(input, Input::PointerLeft) && std::mem::take(&mut self.drag_slides) {
             self.carousel.release(Instant::now(), self.page());
         }
-        // A locked document's password field has the keys: Enter gives what was typed to the
-        // PDF's thread to try (and keeps none of it here), Escape gives up asking.
+        // A PDF with nothing in its place -- SpatiMesh's window closed, it could not be shown, or
+        // SpatiMesh is slow to open it -- is opened again by its button. (Over SpatiMesh's
+        // viewer, the pointer and presses are its own: they do not come here.)
+        let size = self.entry.size;
         if let Doc::Pdf(paper) = &mut self.doc {
-            if let Some(lock) = paper.lock.as_mut() {
-                if let Input::Key { key: Key::Escape, .. } = input {
-                    let name = self.entry.name.clone();
-                    self.doc = Doc::Failed(format!("{name} is locked with a password."));
-                    return Want::Nothing;
-                }
-                if let Some(typed) = lock.field.input(input) {
-                    if typed == Typed::Entered && !lock.trying {
-                        let password = std::mem::take(&mut lock.field.text);
-                        lock.forget();
-                        if !password.is_empty() {
-                            lock.trying = true;
-                            lock.wrong = false;
-                            paper.pdf.ask(Ask::Unlock(pdf::Secret::new(password)));
-                        }
-                    }
-                    return Want::Nothing;
-                }
-                if matches!(input, Input::Key { .. }) {
-                    return Want::Nothing;
-                }
+            if paper.again.input(input) && paper.can_try_again() {
+                paper.try_again(size);
+                return Want::Nothing;
             }
         }
-        // The search field, while there is one, has the keys.
-        if let Doc::Pdf(paper) = &mut self.doc {
-            if let Some(field) = paper.page_field.as_mut() {
-                if let Input::Key { key: Key::Escape, .. } = input {
-                    paper.page_field = None;
-                    return Want::Nothing;
-                }
-                if let Some(typed) = field.input(input) {
-                    if typed == Typed::Entered {
-                        if let Ok(page) = field.text.trim().parse::<usize>() {
-                            paper.go_to = Some(page.clamp(1, paper.pages.len().max(1)) - 1);
-                        }
-                        paper.page_field = None;
-                    } else {
-                        // Numbers only.
-                        field.text.retain(|c| c.is_ascii_digit());
-                    }
-                    return Want::Nothing;
-                }
-                if matches!(input, Input::Key { .. }) {
-                    return Want::Nothing;
-                }
-            }
-            if let Some(field) = paper.find.as_mut() {
-                if let Input::Key { key: Key::Escape, .. } = input {
-                    paper.find = None;
-                    paper.found.clear();
-                    paper.forget_finding();
-                    return Want::Nothing;
-                }
-                let before = field.text.clone();
-                if let Some(typed) = field.input(input) {
-                    if typed == Typed::Entered {
-                        let text = field.text.trim().to_string();
-                        if paper.found.is_empty() || paper.finding {
-                            if !text.is_empty() {
-                                paper.finds += 1;
-                                paper.finding = true;
-                                paper.pdf.ask(Ask::Find { text, ticket: paper.finds });
-                            }
-                        } else {
-                            paper.found_at = (paper.found_at + 1) % paper.found.len();
-                            paper.go_to = Some(paper.found[paper.found_at].page);
-                        }
-                    } else if field.text != before {
-                        // Other words: what was found, or is being found, was for the old ones.
-                        paper.found.clear();
-                        paper.forget_finding();
-                    }
-                    return Want::Nothing;
-                }
-                if matches!(input, Input::Key { .. }) {
-                    return Want::Nothing;
-                }
-            }
-            if let Some(list) = paper.contents.as_mut() {
-                if let Input::Key { key: Key::Escape, .. } = input {
-                    paper.contents = None;
-                    return Want::Nothing;
-                }
-                if let Some(row) = list.input(input) {
-                    if let Some(page) = paper.outline.get(row).and_then(|h| h.page) {
-                        paper.go_to = Some(page);
-                    }
-                    paper.contents = None;
-                    return Want::Nothing;
-                }
-                if matches!(input, Input::Key { .. }) {
-                    return Want::Nothing;
-                }
-            }
-        }
+
         // The controls faded out are not there to be worked: a press where they were brings them
         // back and does nothing else, as a scroll there already did not scroll the strip.
         if let Input::Press { pressed, .. } = input {
@@ -2171,10 +1956,6 @@ impl View {
                 object.orbit.yaw -= dx * 0.008;
                 object.orbit.pitch = (object.orbit.pitch + dy * 0.006).clamp(-1.45, 1.45);
             }
-            Doc::Pdf(paper) => {
-                paper.scroll_by(-dy, all);
-                paper.pan_by(-dx, all);
-            }
             _ => {}
         }
     }
@@ -2214,10 +1995,6 @@ impl View {
                 }
             }
             Doc::Model(object) => object.orbit.zoom = (object.orbit.zoom * (-dy * 0.003).exp()).clamp(0.3, 6.0),
-            Doc::Pdf(paper) => {
-                paper.scroll_by(dy, all);
-                paper.pan_by(dx, all);
-            }
             _ => {}
         }
     }
@@ -2231,11 +2008,6 @@ impl View {
         }
         match &mut self.doc {
             Doc::Picture(shown) => shown.zoom_by(scale, all, x, y),
-            Doc::Pdf(paper) => {
-                let page = paper.current(all);
-                paper.zoom = (paper.zoom * scale).clamp(0.4, 4.0);
-                paper.go_to = Some(page);
-            }
             Doc::Model(object) => object.orbit.zoom = (object.orbit.zoom * scale).clamp(0.3, 6.0),
             _ => {}
         }
@@ -2258,11 +2030,6 @@ impl View {
                 }
             }
             Doc::Model(object) => object.orbit = Orbit::default(),
-            Doc::Pdf(paper) => {
-                let page = paper.current(all);
-                paper.zoom = if paper.zoom > 1.01 { 1.0 } else { 1.5 };
-                paper.go_to = Some(page);
-            }
             _ => {}
         }
     }
@@ -2282,7 +2049,9 @@ impl View {
     }
 
     /// A key: `letter` is its letter for a shortcut, the same key whatever the layout (Russian,
-    /// Greek ...) writes on it; `text` what it types, for the signs (+, -, 0, /).
+    /// Greek ...) writes on it; `text` what it types, for the signs (+, -, 0, /). Over a PDF these
+    /// are SpatiLoupe's only while it has the keyboard: a press in SpatiMesh's viewer gives the
+    /// keys to SpatiMesh (the room's doing), and a press on the bar gives them back.
     fn key(&mut self, key: Key, text: Option<&str>, letter: Option<char>, command: bool, shift: bool) -> Want {
         let all = self.bounds;
         let typed = text.unwrap_or("");
@@ -2296,17 +2065,10 @@ impl View {
                 }
                 return self.leave();
             }
-            // A document zoomed wider than the window is moved about in by them.
-            Key::Left | Key::Right if matches!(&self.doc, Doc::Pdf(paper) if paper.wide(all)) => {
-                if let Doc::Pdf(paper) = &mut self.doc {
-                    paper.pan_by(if key == Key::Left { -90.0 } else { 90.0 }, all);
-                }
-                return Want::Nothing;
-            }
             Key::Left => return self.slide_by(-1),
             Key::Right => return self.slide_by(1),
-            Key::Home if !matches!(self.doc, Doc::Pdf(_)) => return self.slide_to(0),
-            Key::End if !matches!(self.doc, Doc::Pdf(_)) => return self.slide_to(self.files.len().saturating_sub(1)),
+            Key::Home => return self.slide_to(0),
+            Key::End => return self.slide_to(self.files.len().saturating_sub(1)),
             _ => {}
         }
         if letter == Some('i') {
@@ -2367,80 +2129,9 @@ impl View {
                 }
                 _ => {}
             },
-            Doc::Pdf(paper) => {
-                if paper.pages.is_empty() {
-                    return Want::Nothing;
-                }
-                let page = paper.current(all);
-                match (key, typed) {
-                    (Key::Up, _) => paper.scroll_by(-90.0, all),
-                    (Key::Down, _) => paper.scroll_by(90.0, all),
-                    (Key::PageUp, _) => paper.go_to = Some(page.saturating_sub(1)),
-                    (Key::PageDown, _) => paper.go_to = Some((page + 1).min(paper.pages.len() - 1)),
-                    (Key::Space, _) => paper.scroll_by(if shift { -1.0 } else { 1.0 } * (all.h - 160.0), all),
-                    (Key::Home, _) => paper.go_to = Some(0),
-                    (Key::End, _) => paper.go_to = Some(paper.pages.len() - 1),
-                    (_, "+" | "=") => {
-                        paper.zoom = (paper.zoom * 1.2).min(4.0);
-                        paper.go_to = Some(page);
-                    }
-                    (_, "-" | "_") => {
-                        paper.zoom = (paper.zoom / 1.2).max(0.4);
-                        paper.go_to = Some(page);
-                    }
-                    (_, "0") => {
-                        paper.zoom = 1.0;
-                        paper.go_to = Some(page);
-                    }
-                    (Key::Char('f'), _) if command => paper.open_find(),
-                    (_, "/") => paper.open_find(),
-                    (_, _) if letter == Some('n') && !paper.found.is_empty() => {
-                        paper.found_at = (paper.found_at + 1) % paper.found.len();
-                        paper.go_to = Some(paper.found[paper.found_at].page);
-                    }
-                    (_, _) if letter == Some('N') && !paper.found.is_empty() => {
-                        paper.found_at = (paper.found_at + paper.found.len() - 1) % paper.found.len();
-                        paper.go_to = Some(paper.found[paper.found_at].page);
-                    }
-                    (_, _) if matches!(letter, Some('p' | 'P')) => paper.open_page_field(),
-                    (_, _) if matches!(letter, Some('o' | 'O')) && !paper.outline.is_empty() => {
-                        let mut list = List::default();
-                        list.focused = true;
-                        list.cursor = paper.outline.iter().rposition(|h| h.page.is_some_and(|p| p <= page)).unwrap_or(0);
-                        paper.contents = Some(list);
-                    }
-                    _ => {}
-                }
-            }
             _ => {}
         }
         Want::Nothing
-    }
-}
-
-impl Paper {
-    fn open_page_field(&mut self) {
-        let mut field = Field::default();
-        field.focused = true;
-        field.hint = format!("A page, 1 to {}", self.pages.len());
-        self.page_field = Some(field);
-    }
-
-    fn open_find(&mut self) {
-        let mut field = Field::default();
-        field.focused = true;
-        field.hint = "Find in this document".into();
-        self.find = Some(field);
-    }
-
-    fn drawn_pending(&mut self, page: usize, width: u32, height: u32, rgba: Vec<u8>) {
-        self.pending.push((page, width, height, rgba));
-    }
-
-    /// A search going on is not waited for: its answer, when it comes, is not this one's.
-    fn forget_finding(&mut self) {
-        self.finds += 1;
-        self.finding = false;
     }
 }
 
@@ -2515,187 +2206,51 @@ fn turned(uv: [f32; 4], turns: u8) -> [f32; 4] {
     }
 }
 
-/// The document's pages laid out on `all`, its page of the carousel, and drawn no further out than
-/// `seen`, the part of that page in the window. Which keys do what is the controls'.
-/// A locked document's question, in the middle of `all`: what it is, the field its password is
-/// typed into (dots), and whether the one given was wrong or is being tried.
-fn draw_lock(p: &mut Painter, gl: &Gl, lock: &mut Lock, all: Rect, name: &str) {
-    let w = 720.0f32.min(all.w - 80.0);
-    let h = 300.0;
-    let panel = Rect::new(all.x + (all.w - w) * 0.5, all.y + (all.h - h) * 0.5, w, h);
-    look::glass(p, gl, panel, 22.0, 1.0);
-    let mut inner = panel.inset(32.0);
-    let head = inner.take_top(44.0);
-    draw_icon(p, gl, Icon::Lock, Rect { w: 40.0, h: 40.0, ..head }, theme::ink());
-    p.label(gl, &format!("{name} is locked"), Rect { x: head.x + 56.0, w: head.w - 56.0, ..head }, theme::ROW_EM, theme::ink(), 0.0);
-    inner.take_top(6.0);
-    p.label(gl, "Enter its password to open it.", inner.take_top(34.0), theme::DETAIL_EM, theme::ink_detail(), 0.0);
-    inner.take_top(20.0);
-    lock.field.draw(p, gl, inner.take_top(Field::HEIGHT));
-    inner.take_top(16.0);
-    let (said, colour) = if lock.trying {
-        ("Opening\u{2026}", theme::ink_hint())
-    } else if lock.wrong {
-        ("That password does not open it. Try again.", look::trouble())
-    } else {
-        ("", theme::ink_hint())
+/// What is under SpatiMesh's viewer of a PDF, in `place` (where the viewer is, or will be): until
+/// SpatiMesh's window has drawn there, what is being done -- the copy from a remote coming, then
+/// "Opening in SpatiMesh…", quietly, with the dots -- and if it goes, or could not be shown, what
+/// became of it and a button to open it again.
+fn draw_pdf(p: &mut Painter, gl: &Gl, paper: &mut Paper, place: Rect, entry: &Entry) {
+    let middle = place.y + place.h * 0.45;
+    let line = |p: &mut Painter, text: &str, colour: Color| {
+        let column = Rect::new(place.x + 60.0, middle + 36.0, (place.w - 120.0).max(0.0), 40.0);
+        p.label(gl, text, column, theme::DETAIL_EM, colour, 0.5);
     };
-    p.label(gl, said, inner.take_top(34.0), theme::DETAIL_EM, colour, 0.0);
-}
-
-fn draw_paper(p: &mut Painter, gl: &Gl, paper: &mut Paper, all: Rect, seen: Rect, name: &str) {
-    paper.placed.clear();
-    if let Some(lock) = paper.lock.as_mut() {
-        draw_lock(p, gl, lock, all, name);
-        return;
-    }
-    for texture in paper.stale.drain(..) {
-        p.forget(gl, texture);
-    }
-    let pending = std::mem::take(&mut paper.pending);
-    for (page, w, h, rgba) in pending {
-        if let Ok(texture) = upload(gl, &rgba, w, h) {
-            if let Some((old, _)) = paper.drawn.insert(page, (texture, w)) {
-                p.forget(gl, old);
-            }
+    let dots = Rect::new(place.x, middle - 20.0, place.w, 40.0);
+    let (said, colour) = match &paper.stage {
+        Stage::Fetching { done, total } => {
+            look::waiting(p, gl, dots, paper.since);
+            let from = crate::place::remote(&entry.path).map(|(remote, _)| remote).unwrap_or_default();
+            let far = if *total > 0 { format!("  {}%", (*done as f64 * 100.0 / *total as f64).min(100.0).floor()) } else { String::new() };
+            line(p, &format!("Copying it here from {from}\u{2026}{far}"), theme::ink_hint());
+            paper.again = Button::default();
+            return;
         }
-    }
-    if paper.pages.is_empty() {
-        look::waiting(p, gl, all, Instant::now() - Duration::from_millis(1));
-        return;
-    }
-    if let Some(page) = paper.go_to.take() {
-        paper.show_page(page, all);
-    }
-    // The page in view's words, at hand for the room's speech when it asks.
-    let page = paper.current(all);
-    paper.words_on(page);
-    let width = paper.width(all);
-    // Zoomed out again, or the window wider: the column kept within its room.
-    paper.pan_by(0.0, all);
-    let left = all.x + (all.w - width) * 0.5 + paper.across;
-    let layout = paper.layout(all);
-    let pixels = (width * p.scale()).round() as u32;
-    let mut visible = Vec::new();
-    p.clip(gl, seen);
-    for (index, (y, h)) in layout.iter().enumerate() {
-        let top = all.y + y - paper.scroll;
-        if top > all.bottom() + all.h || top + h < all.y - all.h {
-            continue;
+        Stage::Opening | Stage::Shown => {
+            look::waiting(p, gl, dots, paper.since);
+            line(p, "Opening in SpatiMesh\u{2026}", theme::ink_hint());
+            paper.again = Button::default();
+            return;
         }
-        let near = top < all.bottom() && top + h > all.y;
-        visible.push((index, near));
-        let rect = Rect::new(left, top, width, *h);
-        if !near {
-            continue;
-        }
-        paper.placed.push((index, rect));
-        // What is shown of the page -- all of it, or what markup cropped it to -- as fractions.
-        let (pw, ph) = paper.pages.get(index).map_or((1.0, 1.0), |page| (page.width.max(1.0), page.height.max(1.0)));
-        let region = paper.region(index);
-        let uv = [region.x0 / pw, region.y0 / ph, region.x1 / pw, region.y1 / ph];
-        p.glow(gl, rect, 4.0, [0.0, 0.0, 0.0, 0.5], 28.0);
-        match paper.drawn.get(&index) {
-            Some((texture, _)) => p.image(gl, *texture, rect, uv, 4.0, [1.0, 1.0, 1.0, 1.0], true),
-            None => p.fill(gl, rect, 4.0, [0.92, 0.92, 0.94, 1.0]),
-        }
-        // What a search found on this page, washed in the room's teal.
-        for (n, found) in paper.found.iter().enumerate().filter(|(_, f)| f.page == index) {
-            let current = n == paper.found_at;
-            for r in &found.rects {
-                // Fractions of the page, as fractions of what is shown of it.
-                let fx = |f: f32| (f * pw - region.x0) / region.w().max(1e-3);
-                let fy = |f: f32| (f * ph - region.y0) / region.h().max(1e-3);
-                let r = [fx(r[0]), fy(r[1]), fx(r[2]), fy(r[3])];
-                let at = Rect::new(rect.x + r[0] * rect.w - 2.0, rect.y + r[1] * rect.h - 2.0, (r[2] - r[0]) * rect.w + 4.0, (r[3] - r[1]) * rect.h + 4.0);
-                let colour = if current { [look::TEAL[0], look::TEAL[1], look::TEAL[2], 0.45] } else { [look::BLUE[0], look::BLUE[1], look::BLUE[2], 0.25] };
-                p.fill(gl, at, 3.0, colour);
-            }
-        }
-        // Its text, for Live Text: its own characters asked for once, and drawn where it is.
-        paper.ask_letters(index);
-        paper.text_draw_page(p, gl, index, rect);
-    }
-    p.unclip(gl);
-    // Pages are drawn at the width they are shown, and drawn again when that changes much.
-    for (index, near) in visible.iter().copied() {
-        // A cropped page is drawn whole, as wide as its kept part needs.
-        let whole = paper.pages.get(index).map_or(1.0, |page| page.width.max(1.0));
-        let pixels = (pixels as f32 * whole / paper.region(index).w().max(1.0)).round() as u32;
-        let have = paper.drawn.get(&index).map(|(_, w)| *w);
-        let asked = paper.asked.get(&index).copied();
-        let good = |w: u32| (w as f32) >= pixels.min(6000) as f32 * 0.9 && (w as f32) <= pixels as f32 * 1.6;
-        if !have.is_some_and(good) && !asked.is_some_and(good) && (near || have.is_none()) {
-            paper.asked.insert(index, pixels);
-            paper.pdf.ask(Ask::Draw { page: index, width: pixels.min(6000), most_height: crate::picture::LARGEST });
-        }
-    }
-    // Pages far from view let go of: a thousand-page book is not a thousand textures.
-    let keep: Vec<usize> = visible.iter().map(|(i, _)| *i).collect();
-    let far: Vec<usize> = paper.drawn.keys().copied().filter(|i| !keep.iter().any(|k| k.abs_diff(*i) <= 3)).collect();
-    for index in far {
-        if let Some((texture, _)) = paper.drawn.remove(&index) {
-            paper.stale.push(texture);
-        }
-    }
-    // The search field, and the contents, over the pages.
-    if let Some(field) = paper.find.as_mut() {
-        let rect = Rect::new(all.right() - 640.0, all.y + 24.0 + theme::ROW_HEIGHT + 40.0, 600.0, Field::HEIGHT + 24.0);
-        look::glass(p, gl, rect, 20.0, 1.0);
-        let inner = rect.inset(12.0);
-        let count_text = if paper.finding {
-            "Finding\u{2026}".to_string()
-        } else if !paper.found.is_empty() {
-            format!("{} of {}", paper.found_at + 1, paper.found.len())
-        } else if !field.text.is_empty() {
-            "Enter finds".to_string()
-        } else {
-            String::new()
-        };
-        let count_w = p.measure(gl, &count_text, theme::DETAIL_EM, 8192.0).0;
-        field.draw(p, gl, Rect { w: inner.w - count_w - 20.0, ..inner });
-        p.label(gl, &count_text, Rect { x: inner.right() - count_w, w: count_w, ..inner }, theme::DETAIL_EM, theme::ink_hint(), 1.0);
-    }
-    if let Some(field) = paper.page_field.as_mut() {
-        let rect = Rect::new(all.x + (all.w - 420.0) * 0.5, all.y + 24.0 + theme::ROW_HEIGHT + 40.0, 420.0, Field::HEIGHT + 24.0);
-        look::glass(p, gl, rect, 20.0, 1.0);
-        let inner = rect.inset(12.0);
-        let of = format!("of {}", paper.pages.len());
-        let of_w = p.measure(gl, &of, theme::DETAIL_EM, 8192.0).0;
-        field.draw(p, gl, Rect { w: inner.w - of_w - 20.0, ..inner });
-        p.label(gl, &of, Rect { x: inner.right() - of_w, w: of_w, ..inner }, theme::DETAIL_EM, theme::ink_hint(), 1.0);
-    }
-    if let Some(list) = paper.contents.as_mut() {
-        let rect = Rect::new(all.x + 28.0, all.y + 24.0 + theme::ROW_HEIGHT + 42.0, 560.0, all.h - theme::ROW_HEIGHT - 110.0);
-        look::glass(p, gl, rect, 22.0, 1.0);
-        let rows: Vec<Row> = paper
-            .outline
-            .iter()
-            .map(|h| {
-                let label = format!("{}{}", "    ".repeat(h.depth.min(4)), h.title);
-                match h.page {
-                    Some(page) => Row::with(label, (page + 1).to_string()),
-                    None => Row::new(label),
-                }
-            })
-            .collect();
-        list.draw(p, gl, rect.inset(16.0), &rows);
-    }
-}
-
-/// Which keys do what in a document.
-fn paper_hint(paper: &Paper) -> &'static str {
-    if paper.lock.is_some() {
-        "[Enter] Open  [Esc] Give up"
-    } else if paper.outline.is_empty() {
-        "[/] Find  [+] [\u{2212}] Zoom  [P] Page  [PgUp] [PgDn] Turn"
+        Stage::Closed => (format!("SpatiMesh has closed {}.", entry.name), theme::ink_detail()),
+        Stage::Failed { why, .. } => (why.clone(), look::trouble()),
+    };
+    let em = theme::ROW_EM * 0.8;
+    let column = (place.w - 160.0).clamp(0.0, 1000.0);
+    let (w, h) = p.measure(gl, &said, em, column);
+    let top = middle - h - 10.0;
+    p.text(gl, &said, place.x + (place.w - w) * 0.5, top, em, column, colour);
+    if paper.can_try_again() {
+        let label = if paper.stage == Stage::Closed { "Open again" } else { "Try again" };
+        let width = Button::width(p, gl, label).max(220.0);
+        paper.again.draw(p, gl, Rect::new(place.x + (place.w - width) * 0.5, middle + 26.0, width, Button::HEIGHT), label);
     } else {
-        "[/] Find  [+] [\u{2212}] Zoom  [O] Contents  [P] Page  [PgUp] [PgDn] Turn"
+        paper.again = Button::default();
     }
 }
 
-/// Which keys do what, on a pane of glass of its own at the foot of `all`: over a page or a
-/// picture it would be unreadable.
+/// Which keys do what, on a pane of glass of its own at the foot of `all`: over a picture it
+/// would be unreadable.
 fn hint_pane(p: &mut Painter, gl: &Gl, all: Rect, hint: &str) {
     hint_pane_over(p, gl, all, all.bottom() - 18.0, hint);
 }
@@ -2838,11 +2393,6 @@ impl View {
         match self.doc {
             Doc::Picture(shown) => {
                 for texture in [shown.texture, shown.right].into_iter().flatten() {
-                    unsafe { gl.api().delete_texture(texture.raw()) };
-                }
-            }
-            Doc::Pdf(paper) => {
-                for texture in paper.drawn.into_values().map(|(texture, _)| texture).chain(paper.stale) {
                     unsafe { gl.api().delete_texture(texture.raw()) };
                 }
             }
@@ -3168,108 +2718,6 @@ mod tests {
         assert_eq!(view.slid, 0.0);
     }
 
-    /// A PDF of two pages being read, its thread played by the test.
-    fn reading() -> (View, std::sync::mpsc::Sender<pdf::Answer>, std::sync::mpsc::Receiver<Ask>) {
-        let entry = Entry { name: "a.pdf".into(), path: PathBuf::from("/nowhere/a.pdf"), kind: Kind::Pdf, size: 1, modified: String::new() };
-        let mut view = View::new(entry, 0, 1, vec![0]);
-        let (pdf, tell, asked) = Pdf::played();
-        view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
-        let page = pdf::Page { width: 600.0, height: 800.0 };
-        tell.send(pdf::Answer::Opened { pages: vec![page.clone(), page], outline: Vec::new(), title: None, rights: pdf::Rights::ALL }).unwrap();
-        view.answers();
-        (view, tell, asked)
-    }
-
-    fn paper(view: &mut View) -> &mut Paper {
-        match &mut view.doc {
-            Doc::Pdf(paper) => paper,
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    fn a_page_drawn_while_a_search_began_is_kept() {
-        let (mut view, tell, asked) = reading();
-        paper(&mut view).asked.insert(0, 800);
-        view.input(&key(Key::Char('/'), "/"));
-        view.input(&key(Key::Char('a'), "a"));
-        view.input(&key(Key::Enter, ""));
-        assert!(matches!(asked.try_recv(), Ok(Ask::Find { .. })));
-        // Drawn before the search was asked for, and come after it.
-        tell.send(pdf::Answer::Drawn { page: 0, width: 800, height: 1066, rgba: Vec::new() }).unwrap();
-        view.answers();
-        let paper = paper(&mut view);
-        assert!(paper.asked.is_empty(), "no longer waited for");
-        assert_eq!(paper.pending.len(), 1, "on its way to the GPU");
-    }
-
-    #[test]
-    fn what_was_found_for_words_since_changed_is_not_taken() {
-        let (mut view, tell, asked) = reading();
-        view.input(&key(Key::Char('/'), "/"));
-        view.input(&key(Key::Char('a'), "a"));
-        view.input(&key(Key::Enter, ""));
-        let Ok(Ask::Find { ticket, .. }) = asked.try_recv() else { panic!("a search") };
-        // The words changed while it was being found: its answer is for the old ones.
-        view.input(&key(Key::Char('b'), "b"));
-        assert!(!paper(&mut view).finding);
-        tell.send(pdf::Answer::Found { found: vec![pdf::Found { page: 1, rects: Vec::new() }], ticket }).unwrap();
-        view.answers();
-        assert!(paper(&mut view).found.is_empty());
-        // Asked again, for the words now there, it is taken.
-        view.input(&key(Key::Enter, ""));
-        let Ok(Ask::Find { ticket, text }) = asked.try_recv() else { panic!("a search") };
-        assert_eq!(text, "ab");
-        tell.send(pdf::Answer::Found { found: vec![pdf::Found { page: 1, rects: Vec::new() }], ticket }).unwrap();
-        view.answers();
-        assert_eq!(paper(&mut view).found.len(), 1);
-    }
-
-    #[test]
-    fn a_document_zoomed_wider_than_the_window_moves_sideways() {
-        let (mut view, _tell, _asked) = reading();
-        let all = view.bounds;
-        // Fitted, it does not move.
-        view.input(&Input::Scroll { dx: 40.0, dy: 0.0 });
-        assert_eq!(paper(&mut view).across, 0.0);
-        for _ in 0..6 {
-            view.input(&key(Key::Char('='), "+"));
-        }
-        assert!(paper(&mut view).wide(all));
-        // A scroll to the right shows more of the right: the column goes left.
-        view.input(&Input::Scroll { dx: 40.0, dy: 0.0 });
-        assert_eq!(paper(&mut view).across, -40.0);
-        view.input(&key(Key::Right, ""));
-        assert_eq!(paper(&mut view).across, -130.0);
-        assert!(view.carousel.resting(), "the arrow moved the page, not to the next file");
-        // As far as its edge, and no further.
-        for _ in 0..100 {
-            view.input(&key(Key::Left, ""));
-        }
-        let room = paper(&mut view).across_room(all);
-        assert_eq!(paper(&mut view).across, room);
-    }
-
-    #[test]
-    fn the_words_on_the_page_are_told_once_they_have_come() {
-        let (mut view, tell, asked) = reading();
-        // Asked for, not waited for: nothing yet.
-        assert_eq!(view.describe(), ("a.pdf".to_string(), String::new()));
-        let mut words = Vec::new();
-        while let Ok(Ask::Text { page }) = asked.try_recv() {
-            words.push(page);
-        }
-        assert_eq!(words, [1, 0]);
-        tell.send(pdf::Answer::Text { page: 0, text: "Dear reader".into() }).unwrap();
-        view.answers();
-        assert_eq!(view.describe().1, "Dear reader");
-        assert!(asked.try_recv().is_err(), "asked for once");
-        // The find field's words, while it is open.
-        view.input(&key(Key::Char('/'), "/"));
-        view.input(&key(Key::Char('q'), "q"));
-        assert_eq!(view.describe().1, "q");
-    }
-
     #[test]
     fn letter_shortcuts_are_the_key_s_place_on_any_layout() {
         let mut view = viewing(3, 1);
@@ -3552,14 +3000,14 @@ mod tests {
         assert!(view.saving.is_some());
         assert!(matches!(view.input(&chord('z', false)), Want::Nothing));
         assert_eq!(desk(&mut view).markup.marks().notes.len(), 1);
-        view.saved(Ok(PathBuf::from("/nowhere/b.jpg")), None);
+        view.saved(Ok(PathBuf::from("/nowhere/b.jpg")));
         assert!(matches!(view.take_wanted(), Some(Want::Saved { said, .. }) if said == "Saved b.jpg."));
         // A copy is not asked about.
         let mut view = marking(3, 1);
         desk(&mut view).choose(Tool::Box);
         drag(&mut view, (400.0, 400.0), (800.0, 600.0));
         assert!(matches!(view.input(&chord('s', true)), Want::Save(saving) if saving.copy));
-        view.saved(Err("the disk is full".into()), None);
+        view.saved(Err("the disk is full".into()));
         assert_eq!(view.trouble.as_deref(), Some("SpatiLoupe could not save b.jpg: the disk is full."));
         assert!(view.unsaved(), "nothing lost when it was not written");
     }
@@ -3621,28 +3069,6 @@ mod tests {
     }
 
     #[test]
-    fn markup_is_offered_for_flat_still_pictures_and_pdfs_only() {
-        let mut stereo = viewing(3, 1);
-        if let Doc::Picture(shown) = &mut stereo.doc {
-            shown.eyes = Some(Eyes::SideBySide);
-        }
-        stereo.input(&chord('a', true));
-        assert!(stereo.desk.is_none());
-        let mut moving = viewing(3, 1);
-        if let Doc::Picture(shown) = &mut moving.doc {
-            shown.picture.frames = vec![(Vec::new(), Duration::from_millis(100))];
-        }
-        moving.input(&chord('a', true));
-        assert!(moving.desk.is_none());
-        let (mut pdf, _tell, _asked) = reading();
-        pdf.input(&chord('a', true));
-        assert!(pdf.marking());
-        // Taken out and put back with nothing drawn: nothing is kept, nothing asked.
-        pdf.input(&chord('a', true));
-        assert!(pdf.desk.is_none());
-    }
-
-    #[test]
     fn words_are_typed_where_pressed_and_kept_by_a_press_elsewhere() {
         let mut view = marking(3, 1);
         desk(&mut view).choose(Tool::Text);
@@ -3678,140 +3104,151 @@ mod tests {
     }
 
     #[test]
-    fn a_pdf_page_is_drawn_on_in_its_points() {
-        let (mut view, _tell, asked) = reading();
+    fn a_pdf_is_shown_by_spatimesh_in_a_place_under_the_bar_that_follows_the_window() {
+        let mut view = pdf_view("/home/me/Docs/a report #2.pdf");
+        assert_eq!(pdf(&view).stage, Stage::Opening);
+        // Not asked for at once: a PDF slid past on the way to another is not opened.
+        assert_eq!(view.place_wanted(false), None);
+        settle(&mut view);
+        let wanted = view.place_wanted(false).expect("SpatiMesh asked for, once it has stayed");
+        assert_eq!((wanted.ticket, wanted.tries), (7, 0));
+        assert_eq!(wanted.url, "file:///home/me/Docs/a%20report%20%232.pdf");
+        // All of the window under the bar, to its edges: the bar's foot is at 108.
+        assert_eq!(wanted.rect, (0, 120, 1440, 780));
+        // The window resized: the place follows.
+        view.set_size((1000, 700));
+        assert_eq!(view.place_wanted(true).unwrap().rect, (0, 120, 1000, 580));
+        // The info pane open: its column is left out, so that SpatiMesh's window is not over it.
+        view.input(&key(Key::Char('i'), "i"));
+        assert!(view.info);
+        assert_eq!(view.place_wanted(true).unwrap().rect, (0, 120, 1000 - 548, 580));
+        view.input(&key(Key::Escape, ""));
+        assert!(!view.info, "Escape closes the info pane first");
+        // To the next file, by the arrow key SpatiLoupe has while it has the keyboard: the place is
+        // hidden as the carousel takes the PDF away, and kept; one not yet made is not made.
+        view.input(&key(Key::Right, ""));
+        view.tick();
+        assert_eq!(view.place_wanted(true).unwrap().rect, (0, 0, 0, 0));
+        assert_eq!(view.place_wanted(false), None);
+        assert_eq!(view.heading(), Some(2));
+    }
+
+    #[test]
+    fn a_pdf_has_its_bar_but_no_markup_and_says_it_is_shown_by_spatimesh() {
+        let mut view = pdf_view("/home/me/Docs/plan.pdf");
         view.input(&chord('a', true));
-        // Where drawing put the pages: the first 600 points wide shown 800 wide.
+        assert!(view.desk.is_none() && !view.markable(), "marked up with SpatiMesh's own tools");
+        assert!(view.title_words().1.starts_with("PDF   \u{b7}   "), "{}", view.title_words().1);
+        assert!(view.about().iter().any(|(what, value)| what == "Shown by" && value == "SpatiMesh's PDF viewer"));
+        assert!(!view.about().iter().any(|(what, _)| what == "Copy shown"), "a file of this machine is shown itself");
+        // The room's speech: a PDF, its name, and that SpatiMesh's viewer shows it.
+        assert_eq!(view.describe(), ("plan.pdf".to_string(), "The PDF plan.pdf, being opened in SpatiMesh's PDF viewer, inside SpatiLoupe's window.".to_string()));
+        view.pdf_attached();
+        assert_eq!(pdf(&view).stage, Stage::Shown);
+        assert_eq!(view.describe().1, "The PDF plan.pdf, shown by SpatiMesh's PDF viewer inside SpatiLoupe's window.");
+        // Its bar stays, and nothing of it fades.
+        view.clock = AutoHide::new(Instant::now() - CONTROLS_SHOWN - Duration::from_secs(2));
+        assert_eq!(view.chrome(), 1.0);
+        assert!(!view.animating(), "SpatiMesh draws it: nothing to draw here every frame");
+        // Escape is back to the folder.
+        assert!(matches!(view.input(&key(Key::Escape, "")), Want::Leave));
+    }
+
+    #[test]
+    fn spatimesh_closing_is_said_and_the_pdf_opened_again_in_a_place_of_its_own() {
+        let mut view = pdf_view("/home/me/Docs/plan.pdf");
+        settle(&mut view);
+        view.pdf_attached();
+        assert!(view.place_wanted(true).is_some());
+        view.pdf_detached();
+        assert_eq!(pdf(&view).stage, Stage::Closed);
+        assert_eq!(view.place_wanted(true), None, "the place let go of");
+        assert!(pdf(&view).can_try_again());
+        assert_eq!(view.describe().1, "The PDF plan.pdf: SpatiMesh's viewer of it has closed.");
+        // Open again: another try, which is another place, asked for once it has stayed.
         if let Doc::Pdf(paper) = &mut view.doc {
-            paper.placed = vec![(0, Rect::new(320.0, 216.0, 800.0, 1066.67)), (1, Rect::new(320.0, 1310.0, 800.0, 1066.67))];
+            paper.try_again(1234);
         }
-        desk(&mut view).choose(Tool::Box);
-        drag(&mut view, (400.0, 300.0), (720.0, 456.0));
-        let note = desk(&mut view).markup.marks().notes[0].clone();
-        assert_eq!(note.page, 0);
-        let Drawn::Box(a) = note.shape else { panic!("a box") };
-        // (400 - 320) / 800 * 600 = 60 points in, (300 - 216) * 0.75 = 63 down.
-        assert!((a.x0 - 60.0).abs() < 0.01 && (a.y0 - 63.0).abs() < 0.01 && (a.x1 - 300.0).abs() < 0.01 && (a.y1 - 180.0).abs() < 0.01, "{a:?}");
-        // Saved: asked of the document's own thread, which writes it.
-        view.input(&chord('s', true));
-        let saved = std::iter::from_fn(|| asked.try_recv().ok()).find_map(|ask| match ask {
-            Ask::Save { marks, copy } => Some((marks.notes.len(), copy)),
-            _ => None,
-        });
-        assert_eq!(saved, Some((1, true)));
-    }
-
-    fn typed(view: &mut View, words: &str) {
-        for c in words.chars() {
-            view.input(&Input::Key { key: Key::Char(c), text: Some(c.to_string()), modifiers: Default::default(), letter: None });
-        }
-    }
-
-    fn lock(view: &mut View) -> Option<&mut Lock> {
-        paper(view).lock.as_mut()
+        assert_eq!(pdf(&view).stage, Stage::Opening);
+        assert_eq!(view.place_wanted(false), None);
+        settle(&mut view);
+        assert_eq!(view.place_wanted(false).map(|w| w.tries), Some(1));
+        assert!(!pdf(&view).can_try_again(), "nothing to try again while it opens");
+        // A room that keeps no places (a desktop's): said, and nothing to try again.
+        view.place_refused("No place".into(), false);
+        assert!(!pdf(&view).can_try_again());
+        assert_eq!(view.place_wanted(false), None);
     }
 
     #[test]
-    fn a_locked_pdf_asks_for_its_password_and_keeps_none_of_it() {
-        let entry = Entry { name: "locked.pdf".into(), path: PathBuf::from("/nowhere/locked.pdf"), kind: Kind::Pdf, size: 1, modified: String::new() };
-        let mut view = View::new(entry, 0, 1, vec![0]);
-        let (pdf, tell, asked) = Pdf::played();
-        view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
-        tell.send(pdf::Answer::Locked { wrong: false }).unwrap();
-        view.answers();
-        let field = &lock(&mut view).expect("asked").field;
-        assert!(field.secret && field.focused, "a field of dots, typed into at once");
-        assert_eq!(paper_hint(paper(&mut view)), "[Enter] Open  [Esc] Give up");
-        // Typed: never said to the room's speech, nor anywhere but the field.
-        typed(&mut view, "pässwörd");
-        assert_eq!(lock(&mut view).unwrap().field.text, "pässwörd");
-        let said = view.describe().1;
-        assert!(!said.contains("pässwörd") && said.contains("locked"), "{said}");
-        // The arrows are the field's, not the folder's.
-        assert!(matches!(view.input(&key(Key::Left, "")), Want::Nothing));
-        assert!(view.carousel.resting());
-        // Enter: given to the PDF's thread, the field emptied.
-        view.input(&key(Key::Enter, ""));
-        let given = std::iter::from_fn(|| asked.try_recv().ok()).find_map(|ask| match ask {
-            Ask::Unlock(secret) => Some(secret.expose().to_string()),
-            _ => None,
-        });
-        assert_eq!(given.as_deref(), Some("pässwörd"));
-        let lock_now = lock(&mut view).unwrap();
-        assert!(lock_now.field.text.is_empty() && lock_now.trying && !lock_now.wrong);
-        // A wrong one is said, and asked again.
-        tell.send(pdf::Answer::Locked { wrong: true }).unwrap();
-        view.answers();
-        let lock_now = lock(&mut view).unwrap();
-        assert!(lock_now.wrong && !lock_now.trying && lock_now.field.text.is_empty());
-        // Enter with nothing typed gives nothing.
-        view.input(&key(Key::Enter, ""));
-        assert!(asked.try_recv().is_err());
-        // The right one: the pages, and the question gone.
-        typed(&mut view, "user");
-        view.input(&key(Key::Enter, ""));
-        let page = pdf::Page { width: 600.0, height: 800.0 };
-        tell.send(pdf::Answer::Opened { pages: vec![page], outline: Vec::new(), title: None, rights: pdf::Rights { encrypted: true, annotate: true, modify: true } }).unwrap();
-        view.answers();
-        assert!(lock(&mut view).is_none() && paper(&mut view).pages.len() == 1);
-        assert!(view.about().iter().any(|(what, value)| what == "Security" && value == "Encrypted; marking up allowed"));
-        // Escape gives up asking: the file says it is locked.
-        let entry = Entry { name: "locked.pdf".into(), path: PathBuf::from("/nowhere/locked.pdf"), kind: Kind::Pdf, size: 1, modified: String::new() };
-        let mut view = View::new(entry, 0, 1, vec![0]);
-        let (pdf, tell, _asked) = Pdf::played();
-        view.doc = Doc::Pdf(Box::new(Paper::new(pdf)));
-        tell.send(pdf::Answer::Locked { wrong: false }).unwrap();
-        view.answers();
-        typed(&mut view, "half");
-        assert!(matches!(view.input(&key(Key::Escape, "")), Want::Nothing), "not back to the folder");
-        assert!(matches!(&view.doc, Doc::Failed(why) if why == "locked.pdf is locked with a password."));
-    }
-
-    #[test]
-    fn markup_keeps_to_what_a_pdf_s_owner_allows() {
-        // Notes not allowed: not offered, and said why.
-        let (mut view, tell, _asked) = reading();
-        tell.send(pdf::Answer::Opened { pages: vec![pdf::Page { width: 600.0, height: 800.0 }], outline: Vec::new(), title: None, rights: pdf::Rights { encrypted: true, annotate: false, modify: true } }).unwrap();
-        view.answers();
-        view.input(&chord('a', true));
-        assert!(view.desk.is_none() && !view.marking());
-        assert_eq!(view.trouble.as_deref(), Some("The owner of a.pdf does not allow marking it up: its permissions keep notes out."));
-        // Notes allowed, the pages not to be changed: markup, without Crop.
-        let (mut view, tell, _asked) = reading();
-        tell.send(pdf::Answer::Opened { pages: vec![pdf::Page { width: 600.0, height: 800.0 }], outline: Vec::new(), title: None, rights: pdf::Rights { encrypted: true, annotate: true, modify: false } }).unwrap();
-        view.answers();
-        view.input(&chord('a', true));
-        assert!(view.marking());
-        assert!(!desk(&mut view).may_crop);
-        desk(&mut view).choose(Tool::Crop);
-        assert_eq!(desk(&mut view).tool, Tool::Select, "Crop is not taken up");
-        desk(&mut view).choose(Tool::Box);
-        assert_eq!(desk(&mut view).tool, Tool::Box);
-        // Not encrypted, or opened with the owner's password: everything.
-        let (mut view, _tell, _asked) = reading();
-        view.input(&chord('a', true));
-        assert!(view.marking() && desk(&mut view).may_crop);
-    }
-
-    #[test]
-    fn a_locked_pdf_written_is_opened_again_with_its_password() {
-        let (mut view, tell, _asked) = reading();
-        view.input(&chord('a', true));
+    fn a_remote_s_pdf_is_copied_here_first_and_shown_from_its_copy() {
+        let mut view = pdf_view("Drive:Docs/report.pdf");
+        assert_eq!(pdf(&view).stage, Stage::Fetching { done: 0, total: 1234 });
+        settle(&mut view);
+        assert_eq!(view.place_wanted(false), None, "nothing to show until it is here");
+        view.fetching(600, 1234);
+        assert_eq!(pdf(&view).stage, Stage::Fetching { done: 600, total: 1234 });
+        // SpatiMesh's window going says nothing while there is none.
+        view.pdf_detached();
+        assert!(matches!(pdf(&view).stage, Stage::Fetching { .. }));
+        // Not copied: said, with a way to try again -- which copies it again.
+        view.fetched(Err("the remote did not answer".into()));
+        assert_eq!(pdf(&view).stage, Stage::Failed { why: "SpatiLoupe could not copy report.pdf here to be shown: the remote did not answer.".into(), again: true });
         if let Doc::Pdf(paper) = &mut view.doc {
-            paper.placed = vec![(0, Rect::new(320.0, 216.0, 800.0, 1066.67))];
+            paper.try_again(1234);
         }
-        desk(&mut view).choose(Tool::Box);
-        drag(&mut view, (400.0, 300.0), (720.0, 456.0));
-        view.input(&chord('s', true));
-        tell.send(pdf::Answer::Saved { result: Ok(PathBuf::from("/nowhere/a (edited).pdf")), password: Some(pdf::Secret::new("user".into())) }).unwrap();
-        view.answers();
-        match view.take_wanted() {
-            Some(Want::Saved { path, password: Some(password), .. }) => {
-                assert_eq!(path, PathBuf::from("/nowhere/a (edited).pdf"));
-                assert_eq!(password.expose(), "user");
-                assert_eq!(format!("{password:?}"), "Secret", "never printed");
-            }
-            _ => panic!("written, with its password"),
+        assert_eq!(pdf(&view).stage, Stage::Fetching { done: 0, total: 1234 });
+        // Copied: shown from the copy, which the info pane names.
+        let copy = PathBuf::from("/home/me/.cache/spatiloupe/remote/0123456789abcdef/report.pdf");
+        view.fetched(Ok(copy.clone()));
+        assert_eq!(pdf(&view).stage, Stage::Opening);
+        settle(&mut view);
+        assert_eq!(view.place_wanted(false).map(|w| w.url), Some("file:///home/me/.cache/spatiloupe/remote/0123456789abcdef/report.pdf".to_string()));
+        assert!(view.about().iter().any(|(what, value)| what == "Copy shown" && *value == copy.display().to_string()));
+    }
+
+    #[test]
+    fn markup_is_offered_for_flat_still_pictures_only() {
+        let mut stereo = viewing(3, 1);
+        if let Doc::Picture(shown) = &mut stereo.doc {
+            shown.eyes = Some(Eyes::SideBySide);
+        }
+        stereo.input(&chord('a', true));
+        assert!(stereo.desk.is_none());
+        let mut moving = viewing(3, 1);
+        if let Doc::Picture(shown) = &mut moving.doc {
+            shown.picture.frames = vec![(Vec::new(), Duration::from_millis(100))];
+        }
+        moving.input(&chord('a', true));
+        assert!(moving.desk.is_none());
+        // Taken out and put back with nothing drawn: nothing is kept, nothing asked.
+        let mut flat = viewing(3, 1);
+        flat.input(&chord('a', true));
+        assert!(flat.marking());
+        flat.input(&chord('a', true));
+        assert!(flat.desk.is_none());
+    }
+
+    /// A PDF at `path`, the second of three files, opened as SpatiLoupe opens one.
+    fn pdf_view(path: &str) -> View {
+        let path = PathBuf::from(path);
+        let entry = Entry { name: crate::place::name(&path), path, kind: Kind::Pdf, size: 1234, modified: "1".into() };
+        let mut view = View::new(entry, 1, 7, vec![0, 1, 2]);
+        view.open_pdf();
+        view
+    }
+
+    fn pdf(view: &View) -> &Paper {
+        match &view.doc {
+            Doc::Pdf(paper) => paper,
+            _ => unreachable!(),
+        }
+    }
+
+    /// As if the PDF had stayed the one looked at for a moment.
+    fn settle(view: &mut View) {
+        if let Doc::Pdf(paper) = &mut view.doc {
+            paper.since = Instant::now() - PLACE_SETTLE;
         }
     }
 }
