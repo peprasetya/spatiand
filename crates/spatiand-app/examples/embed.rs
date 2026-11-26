@@ -41,7 +41,10 @@ fn main() -> Result<(), String> {
 
 fn host() -> Result<(), String> {
     let mut app = App::connect("id.prasetya.spatiand.embed-test")?;
-    let window = app.open("Embed host", (800, 500));
+    // A page of SpatiMesh's fills the window, as a viewer's would; the window inside is a middle.
+    let page = std::env::args().skip_while(|a| a != "--page").nth(1);
+    let window = app.open("Embed host", if page.is_some() { (1280, 800) } else { (800, 500) });
+    let place_of = |w: i32, h: i32| if page.is_some() { (0, 0, w, h) } else { (w / 4, h / 4, w / 2, h / 2) };
     let mut embed: Option<EmbedId> = None;
     loop {
         for event in app.wait(None)? {
@@ -53,12 +56,13 @@ fn host() -> Result<(), String> {
                             return Ok(());
                         };
                         embed = Some(place);
-                        app.set_embed_rect(place, 200, 125, 400, 250);
+                        let (w, h) = app.size(window);
+                        let (x, y, pw, ph) = place_of(w as i32, h as i32);
+                        app.set_embed_rect(place, x, y, pw, ph);
                         let token = app.embed_token(place).unwrap_or_default();
                         log::info!("host: a place, its token {} long", token.len());
-                        let page = std::env::args().skip_while(|a| a != "--page").nth(1);
-                        if let Some(page) = page {
-                            match app.show_page(place, &page, None) {
+                        if let Some(page) = page.as_deref() {
+                            match app.show_page(place, page, None) {
                                 Ok(()) => log::info!("host: SpatiMesh asked for the page"),
                                 Err(e) => log::error!("host: SpatiMesh could not be asked: {e}"),
                             }
@@ -78,6 +82,10 @@ fn host() -> Result<(), String> {
                 }
                 Event::Resized { width, height, .. } => {
                     app.resize(window, (width, height));
+                    if let Some(place) = embed {
+                        let (x, y, pw, ph) = place_of(width as i32, height as i32);
+                        app.set_embed_rect(place, x, y, pw, ph);
+                    }
                     fill(&mut app, window, BLUE);
                 }
                 Event::EmbedAttached { .. } => log::info!("host: a window is inside the place"),

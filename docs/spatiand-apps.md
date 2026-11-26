@@ -1538,3 +1538,41 @@ a JPEG or a PNG made here -- properly hemera would read HEIC, AVIF and JPEG XL i
 the room's `hands` while the pointer rests on the text for the text's -- properly the room would say
 which press a `hands` is for; a subtitle's glyphs are placed from where its first glyph's ink is
 taken to begin (side bearings not known), a pixel or two off.
+
+## 2026-11-27: a window inside another's -- the room's web view
+
+The owner: "the build true webview, spatiloupe use webview for chromium best for. this can be useful in
+future". Wayland has no way to show one application's window inside another's, so the room does it, for
+any of its applications: a host keeps a **place** in its window, and another application's window is the
+place's inside -- drawn there, pointed at and typed into there, hidden, moved, pinned, faded and closed with
+the host, its sound heard from the host's place. First use: SpatiLoupe showing a PDF with SpatiMesh's own
+viewer (the owner chose Chromium's tools for PDFs, and SpatiLoupe's picture tools matching them).
+
+**The protocol** (`spatiand_xr_v1` 13; its notes are the XML's): `spatiand_xr_surface_v1.get_embed` makes a
+`spatiand_xr_embed_v1` on the host's window, which is told an unguessable `token` at once and sets its
+`rect` (in the host surface's coordinates, double-buffered with the host's commits); the window to go inside
+says `set_embedded(token)` before its first commit and is offered the place's size; the two talk with
+`send`/`host_message` and `post_to_host`/`message`; `attached` and `detached` say when a window comes and
+goes. `ask_system`'s `open_embedded` starts SpatiMesh into a place of the asker's own (patch 0035:
+`--spatiand-embed=<token> --app=<address>`, an application's window with no tabs or address bar).
+
+**In the SDK:** `App::embed(window)` (the token is waited for, so it can be used at once),
+`set_embed_rect`, `show_page(embed, address, profile)` for a page of SpatiMesh's (a `file:` address shows a
+PDF in Chromium's viewer), `embed_send`, `embed_focus`, `close_embed`, `embed_token` -- a program the host
+starts itself with that in `SPATIAND_EMBED_TOKEN` opens its first window as the place's inside by itself --
+and on the inside's side `post_to_host`; the events `EmbedAttached`, `EmbedDetached`, `EmbedMessage`,
+`HostMessage`. One page per place: to show another, close the place and keep a new one.
+
+**In the room** (`crates/spatiand/src/embed.rs`): the inside keeps its number in the layout -- what is keyed
+by it, its sound above all, goes on -- and loses its place, so it is in no list, switcher or account the
+assistant is given; `scene::collect_windows` draws it with its subsurfaces and its own menus in the host's
+pixels at the rectangle, over the host's own picture and under the host's menus, as a menu is drawn
+(`push_guests`, `push_popups`); a press in it gives it the keyboard and a press elsewhere in the host gives
+it back (`embed::pressed`, from `PointerState::button`, which every room's backend presses through). On the
+Mac's desktop (2D mode) the inside is a view in its host's Mac window (`SP_DESK_EMBED`).
+
+**Tried** in deepmagpie's snapshot room: `tools/spatiand-embed-e2e.py` (the SDK's `examples/embed.rs` as
+host and inside) passes its thirteen checks -- the place, the size offered first, the keyboard in and back,
+messages both ways, the room's picture with the inside at the place; `examples/embed --page file:///…pdf`
+shows SpatiMesh's PDF viewer in the place on the Deck build of Chromium 157. **Not yet:** the Beam Pro's and
+the Mac's builds of SpatiMesh with patch 0035, the Mac's 2D mode run, SpatiLoupe using it, the glasses.
