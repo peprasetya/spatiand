@@ -2309,7 +2309,7 @@ impl Shelf {
                 room::glass(p, gl, pane, 24.0, 1.0);
                 let mut inner = pane.inset(30.0);
                 p.label(gl, "SpatiShelf", inner.take_top(50.0), theme::TITLE_EM * 0.8, theme::ink(), 0.0);
-                let text = "Spatiand's file manager. Remotes are reached through Spatiand's storage service, which is built on rclone (MIT License, copyright Nick Craig-Wood and the rclone contributors). PDF pages are drawn by PDFium (BSD and Apache 2.0, the Chromium authors); films and pictures are read by FFmpeg (LGPL 2.1).";
+                let text = "Spatiand's file manager. Remotes are reached through Spatiand's storage service, which is built on rclone (MIT License, copyright Nick Craig-Wood and the rclone contributors). Films and pictures are read by FFmpeg (LGPL version 3), its https by BoringSSL (Apache 2.0, from SpatiMesh's Chromium).";
                 let (_, h) = p.text(gl, text, inner.x, inner.y, theme::DETAIL_EM, inner.w, theme::ink_detail());
                 inner.take_top(h);
                 let buttons = inner.take_bottom(Button::HEIGHT);
