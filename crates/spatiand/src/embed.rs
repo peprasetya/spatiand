@@ -14,6 +14,8 @@
 //! `scene::collect_windows` draws it as part of its host, in the host's pixels, the way a menu
 //! is drawn; a press in it gives it the keyboard ([`pressed`]).
 
+use std::time::{Duration, Instant};
+
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource;
@@ -59,6 +61,29 @@ pub struct Embeds {
     /// has the keyboard. Remembered when the wearer goes to another window, so that coming back
     /// to the host comes back to where they were typing, as in a browser's page.
     pub focus: Option<WlSurface>,
+    /// Places taken away before their window came, by token and when: a window that still comes
+    /// saying one is asked to close as it arrives, never shown -- it was meant for that place alone.
+    ended: Vec<(String, Instant)>,
+    /// Places SpatiMesh was asked into (`own::open_embedded`) and has not come into yet, by token
+    /// and when: a SpatiMesh too old for places opens the page in a window of its own instead,
+    /// and the place is told so as that window arrives ([`committed`]).
+    awaited: Vec<(String, Instant)>,
+}
+
+/// How long a place taken away is remembered for a window still on its way.
+const ENDED_KEPT: Duration = Duration::from_secs(600);
+/// How long SpatiMesh is waited for, for a place it was asked into, before its next new window
+/// is no longer taken for that page's.
+const AWAITED_KEPT: Duration = Duration::from_secs(60);
+
+/// What SpatiMesh too old for places opening the page in a window of its own is told to the
+/// place as (`spatiand_xr_embed_v1.refused`).
+const TOO_OLD: &str = "This SpatiMesh cannot show a page inside another window yet: it opened it in a window of its own.";
+
+/// SpatiMesh was asked into the place with this token.
+pub fn awaiting(state: &mut Spatiand, token: &str) {
+    state.embeds.awaited.retain(|(t, since)| t != token && since.elapsed() < AWAITED_KEPT);
+    state.embeds.awaited.push((token.to_string(), Instant::now()));
 }
 
 /// A name nobody can guess, for a place.
@@ -120,7 +145,48 @@ pub fn committed(state: &mut Spatiand, surface: &WlSurface, embedded: Option<Str
     match embedded.as_deref() {
         Some("") => come_out(state, surface),
         Some(token) => go_in(state, surface, token),
-        None => {}
+        None => came_without_place(state, surface),
+    }
+}
+
+/// A window's first commit, naming no place. SpatiMesh bound to `spatiand_xr_v1` before 13,
+/// asked into a place, opens the page in a window of its own -- this one -- and the place that has
+/// waited longest for SpatiMesh is told so (`refused`) as it arrives. A SpatiMesh new enough for
+/// places names one in the window it opens for a place, so a window of its naming none is one the
+/// wearer opened, and nothing is told.
+fn came_without_place(state: &mut Spatiand, surface: &WlSurface) {
+    use smithay::reexports::wayland_server::Resource;
+    state.embeds.awaited.retain(|(_, since)| since.elapsed() < AWAITED_KEPT);
+    if state.embeds.awaited.is_empty() {
+        return;
+    }
+    let Some(window) = window_of(state, surface) else { return };
+    // Its first commit only: the initial configure is sent after this one (state.rs).
+    if window.toplevel().is_none_or(|t| t.is_initial_configure_sent()) {
+        return;
+    }
+    let spatimesh = state.app_id_of(&window).is_some_and(|a| a == crate::audio::CHROMIUM_APP_ID);
+    // The version its window's xr object has, or else the one its client bound spatiand_xr_v1
+    // at (a window says nothing through it until it has something to say); none at all, 0.
+    let version = state
+        .xr_surfaces
+        .iter()
+        .find(|(s, _)| s == surface)
+        .map(|(_, o)| o.version())
+        .or_else(|| {
+            let client = surface.client()?;
+            state.xr_globals.iter().filter(|g| g.client().is_some_and(|c| c.id() == client.id())).map(|g| g.version()).max()
+        })
+        .unwrap_or(0);
+    if !spatimesh || version >= 13 {
+        return;
+    }
+    let (token, _) = state.embeds.awaited.remove(0);
+    if let Some(slot) = state.embeds.slots.iter().find(|s| s.token == token && s.guest.is_none()) {
+        if slot.object.version() >= 13 {
+            slot.object.refused(TOO_OLD.into());
+        }
+        log::warn!("SpatiMesh bound spatiand_xr_v1 {version}, too old for places: it opened the page in a window of its own, and the place is told so");
     }
 }
 
@@ -143,9 +209,21 @@ fn size_guest(state: &mut Spatiand, guest: &WlSurface, rect: Rect) {
 
 fn go_in(state: &mut Spatiand, guest: &WlSurface, token: &str) {
     let Some(at) = state.embeds.slots.iter().position(|s| s.token == token) else {
+        state.embeds.ended.retain(|(_, since)| since.elapsed() < ENDED_KEPT);
+        if let Some(gone) = state.embeds.ended.iter().position(|(t, _)| t == token) {
+            // Meant for a place taken away before it came: asked to close, and never shown.
+            state.embeds.ended.remove(gone);
+            if let Some(window) = window_of(state, guest) {
+                state.layout.unplace(&window);
+                state.close_window(&window);
+            }
+            log::info!("a window came for a place taken away before it did; it is asked to close");
+            return;
+        }
         log::warn!("a window named a place that is not there; it stays a window of its own");
         return;
     };
+    state.embeds.awaited.retain(|(t, _)| t != token);
     if let Some(other) = state.embeds.slots[at].guest.as_ref() {
         if other == guest {
             return;
@@ -210,14 +288,19 @@ fn leave(state: &mut Spatiand, guest: &WlSurface) -> bool {
 pub fn gone(state: &mut Spatiand, surface: &WlSurface) {
     leave(state, surface);
     let mut closing = Vec::new();
+    let mut ended = Vec::new();
     state.embeds.slots.retain(|slot| {
         if slot.host == *surface {
-            closing.extend(slot.guest.clone());
+            match &slot.guest {
+                Some(guest) => closing.push(guest.clone()),
+                None => ended.push(slot.token.clone()),
+            }
             false
         } else {
             true
         }
     });
+    remember_ended(state, ended);
     for guest in closing {
         close(state, &guest);
     }
@@ -226,20 +309,34 @@ pub fn gone(state: &mut Spatiand, surface: &WlSurface) {
 /// The host took the place away (its object destroyed, however it went).
 pub fn destroyed(state: &mut Spatiand, object: &SpatiandXrEmbedV1) {
     let mut closing = Vec::new();
+    let mut ended = Vec::new();
     state.embeds.slots.retain(|slot| {
         if slot.object == *object {
-            closing.extend(slot.guest.clone());
+            match &slot.guest {
+                Some(guest) => closing.push(guest.clone()),
+                None => ended.push(slot.token.clone()),
+            }
             false
         } else {
             true
         }
     });
+    remember_ended(state, ended);
     for guest in closing {
         if state.embeds.focus.as_ref() == Some(&guest) {
             state.embeds.focus = None;
         }
         close(state, &guest);
     }
+}
+
+/// Places taken away with no window inside: a window still on its way to one is closed as it
+/// comes ([`go_in`]).
+fn remember_ended(state: &mut Spatiand, tokens: Vec<String>) {
+    let now = Instant::now();
+    state.embeds.ended.retain(|(_, since)| since.elapsed() < ENDED_KEPT);
+    state.embeds.awaited.retain(|(t, _)| !tokens.contains(t));
+    state.embeds.ended.extend(tokens.into_iter().map(|t| (t, now)));
 }
 
 fn close(state: &mut Spatiand, guest: &WlSurface) {

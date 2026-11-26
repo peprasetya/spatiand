@@ -342,6 +342,7 @@ pub fn open_embedded(state: &mut crate::state::Spatiand, asker: &smithay::reexpo
     match embedded_entry(token, url, profile) {
         Ok(app) => {
             log::info!("a client asked for a page of SpatiMesh's inside a place in its window");
+            crate::embed::awaiting(state, token);
             match &mut state.own_launches {
                 Some(waiting) => waiting.push(app),
                 None => launch(&app, &state.socket_name.clone(), &[]),

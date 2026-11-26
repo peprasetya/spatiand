@@ -26,7 +26,7 @@ the password field focused, no field at all and the password nowhere in it.
  chrome/browser/spatiand/describe.h            |  18 +
  chrome/browser/spatiand/main_parts.cc         |   2 +
  third_party/wayland-protocols/BUILD.gn        |   5 +
- .../spatiand/spatiand-xr-v1.xml               | 968 ++++++++++++++++++
+ .../spatiand/spatiand-xr-v1.xml               | 985 ++++++++++++++++++
  ui/ozone/platform/wayland/BUILD.gn            |   3 +
  ui/ozone/platform/wayland/host/spatiand_xr.cc | 114 +++
  ui/ozone/platform/wayland/host/spatiand_xr.h  |  40 ++
@@ -34,7 +34,7 @@ the password field focused, no field at all and the password nowhere in it.
  .../wayland/host/wayland_toplevel_window.cc   |   8 +-
  ui/platform_window/platform_window.cc         |  18 +
  ui/platform_window/platform_window.h          |  14 +
- 13 files changed, 1152 insertions(+), 1 deletion(-)
+ 13 files changed, 1169 insertions(+), 1 deletion(-)
  create mode 100644 chrome/browser/spatiand/describe.cc
  create mode 100644 chrome/browser/spatiand/describe.h
  create mode 100644 third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
@@ -349,10 +349,10 @@ index 7beb117992..0bcf68eedc 100644
  }
 diff --git a/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
 new file mode 100644
-index 0000000..da1c83c84b
+index 0000000..a056ad9b57
 --- /dev/null
 +++ b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
-@@ -0,0 +1,968 @@
+@@ -0,0 +1,985 @@
 +<?xml version="1.0" encoding="UTF-8"?>
 +<protocol name="spatiand_xr_v1">
 +
@@ -985,7 +985,9 @@ index 0000000..da1c83c84b
 +        the first, before anything is drawn, so that the window never appears
 +        in the room on its own. A token that names no place, or a place that
 +        has a window already, leaves this an ordinary window, and the room
-+        says so in its log. An empty token is no place.
++        says so in its log -- but the token of a place taken away before its
++        window came: that window is asked to close (xdg_toplevel.close) and
++        never shown. An empty token is no place.
 +      </description>
 +      <arg name="token" type="string" summary="the place's token, as it was given"/>
 +    </request>
@@ -1028,7 +1030,10 @@ index 0000000..da1c83c84b
 +      gives the keyboard back to the host.
 +
 +      Destroying this object, or the host's window closing, asks the inside to
-+      close (xdg_toplevel.close) and forgets the token.
++      close (xdg_toplevel.close) and forgets the token. A window that comes
++      later, saying the token of a place taken away before it came, is asked
++      to close as it arrives and is never shown: it was meant for that place
++      alone.
 +    </description>
 +
 +    <request name="destroy" type="destructor">
@@ -1096,6 +1101,18 @@ index 0000000..da1c83c84b
 +        spatiand_xr_surface_v1.post_to_host, from the window inside.
 +      </description>
 +      <arg name="message" type="string"/>
++    </event>
++
++    <event name="refused">
++      <description summary="the window asked for will not come inside">
++        The program asked to come into this place (`ask_system`'s
++        `open_embedded`) cannot be any place's inside -- a SpatiMesh bound to
++        spatiand_xr_v1 before 13 -- and has opened the page in a window of its
++        own instead, which stays the wearer's. Sent as that window arrives. The
++        place is empty and keeps its token; `reason` says what happened in
++        words fit to show.
++      </description>
++      <arg name="reason" type="string"/>
 +    </event>
 +  </interface>
 +

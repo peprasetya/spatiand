@@ -8,6 +8,10 @@
 //!
 //! `--notify <words>`: only a notice on the room's card (`App::notify`).
 //!
+//! `--old-spatimesh`: a SpatiMesh too old for places, as the room sees one -- a window of
+//! SpatiMesh's application id naming no place, from a client bound to `spatiand_xr_v1` before 13
+//! (run it with `SPATIAND_XR_MOST=12`): what such a SpatiMesh, asked into a place, opens instead.
+//!
 //! `--page <address>`: the inside is a page of SpatiMesh's instead (`App::show_page`) -- a `file:`
 //! address of a PDF shows SpatiMesh's PDF viewer in the place.
 //!
@@ -43,6 +47,9 @@ fn main() -> Result<(), String> {
         app.notify("Embed test", &words, "from the SDK's example")?;
         log::info!("notified");
         return Ok(());
+    }
+    if std::env::args().any(|a| a == "--old-spatimesh") {
+        return old_spatimesh();
     }
     if std::env::args().any(|a| a == "--inside") {
         inside()
@@ -114,6 +121,27 @@ fn host() -> Result<(), String> {
                 Event::Key { pressed: true, code, .. } => log::info!("host: a key came to the host ({code})"),
                 Event::Button { pressed: true, .. } => log::info!("host: a press on the host"),
                 Event::Focus { focused, .. } => log::info!("host: keyboard {}", if focused { "here" } else { "gone" }),
+                Event::CloseRequested { .. } | Event::Quit { .. } => return Ok(()),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn old_spatimesh() -> Result<(), String> {
+    let mut app = App::connect("spatimesh-chromium")?;
+    let window = app.open("SpatiMesh stand-in", (640, 480));
+    loop {
+        for event in app.wait(None)? {
+            match event {
+                Event::Ready { .. } => {
+                    log::info!("old SpatiMesh: a window of its own");
+                    fill(&mut app, window, GREEN);
+                }
+                Event::Resized { width, height, .. } => {
+                    app.resize(window, (width, height));
+                    fill(&mut app, window, GREEN);
+                }
                 Event::CloseRequested { .. } | Event::Quit { .. } => return Ok(()),
                 _ => {}
             }

@@ -1647,7 +1647,11 @@ viewer (the owner chose Chromium's tools for PDFs, and SpatiLoupe's picture tool
 says `set_embedded(token)` before its first commit and is offered the place's size; the two talk with
 `send`/`host_message` and `post_to_host`/`message`; `attached` and `detached` say when a window comes and
 goes. `ask_system`'s `open_embedded` starts SpatiMesh into a place of the asker's own (patch 0035:
-`--spatiand-embed=<token> --app=<address>`, an application's window with no tabs or address bar).
+`--spatiand-embed=<token> --app=<address>`, an application's window with no tabs or address bar). A
+window that comes naming a place taken away before it came is asked to close as it arrives, never shown;
+a SpatiMesh too old for places (bound to `spatiand_xr_v1` before 13), whose window of its own comes
+instead, is told to the waiting place with `refused` and its reason, as that window arrives
+(`embed::came_without_place`, 2026-11-27).
 
 **In the SDK:** `App::embed(window)` (the token is waited for, so it can be used at once),
 `set_embed_rect`, `show_page(embed, address, profile)` for a page of SpatiMesh's (a `file:` address shows a
@@ -1727,23 +1731,23 @@ folder is gone back to, or SpatiMesh is asked again: one page to a place. SpatiM
 PDF has stayed the one looked at for 0.3 s, at rest: one slid past on the way to another starts nothing.
 While the carousel takes the PDF away or brings it, the place is hidden (a rectangle of no size keeps its
 window) and the PDF's tile slides as any file's does. A place let go of before SpatiMesh's window came
-into it is kept, hidden, until the window comes, and closed with it then (two minutes at most): the room
-leaves a window that names a place already gone a window of its own, as the protocol says, so the wearer
-going back to the folder at once would otherwise have been left a stray SpatiMesh window. `EmbedAttached`
-and `EmbedDetached` say what the view shows.
+into it is closed at once: the room asks a window that comes later naming a place taken away to close as
+it arrives, never shown (`spatiand_xr_embed_v1`, 2026-11-27 -- until then SpatiLoupe kept such a place
+hidden for up to two minutes to close the window with it, a workaround now gone). `EmbedAttached`,
+`EmbedDetached` and `EmbedRefused` say what the view shows.
 
 **A SpatiMesh without the web view.** Until the 159 build, the installed SpatiMesh on the Deck, the Mac
 and the Beam Pro has no patch 0035: given `--spatiand-embed` it takes no notice and opens the PDF as an
-application window of its own. So when no window has come into the place 10 s after SpatiMesh was asked
-(`NOT_INSIDE`), SpatiLoupe lets the place go -- at once, so that the window of its own, or a SpatiMesh
-slower than that, is left be -- goes back to the folder, the PDF's tile chosen, and says at its foot for
-15 s: "SpatiMesh opened <name> in a window of its own: this SpatiMesh cannot show it inside SpatiLoupe
-yet." (`describe` says it too). *A workaround, named:* SpatiLoupe cannot know whether the SpatiMesh it
-gets has the web view, and judges by the time; a patched SpatiMesh that takes longer than 10 s to start
-(a cold start on a slow machine) is taken for an unpatched one and shows the PDF in a window of its own.
-The proper way is to know: the room answering `open_embedded` that the SpatiMesh it would start cannot
-be put in a place (from the build's own version, which the 159 package would say) -- or, once every
-machine has the 159 build, nothing.
+application window of its own. The room knows it as that window arrives -- a window of SpatiMesh's
+application id naming no place, from a client bound to `spatiand_xr_v1` before 13, while a place waits for
+SpatiMesh -- and tells the place (`spatiand_xr_embed_v1.refused`, the SDK's `Event::EmbedRefused`):
+SpatiLoupe lets the place go, leaves that window be, goes back to the folder, the PDF's tile chosen, and
+says at its foot for 15 s: "SpatiMesh opened <name> in a window of its own: this SpatiMesh cannot show it
+inside SpatiLoupe yet." (`describe` says it too). A SpatiMesh that never comes at all (one that did not
+start) is waited for 60 s (`NOT_COME`), and then the view says "SpatiMesh has not shown <name> here." with
+Open again. (Until 2026-11-27 SpatiLoupe judged an old SpatiMesh by the time, 10 s, a workaround now gone.)
+`tools/spatiloupe-pdf-e2e.py` has the SDK's example stand in for an old SpatiMesh (`embed --old-spatimesh`,
+bound at 12 by the SDK's test-only `SPATIAND_XR_MOST`).
 
 **A remote's PDF** (`place::fetched`). SpatiMesh is given files of this machine only, so a remote's PDF is
 copied here first by the storage service's rclone (`operations/copyfile`, as the room's chooser fetches),

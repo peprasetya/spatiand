@@ -17,11 +17,14 @@ picture along the way (dump:):
     next      past the picture to the other PDF: that one shown, the first one's SpatiMesh closed
     resized   the window made smaller: the place follows it
     info      the info pane open: the viewer leaves its column
-    early     back to the folder before SpatiMesh's window has come (SpatiMesh slowed): it comes
-              into the place kept for it, hidden, and is closed with it -- no window of its own
-    apart     a SpatiMesh without the web view (patch 0035), started without the place's switch:
-              the PDF in a window of its own, left be, and SpatiLoupe back at its folder after
-              10 s, saying so; and a SpatiMesh that opens nothing, the same
+    early     back to the folder before SpatiMesh's window has come (SpatiMesh slowed): the place
+              let go of at once, and SpatiMesh's window, when it comes naming that place, asked
+              by the room to close -- no window of its own
+    apart     a SpatiMesh too old for places (patch 0035 not in it: the SDK's example standing in,
+              bound to spatiand_xr_v1 12 under SpatiMesh's application id): its window of its own
+              left be, the room telling the place at once (refused), SpatiLoupe back at its folder
+              saying so; and a SpatiMesh that opens nothing: after 60 s the view says so, with
+              Open again
     keys      a press in the viewer gives SpatiMesh the keyboard (the arrow key there is not
               SpatiLoupe's: the PDF stays); a press on SpatiLoupe's bar gives it back (the arrow
               key goes to the picture)
@@ -126,9 +129,9 @@ def main():
         """One run of the room with SpatiLoupe on `opened`; `during(env, profile)` runs beside it.
         `runtime`, the runtime folder to run in, is the caller's to remove; else one of its own.
         `slow`: seconds SpatiMesh waits before it starts, as a slow machine's would. `mesh_is`:
-        "patched", SpatiMesh as it is; "unpatched", as one without the web view (patch 0035) --
-        started without the place's switch, it opens the PDF in a window of its own; "nothing", a
-        SpatiMesh that opens nothing at all."""
+        "patched", SpatiMesh as it is; "unpatched", one too old for places (before patch 0035) --
+        the SDK's example as one (`--old-spatimesh`, bound to spatiand_xr_v1 12), which opens a
+        window of its own; "nothing", a SpatiMesh that opens nothing at all."""
         # Short: the room's sockets go in it, and a socket's path has to fit.
         own_runtime = runtime is None
         runtime = runtime or tempfile.mkdtemp(prefix="spl2-", dir="/tmp")
@@ -136,11 +139,14 @@ def main():
         chromium = os.path.join(work, f"chromium-{name}")
         os.makedirs(chromium)
         runner = os.path.join(chromium, "run.sh")
-        # The place's switch taken out of what the room starts SpatiMesh with, for an unpatched one.
-        drop = 'for a; do shift; case "$a" in --spatiand-embed=*) ;; *) set -- "$@" "$a" ;; esac; done\n' if mesh_is == "unpatched" else ""
         start = (f'exec "{CHROMIUM}" --no-sandbox --no-first-run --no-default-browser-check '
                  f'--password-store=basic --user-data-dir="{mesh}" "$@" 2>>"{os.path.join(out, name + "-chromium.log")}"\n')
-        open(runner, "w").write("#!/bin/sh\n" + (f"sleep {slow}\n" + drop + start if mesh_is != "nothing" else "exit 0\n"))
+        if mesh_is == "unpatched":
+            # What a SpatiMesh too old for places is to the room: a window of SpatiMesh's
+            # application id, naming no place, from a client bound to spatiand_xr_v1 before 13.
+            start = (f'SPATIAND_XR_MOST=12 exec "{os.path.join(target, "examples", "embed")}" --old-spatimesh '
+                     f'2>>"{os.path.join(out, name + "-chromium.log")}"\n')
+        open(runner, "w").write("#!/bin/sh\n" + (f"sleep {slow}\n" + start if mesh_is != "nothing" else "exit 0\n"))
         os.chmod(runner, 0o755)
         launcher = os.path.join(work, f"{name}.sh")
         open(launcher, "w").write(f'#!/bin/sh\nexec "{loupe}" "{opened}"\n')
@@ -211,17 +217,17 @@ def main():
         run("info", first, [wait_mesh, "window:SpatiLoupe", "key:23", "wait:4"])
     # Back to the folder a moment after SpatiMesh was asked, before its window has come (SpatiMesh
     # slowed by 8 seconds: the steps begin once SpatiLoupe has drawn, which may be 3 seconds after
-    # it asked): it comes into the place kept for it, hidden, and is closed with it -- no window of
-    # its own in the room.
+    # it asked): the place let go of at once, and SpatiMesh's window, naming it when it comes, asked
+    # by the room to close -- no window of its own in the room.
     if want("early"):
         run("early", first, ["wait:1.5", "window:SpatiLoupe", "key:1", "wait:18"], slow=8)
-    # A SpatiMesh without the web view (the installed ones until the 159 build): it opens the PDF in
-    # a window of its own and never comes into the place. After 10 seconds SpatiLoupe lets the
-    # place go, leaves that window be, and goes back to the folder, which says so; and one that
-    # opens nothing at all, the same.
+    # A SpatiMesh too old for places (the installed ones until the 159 build): it opens the PDF in a
+    # window of its own and never comes into the place; the room tells the place so as that window
+    # arrives, and SpatiLoupe lets the place go, leaves that window be and goes back to the folder,
+    # which says so. And one that opens nothing at all: after 60 s the view says so, Open again.
     if want("apart"):
-        run("apart", first, ["wait:16", "window:SpatiLoupe", "describe", "wait:1", f"dump:{os.path.join(out, 'apart-loupe.png')}"], mesh_is="unpatched")
-        run("apart-nothing", first, ["wait:14", "window:SpatiLoupe", f"dump:{os.path.join(out, 'apart-nothing-loupe.png')}"], mesh_is="nothing")
+        run("apart", first, ["wait:8", "window:SpatiLoupe", "describe", "wait:1", f"dump:{os.path.join(out, 'apart-loupe.png')}"], mesh_is="unpatched")
+        run("apart-nothing", first, ["wait:64", "window:SpatiLoupe", "describe", "wait:1", f"dump:{os.path.join(out, 'apart-nothing-loupe.png')}"], mesh_is="nothing")
     # A press in the viewer's page, then the arrow key: SpatiMesh's. A press on the bar, then the
     # arrow key: SpatiLoupe's, to the picture.
     if want("keys"):
@@ -308,21 +314,23 @@ def main():
 
     if "early" in logs:
         check("early: SpatiMesh asked, then the folder gone back to before its window came", asked in said("early"))
-        check("early: its window came into the place kept for it, and was closed with it",
-              "SpatiMesh's window came into a place let go of; closed with it" in said("early"))
+        check("early: its window, naming the place let go of, asked by the room to close as it came",
+              "a window came for a place taken away before it did; it is asked to close" in room_said("early"))
         check("early: no window of SpatiMesh's own in the room", "it stays a window of its own" not in room_said("early"))
         orange = counted("early", ORANGE)
         check(f"early: the room shows the folder, no PDF ({orange} orange pixels)", orange < 2000)
 
     if "apart" in logs:
-        gave_up = "did not come into its place in 10 s"
-        check("apart: SpatiLoupe let the place go after 10 s with no window in it", gave_up in said("apart"))
+        check("apart: the room told the place a SpatiMesh too old for places opened it in a window of its own",
+              "too old for places" in room_said("apart") and "SpatiMesh will not come into its place" in said("apart"))
         check("apart: no window went into the place", "a window is inside another's place now" not in room_said("apart"))
-        orange = counted("apart", ORANGE)
-        check(f"apart: SpatiMesh's window of its own shows the PDF, left be ({orange} orange pixels)", orange > 20000)
+        check("apart: the old SpatiMesh's window of its own left be (not asked to close)", "asked to close" not in room_said("apart"))
+        green = counted("apart", GREEN)
+        check(f"apart: its window of its own in the room ({green} of its pixels)", green > 20000)
         check("apart: SpatiLoupe is back at the folder, saying SpatiMesh opened it in a window of its own",
               "describe: said" in room_said("apart") and "SpatiMesh opened 1 report #1.pdf in a window of its own" in room_said("apart"))
-        check("apart: a SpatiMesh that opens nothing: the place let go of the same", gave_up in said("apart-nothing"))
+        check("apart: a SpatiMesh that opens nothing: after 60 s the place let go of, and said, with Open again",
+              "did not come into its place in 60 s" in said("apart-nothing") and "SpatiMesh has not shown 1 report #1.pdf here." in room_said("apart-nothing"))
         check(f"apart: and nothing of the PDF in the room ({counted('apart-nothing', ORANGE)} orange pixels)", counted("apart-nothing", ORANGE) < 2000)
 
     if "keys-mesh" in logs:

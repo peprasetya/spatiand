@@ -275,6 +275,10 @@ pub enum Event {
     /// The window inside a place here has gone -- closed or ended. The place stays, and can take
     /// another ([`App::show_page`] again).
     EmbedDetached { window: WindowId, embed: EmbedId },
+    /// What was asked into a place here ([`App::show_page`]) will not come inside it: a SpatiMesh
+    /// too old for places, which has opened the page in a window of its own instead. `reason`, in
+    /// words fit to show. The place is empty and stays.
+    EmbedRefused { window: WindowId, embed: EmbedId, reason: String },
     /// The window inside a place here said something ([`App::post_to_host`] on its side).
     EmbedMessage { window: WindowId, embed: EmbedId, message: String },
     /// This window is the inside of another's place, and that window said something
@@ -316,6 +320,7 @@ impl Event {
             | Event::Dropped { window, .. }
             | Event::EmbedAttached { window, .. }
             | Event::EmbedDetached { window, .. }
+            | Event::EmbedRefused { window, .. }
             | Event::EmbedMessage { window, .. }
             | Event::HostMessage { window, .. } => Some(*window),
         }

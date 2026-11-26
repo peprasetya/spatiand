@@ -67,15 +67,10 @@ struct Place {
     asked: Instant,
 }
 
-/// How long a place let go of before SpatiMesh's window came into it is kept, hidden, waiting for
-/// that window to close it with: SpatiMesh slow to start, or never starting.
-const LEFT_WAITS: Duration = Duration::from_secs(120);
-
-/// How long SpatiMesh's window may take to come into its place. A SpatiMesh without the web view
-/// (patch 0035, which comes with the 159 build) takes no notice of the place it is started for and
-/// opens the PDF in a window of its own; past this, SpatiLoupe takes it for one, lets the place go
-/// -- leaving that window be -- and says so ([`Loupe::keep_place`]).
-const NOT_INSIDE: Duration = Duration::from_secs(10);
+/// How long SpatiMesh's window may take to come into its place before SpatiLoupe stops waiting
+/// and says so, with Open again: a SpatiMesh that did not start. A SpatiMesh too old for places,
+/// which opens the PDF in a window of its own, the room says at once (`Event::EmbedRefused`).
+const NOT_COME: Duration = Duration::from_secs(60);
 
 /// A picture read before it is looked at: the one the carousel is heading for.
 struct Ahead {
@@ -201,10 +196,6 @@ struct Loupe {
     saying: Option<String>,
     /// The place SpatiMesh's viewer of the PDF looked at is in.
     place: Option<Place>,
-    /// Places let go of before SpatiMesh's window came into them -- the wearer moved on while it
-    /// started -- kept, hidden, until it comes, and closed then with it: a window naming a place
-    /// that is gone would be left a window of its own in the room. Since when each waits.
-    leaving: Vec<(EmbedId, Instant)>,
     /// A place's rectangle changed while nothing else is to be drawn: committed on its own.
     commit_due: bool,
     /// The remote's PDF being copied here: for which view, and which try of it.
@@ -365,32 +356,21 @@ impl Loupe {
                 _ => self.let_go(place),
             }
         }
-        // Those let go of before their window came, and waited for too long: closed anyway.
-        let mut gone = Vec::new();
-        self.leaving.retain(|(embed, since)| {
-            let waited = since.elapsed() > LEFT_WAITS;
-            if waited {
-                gone.push(*embed);
-            }
-            !waited
-        });
-        for embed in gone {
-            self.app.close_embed(embed);
-        }
-        // SpatiMesh asked, and no window come into the place: a SpatiMesh without the web view,
-        // which has opened the PDF in a window of its own. That window is left be -- the place,
-        // with none inside it, is let go of at once, so that it is not closed later -- and
-        // SpatiLoupe goes back to the folder, which says so.
-        // (Only with the PDF on show: one being slid away from is let go of anyway on arrival.)
+        // SpatiMesh asked, and no window come into the place for a long while: one that did not
+        // start. The place is let go of -- a window still coming to it is closed by the room as it
+        // comes -- and the view says so, with Open again (a new place).
+        // (Only with the PDF on show: one being slid away from is let go of anyway.)
         let on_show = wanted.as_ref().is_some_and(|w| w.rect.2 > 0 && w.rect.3 > 0);
-        if on_show && self.place.as_ref().is_some_and(|p| !p.attached && p.asked.elapsed() >= NOT_INSIDE) {
+        if on_show && self.place.as_ref().is_some_and(|p| !p.attached && p.asked.elapsed() >= NOT_COME) {
             if let Some(place) = self.place.take() {
                 self.app.close_embed(place.embed);
             }
-            let name = self.view.as_ref().map(|v| v.entry.name.clone()).unwrap_or_default();
-            log::warn!("SpatiMesh's window did not come into its place in {} s: a SpatiMesh without the web view, which opens the PDF in a window of its own", NOT_INSIDE.as_secs());
-            self.leave();
-            self.folder.say(format!("SpatiMesh opened {name} in a window of its own: this SpatiMesh cannot show it inside SpatiLoupe yet."));
+            log::warn!("SpatiMesh's window did not come into its place in {} s", NOT_COME.as_secs());
+            if let Some(view) = self.view.as_mut() {
+                let name = view.entry.name.clone();
+                view.place_refused(format!("SpatiMesh has not shown {name} here."), true);
+            }
+            self.dirty = true;
             return;
         }
         let Some(wanted) = wanted else { return };
@@ -429,27 +409,32 @@ impl Loupe {
         self.dirty = true;
     }
 
-    /// A place no longer wanted: SpatiMesh's window in it asked to close with it, or -- if it has
-    /// not come yet -- the place kept hidden until it does, and closed then.
+    /// A place no longer wanted: SpatiMesh's window in it asked to close with it. One that has not
+    /// come yet is closed by the room as it comes (`spatiand_xr_embed_v1`: a window naming a place
+    /// taken away is asked to close).
     fn let_go(&mut self, place: Place) {
-        if place.attached {
-            self.app.close_embed(place.embed);
-        } else {
-            self.app.set_embed_rect(place.embed, 0, 0, 0, 0);
-            self.commit_due = true;
-            self.leaving.push((place.embed, Instant::now()));
+        self.app.close_embed(place.embed);
+    }
+
+    /// The room says SpatiMesh will not come into the place: one too old for places, which has
+    /// opened the PDF in a window of its own. That window is left be, the place let go of, and
+    /// SpatiLoupe goes back to the folder, which says so.
+    fn refused(&mut self, embed: EmbedId, reason: &str) {
+        if !self.place.as_ref().is_some_and(|p| p.embed == embed) {
+            return;
         }
+        if let Some(place) = self.place.take() {
+            self.app.close_embed(place.embed);
+        }
+        let name = self.view.as_ref().map(|v| v.entry.name.clone()).unwrap_or_default();
+        log::warn!("SpatiMesh will not come into its place: {reason}");
+        self.leave();
+        self.folder.say(format!("SpatiMesh opened {name} in a window of its own: this SpatiMesh cannot show it inside SpatiLoupe yet."));
+        self.dirty = true;
     }
 
     /// The room says a window has come into a place in the window, or gone from it.
     fn placed(&mut self, embed: EmbedId, attached: bool) {
-        if let Some(at) = self.leaving.iter().position(|(e, _)| *e == embed) {
-            // Come into a place let go of: closed with it, as it was asked to be.
-            log::info!("SpatiMesh's window came into a place let go of; closed with it");
-            self.leaving.remove(at);
-            self.app.close_embed(embed);
-            return;
-        }
         let Some(place) = self.place.as_mut().filter(|p| p.embed == embed) else { return };
         let ticket = place.ticket;
         let view = self.view.as_mut().filter(|v| v.ticket == ticket);
@@ -662,6 +647,10 @@ impl Loupe {
             }
             Event::EmbedDetached { embed, .. } => {
                 self.placed(*embed, false);
+                return true;
+            }
+            Event::EmbedRefused { embed, reason, .. } => {
+                self.refused(*embed, reason);
                 return true;
             }
             _ => {}
@@ -935,7 +924,6 @@ fn main() {
             relisted: std::time::Instant::now(),
             saying: None,
             place: None,
-            leaving: Vec::new(),
             commit_due: false,
             fetching: None,
         };

@@ -199,7 +199,10 @@ impl Wire {
         let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=13, ()).ok();
+        // SPATIAND_XR_MOST, for tests only: a client as old as that version of the room's protocol
+        // (tools/spatiloupe-pdf-e2e.py's SpatiMesh too old for places binds 12).
+        let most = std::env::var("SPATIAND_XR_MOST").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(13).clamp(1, 13);
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=most, ()).ok();
         // Only a process the room gave its assistant's key to has any business here, and it says
         // the key at once: every question before that is refused.
         let assist: Option<spatiand_assist_v1::SpatiandAssistV1> = match std::env::var("SPATIAND_ASSIST_KEY") {
@@ -1185,6 +1188,9 @@ impl Dispatch<spatiand_xr_embed_v1::SpatiandXrEmbedV1, crate::EmbedId> for Wire 
             spatiand_xr_embed_v1::Event::Detached => state.events.push(Event::EmbedDetached { window, embed: *embed }),
             spatiand_xr_embed_v1::Event::Message { message } => {
                 state.events.push(Event::EmbedMessage { window, embed: *embed, message })
+            }
+            spatiand_xr_embed_v1::Event::Refused { reason } => {
+                state.events.push(Event::EmbedRefused { window, embed: *embed, reason })
             }
             _ => {}
         }

@@ -630,7 +630,9 @@
         the first, before anything is drawn, so that the window never appears
         in the room on its own. A token that names no place, or a place that
         has a window already, leaves this an ordinary window, and the room
-        says so in its log. An empty token is no place.
+        says so in its log -- but the token of a place taken away before its
+        window came: that window is asked to close (xdg_toplevel.close) and
+        never shown. An empty token is no place.
       </description>
       <arg name="token" type="string" summary="the place's token, as it was given"/>
     </request>
@@ -673,7 +675,10 @@
       gives the keyboard back to the host.
 
       Destroying this object, or the host's window closing, asks the inside to
-      close (xdg_toplevel.close) and forgets the token.
+      close (xdg_toplevel.close) and forgets the token. A window that comes
+      later, saying the token of a place taken away before it came, is asked
+      to close as it arrives and is never shown: it was meant for that place
+      alone.
     </description>
 
     <request name="destroy" type="destructor">
@@ -741,6 +746,18 @@
         spatiand_xr_surface_v1.post_to_host, from the window inside.
       </description>
       <arg name="message" type="string"/>
+    </event>
+
+    <event name="refused">
+      <description summary="the window asked for will not come inside">
+        The program asked to come into this place (`ask_system`'s
+        `open_embedded`) cannot be any place's inside -- a SpatiMesh bound to
+        spatiand_xr_v1 before 13 -- and has opened the page in a window of its
+        own instead, which stays the wearer's. Sent as that window arrives. The
+        place is empty and keeps its token; `reason` says what happened in
+        words fit to show.
+      </description>
+      <arg name="reason" type="string"/>
     </event>
   </interface>
 

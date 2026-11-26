@@ -1260,6 +1260,10 @@ impl CompositorHandler for Spatiand {
             // that the first size it is offered is the place's.
             let embedded = crate::xr::take_embedded(&object);
             crate::embed::committed(self, surface, embedded);
+        } else {
+            // A window with no xr object of its own names no place; its first commit still
+            // tells a place waiting for SpatiMesh that it will not come (`embed::committed`).
+            crate::embed::committed(self, surface, None);
         }
 
         // Popup bookkeeping is keyed on the popup's own surface, not on the root found above:
