@@ -1,0 +1,113 @@
+From: Spatiand build <spatiand@localhost>
+Subject: [PATCH] TLS and DTLS on BoringSSL
+
+Spatiand's FFmpeg does https with BoringSSL, the TLS library SpatiMesh's Chromium carries, in
+place of OpenSSL (third_party/ffmpeg/build.sh). BoringSSL keeps OpenSSL's API, all but four calls
+of this file and a comparison that only held in OpenSSL; configure looked for one of the four to
+find OpenSSL at all.
+
+- configure: BoringSSL is found by SSL_max_seal_overhead, which only it has (OpenSSL is found as
+  before), and asks for --enable-version3 under the GPL, as OpenSSL 3 does: both are Apache 2.0.
+- BIO_read_ex, twice (a key and certificate as PEM text): BIO_read, which both have.
+- DTLS_set_link_mtu: BoringSSL has the one MTU, SSL_set_mtu's, set just before it; OpenSSL's link
+  MTU is that one plus what the BIO adds to a datagram, and FFmpeg's BIO adds nothing.
+- DTLS_get_data_mtu: the MTU less SSL_max_seal_overhead, the most that sealing a record adds.
+- A finished DTLS handshake was told by comparing SSL_is_init_finished with TLS_ST_OK, which is 1
+  in OpenSSL and 3 in BoringSSL: the handshake answered "not done yet" after it was done, and WHIP
+  would wait for it until its timeout. SSL_is_init_finished's own answer is taken instead.
+
+DTLS serves only the WHIP muxer, which nothing in Spatiand uses; it is kept building and working
+rather than turned off.
+---
+--- a/configure
++++ b/configure
+@@ -7459,6 +7459,8 @@
+                                die "ERROR: opencl must be installed and version must be 1.2 or compatible"; }
+ enabled openssl           && { { check_pkg_config openssl "openssl >= 3.0.0" openssl/ssl.h DTLS_get_data_mtu &&
+                                  { enabled gplv3 || ! enabled gpl || enabled nonfree || die "ERROR: OpenSSL >=3.0.0 requires --enable-version3"; }; } ||
++                               { check_pkg_config openssl openssl openssl/ssl.h SSL_max_seal_overhead &&
++                                 { enabled gplv3 || ! enabled gpl || enabled nonfree || die "ERROR: BoringSSL requires --enable-version3"; }; } ||
+                                { enabled gpl && ! enabled nonfree && die "ERROR: OpenSSL <3.0.0 is incompatible with the gpl"; } ||
+                                check_pkg_config openssl "openssl >= 1.1.1" openssl/ssl.h DTLS_get_data_mtu ||
+                                check_lib openssl openssl/ssl.h DTLS_get_data_mtu -lssl -lcrypto ||
+--- a/libavformat/tls_openssl.c
++++ b/libavformat/tls_openssl.c
+@@ -47,6 +47,7 @@
+ {
+     BIO *mem = NULL;
+     size_t read_bytes = 0;
++    int n;
+
+     if (!pkey || !out || !out_sz)
+         goto done;
+@@ -57,8 +58,10 @@
+     if (!PEM_write_bio_PrivateKey(mem, pkey, NULL, NULL, 0, NULL, NULL))
+         goto done;
+
+-    if (!BIO_read_ex(mem, out, out_sz - 1, &read_bytes))
++    /* BIO_read(), not BIO_read_ex(), which BoringSSL does not have. */
++    if ((n = BIO_read(mem, out, FFMIN(out_sz - 1, INT_MAX))) <= 0)
+         goto done;
++    read_bytes = n;
+
+ done:
+     BIO_free(mem);
+@@ -74,6 +77,7 @@
+ {
+     BIO *mem = NULL;
+     size_t read_bytes = 0;
++    int n;
+
+     if (!cert || !out || !out_sz)
+         goto done;
+@@ -84,8 +88,10 @@
+     if (!PEM_write_bio_X509(mem, cert))
+         goto done;
+
+-    if (!BIO_read_ex(mem, out, out_sz - 1, &read_bytes))
++    /* BIO_read(), not BIO_read_ex(), which BoringSSL does not have. */
++    if ((n = BIO_read(mem, out, FFMIN(out_sz - 1, INT_MAX))) <= 0)
+         goto done;
++    read_bytes = n;
+
+ done:
+     BIO_free(mem);
+@@ -691,8 +697,9 @@
+             goto end;
+         }
+     }
+-    /* Check whether the handshake is completed. */
+-    if (SSL_is_init_finished(c->ssl) != TLS_ST_OK)
++    /* Check whether the handshake is completed. SSL_is_init_finished() answers one or zero; TLS_ST_OK
++     * is one in OpenSSL and three in BoringSSL, where comparing with it never found the handshake done. */
++    if (!SSL_is_init_finished(c->ssl))
+         goto end;
+
+     ret = 0;
+@@ -858,7 +865,11 @@
+             s->mtu = 1096;
+         SSL_set_options(c->ssl, SSL_OP_NO_QUERY_MTU);
+         SSL_set_mtu(c->ssl, s->mtu);
++#ifndef OPENSSL_IS_BORINGSSL
++        /* BoringSSL has one MTU, SSL_set_mtu()'s; OpenSSL's link MTU is that one plus what the BIO
++         * adds to a datagram, and this BIO adds nothing. */
+         DTLS_set_link_mtu(c->ssl, s->mtu);
++#endif
+     }
+
+     init_bio_method(h);
+@@ -975,7 +986,14 @@
+     uc->flags |= h->flags & AVIO_FLAG_NONBLOCK;
+
+     if (s->is_dtls) {
++#ifdef OPENSSL_IS_BORINGSSL
++        /* What DTLS_get_data_mtu() answers in OpenSSL: the MTU less the most that sealing a record
++         * adds to it (header, explicit nonce, tag, padding). */
++        const size_t overhead = SSL_max_seal_overhead(c->ssl);
++        const size_t mtu_size = (size_t)s->mtu > overhead ? (size_t)s->mtu - overhead : 0;
++#else
+         const size_t mtu_size = DTLS_get_data_mtu(c->ssl);
++#endif
+         size = FFMIN(size, mtu_size);
+     }
+

@@ -35,9 +35,10 @@ pub use sound::{SoundGroup, Stream};
 pub mod still;
 
 /// **Where the trusted certificates are, for FFmpeg's own https** (a streaming playlist, a film
-/// the app's own fetching left to FFmpeg). The OpenSSL Spatiand ships was built to look in its
-/// own build folder, and so trusted nobody: Apple's own test stream was refused,
-/// "certificate verify failed". The system's list is named instead, unless one is set already.
+/// the app's own fetching left to FFmpeg). The BoringSSL inside Spatiand's FFmpeg looks only in
+/// /etc/ssl, which Android has not got (and the OpenSSL before it looked in its own build folder,
+/// and so trusted nobody: Apple's own test stream was refused, "certificate verify failed"). The
+/// system's list is named instead, unless one is set already; BoringSSL reads SSL_CERT_FILE too.
 #[cfg(feature = "engine")]
 pub(crate) fn trusted_certificates() {
     static ONCE: std::sync::Once = std::sync::Once::new();
