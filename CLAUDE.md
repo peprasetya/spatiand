@@ -59,7 +59,6 @@ libwayland's C API. Both speak the same protocol, `spatiand_xr_v1` included, on 
 
 This table says how it was built on 2026-11-10; a session wrote it, and it is **not a rule of the
 owner's**. The owner, 2026-11-26: **"i do not put that rule. if can be unify, why not"** -- a library
-that SpatiMesh, the other apps and the room can share is to be one. Proposed for the 159 Chromium
-build: one libwayland, built from the source Chromium pins and carried beside the programs, used by
-Chromium, by the Rust apps (wayland-rs's libwayland mode) and by every room (today the Deck's room
-uses the system's libwayland-server, the Mac's and the Beam Pro's smithay's Rust code).
+that SpatiMesh, the other apps and the room can share is to be one. For Wayland itself he decided
+against it, told the library is about 100 KB: **"if only 100k then leave separate, not worth"**
+(2026-11-27). So Chromium keeps its own libwayland and the Rust apps wayland-rs's own code, as above.
