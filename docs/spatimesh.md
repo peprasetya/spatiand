@@ -335,6 +335,20 @@ viewer was dark only. The ground around the pages is the room's (`pdf_viewer.ts`
 first frame). Save to Google Drive is off by default (`kPdfSaveToDrive`). Seen in the Deck build's test room,
 dark and light, with the drawing tools open.
 
+**A scanned PDF's words, read by the room's own reader (patch 0037; 2026-11-27).** With SpatiLoupe's PDFs shown
+by SpatiMesh's viewer, SpatiLoupe's Live Text on PDF pages (the owner, 2026-11-19: "I want it can select text from
+images (also on image of pdf)") is the viewer's: Chromium gives a page that is only a picture the words read in it,
+to be chosen, copied and found as a page's own (searchify), through its OCR service -- Google's Screen AI library,
+which the room has not got. That service is answered by hemera (`chrome/browser/spatiand/ocr.cc`, bound in
+`BindScreenAIAnnotator`): the page's picture to `POST /v1/ocr` with the room's AI settings (`apps/ai.json`: hemera's
+address, the reading model, the first and second languages then `auto`; nothing is sent while "read text in pictures
+by itself" is off), its lines and words back in Chromium's form; a reader still starting (503) is asked again after
+the wait it says. The firewall lets it out under its own annotation (`spatiand_ocr`, in `rules.xml` and
+`annotations.xml` -- without the latter it is aborted as a request of no name). Only how many lines were read is
+logged. Tried in the Deck build's test room with a page that is a photograph of text: hemera read its five lines,
+and select-all and copy in the viewer gave them, line for line. Not there: Live Text's translation between the two
+languages (selected text can be given to SpatiPal).
+
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
 scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look

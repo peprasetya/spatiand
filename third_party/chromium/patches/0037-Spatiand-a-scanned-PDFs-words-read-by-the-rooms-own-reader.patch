@@ -1,0 +1,512 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 27 Nov 2026 02:21:23 +0700
+Subject: [PATCH] Spatiand: a scanned PDF's words, read by the room's own
+ reader
+
+SpatiLoupe's PDFs are shown by SpatiMesh's viewer now (the owner, 2026-11-27: "webview, chromium
+tools"), and SpatiLoupe read the text in a PDF's pictures with hemera, the room's own reader (its
+Live Text; the owner, 2026-11-19: "I want it can select text from images (also on image of pdf)").
+Chromium's viewer gives a page that is only a picture the words read in it -- chosen, copied and
+found as a page's own (searchify) -- through Chromium's OCR service, Google's Screen AI library,
+which the room has not got. That service (screen_ai::mojom::ScreenAIAnnotator) is answered here by
+hemera (chrome/browser/spatiand/ocr.cc, bound in BindScreenAIAnnotator): the page's picture as
+PNG to its POST /v1/ocr, with the room's AI settings (apps/ai.json: hemera's address, the reading
+model, the first and second languages and then auto, and nothing sent when "read text in pictures
+by itself" is off), its lines and words with their outlines in Chromium's form; a reader still
+starting (503) is asked again after the wait it says. The request is let out by the firewall under
+its own annotation (spatiand_ocr, in rules.xml and annotations.xml). Only how many lines were read
+is logged, never what.
+---
+ chrome/browser/BUILD.gn                       |   2 +
+ .../chrome_browser_interface_binders.cc       |  10 +
+ chrome/browser/spatiand/ocr.cc                | 380 ++++++++++++++++++
+ chrome/browser/spatiand/ocr.h                 |  26 ++
+ services/firewall/tools/annotations.xml       |   1 +
+ services/firewall/tools/rules.xml             |   2 +
+ 6 files changed, 421 insertions(+)
+ create mode 100644 chrome/browser/spatiand/ocr.cc
+ create mode 100644 chrome/browser/spatiand/ocr.h
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 891c5d0af6..74660f83c1 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1839,6 +1839,8 @@ source_set("core") {
+       "spatiand/history_sync.h",
+       "spatiand/main_parts.cc",
+       "spatiand/main_parts.h",
++      "spatiand/ocr.cc",
++      "spatiand/ocr.h",
+       "spatiand/profile_lock_dialog.cc",
+       "spatiand/profile_lock_dialog.h",
+       "spatiand/profile_service.cc",
+diff --git a/chrome/browser/chrome_browser_interface_binders.cc b/chrome/browser/chrome_browser_interface_binders.cc
+index 455cbfb53c..061f7c8665 100644
+--- a/chrome/browser/chrome_browser_interface_binders.cc
++++ b/chrome/browser/chrome_browser_interface_binders.cc
+@@ -10,6 +10,9 @@
+ #include "base/functional/bind.h"
+ #include "build/build_config.h"
+ #include "build/chromeos_buildflags.h"
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/ocr.h"
++#endif
+ #include "chrome/browser/accessibility/accessibility_labels_service.h"
+ #include "chrome/browser/accessibility/accessibility_labels_service_factory.h"
+ #include "chrome/browser/actor/actor_script_tool_receiver.h"
+@@ -395,8 +398,15 @@ void BindScreenAIAnnotator(
+   content::BrowserContext* browser_context =
+       frame_host->GetProcess()->GetBrowserContext();
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: the room's own reader of text in pictures (hemera), not Google's Screen AI
++  // library, which the room has not got: a scanned PDF's words, to be chosen and found.
++  spatiand::BindOcrAnnotator(browser_context, std::move(receiver));
++  return;
++#else
+   screen_ai::ScreenAIServiceRouterFactory::GetForBrowserContext(browser_context)
+       ->BindScreenAIAnnotator(std::move(receiver));
++#endif
+ }
+ 
+ void BindScreen2xMainContentExtractor(
+diff --git a/chrome/browser/spatiand/ocr.cc b/chrome/browser/spatiand/ocr.cc
+new file mode 100644
+index 0000000000..f196de1368
+--- /dev/null
++++ b/chrome/browser/spatiand/ocr.cc
+@@ -0,0 +1,380 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/ocr.h"
++
++#include <algorithm>
++#include <cmath>
++#include <list>
++#include <memory>
++#include <optional>
++#include <string>
++#include <utility>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/logging.h"
++#include "base/memory/weak_ptr.h"
++#include "base/rand_util.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/stringprintf.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "chrome/browser/spatiand/shared_folder.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/storage_partition.h"
++#include "mojo/public/cpp/bindings/self_owned_receiver.h"
++#include "net/base/net_errors.h"
++#include "net/http/http_response_headers.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/shared_url_loader_factory.h"
++#include "services/network/public/cpp/simple_url_loader.h"
++#include "services/network/public/mojom/url_response_head.mojom.h"
++#include "third_party/skia/include/core/SkBitmap.h"
++#include "ui/gfx/codec/png_codec.h"
++#include "ui/gfx/geometry/rect.h"
++#include "url/gurl.h"
++
++namespace spatiand {
++
++namespace {
++
++// What the reader is asked for: the address, the model and the languages, from the room's AI
++// settings, as SpatiLoupe's Live Text asks (crates/spatiand-voice/src/hemera/ocr.rs).
++struct Reader {
++  std::string hemera;
++  std::string model;
++  std::vector<std::string> languages;
++  // "Read text in pictures by itself": off, nothing is sent.
++  bool by_itself = true;
++};
++
++// Read off the UI thread: a file.
++std::optional<Reader> LoadReader() {
++  std::optional<base::Value> value = ReadJson(SharedDir().DirName().Append("ai.json"));
++  if (!value || !value->is_dict()) {
++    return std::nullopt;
++  }
++  const base::DictValue& dict = value->GetDict();
++  Reader reader;
++  if (const std::string* hemera = dict.FindString("hemera")) {
++    reader.hemera = *hemera;
++  }
++  while (!reader.hemera.empty() && reader.hemera.back() == '/') {
++    reader.hemera.pop_back();
++  }
++  if (reader.hemera.empty()) {
++    return std::nullopt;
++  }
++  if (const base::DictValue* models = dict.FindDict("models")) {
++    if (const std::string* reading = models->FindString("reading")) {
++      reader.model = *reading;
++    }
++  }
++  if (const base::DictValue* pictures = dict.FindDict("text_in_pictures")) {
++    reader.by_itself = pictures->FindBool("read_by_itself").value_or(true);
++    for (const char* key : {"first_language", "second_language"}) {
++      const std::string* language = pictures->FindString(key);
++      if (language && !language->empty() &&
++          std::find(reader.languages.begin(), reader.languages.end(), *language) ==
++              reader.languages.end()) {
++        reader.languages.push_back(*language);
++      }
++    }
++  }
++  // Lines in a script neither language is written in are still found.
++  reader.languages.push_back("auto");
++  return reader;
++}
++
++constexpr net::NetworkTrafficAnnotationTag kTraffic =
++    net::DefineNetworkTrafficAnnotation("spatiand_ocr", R"(
++        semantics {
++          sender: "Spatiand"
++          description:
++            "A picture of a PDF page with no text of its own is sent to the room's own reader of "
++            "text in pictures (hemera, on the wearer's own network), so that its words can be "
++            "chosen and found."
++          trigger: "A PDF with a page that is only a picture is opened."
++          data: "The page's picture."
++          destination: OTHER
++          destination_other: "The wearer's own hemera, as Spatiand's AI settings name it."
++        }
++        policy {
++          cookies_allowed: NO
++          setting: "Spatiand's AI settings: read text in pictures by itself."
++          policy_exception_justification: "Spatiand's own."
++        })");
++
++gfx::Rect BoundsOf(const base::ListValue* polygon) {
++  if (!polygon || polygon->empty()) {
++    return gfx::Rect();
++  }
++  float left = 1e9f, top = 1e9f, right = -1e9f, bottom = -1e9f;
++  for (const base::Value& point : *polygon) {
++    const base::ListValue* xy = point.GetIfList();
++    if (!xy || xy->size() < 2) {
++      continue;
++    }
++    const float x = static_cast<float>((*xy)[0].GetIfDouble().value_or(0));
++    const float y = static_cast<float>((*xy)[1].GetIfDouble().value_or(0));
++    left = std::min(left, x);
++    top = std::min(top, y);
++    right = std::max(right, x);
++    bottom = std::max(bottom, y);
++  }
++  if (right < left || bottom < top) {
++    return gfx::Rect();
++  }
++  return gfx::Rect(static_cast<int>(std::floor(left)), static_cast<int>(std::floor(top)),
++                   static_cast<int>(std::ceil(right - left)),
++                   static_cast<int>(std::ceil(bottom - top)));
++}
++
++screen_ai::mojom::Direction DirectionOf(const std::string* direction) {
++  if (!direction) {
++    return screen_ai::mojom::Direction::DIRECTION_UNSPECIFIED;
++  }
++  if (*direction == "rtl") {
++    return screen_ai::mojom::Direction::DIRECTION_RIGHT_TO_LEFT;
++  }
++  if (*direction == "ttb") {
++    return screen_ai::mojom::Direction::DIRECTION_TOP_TO_BOTTOM;
++  }
++  return screen_ai::mojom::Direction::DIRECTION_LEFT_TO_RIGHT;
++}
++
++// hemera's answer -- blocks of lines of words, each with its outline in the picture's pixels as
++// it was sent -- as Chromium's OCR service gives it: lines of words, each with its box.
++screen_ai::mojom::VisualAnnotationPtr AnnotationOf(const base::DictValue& answer) {
++  auto annotation = screen_ai::mojom::VisualAnnotation::New();
++  const base::ListValue* blocks = answer.FindList("blocks");
++  if (!blocks) {
++    return annotation;
++  }
++  int block_id = 0;
++  for (const base::Value& block_value : *blocks) {
++    const base::DictValue* block = block_value.GetIfDict();
++    const base::ListValue* lines = block ? block->FindList("lines") : nullptr;
++    if (!lines) {
++      continue;
++    }
++    for (const base::Value& line_value : *lines) {
++      const base::DictValue* line = line_value.GetIfDict();
++      if (!line) {
++        continue;
++      }
++      auto box = screen_ai::mojom::LineBox::New();
++      if (const std::string* text = line->FindString("text")) {
++        box->text_line = *text;
++      }
++      if (const std::string* language = line->FindString("language")) {
++        box->language = *language;
++      }
++      box->block_id = block_id;
++      box->paragraph_id = block_id;
++      box->bounding_box = BoundsOf(line->FindList("polygon"));
++      box->bounding_box_angle = static_cast<float>(line->FindDouble("angle").value_or(0));
++      box->confidence = static_cast<float>(line->FindDouble("confidence").value_or(1));
++      const screen_ai::mojom::Direction direction = DirectionOf(line->FindString("direction"));
++      if (const base::ListValue* words = line->FindList("words")) {
++        for (const base::Value& word_value : *words) {
++          const base::DictValue* word = word_value.GetIfDict();
++          if (!word) {
++            continue;
++          }
++          auto word_box = screen_ai::mojom::WordBox::New();
++          if (const std::string* text = word->FindString("text")) {
++            word_box->word = *text;
++          }
++          word_box->language = box->language;
++          word_box->bounding_box = BoundsOf(word->FindList("polygon"));
++          word_box->bounding_box_angle = box->bounding_box_angle;
++          word_box->direction = direction;
++          word_box->confidence = box->confidence;
++          box->words.push_back(std::move(word_box));
++        }
++      }
++      // A line hemera gave no words for is one word, so that it is there to be chosen.
++      if (box->words.empty() && !box->text_line.empty()) {
++        auto word_box = screen_ai::mojom::WordBox::New();
++        word_box->word = box->text_line;
++        word_box->language = box->language;
++        word_box->bounding_box = box->bounding_box;
++        word_box->bounding_box_angle = box->bounding_box_angle;
++        word_box->direction = direction;
++        word_box->confidence = box->confidence;
++        box->words.push_back(std::move(word_box));
++      }
++      annotation->lines.push_back(std::move(box));
++    }
++    ++block_id;
++  }
++  return annotation;
++}
++
++class Annotator : public screen_ai::mojom::ScreenAIAnnotator {
++ public:
++  explicit Annotator(scoped_refptr<network::SharedURLLoaderFactory> factory)
++      : factory_(std::move(factory)) {}
++  Annotator(const Annotator&) = delete;
++  Annotator& operator=(const Annotator&) = delete;
++  ~Annotator() override = default;
++
++  // screen_ai::mojom::ScreenAIAnnotator:
++  void PerformOcrAndReturnAnnotation(
++      const SkBitmap& image,
++      PerformOcrAndReturnAnnotationCallback callback) override {
++    base::ThreadPool::PostTaskAndReplyWithResult(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
++        base::BindOnce(&LoadReader),
++        base::BindOnce(&Annotator::Read, weak_factory_.GetWeakPtr(), image,
++                       std::move(callback)));
++  }
++  void SetClientType(screen_ai::mojom::OcrClientType client_type) override {}
++  // A page is drawn for reading no larger than this, on its longer side.
++  void GetMaxImageDimension(GetMaxImageDimensionCallback callback) override {
++    std::move(callback).Run(2048);
++  }
++  void SetOCRLightMode(bool enabled) override {}
++  void IsOCRBusy(IsOCRBusyCallback callback) override {
++    std::move(callback).Run(!loaders_.empty());
++  }
++
++ private:
++  using Loaders = std::list<std::unique_ptr<network::SimpleURLLoader>>;
++
++  void Read(const SkBitmap& image,
++            PerformOcrAndReturnAnnotationCallback callback,
++            std::optional<Reader> reader) {
++    if (!reader || !reader->by_itself) {
++      std::move(callback).Run(screen_ai::mojom::VisualAnnotation::New());
++      return;
++    }
++    std::optional<std::vector<uint8_t>> png =
++        gfx::PNGCodec::EncodeBGRASkBitmap(image, /*discard_transparency=*/true);
++    if (!png) {
++      std::move(callback).Run(screen_ai::mojom::VisualAnnotation::New());
++      return;
++    }
++    // The form hemera takes: its options, then the picture.
++    base::DictValue options;
++    base::ListValue languages;
++    for (const std::string& language : reader->languages) {
++      languages.Append(language);
++    }
++    options.Set("languages", std::move(languages));
++    options.Set("granularity", "words");
++    options.Set("orientation", "auto");
++    if (!reader->model.empty()) {
++      options.Set("model", reader->model);
++    }
++    std::string options_json;
++    base::JSONWriter::Write(options, &options_json);
++    const std::string boundary =
++        base::StringPrintf("spatiand-ocr-%016llx%016llx",
++                           static_cast<unsigned long long>(base::RandUint64()),
++                           static_cast<unsigned long long>(base::RandUint64()));
++    std::string body;
++    body += "--" + boundary +
++            "\r\nContent-Disposition: form-data; name=\"options\"\r\n"
++            "Content-Type: application/json\r\n\r\n";
++    body += options_json;
++    body += "\r\n--" + boundary +
++            "\r\nContent-Disposition: form-data; name=\"image\"; filename=\"page.png\"\r\n"
++            "Content-Type: image/png\r\n\r\n";
++    body.append(png->begin(), png->end());
++    body += "\r\n--" + boundary + "--\r\n";
++    Send(GURL(reader->hemera + "/v1/ocr"), std::move(body),
++         "multipart/form-data; boundary=" + boundary, std::move(callback),
++         /*tries_left=*/4);
++  }
++
++  void Send(GURL url,
++            std::string body,
++            std::string content_type,
++            PerformOcrAndReturnAnnotationCallback callback,
++            int tries_left) {
++    auto request = std::make_unique<network::ResourceRequest>();
++    request->url = url;
++    request->method = "POST";
++    request->credentials_mode = network::mojom::CredentialsMode::kOmit;
++    std::unique_ptr<network::SimpleURLLoader> loader =
++        network::SimpleURLLoader::Create(std::move(request), kTraffic);
++    loader->AttachStringForUpload(body, content_type);
++    loader->SetAllowHttpErrorResults(true);
++    loader->SetTimeoutDuration(base::Seconds(90));
++    loaders_.push_front(std::move(loader));
++    auto it = loaders_.begin();
++    (*it)->DownloadToString(
++        factory_.get(),
++        base::BindOnce(&Annotator::Answered, weak_factory_.GetWeakPtr(), it,
++                       std::move(url), std::move(body), std::move(content_type),
++                       std::move(callback), tries_left),
++        /*max_body_size=*/16 * 1024 * 1024);
++  }
++
++  void Answered(Loaders::iterator it,
++                GURL url,
++                std::string body,
++                std::string content_type,
++                PerformOcrAndReturnAnnotationCallback callback,
++                int tries_left,
++                std::optional<std::string> answer) {
++    std::unique_ptr<network::SimpleURLLoader> loader = std::move(*it);
++    loaders_.erase(it);
++    const int status = loader->ResponseInfo() && loader->ResponseInfo()->headers
++                           ? loader->ResponseInfo()->headers->response_code()
++                           : 0;
++    // hemera's reader starting: once more after the wait it says.
++    if (status == 503 && tries_left > 1) {
++      int wait = 2;
++      if (std::optional<std::string> after =
++              loader->ResponseInfo()->headers->GetNormalizedHeader("retry-after")) {
++        base::StringToInt(*after, &wait);
++      }
++      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++          FROM_HERE,
++          base::BindOnce(&Annotator::Send, weak_factory_.GetWeakPtr(), std::move(url),
++                         std::move(body), std::move(content_type), std::move(callback),
++                         tries_left - 1),
++          base::Seconds(std::clamp(wait, 1, 30)));
++      return;
++    }
++    if (status != 200 || !answer) {
++      LOG(WARNING) << "Spatiand: hemera did not read the page (status " << status << ", "
++                   << net::ErrorToShortString(loader->NetError()) << ")";
++      std::move(callback).Run(screen_ai::mojom::VisualAnnotation::New());
++      return;
++    }
++    std::optional<base::DictValue> dict =
++        base::JSONReader::ReadDict(*answer, base::JSON_PARSE_RFC);
++    screen_ai::mojom::VisualAnnotationPtr annotation =
++        dict ? AnnotationOf(*dict) : screen_ai::mojom::VisualAnnotation::New();
++    // How much, never what: the page's words are the wearer's.
++    VLOG(1) << "Spatiand: hemera read " << annotation->lines.size() << " lines";
++    std::move(callback).Run(std::move(annotation));
++  }
++
++  scoped_refptr<network::SharedURLLoaderFactory> factory_;
++  Loaders loaders_;
++  base::WeakPtrFactory<Annotator> weak_factory_{this};
++};
++
++}  // namespace
++
++void BindOcrAnnotator(
++    content::BrowserContext* context,
++    mojo::PendingReceiver<screen_ai::mojom::ScreenAIAnnotator> receiver) {
++  mojo::MakeSelfOwnedReceiver(
++      std::make_unique<Annotator>(
++          context->GetDefaultStoragePartition()->GetURLLoaderFactoryForBrowserProcess()),
++      std::move(receiver));
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/ocr.h b/chrome/browser/spatiand/ocr.h
+new file mode 100644
+index 0000000000..14521a47c9
+--- /dev/null
++++ b/chrome/browser/spatiand/ocr.h
+@@ -0,0 +1,26 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_OCR_H_
++#define CHROME_BROWSER_SPATIAND_OCR_H_
++
++#include "mojo/public/cpp/bindings/pending_receiver.h"
++#include "services/screen_ai/public/mojom/screen_ai_service.mojom.h"
++
++namespace content {
++class BrowserContext;
++}  // namespace content
++
++namespace spatiand {
++
++// The text in a picture, read by the room's own reader -- hemera, as Spatiand's AI settings name
++// it (apps/ai.json) -- for what asks Chromium's OCR service: above all the PDF viewer, which
++// gives a page that is only a picture (a scan) the words read in it, to be chosen and found as a
++// page's own (searchify). In place of Google's Screen AI library, which the room has not got.
++void BindOcrAnnotator(
++    content::BrowserContext* context,
++    mojo::PendingReceiver<screen_ai::mojom::ScreenAIAnnotator> receiver);
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_OCR_H_
+diff --git a/services/firewall/tools/annotations.xml b/services/firewall/tools/annotations.xml
+index c34b796ef9..eca24c32a7 100644
+--- a/services/firewall/tools/annotations.xml
++++ b/services/firewall/tools/annotations.xml
+@@ -500,4 +500,5 @@ TO PRODUCE:
+  <item id="blink_resource_loader_xslt" added_in_milestone="126" hash_code="35024334" content_hash_code="029ecdad" os_list="linux,windows,android" file_path="third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc" />
+  <item id="blink_resource_loader_dictionary" added_in_milestone="126" hash_code="72296456" content_hash_code="04fa88f8" os_list="linux,windows,android" file_path="third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc" />
+  <item id="blink_extension_resource_loader_embed" added_in_milestone="126" hash_code="95145213" content_hash_code="03788d28" os_list="linux,windows,android" file_path="third_party/blink/renderer/platform/loader/fetch/fetch_utils.cc" />
++ <item id="spatiand_ocr" added_in_milestone="157" hash_code="4410058" content_hash_code="00000000" os_list="linux" file_path="chrome/browser/spatiand/ocr.cc"/>
+ </annotations>
+diff --git a/services/firewall/tools/rules.xml b/services/firewall/tools/rules.xml
+index 4880ebb088..0a6ed37b6c 100644
+--- a/services/firewall/tools/rules.xml
++++ b/services/firewall/tools/rules.xml
+@@ -97,4 +97,6 @@
+  <!-- Component Updater-->
+  <item id="update_client" allowed="1"/>
+  <item id="spellcheck_hunspell_dictionary" allowed="1"/>
++ <!-- Spatiand: a scanned PDF page's picture to the room's own reader of text in pictures (hemera) -->
++ <item id="spatiand_ocr" allowed="1"/>
+ </rules>
