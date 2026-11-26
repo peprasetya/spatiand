@@ -131,7 +131,7 @@ EOF
 }
 
 build_android() {
-    # Spatiand's FFmpeg for Android (third_party/ffmpeg, `build.sh android`: 9.0.2 with MediaCodec in
+    # Spatiand's FFmpeg for Android (third_party/ffmpeg, `build.sh android`: with MediaCodec in
     # it), where patch 0003 looks for it, as for Linux; the APK carries the same libraries.
     ffmpeg=${SPATIAND_FFMPEG:-$here/../ffmpeg/out/android}
     staged=$work/chromium/src/third_party/spatiand_ffmpeg
@@ -337,9 +337,29 @@ EOF
 build() {
     [ "$target" = android ] && { build_android; return; }
     [ "$target" = mac ] && { build_mac; return; }
-    # Spatiand's own FFmpeg (third_party/ffmpeg, `build.sh linux` -- 9.0.2, one copy for every
-    # program of Spatiand's): its headers and libraries where build/linux/unbundle/ffmpeg.gn
-    # (patch 0003) looks for them. libsw* too: libavcodec needs libswresample to load.
+    # Spatiand's own FFmpeg (third_party/ffmpeg, `build.sh linux`, one copy for every program of
+    # Spatiand's): its headers and libraries where build/linux/unbundle/ffmpeg.gn (patch 0003) looks
+    # for them. libsw* too: libavcodec needs libswresample to load.
+    #
+    # **Built here, in this same 22.04 root, on this tree's own BoringSSL** -- unless one is named
+    # (SPATIAND_FFMPEG). Built on the host it needs the host's glibc (2.43 since 2026-11-13: acosf,
+    # atan2f, log10f), and code_cache_generator, a program of Chromium's built and run inside the
+    # root during the build, loads it and would not start. Its TLS is BoringSSL from this tree
+    # (third_party/ffmpeg/versions.sh), read only; a build with the same stamp is not done again.
+    if [ -z "${SPATIAND_FFMPEG:-}" ]; then
+        repo=$(cd "$here/../.." && pwd)
+        boringssl=$work/chromium/src/third_party/boringssl/src
+        # Nothing made in the root's own folders: /media is an empty tmpfs with the two put on it,
+        # and the home is in /tmp, which is this machine's.
+        home=$(mktemp -d /tmp/spatiand-ffmpeg-XXXXXX)
+        bwrap --unshare-user --uid 1000 --gid 1000 --bind "$root" / --dev /dev --tmpfs /dev/shm --proc /proc \
+            --bind /tmp /tmp --tmpfs /media --bind "$repo" "$repo" --ro-bind "$boringssl" "$boringssl" \
+            --setenv HOME "$home" --setenv USER builder --setenv LOGNAME builder \
+            --setenv PATH /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            --setenv SPATIAND_BORINGSSL "$boringssl" \
+            --chdir "$repo" third_party/ffmpeg/build.sh linux
+        rm -rf "$home"
+    fi
     ffmpeg=${SPATIAND_FFMPEG:-$here/../ffmpeg/out/linux}
     staged=$work/chromium/src/third_party/spatiand_ffmpeg
     rm -rf "$staged"; mkdir -p "$staged/lib"
