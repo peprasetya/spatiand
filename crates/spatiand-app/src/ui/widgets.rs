@@ -944,6 +944,13 @@ pub struct Field {
     /// The text's size, when not the rows' own ([`theme::ROW_EM`]): a browser's address
     /// is long and wants more of it in view.
     pub em: Option<f32>,
+    /// Where the text lies in the field while it is shorter than it: 0 from the left (as a
+    /// field's does, unless told otherwise), a half about the middle, 1 against the right --
+    /// words being typed onto a picture set as they will be.
+    pub align: f32,
+    /// What the text is set in: the room's own sans serif, unless it is words being typed in a
+    /// face of their own.
+    pub face: spatiand_render::TextFace,
     /// Where the caret is, in characters from the start.
     caret: usize,
     /// The other end of the selection, when there is one: what is between it and the caret.
@@ -1141,6 +1148,12 @@ impl Field {
     }
 
     pub fn draw(&mut self, p: &mut Painter, gl: &Gl, rect: Rect) {
+        let before = p.set_face(self.face);
+        self.draw_in_face(p, gl, rect);
+        p.set_face(before);
+    }
+
+    fn draw_in_face(&mut self, p: &mut Painter, gl: &Gl, rect: Rect) {
         self.area = rect;
         let em = self.em.unwrap_or(theme::ROW_EM);
         self.caret = self.caret.min(self.text.chars().count());
@@ -1150,8 +1163,9 @@ impl Field {
         }
         let text = Rect { x: rect.x + theme::ROW_INSET, w: rect.w - theme::ROW_INSET * 2.0, ..rect };
         let wide = 8192.0 / p.scale();
+        let align = self.align.clamp(0.0, 1.0);
         if self.text.is_empty() {
-            p.label(gl, &self.hint, text, em, theme::ink_hint(), 0.0);
+            p.label(gl, &self.hint, text, em, theme::ink_hint(), align);
         }
         // What is before the caret decides where the caret is; a field too full to show it
         // all slides left so that the caret is never out of sight.
@@ -1162,6 +1176,16 @@ impl Field {
         let stop = p.measure(gl, "|", em, wide).0;
         let mut caret = if before.is_empty() { 0.0 } else { p.measure(gl, &format!("{before}|"), em, wide).0 - stop };
         let mut slide = (caret - text.w + 6.0).max(0.0);
+        // Text shorter than the field, set in it as `align` says: how far in it starts. (A field
+        // too full slides instead, and starts at its left.) The caret after the last letter is
+        // in the field's margin.
+        let lead = if align > 0.0 && !shown.is_empty() {
+            let full = p.measure(gl, &format!("{shown}|"), em, wide).0 - stop;
+            if full + 6.0 < text.w { (text.w - full) * align } else { 0.0 }
+        } else {
+            0.0
+        };
+        let text = Rect { x: text.x + lead, w: text.w - lead, ..text };
         // The pointer's doing, put at the character it was at, as the text lay when it was
         // pressed (slid by where the caret was).
         if let Some(aim) = self.aim.take() {
@@ -1447,8 +1471,9 @@ impl Button {
         }
     }
 
-    /// A button with an icon, and a label after it unless `label` is empty -- then it is round.
-    pub fn draw_icon(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, icon: super::Icon, label: &str) {
+    /// An icon button's ground in `rect`, lit for its state, its corners `radius` round: the
+    /// colour what is drawn on it is to be in.
+    fn icon_ground(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, radius: f32) -> super::Color {
         self.area = rect;
         let lit = self.focused || (self.pressed && self.hover);
         let ground = if lit {
@@ -1458,12 +1483,24 @@ impl Button {
         } else {
             theme::raised()
         };
-        let radius = if label.is_empty() { rect.h.min(rect.w) * 0.5 } else { theme::ROW_RADIUS };
         if self.hover || lit {
             p.glow(gl, rect, radius, theme::glow(0.18), 12.0);
         }
         p.fill(gl, rect, radius, ground);
-        let ink = if self.focused || self.hover { theme::ink() } else { theme::ink_row() };
+        if self.focused || self.hover { theme::ink() } else { theme::ink_row() }
+    }
+
+    /// A round button with nothing drawn on it, for its caller to draw in its middle what it
+    /// stands for -- a colour, a line's weight, a number -- as an icon button looks: its ground,
+    /// lit as [`Button::draw_icon`]'s is. The colour what is drawn on it is to be in.
+    pub fn draw_bare(&mut self, p: &mut Painter, gl: &Gl, rect: Rect) -> super::Color {
+        self.icon_ground(p, gl, rect, rect.h.min(rect.w) * 0.5)
+    }
+
+    /// A button with an icon, and a label after it unless `label` is empty -- then it is round.
+    pub fn draw_icon(&mut self, p: &mut Painter, gl: &Gl, rect: Rect, icon: super::Icon, label: &str) {
+        let radius = if label.is_empty() { rect.h.min(rect.w) * 0.5 } else { theme::ROW_RADIUS };
+        let ink = self.icon_ground(p, gl, rect, radius);
         let side = (theme::ROW_EM * 0.9).min(rect.h * 0.6);
         if label.is_empty() {
             super::icons::draw(p, gl, icon, Rect::new(rect.x + (rect.w - side) * 0.5, rect.y + (rect.h - side) * 0.5, side, side), ink);

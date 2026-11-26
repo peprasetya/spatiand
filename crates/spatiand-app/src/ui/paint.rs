@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use glow::HasContext;
-use spatiand_render::{TextImage, TextRenderer};
+use spatiand_render::{TextFace, TextImage, TextRenderer};
 
 use super::{Color, Rect};
 use crate::Gl;
@@ -109,6 +109,7 @@ struct TextKey {
     width: u32,
     /// Each line from the left, rather than centred under the longest.
     left: bool,
+    face: TextFace,
 }
 
 struct Set {
@@ -133,6 +134,8 @@ pub struct Painter {
     origin: (f32, f32),
     logical: (f32, f32),
     clip: Vec<Rect>,
+    /// What text is set in: the room's own sans serif unless told otherwise ([`Painter::set_face`]).
+    face: TextFace,
 }
 
 unsafe fn compile(g: &glow::Context, kind: u32, source: &str) -> Result<glow::Shader, String> {
@@ -185,8 +188,17 @@ impl Painter {
                 origin: (0.0, 0.0),
                 logical: (1.0, 1.0),
                 clip: Vec::new(),
+                face: TextFace::default(),
             })
         }
+    }
+
+    /// Set the text that follows in `face`, until it is set again -- the room's own sans serif
+    /// is `TextFace::default()`: words typed in the face they will have. Returns the face before,
+    /// to be set back.
+    pub fn set_face(&mut self, face: TextFace) -> TextFace {
+        self.text.set_face(face);
+        std::mem::replace(&mut self.face, face)
     }
 
     /// Start a picture of `size` device pixels, laid out at `scale` device pixels to a logical
@@ -218,6 +230,8 @@ impl Painter {
         self.scale = (part.w / logical.0.max(1.0), part.h / logical.1.max(1.0));
         self.frame += 1;
         self.clip.clear();
+        // Every picture begins in the room's own face, whatever the last left set.
+        self.set_face(TextFace::default());
         unsafe {
             g.disable(glow::SCISSOR_TEST);
             g.disable(glow::DEPTH_TEST);
@@ -345,6 +359,18 @@ impl Painter {
         self.quad(gl, rect, radius, tint, if opaque { 2 } else { 1 }, uv);
     }
 
+    /// A picture whose colours multiply what is drawn under it, as a highlighter's ink does the
+    /// paper it is on: white leaves what is under it as it is, and its own alpha is how much it
+    /// acts. `uv` as for [`Painter::image`].
+    pub fn image_multiplied(&mut self, gl: &Gl, texture: Texture, rect: Rect, uv: [f32; 4]) {
+        let g = gl.api();
+        // What is drawn comes out with its colour multiplied by its alpha: times what is there,
+        // and what is there kept where it does not act.
+        unsafe { g.blend_func(glow::DST_COLOR, glow::ONE_MINUS_SRC_ALPHA) };
+        self.image(gl, texture, rect, uv, 0.0, [1.0, 1.0, 1.0, 1.0], false);
+        unsafe { g.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA) };
+    }
+
     /// A picture filling `rect` without being stretched: scaled until it covers, the overflow
     /// cut off equally on both sides.
     pub fn cover(&mut self, gl: &Gl, texture: Texture, rect: Rect, radius: f32, tint: Color) {
@@ -398,6 +424,7 @@ impl Painter {
             size: (em * self.scale.1 * 16.0).round() as u32,
             width: (width * self.scale.1).round().max(1.0) as u32,
             left,
+            face: self.face,
         };
         if let Some(set) = self.set.get_mut(&key) {
             set.used = self.frame;
