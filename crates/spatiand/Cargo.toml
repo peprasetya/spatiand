@@ -70,7 +70,10 @@ features = [
     "renderer_gl",     # GLES 3.2 — see the plan for why not Vulkan
     "wayland_frontend",
     "desktop",
-    "use_system_lib",
+    # No "use_system_lib": the room's Wayland server is smithay's own Rust code here as on the Mac
+    # and the Beam Pro, not the system's libwayland-server (the owner, 2026-11-27: "yes make deck
+    # same"). It was on from the first commit with no reason recorded; what it adds is EGL's
+    # wl_drm buffers (bind_wl_display), which Spatiand never offered.
     # X11 applications. Many programs have no Wayland support and never will; without this
     # they do not start at all. See `crate::xwayland`.
     "xwayland",
