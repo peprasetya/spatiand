@@ -26,7 +26,7 @@ the password field focused, no field at all and the password nowhere in it.
  chrome/browser/spatiand/describe.h            |  18 +
  chrome/browser/spatiand/main_parts.cc         |   2 +
  third_party/wayland-protocols/BUILD.gn        |   5 +
- .../spatiand/spatiand-xr-v1.xml               | 963 ++++++++++++++++++
+ .../spatiand/spatiand-xr-v1.xml               | 968 ++++++++++++++++++
  ui/ozone/platform/wayland/BUILD.gn            |   3 +
  ui/ozone/platform/wayland/host/spatiand_xr.cc | 114 +++
  ui/ozone/platform/wayland/host/spatiand_xr.h  |  40 ++
@@ -34,7 +34,7 @@ the password field focused, no field at all and the password nowhere in it.
  .../wayland/host/wayland_toplevel_window.cc   |   8 +-
  ui/platform_window/platform_window.cc         |  18 +
  ui/platform_window/platform_window.h          |  14 +
- 13 files changed, 1147 insertions(+), 1 deletion(-)
+ 13 files changed, 1152 insertions(+), 1 deletion(-)
  create mode 100644 chrome/browser/spatiand/describe.cc
  create mode 100644 chrome/browser/spatiand/describe.h
  create mode 100644 third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
@@ -349,10 +349,10 @@ index 7beb117992..0bcf68eedc 100644
  }
 diff --git a/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
 new file mode 100644
-index 0000000000..2694fef818
+index 0000000..da1c83c84b
 --- /dev/null
 +++ b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
-@@ -0,0 +1,963 @@
+@@ -0,0 +1,968 @@
 +<?xml version="1.0" encoding="UTF-8"?>
 +<protocol name="spatiand_xr_v1">
 +
@@ -478,6 +478,11 @@ index 0000000000..2694fef818
 +          tabs, no address bar, no frame. `profile` as for `open_link`.
 +          `{"ok": true}` once it is on its way; the place says `attached`
 +          when it has it.
++        - `{"do": "notify", "app": name, "summary": s, "body": b}` (since
++          13): a notice on the room's card, from `name`, as the system's own
++          notifications are shown -- for what an application wants the wearer
++          to hear of while it has no window to say it in (a file saved to a
++          remote by the chooser's sender, say). `{"ok": true}`.
 +
 +        An answer of `{"error": "..."}` says what went wrong in words fit to
 +        show.

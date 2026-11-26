@@ -511,6 +511,23 @@ fn answer(m: &Msg) {
     send(&message);
 }
 
+/// A notice of one of the room's own applications (`crate::notices::post_own`), on the same card.
+pub fn post_own(key: &str, words: String) {
+    let displaced = {
+        let mut state = STATE.lock().unwrap();
+        let posted = state.card.post(key, words, crate::notices::GLANCE, Instant::now());
+        if let Some(old) = &posted.displaced {
+            state.card.forget(old);
+        }
+        posted.displaced
+    };
+    // The notification it pushed off the card is over, as `Notify` tells one (its key is not a
+    // number of this server's when it was another own notice, and then nothing is said).
+    if let Some(old) = displaced {
+        closed(id_of(&old), 1);
+    }
+}
+
 /// `Notify`: put it on the card, in place of whatever was there.
 fn notify(m: &Msg) -> Result<u32, (&'static str, String)> {
     let invalid = |e: String| ("org.freedesktop.DBus.Error.InvalidArgs", e);

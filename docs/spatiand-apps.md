@@ -1651,5 +1651,23 @@ Mac's desktop (2D mode) the inside is a view in its host's Mac window (`SP_DESK_
 **Tried** in deepmagpie's snapshot room: `tools/spatiand-embed-e2e.py` (the SDK's `examples/embed.rs` as
 host and inside) passes its thirteen checks -- the place, the size offered first, the keyboard in and back,
 messages both ways, the room's picture with the inside at the place; `examples/embed --page file:///…pdf`
-shows SpatiMesh's PDF viewer in the place on the Deck build of Chromium 157. **Not yet:** the Beam Pro's and
-the Mac's builds of SpatiMesh with patch 0035, the Mac's 2D mode run, SpatiLoupe using it, the glasses.
+shows SpatiMesh's PDF viewer in the place on the Deck build of Chromium 157; on littleotter, `Spatiand
+--selftest-desk <examples/embed>` showed the inside in its host's Mac window in 2D mode, following a resize.
+**Not yet:** the Beam Pro's and the Mac's builds of SpatiMesh with patch 0035, the glasses.
+
+## 2026-11-27: a notice from an application
+
+An application with no window to say it in -- the chooser's sender, saving a file to a remote after
+its window has gone -- puts a notice on the room's card: `App::notify(app, summary, body)`, which is
+`spatiand_xr_v1.ask_system`'s `{"do": "notify", ...}` (version 13; Chromium's copy has the note too,
+patch 0020). The room shows it as the system's own notifications are shown, for the same glance (8 s),
+on the card each platform has (`notices::post_own`): the Deck's notification server's
+(`notifications::post_own`, which tells a D-Bus notification it pushed off the card that it is over),
+the Beam Pro's listener's, the Mac's banners'. Each application has one notice at a time (its key is
+`own:<app>`); pressed, it only goes -- on the Mac it is not taken for a banner to press. The sender
+(`spatiand-choose --send`) says "Saved <name>" "in <remote>", or that it could not, and where the file is
+kept.
+
+**Tried** in deepmagpie's snapshot room: `examples/embed --notify "Saved report.pdf"` put "Embed test /
+Saved report.pdf -- from the SDK's example" on the card. Type-checked for the Beam Pro. **Not yet:** the
+sender's own notice end to end (with a remote), the Mac and the Beam Pro run, the glasses.

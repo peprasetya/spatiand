@@ -177,6 +177,19 @@ pub fn send(remotes: &dyn Remotes, folder: &Path, name: &str, to: &Place, pauses
     }
 }
 
+/// Said on the room's card (`App::notify`), where the wearer hears it: the sender has no window.
+/// Nothing, where there is no room to say it in.
+fn tell(summary: &str, body: &str) {
+    match spatiand_app::App::connect("id.prasetya.spatiand.choose") {
+        Ok(mut app) => {
+            if let Err(e) = app.notify("Files", summary, body) {
+                log::warn!("could not say so in the room: {e}");
+            }
+        }
+        Err(e) => log::warn!("no room to say so in: {e}"),
+    }
+}
+
 /// `--send <file> <remote:path>`: what the sender does, all of it. Its exit code.
 pub fn run(file: &Path, to: &str) -> i32 {
     let base = own::base();
@@ -201,11 +214,13 @@ pub fn run(file: &Path, to: &str) -> i32 {
         Ok(()) => {
             log::info!("sent {name} to {}", to.shown());
             let _ = std::fs::remove_dir_all(folder);
+            tell(&format!("Saved {name}"), &format!("in {}", to.shown()));
             0
         }
         Err(e) => {
             log::error!("{name} could not be sent to {}: {e}. It is kept in {} for a week.", to.shown(), folder.display());
             let _ = std::fs::remove_file(folder.join(own::SENDER_FILE));
+            tell(&format!("{name} could not be saved in {}", to.shown()), &format!("{e}. It is kept in {} for a week.", folder.display()));
             1
         }
     }

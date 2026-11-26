@@ -123,6 +123,11 @@
           tabs, no address bar, no frame. `profile` as for `open_link`.
           `{"ok": true}` once it is on its way; the place says `attached`
           when it has it.
+        - `{"do": "notify", "app": name, "summary": s, "body": b}` (since
+          13): a notice on the room's card, from `name`, as the system's own
+          notifications are shown -- for what an application wants the wearer
+          to hear of while it has no window to say it in (a file saved to a
+          remote by the chooser's sender, say). `{"ok": true}`.
 
         An answer of `{"error": "..."}` says what went wrong in words fit to
         show.

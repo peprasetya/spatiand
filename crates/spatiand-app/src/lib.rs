@@ -582,6 +582,14 @@ impl App {
         }
     }
 
+    /// A notice on the room's card, from `app` (the application's name as the wearer knows it):
+    /// what it wants heard while it has no window to say it in. Nothing where the room cannot
+    /// (`spatiand_xr_v1` before 13); the answer is not waited for long.
+    pub fn notify(&mut self, app: &str, summary: &str, body: &str) -> Result<(), String> {
+        let asked = serde_json::json!({ "do": "notify", "app": app, "summary": summary, "body": body });
+        self.ask_system(&asked.to_string(), std::time::Duration::from_secs(2)).map(|_| ())
+    }
+
     /// Say something to the window inside the place (it hears [`Event::HostMessage`]).
     pub fn embed_send(&mut self, embed: EmbedId, message: &str) {
         self.wire.embed_send(embed, message);

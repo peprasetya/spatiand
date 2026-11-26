@@ -715,6 +715,11 @@ pub fn noticed(text: String) {
     }
 }
 
+/// A notice of one of the room's own applications (`crate::notices::post_own`), on the same card.
+pub fn own_notice(key: &str, words: String) {
+    NOTICE.lock().unwrap().post(key, words, crate::notices::GLANCE, Instant::now());
+}
+
 /// The notification to show under the status bar: who it is from, then what it says.
 pub fn notice() -> String {
     NOTICE.lock().map(|mut card| card.text(Instant::now())).unwrap_or_default()
@@ -734,6 +739,11 @@ pub fn remind(text: String) {
 /// opens what its reminder is about (told "reminder").
 pub fn notice_pressed() {
     let key = NOTICE.lock().unwrap().press(Instant::now());
+    // One of the room's own applications' notices (`own_notice`) has no banner behind it to
+    // press: pressed, it only goes.
+    if key.as_deref().is_some_and(|k| k.starts_with("own:")) {
+        return;
+    }
     let reminder = key.as_deref() == Some(REMINDER);
     ffi::tell(ffi::Asked::NoticePressed, if reminder { REMINDER } else { "" });
 }

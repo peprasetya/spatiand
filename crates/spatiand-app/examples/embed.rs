@@ -6,6 +6,8 @@
 //! host, and the host answers "green", which turns it green. Everything each side hears is logged
 //! (`host:` and `inside:`), which is what `tools/spatiand-embed-e2e.py` reads.
 //!
+//! `--notify <words>`: only a notice on the room's card (`App::notify`).
+//!
 //! `--page <address>`: the inside is a page of SpatiMesh's instead (`App::show_page`) -- a `file:`
 //! address of a PDF shows SpatiMesh's PDF viewer in the place.
 //!
@@ -35,6 +37,13 @@ const GREEN: [u8; 4] = [0x40, 0xc8, 0x30, 0xff];
 
 fn main() -> Result<(), String> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // `--notify <words>`: a notice on the room's card, and nothing else (App::notify).
+    if let Some(words) = std::env::args().skip_while(|a| a != "--notify").nth(1) {
+        let mut app = App::connect("id.prasetya.spatiand.embed-test")?;
+        app.notify("Embed test", &words, "from the SDK's example")?;
+        log::info!("notified");
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--inside") {
         inside()
     } else {

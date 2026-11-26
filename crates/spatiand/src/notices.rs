@@ -26,6 +26,21 @@ use std::time::{Duration, Instant};
 /// seconds, a glance's worth.
 #[allow(dead_code)] // the Beam Pro's and the Mac's
 pub const GLANCE: Duration = Duration::from_secs(8);
+
+/// A notice from one of the room's own applications (`spatiand_xr_v1.ask_system`'s `notify`): on
+/// the card as the system's notifications are, from `app`, for a glance, on every platform -- the
+/// card each platform has (the Deck's notification server's, the Beam Pro's listener's, the Mac's
+/// banners'). Each application has one notice at a time: a second takes the first's place.
+pub fn post_own(app: &str, summary: &str, body: &str) {
+    let key = format!("own:{app}");
+    #[cfg(target_os = "android")]
+    crate::android::notices::posted(&key, app, summary, body);
+    #[cfg(target_os = "macos")]
+    crate::mac::own_notice(&key, words(app, summary, body));
+    #[cfg(all(target_os = "linux", not(target_os = "android")))]
+    crate::notifications::post_own(&key, words(app, summary, body));
+    log::info!("a notice from {app} on the card");
+}
 /// Characters on a line of the card, before it is cut short.
 pub const LINE: usize = 120;
 /// How many notifications are remembered as seen.

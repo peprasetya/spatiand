@@ -543,6 +543,11 @@ impl Dispatch<SpatiandXrV1, ()> for Spatiand {
                         let reply = crate::own::open_link(state, &text("url").unwrap_or_default(), text("profile").as_deref());
                         answer_at_once(answer, reply.as_bytes());
                     }
+                    "notify" => {
+                        let app = text("app").filter(|a| !a.trim().is_empty()).unwrap_or_else(|| "An application".into());
+                        crate::notices::post_own(&app, &text("summary").unwrap_or_default(), &text("body").unwrap_or_default());
+                        answer_at_once(answer, br#"{"ok":true}"#);
+                    }
                     "open_embedded" => {
                         let reply = crate::own::open_embedded(
                             state,
