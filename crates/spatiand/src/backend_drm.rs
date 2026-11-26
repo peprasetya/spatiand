@@ -2548,11 +2548,14 @@ pub fn run(
             // rather than lagging a frame behind it.
             let time_ms = started.elapsed().as_millis() as u32;
             let origin = eye_centre(orientation, &stereo);
+            // A button that went down in the room keeps the pointer there: no window is aimed at
+            // until it is let go. See `Pointers::held_by_room`.
+            let past_windows = pointers.held_by_room();
             let aim_of = |pad: &spatiand_input::Pad| -> Option<Aim> {
                 pad.touched.then(|| {
                     pointer::aim(
                         ray_from_pad(pad.x, pad.y, orientation, origin, &pointer_config),
-                        &windows,
+                        if past_windows { &[] } else { &windows[..] },
                     )
                 })
             };
@@ -2707,7 +2710,7 @@ pub fn run(
             let mouse_aim = mouse_cursor.map(|(x, y, _)| {
                 pointer::aim(
                     ray_from_pad(x, y, orientation, origin, &pointer_config),
-                    &windows,
+                    if past_windows { &[] } else { &windows[..] },
                 )
             });
             // The mouse has the pointer only with no thumb on a pad (see `cursor_aim` below), and

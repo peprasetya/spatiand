@@ -1420,9 +1420,16 @@ pub fn run(
             // --- pointing and clicking ---
             let time_ms = started.elapsed().as_millis() as u32;
             let origin = eye_centre(orientation, &stereo);
+            // A button that went down in the room keeps the pointer there: no window is aimed at
+            // until it is let go. See `Pointers::held_by_room`.
+            let past_windows = pointers.held_by_room();
             let aim_of = |pad: &spatiand_input::Pad| -> Option<Aim> {
-                pad.touched
-                    .then(|| pointer::aim(ray_from_pad(pad.x, pad.y, orientation, origin, &pointer_config), &windows))
+                pad.touched.then(|| {
+                    pointer::aim(
+                        ray_from_pad(pad.x, pad.y, orientation, origin, &pointer_config),
+                        if past_windows { &[] } else { &windows[..] },
+                    )
+                })
             };
             let mut right_aim = pads.as_ref().and_then(|p| aim_of(&p.right_pad));
             // On the Mac the pointer is the mouse's or the trackpad's unless a pad's touchpad is

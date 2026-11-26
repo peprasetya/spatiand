@@ -701,6 +701,8 @@ pub struct PointerState {
     pub drag: Option<Drag>,
     /// Buttons currently held, so a release is only sent for something that was pressed.
     held: Vec<u32>,
+    /// What the first of them went down on, while any is held. See [`Self::held_by_room`].
+    pressed_on: Option<WlSurface>,
     /// Which window the cursor was last over, to notice when it leaves.
     last_focus: Option<usize>,
     /// Where a controller layout's mouse is inside the focused window, surface pixels.
@@ -1059,6 +1061,24 @@ impl PointerState {
         }
     }
 
+    /// **A button that went down in the room keeps the pointer in the room**, wherever it is
+    /// taken until the last button is let go. The owner, 2026-11-26, turning SpatiWorld's
+    /// camera by a drag: "if the pointer pressed in the room app, no matter where the pointer...
+    /// it should owned by the room app... when the pointer reach a window... then the panning in
+    /// room app jumping randomly". A held button keeps the surface it went down on, but the
+    /// place told was the place in whatever window the ray had come to, counted from that
+    /// window's corner: a place in another surface altogether. While this holds nothing of a
+    /// window is aimed at -- not its content, its bar or its menus -- and the place is the
+    /// room's. A backend aims at no window meanwhile either, so that the room's own furniture
+    /// keeps out of it.
+    pub fn held_by_room(&self) -> bool {
+        !self.held.is_empty()
+            && match (&self.pressed_on, &self.room) {
+                (Some(surface), Some(room)) => *surface == room.surface,
+                _ => false,
+            }
+    }
+
     /// Send motion for wherever the pointer is now.
     pub fn motion(
         &mut self,
@@ -1085,6 +1105,15 @@ impl PointerState {
             &held
         } else {
             self.steadied = None;
+            aim
+        };
+        // Held by the room: past every window, whatever the ray is on. See `held_by_room`.
+        let in_room = self.held_by_room();
+        let past;
+        let aim = if in_room {
+            past = self::aim(aim.ray, &[]);
+            &past
+        } else {
             aim
         };
         // The second element of `focus` is the surface's ORIGIN in the same space as
@@ -1139,6 +1168,11 @@ impl PointerState {
             },
             (focus, local, _) => (focus, local),
         };
+        if in_room && focus.is_none() {
+            // Aimed past the edge of the room's picture with its button held: there is no place
+            // to tell, and "nowhere" told to a held pointer is its surface's corner.
+            return;
+        }
 
         // **Where the laser is, a layout's mouse is too.** A button a controller layout
         // turns into a mouse click — L2 as right-click — is delivered at the layout's own
@@ -1287,6 +1321,9 @@ impl PointerState {
             self.held.push(button);
         } else if let Some(at) = self.held.iter().position(|b| *b == button) {
             self.held.remove(at);
+            if self.held.is_empty() {
+                self.pressed_on = None;
+            }
         } else {
             // Never send a release for something that was not pressed. Clients track button
             // state themselves and a stray release leaves them convinced a drag is running.
@@ -1310,6 +1347,9 @@ impl PointerState {
             self.hold.pressed_at(time_ms, told.as_ref().map(|t| t.direction));
             if let Some(told) = told {
                 self.put_back(state, &pointer, told, time_ms);
+            }
+            if self.held.len() == 1 {
+                self.pressed_on = pointer.current_focus();
             }
         } else if self.held.is_empty() {
             self.hold.released();
