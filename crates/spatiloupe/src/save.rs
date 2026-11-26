@@ -266,13 +266,13 @@ pub struct Saving {
     pub copy: bool,
 }
 
-/// A picture as its marks make it: turned, the marks' layer at its turned size, and what is kept
+/// A picture as its marks make it: turned, the marks' layers at its turned size, and what is kept
 /// of it (x, y, width, height in the turned picture's pixels).
 pub struct Rendered {
     pub image: DynamicImage,
     pub whole: crate::picture::Whole,
     pub turns: u8,
-    pub layer: Vec<u8>,
+    pub layers: ink::Layers,
     pub turned_size: (u32, u32),
     pub crop: Option<(u32, u32, u32, u32)>,
 }
@@ -292,8 +292,8 @@ pub fn render(saving: &Saving) -> Result<Rendered, String> {
     // shown size rather than its own.
     let scale = w as f32 / saving.frame.0.max(1e-3);
     let notes: Vec<_> = saving.marks.notes.iter().filter(|n| n.page == 0).collect();
-    let layer = ink::layer(w, h, &notes, Map { scale, dx: 0.0, dy: 0.0 })?;
-    let mut image = depth::lay(image, &layer, curve);
+    let layers = ink::layer(w, h, &notes, Map { scale, dx: 0.0, dy: 0.0 })?;
+    let mut image = depth::lay(image, &layers, curve);
     let crop = saving.marks.crop(0).map(|crop| {
         let x0 = (crop.x0 * scale).round().clamp(0.0, w as f32 - 1.0) as u32;
         let y0 = (crop.y0 * scale).round().clamp(0.0, h as f32 - 1.0) as u32;
@@ -304,7 +304,7 @@ pub fn render(saving: &Saving) -> Result<Rendered, String> {
     if let Some((x, y, cw, ch)) = crop {
         image = image.crop_imm(x, y, cw, ch);
     }
-    Ok(Rendered { image, whole, turns, layer, turned_size: (w, h), crop })
+    Ok(Rendered { image, whole, turns, layers, turned_size: (w, h), crop })
 }
 
 /// Whether a picture has no see-through parts at all.
@@ -344,7 +344,7 @@ pub fn save(saving: &Saving) -> Result<PathBuf, String> {
     };
     // An OpenEXR written as it was: every channel of its layer, not only the picture of it.
     let mut bytes = if format == ImageFormat::OpenExr && own {
-        depth::exr_bytes(&whole.bytes, rendered.turns, &rendered.layer, rendered.crop)?
+        depth::exr_bytes(&whole.bytes, rendered.turns, &rendered.layers, rendered.crop)?
     } else {
         encode(image, format, whole)?
     };
@@ -353,7 +353,9 @@ pub fn save(saving: &Saving) -> Result<PathBuf, String> {
     if format == ImageFormat::Jpeg && whole.format == Some(ImageFormat::Jpeg) {
         match crate::gainmap::find(&whole.bytes) {
             crate::gainmap::Found::Carried(gain) => {
-                let map = crate::gainmap::remade(&gain, whole.orientation, rendered.turns, &rendered.layer, rendered.turned_size, rendered.crop)?;
+                // Under the marks no brighter than paper white; under a highlighter as bright as
+                // ever, which it tints in HDR as on paper.
+                let map = crate::gainmap::remade(&gain, whole.orientation, rendered.turns, &rendered.layers.over, rendered.turned_size, rendered.crop)?;
                 bytes = crate::gainmap::written(&bytes, &gain, &map)?;
             }
             // Its XMP too (its rating, its words), upright: what the image crate does not keep.
@@ -376,8 +378,31 @@ pub fn save(saving: &Saving) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markup::{Area, Ink, Note, Shape, Weight};
+    use crate::markup::{Area, Brush, Face, Ink, Note, Pick, Shape, HIGHLIGHTER_COLOURS, PEN_COLOURS};
     use image::RgbaImage;
+
+    #[test]
+    fn a_picture_is_saved_with_a_pen_s_line_and_a_highlighter_as_they_were_seen() {
+        let dir = folder("strokes");
+        let path = dir.join("page.png");
+        // White above, black below.
+        RgbaImage::from_fn(200, 100, |_, y| if y < 50 { image::Rgba([255, 255, 255, 255]) } else { image::Rgba([0, 0, 0, 255]) }).save(&path).unwrap();
+        let pen = Note { pick: Pick::Chromium(6.0), ..Note::new(0, Shape::Stroke { brush: Brush::Pen, points: vec![(10.0, 20.0), (100.0, 20.0), (190.0, 20.0)] }, PEN_COLOURS[13].colour, 6.0) };
+        // Down across the pen's line, after it, and on into the black.
+        let marker = Note { pick: Pick::Chromium(8.0), ..Note::new(0, Shape::Stroke { brush: Brush::Highlighter, points: vec![(100.0, 5.0), (100.0, 95.0)] }, HIGHLIGHTER_COLOURS[1].colour, 16.0) };
+        let marks = Marks { notes: vec![pen, marker], ..Marks::default() };
+        save(&Saving { source: path.clone(), marks, frame: (200.0, 100.0), copy: false }).unwrap();
+        let read = image::open(&path).unwrap().to_rgba8();
+        assert_eq!(read.get_pixel(40, 20).0, [0x42, 0x85, 0xf4, 255], "the pen's Blue 2 along its line");
+        assert_eq!(read.get_pixel(100, 35).0, [0xfe, 0xef, 0xc1, 255], "the highlighter on white, as Chromium lays it on paper");
+        assert_eq!(read.get_pixel(100, 70).0, [0, 0, 0, 255], "on black, black as under a highlighter's ink");
+        // Over the pen's line, which it was drawn after: the blue under it tinted by it.
+        let under = read.get_pixel(100, 20).0;
+        let tinted = [0x42 as f32 * 254.0 / 255.0, 0x85 as f32 * 239.0 / 255.0, 0xf4 as f32 * 193.0 / 255.0];
+        assert!((0..3).all(|k| (under[k] as f32 - tinted[k]).abs() <= 1.5), "{under:?} {tinted:?}");
+        assert_eq!(read.get_pixel(150, 40).0, [255, 255, 255, 255], "untouched elsewhere");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A little-endian or big-endian TIFF: IFD0 with the orientation (6, a quarter turn) and the
     /// Exif IFD's pointer, a next IFD (a thumbnail's); the Exif IFD with the pixel size, as a
@@ -487,7 +512,7 @@ mod tests {
     }
 
     fn red_box(area: Area, size: f32) -> Note {
-        Note { page: 0, shape: Shape::Box(area), ink: Ink::Red, weight: Weight::Medium, size }
+        Note::new(0, Shape::Box(area), Ink::Red.colour(), size)
     }
 
     fn reddish(p: &image::Rgba<u8>) -> bool {
@@ -575,7 +600,7 @@ mod tests {
         // Turned a quarter clockwise: shown 10 wide and 30 tall, the see-through part now at the
         // foot. An arrow down its middle, ending in the clear part.
         let marks = Marks {
-            notes: vec![Note { page: 0, shape: Shape::Arrow { from: (5.0, 2.0), to: (5.0, 28.0) }, ink: Ink::Red, weight: Weight::Heavy, size: 2.0 }],
+            notes: vec![Note::new(0, Shape::Arrow { from: (5.0, 2.0), to: (5.0, 28.0) }, Ink::Red.colour(), 2.0)],
             crops: Vec::new(),
             turns: 1,
         };
@@ -620,14 +645,14 @@ mod tests {
         let dir = folder("words");
         let path = dir.join("plain.png");
         RgbaImage::from_pixel(400, 120, image::Rgba([255, 255, 255, 255])).save(&path).unwrap();
-        let words = Note { page: 0, shape: Shape::Text { at: (10.0, 10.0), words: "Hello Привет 你好".into(), extent: (0.0, 0.0) }, ink: Ink::Blue, weight: Weight::Medium, size: 40.0 };
+        let words = Note::new(0, Shape::Text { at: (10.0, 10.0), words: "Hello Привет 你好".into(), extent: (0.0, 0.0), face: Face::default() }, Ink::Blue.colour(), 40.0);
         let marks = Marks { notes: vec![words], ..Marks::default() };
         save(&Saving { source: path.clone(), marks, frame: (400.0, 120.0), copy: false }).unwrap();
         let read = image::open(&path).unwrap().to_rgba8();
         let blue = |x0: u32, x1: u32| (10..70).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| read.get_pixel(x, y).0[2] > 150 && read.get_pixel(x, y).0[0] < 120).count();
         // Latin, Cyrillic and Chinese each put ink where they are set.
-        let (latin, _) = crate::ink::measure(&mut crate::ink::fonts(), "Hello ", 40.0);
-        let (both, _) = crate::ink::measure(&mut crate::ink::fonts(), "Hello Привет ", 40.0);
+        let (latin, _) = crate::ink::measure(&mut crate::ink::fonts(), "Hello ", 40.0, &Face::default());
+        let (both, _) = crate::ink::measure(&mut crate::ink::fonts(), "Hello Привет ", 40.0, &Face::default());
         let (latin, both) = (10 + latin as u32, 10 + both as u32);
         assert!(blue(10, latin) > 100, "Latin");
         assert!(blue(latin, both) > 100, "Cyrillic");
@@ -683,7 +708,7 @@ pub(crate) mod pictures {
 mod copies {
     use super::pictures::{near, put, stored};
     use super::*;
-    use crate::markup::{Area, Ink, Note, Shape, Weight};
+    use crate::markup::{Area, Ink, Note, Shape};
 
     fn folder(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("spatiloupe-copies-{name}-{}", std::process::id()));
@@ -715,7 +740,7 @@ mod copies {
             let own = dir.join(name.replace('.', "-"));
             std::fs::create_dir_all(&own).unwrap();
             let path = put(&own, name);
-            let marks = Marks { notes: vec![Note { page: 0, shape: Shape::Box(area), ink: Ink::Red, weight: Weight::Medium, size: 6.0 }], ..Marks::default() };
+            let marks = Marks { notes: vec![Note::new(0, Shape::Box(area), Ink::Red.colour(), 6.0)], ..Marks::default() };
             // Not written over: only copied.
             let refused = save(&Saving { source: path.clone(), marks: marks.clone(), frame: (w as f32, h as f32), copy: false });
             assert!(refused.unwrap_err().contains("Save a copy"), "{name}");

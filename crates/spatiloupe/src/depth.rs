@@ -48,23 +48,61 @@ impl Curve {
 
     /// A mark's colour, `c` of sRGB from 0 to 1, on this curve.
     pub fn put(self, c: f32) -> f32 {
-        let light = || if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
         match self {
             Curve::Srgb => c,
-            Curve::Linear => light(),
-            Curve::Pq => {
-                let (m1, m2, c1, c2, c3) = (0.159_301_76, 78.843_75, 0.835_937_5, 18.851_563, 18.6875);
-                let y = (light() * 203.0 / 10_000.0).powf(m1);
-                ((c1 + c2 * y) / (1.0 + c3 * y)).powf(m2)
-            }
-            Curve::Hlg => {
-                // Paper white is HLG's 75 per cent: a scene light of 0.2652.
-                let e = light() * 0.2652;
-                let (a, b, cc) = (0.178_832_77, 0.284_668_92, 0.559_910_7);
-                if e <= 1.0 / 12.0 { (3.0 * e).sqrt() } else { a * (12.0 * e - b).ln() + cc }
-            }
+            Curve::Linear => light(c),
+            Curve::Pq => pq(light(c) * 203.0 / 10_000.0),
+            // Paper white is HLG's 75 per cent: a scene light of 0.2652.
+            Curve::Hlg => hlg(light(c) * 0.2652),
         }
     }
+
+    /// A sample `v` on this curve multiplied by `f`, a highlighter's tint of sRGB from 0 to 1, as
+    /// the light it stands for is: on sRGB's curve as the window multiplies it (and so as it was
+    /// seen), otherwise the light taken out, multiplied, and put back.
+    pub fn multiply(self, v: f32, f: f32) -> f32 {
+        match self {
+            Curve::Srgb => v * f,
+            Curve::Linear => v * light(f),
+            Curve::Pq => pq(pq_light(v) * light(f)),
+            Curve::Hlg => hlg(hlg_light(v) * light(f)),
+        }
+    }
+}
+
+/// sRGB's curve taken off: light from 0 to 1.
+fn light(c: f32) -> f32 {
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
+const PQ: (f32, f32, f32, f32, f32) = (0.159_301_76, 78.843_75, 0.835_937_5, 18.851_563, 18.6875);
+
+/// Light, a share of 10,000 nits, on SMPTE ST 2084's curve; and back.
+fn pq(y: f32) -> f32 {
+    let (m1, m2, c1, c2, c3) = PQ;
+    let y = y.max(0.0).powf(m1);
+    ((c1 + c2 * y) / (1.0 + c3 * y)).powf(m2)
+}
+
+fn pq_light(v: f32) -> f32 {
+    let (m1, m2, c1, c2, c3) = PQ;
+    let e = v.clamp(0.0, 1.0).powf(1.0 / m2);
+    ((e - c1).max(0.0) / (c2 - c3 * e)).powf(1.0 / m1)
+}
+
+const HLG: (f32, f32, f32) = (0.178_832_77, 0.284_668_92, 0.559_910_7);
+
+/// A scene's light on ARIB STD-B67's curve (HLG's); and back.
+fn hlg(e: f32) -> f32 {
+    let (a, b, c) = HLG;
+    let e = e.max(0.0);
+    if e <= 1.0 / 12.0 { (3.0 * e).sqrt() } else { a * (12.0 * e - b).ln() + c }
+}
+
+fn hlg_light(v: f32) -> f32 {
+    let (a, b, c) = HLG;
+    let v = v.max(0.0);
+    if v <= 0.5 { v * v / 3.0 } else { (((v - c) / a).exp() + b) / 12.0 }
 }
 
 /// Whether the layer of marks has anything in it.
@@ -72,11 +110,19 @@ pub fn any(layer: &[u8]) -> bool {
     layer.chunks_exact(4).any(|p| p[3] != 0)
 }
 
-/// The marks' `layer` (tiny-skia's eight bits, alpha multiplied in, at the picture's size) laid
-/// over `image` at its own depth. A grey picture is made a coloured one of the same depth first
-/// (the marks have colour); where the layer is clear nothing is touched.
-pub fn lay(image: DynamicImage, layer: &[u8], curve: Curve) -> DynamicImage {
-    if !any(layer) {
+/// Whether a highlighters' tint has anything in it: anything not white.
+pub fn tinted(tint: &[u8]) -> bool {
+    tint.chunks_exact(4).any(|p| p[..3] != [255, 255, 255])
+}
+
+/// The marks' `layers` (tiny-skia's eight bits, at the picture's size) laid on `image` at its own
+/// depth: the picture multiplied by the highlighters' tint, then the marks laid over it. A grey
+/// picture is made a coloured one of the same depth first (the marks have colour); where the
+/// layers are clear nothing is touched.
+pub fn lay(image: DynamicImage, layers: &crate::ink::Layers, curve: Curve) -> DynamicImage {
+    let tint = layers.tint.as_deref().filter(|t| tinted(t));
+    let layer = &layers.over[..];
+    if !any(layer) && tint.is_none() {
         return image;
     }
     let mut image = match image {
@@ -92,21 +138,27 @@ pub fn lay(image: DynamicImage, layer: &[u8], curve: Curve) -> DynamicImage {
     let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     let to16 = |v: f32| (v.clamp(0.0, 1.0) * 65535.0).round() as u16;
     match &mut image {
-        DynamicImage::ImageRgb8(b) => over(b, 3, layer, unit8, to8, curve),
-        DynamicImage::ImageRgba8(b) => over(b, 4, layer, unit8, to8, curve),
-        DynamicImage::ImageRgb16(b) => over(b, 3, layer, unit16, to16, curve),
-        DynamicImage::ImageRgba16(b) => over(b, 4, layer, unit16, to16, curve),
+        DynamicImage::ImageRgb8(b) => over(b, 3, layer, tint, unit8, to8, curve),
+        DynamicImage::ImageRgba8(b) => over(b, 4, layer, tint, unit8, to8, curve),
+        DynamicImage::ImageRgb16(b) => over(b, 3, layer, tint, unit16, to16, curve),
+        DynamicImage::ImageRgba16(b) => over(b, 4, layer, tint, unit16, to16, curve),
         // Light: as bright as it is, above 1 where it is.
-        DynamicImage::ImageRgb32F(b) => over(b, 3, layer, |v| v, |v| v, curve),
-        DynamicImage::ImageRgba32F(b) => over(b, 4, layer, |v| v, |v| v, curve),
+        DynamicImage::ImageRgb32F(b) => over(b, 3, layer, tint, |v| v, |v| v, curve),
+        DynamicImage::ImageRgba32F(b) => over(b, 4, layer, tint, |v| v, |v| v, curve),
         _ => {}
     }
     image
 }
 
-/// The layer over `samples`, `channels` a pixel, read and written by `get` and `set` (0 to 1).
-fn over<T: Copy>(samples: &mut [T], channels: usize, layer: &[u8], get: impl Fn(T) -> f32, set: impl Fn(f32) -> T, curve: Curve) {
-    for (px, mark) in samples.chunks_exact_mut(channels).zip(layer.chunks_exact(4)) {
+/// The tint, then the layer, over `samples`, `channels` a pixel, read and written by `get` and
+/// `set` (0 to 1).
+fn over<T: Copy>(samples: &mut [T], channels: usize, layer: &[u8], tint: Option<&[u8]>, get: impl Fn(T) -> f32, set: impl Fn(f32) -> T, curve: Curve) {
+    for (i, (px, mark)) in samples.chunks_exact_mut(channels).zip(layer.chunks_exact(4)).enumerate() {
+        if let Some(t) = tint.and_then(|t| t.get(i * 4..i * 4 + 3)).filter(|t| *t != [255, 255, 255]) {
+            for k in 0..3 {
+                px[k] = set(curve.multiply(get(px[k]), t[k] as f32 / 255.0));
+            }
+        }
         if mark[3] == 0 {
             continue;
         }
@@ -337,10 +389,11 @@ pub fn exr_as_read(bytes: &[u8]) -> Result<(), String> {
 }
 
 /// The OpenEXR of `bytes` again: every channel of its layer turned `turns` quarters and cropped
-/// to `crop` (x, y, w, h in the turned picture's pixels), the marks' `layer` (at the turned
-/// picture's size) laid over its red, green, blue and alpha as light; its channels' sample types,
+/// to `crop` (x, y, w, h in the turned picture's pixels), the marks' `layers` (at the turned
+/// picture's size) laid on its red, green, blue and alpha as light; its channels' sample types,
 /// its compression, its blocks and its attributes as they were.
-pub fn exr_bytes(bytes: &[u8], turns: u8, layer: &[u8], crop: Option<(u32, u32, u32, u32)>) -> Result<Vec<u8>, String> {
+pub fn exr_bytes(bytes: &[u8], turns: u8, layers: &crate::ink::Layers, crop: Option<(u32, u32, u32, u32)>) -> Result<Vec<u8>, String> {
+    let layer = &layers.over[..];
     use exr::image::FlatSamples;
     use exr::math::Vec2;
     use exr::prelude::*;
@@ -375,6 +428,16 @@ pub fn exr_bytes(bytes: &[u8], turns: u8, layer: &[u8], crop: Option<(u32, u32, 
     // The marks, over red, green, blue (and alpha), as light.
     let index = |name: &str| layer_data.channel_data.list.iter().position(|c| c.name.to_string() == name);
     let (r, g, b, a) = (index("R").ok_or("no red")?, index("G").ok_or("no green")?, index("B").ok_or("no blue")?, index("A"));
+    // The highlighters first: the light under them multiplied by their tint's.
+    if let Some(tint) = layers.tint.as_deref().filter(|t| t.len() == tw * th * 4 && tinted(t)) {
+        for (i, t) in tint.chunks_exact(4).enumerate() {
+            if t[..3] != [255, 255, 255] {
+                for (k, c) in [r, g, b].into_iter().enumerate() {
+                    planes[c][i] = Curve::Linear.multiply(planes[c][i], t[k] as f32 / 255.0);
+                }
+            }
+        }
+    }
     if layer.len() == tw * th * 4 {
         for (i, mark) in layer.chunks_exact(4).enumerate() {
             if mark[3] == 0 {
@@ -458,7 +521,7 @@ pub fn hdr_bytes(image: &DynamicImage, original: &[u8]) -> Result<Vec<u8>, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markup::{Area, Ink, Marks, Note, Shape, Weight};
+    use crate::markup::{Area, Ink, Marks, Note, Shape};
     use crate::save::{save, Saving};
     use std::path::PathBuf;
 
@@ -471,7 +534,7 @@ mod tests {
 
     /// A red box, its line 4 wide, round `area`.
     fn boxed(area: Area) -> Marks {
-        Marks { notes: vec![Note { page: 0, shape: Shape::Box(area), ink: Ink::Red, weight: Weight::Medium, size: 4.0 }], ..Marks::default() }
+        Marks { notes: vec![Note::new(0, Shape::Box(area), Ink::Red.colour(), 4.0)], ..Marks::default() }
     }
 
     /// Whether (x, y) is clear of a box's line round `area` (4 wide, and its soft edge).
@@ -751,5 +814,45 @@ mod tests {
         let reader = decoder.read_info().unwrap();
         let cicp = reader.info().coding_independent_code_points.unwrap();
         assert_eq!((cicp.color_primaries, cicp.transfer_function, cicp.matrix_coefficients, cicp.is_video_full_range_image), (9, 16, 0, true));
+    }
+
+    #[test]
+    fn a_highlighter_multiplies_the_light_on_each_curve() {
+        // White, nothing; on sRGB's curve as the window multiplies; otherwise in light.
+        for curve in [Curve::Srgb, Curve::Linear, Curve::Pq, Curve::Hlg] {
+            for v in [0.0, 0.1, 0.5, 0.9] {
+                assert!((curve.multiply(v, 1.0) - v).abs() < 1e-4, "{curve:?} {v}");
+            }
+        }
+        assert_eq!(Curve::Srgb.multiply(0.8, 0.5), 0.4);
+        assert!((Curve::Linear.multiply(2.0, 0.5) - 2.0 * 0.214).abs() < 0.001, "light above 1 kept, and multiplied");
+        // PQ and HLG: the light they stand for is what is multiplied.
+        let halved = Curve::Pq.multiply(Curve::Pq.put(0.8), 0.735_357);
+        assert!((pq_light(halved) - pq_light(Curve::Pq.put(0.8)) * 0.5).abs() < 1e-5);
+        let halved = Curve::Hlg.multiply(0.6, 0.735_357);
+        assert!((hlg_light(halved) - hlg_light(0.6) * 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_sixteen_bit_png_highlighted_keeps_its_low_bits_under_the_highlight() {
+        use crate::markup::{Brush, HIGHLIGHTER_COLOURS};
+        let dir = folder("png16hl");
+        let path = dir.join("deep.png");
+        let image = image::ImageBuffer::<image::Rgb<u16>, Vec<u16>>::from_fn(64, 48, |x, y| image::Rgb(deep(x, y)));
+        image.save(&path).unwrap();
+        let marker = Note::new(0, Shape::Stroke { brush: Brush::Highlighter, points: vec![(0.0, 24.0), (64.0, 24.0)] }, HIGHLIGHTER_COLOURS[3].colour, 8.0);
+        save(&Saving { source: path.clone(), marks: Marks { notes: vec![marker], ..Marks::default() }, frame: (64.0, 48.0), copy: false }).unwrap();
+        let DynamicImage::ImageRgb16(read) = image::open(&path).unwrap() else { panic!("sixteen bits") };
+        // Under it: each sample times the light blue's tint as Chromium shows it on white, at
+        // sixteen bits, not eight.
+        let tint = HIGHLIGHTER_COLOURS[3].colour.on_white().rgb();
+        let (x, y) = (31, 24);
+        for k in 0..3 {
+            let want = (deep(x, y)[k] as f32 * tint[k] as f32 / 255.0).round() as i32;
+            assert!((read.get_pixel(x, y).0[k] as i32 - want).abs() <= 1, "{k}: {} {want}", read.get_pixel(x, y).0[k]);
+        }
+        // Clear of it: as it was.
+        assert_eq!(read.get_pixel(31, 5).0, deep(31, 5));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

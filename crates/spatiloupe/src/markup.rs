@@ -1,11 +1,19 @@
-//! Markup: what the wearer draws over a picture or a PDF's pages -- boxes, ovals, arrows and
-//! words -- and what is cropped away, kept as shapes while the file is open, every change one
-//! that can be undone. Nothing here draws or writes: `ink` paints these, `save` writes a
-//! picture with them and `annotate` a PDF.
+//! Markup: what the wearer draws over a picture or a PDF's pages -- lines drawn by hand with a
+//! pen or a highlighter, boxes, ovals, arrows and words -- and what is cropped away, kept as
+//! shapes while the file is open, every change one that can be undone. Nothing here draws or
+//! writes: `ink` paints these, `save` writes a picture with them and `annotate` a PDF.
 //!
 //! Each shape is in its page's own units: a picture's own pixels, the picture as it is shown
 //! (turned as it is turned); a PDF page's points from its top left, as PDFium shows the page. A
 //! picture is page 0.
+//!
+//! A picture is drawn on with the tools of Chromium's PDF viewer (the owner, 2026-11-27:
+//! "chromium tools. spatiloupe tools match chromium, if not exists box circle arrow crop, add
+//! for pictures"): its pen, highlighter and eraser and its words, in its own colours and sizes,
+//! kept as its own values -- a colour's hex, a size's number, a typeface's, a style's and an
+//! alignment's names -- from Chromium 157's `chrome/browser/resources/pdf` and `pdf/`. A PDF keeps
+//! the seven colours and three weights it was marked up with before, until PDFs are shown by
+//! SpatiMesh, Chromium itself.
 
 /// A point on a page, in its units, down from its top left.
 pub type Point = (f32, f32);
@@ -62,8 +70,286 @@ impl Area {
     }
 }
 
-/// A colour to draw with: Preview's few, red to begin with. A drawing's own colours, the same in
-/// the dark and the light look, not the room's.
+/// A colour exactly as Chromium's PDF viewer keeps one -- `#rrggbb` (its `hexToColor` and
+/// `colorToHex`, pdf_viewer_utils.ts) -- and as a mark is painted in: a drawing's own colour, the
+/// same in the dark and the light look, not the room's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Colour(pub [u8; 3]);
+
+/// How much of a highlighter's colour lies over what is under it, in Chromium (`GetOpacity`,
+/// pdf_ink_brush.cc).
+pub const HIGHLIGHTER_OPACITY: f32 = 0.4;
+
+impl Colour {
+    pub const BLACK: Colour = Colour::of(0x000000);
+
+    /// From its hex as a number: `Colour::of(0xf28b82)`.
+    pub const fn of(hex: u32) -> Colour {
+        Colour([(hex >> 16) as u8, (hex >> 8) as u8, hex as u8])
+    }
+
+    pub fn rgb(self) -> [u8; 3] {
+        self.0
+    }
+
+    /// As Chromium writes it: "#f28b82".
+    pub fn hex(self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.0[0], self.0[1], self.0[2])
+    }
+
+    /// As the painter takes one: each 0 to 1, opaque.
+    pub fn unit(self) -> [f32; 4] {
+        let [r, g, b] = self.0;
+        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+    }
+
+    /// As a highlighter of it lies on white paper in Chromium: its colour at 40 per cent over
+    /// white (`blendHighlighterColorValue`, pdf_viewer_utils.ts), which is how Chromium shows a
+    /// highlighter's colours to choose from. What a highlighter multiplies what is under it by
+    /// here, so that on white it is Chromium's to the pixel.
+    pub fn on_white(self) -> Colour {
+        Colour(self.0.map(|v| (v as f32 * HIGHLIGHTER_OPACITY + 255.0 * (1.0 - HIGHLIGHTER_OPACITY)).round() as u8))
+    }
+}
+
+/// One of Chromium's colours to choose from, with the name its PDF viewer gives it (its strings,
+/// components/pdf_strings.grdp).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Swatch {
+    pub colour: Colour,
+    pub name: &'static str,
+}
+
+const fn swatch(hex: u32, name: &'static str) -> Swatch {
+    Swatch { colour: Colour::of(hex), name }
+}
+
+/// The pen's colours -- and so a box's, an oval's and an arrow's -- as Chromium has them
+/// (`PEN_COLORS`, ink_annotation_brush_mixin.ts), in its order: four rows of five.
+pub const PEN_COLOURS: [Swatch; 20] = [
+    swatch(0x000000, "Black"),
+    swatch(0x5f6368, "Dark Grey 2"),
+    swatch(0x9aa0a6, "Dark Grey 1"),
+    swatch(0xdadce0, "Light Grey"),
+    swatch(0xffffff, "White"),
+    swatch(0xf28b82, "Red 1"),
+    swatch(0xfdd663, "Yellow 1"),
+    swatch(0x81c995, "Green 1"),
+    swatch(0x8ab4f8, "Blue 1"),
+    swatch(0xeec9ae, "Tan 1"),
+    swatch(0xea4335, "Red 2"),
+    swatch(0xfbbc04, "Yellow 2"),
+    swatch(0x34a853, "Green 2"),
+    swatch(0x4285f4, "Blue 2"),
+    swatch(0xe2a185, "Tan 2"),
+    swatch(0xc5221f, "Red 3"),
+    swatch(0xf29900, "Yellow 3"),
+    swatch(0x188038, "Green 3"),
+    swatch(0x1967d2, "Blue 3"),
+    swatch(0x885945, "Tan 3"),
+];
+
+/// The highlighter's (`HIGHLIGHTER_COLORS`): two rows of five, each "blended" -- shown, and laid
+/// over what is under it, see-through.
+pub const HIGHLIGHTER_COLOURS: [Swatch; 10] = [
+    swatch(0xf28b82, "Light Red"),
+    swatch(0xfdd663, "Light Yellow"),
+    swatch(0x34a853, "Light Green"),
+    swatch(0x4285f4, "Light Blue"),
+    swatch(0xffae80, "Light Orange"),
+    swatch(0xd93025, "Red"),
+    swatch(0xddf300, "Yellow"),
+    swatch(0x25e387, "Green"),
+    swatch(0x5379ff, "Blue"),
+    swatch(0xff630c, "Orange"),
+];
+
+/// Words' (`TEXT_COLORS`, ink_annotation_text_mixin.ts): four rows of five, with cyans where the
+/// pen has tans.
+pub const TEXT_COLOURS: [Swatch; 20] = [
+    swatch(0x000000, "Black"),
+    swatch(0x5f6368, "Dark Grey 2"),
+    swatch(0x9aa0a6, "Dark Grey 1"),
+    swatch(0xdadce0, "Light Grey"),
+    swatch(0xffffff, "White"),
+    swatch(0xf28b82, "Red 1"),
+    swatch(0xfdd663, "Yellow 1"),
+    swatch(0x81c995, "Green 1"),
+    swatch(0x78d9ec, "Cyan 1"),
+    swatch(0x8ab4f8, "Blue 1"),
+    swatch(0xe94235, "Red 2"),
+    swatch(0xfbbc04, "Yellow 2"),
+    swatch(0x34a853, "Green 2"),
+    swatch(0x24c1e0, "Cyan 2"),
+    swatch(0x4285f4, "Blue 2"),
+    swatch(0xc5221f, "Red 3"),
+    swatch(0xd56e0c, "Yellow 3"),
+    swatch(0x188038, "Green 3"),
+    swatch(0x12a4af, "Cyan 3"),
+    swatch(0x1967d2, "Blue 3"),
+];
+
+/// One of Chromium's sizes for a brush, with its name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Size {
+    pub value: f32,
+    pub name: &'static str,
+}
+
+/// The pen's sizes (`PEN_SIZES`, ink_size_selector.ts) -- and so a box's, an oval's and an
+/// arrow's.
+pub const PEN_SIZES: [Size; 5] = [
+    Size { value: 1.0, name: "Extra thin" },
+    Size { value: 2.0, name: "Thin" },
+    Size { value: 3.0, name: "Medium" },
+    Size { value: 6.0, name: "Thick" },
+    Size { value: 8.0, name: "Extra thick" },
+];
+
+/// The highlighter's (`HIGHLIGHTER_SIZES`).
+pub const HIGHLIGHTER_SIZES: [Size; 5] = [
+    Size { value: 4.0, name: "Extra thin" },
+    Size { value: 6.0, name: "Thin" },
+    Size { value: 8.0, name: "Medium" },
+    Size { value: 12.0, name: "Thick" },
+    Size { value: 16.0, name: "Extra thick" },
+];
+
+/// Words' sizes (`TEXT_SIZES`, ink_annotation_text_mixin.ts).
+pub const TEXT_SIZES: [f32; 16] = [6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 40.0, 48.0, 64.0, 72.0, 100.0];
+
+/// Chromium's own first choices: the pen black at 3 (`CreateDefaultPenBrush`, pdf_ink_module.cc),
+/// the highlighter light red at 8 (`CreateDefaultHighlighterBrush`), and words black at 12 --
+/// sans serif, from the left, neither bold nor italic (ink2_manager.ts's `attributes_`).
+pub const PEN: (Colour, f32) = (Colour::BLACK, 3.0);
+pub const HIGHLIGHTER: (Colour, f32) = (Colour::of(0xf28b82), 8.0);
+pub const WORDS: (Colour, f32) = (Colour::BLACK, 12.0);
+
+/// Chromium's sizes are in CSS pixels of a page shown at 100 per cent -- its "canonical"
+/// coordinates (pdf_ink_transform.h), where its strokes are drawn -- and a CSS pixel is three
+/// quarters of a point (`kUnitConversionFactorPixelsToPoints`, printing/units.h): its pen of 3
+/// is 2.25 points wide on the page, its words of 12 are set 9 points high
+/// (`CSSFontSizeToPdfFontSize`).
+pub const CSS_PIXEL: f32 = 0.75;
+
+/// An A4 page's shorter side, in points: a picture's shorter side is taken as one, so that a
+/// size looks on a photograph as it does on a page.
+pub const A4_SHORT: f32 = 595.0;
+
+/// How far the eraser reaches either way of where it is, in Chromium's units: a square
+/// (`kEraserSize`, pdf_ink_module.cc).
+pub const ERASER: f32 = 3.0;
+
+/// One of Chromium's numbers -- a brush's size, words' size, the eraser's reach -- on a picture
+/// whose shorter side is `short` of its pixels: on a 12-megapixel photograph's 3024, the pen's 3
+/// is 11.4 pixels, as it is 2.25 points on an A4 page's 595.
+pub fn on_picture(value: f32, short: f32) -> f32 {
+    value * CSS_PIXEL * short / A4_SHORT
+}
+
+/// What draws a line by hand: Chromium's brushes, "pen" and "highlighter"
+/// (`AnnotationBrushType`, constants.ts), but for the eraser, which draws nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Brush {
+    /// A round tip, the colour laid on as it is.
+    Pen,
+    /// A square tip, upright (`GetCornerRounding` 0), see-through.
+    Highlighter,
+}
+
+/// Words' typeface, by Chromium's names (`TextTypeface`, constants.ts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Typeface {
+    #[default]
+    SansSerif,
+    Serif,
+    Monospace,
+}
+
+impl Typeface {
+    pub const ALL: [Typeface; 3] = [Typeface::SansSerif, Typeface::Serif, Typeface::Monospace];
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Typeface::SansSerif => "sans-serif",
+            Typeface::Serif => "serif",
+            Typeface::Monospace => "monospace",
+        }
+    }
+
+    /// As Chromium's PDF viewer says it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Typeface::SansSerif => "Sans Serif",
+            Typeface::Serif => "Serif",
+            Typeface::Monospace => "Monospace",
+        }
+    }
+}
+
+/// How words' lines lie in their box (`TextAlignment`, constants.ts). One line, as SpatiLoupe's
+/// words are, lies against the edge its alignment says: that edge stays where it is as the words
+/// change, and a new line of words is set from the place pressed by it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Alignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl Alignment {
+    pub const ALL: [Alignment; 3] = [Alignment::Left, Alignment::Center, Alignment::Right];
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Alignment::Left => "left",
+            Alignment::Center => "center",
+            Alignment::Right => "right",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Alignment::Left => "Left",
+            Alignment::Center => "Center",
+            Alignment::Right => "Right",
+        }
+    }
+
+    /// How far across a line the place that holds it is: its left, its middle, its right.
+    pub fn share(self) -> f32 {
+        match self {
+            Alignment::Left => 0.0,
+            Alignment::Center => 0.5,
+            Alignment::Right => 1.0,
+        }
+    }
+}
+
+/// How words are set: Chromium's `TextAttributes` but for their size and colour, which every mark
+/// has -- the styles its viewer offers (bold and italic: underline and strikethrough are behind a
+/// flag that is off in Chromium 157, text_styles_selector.ts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Face {
+    pub typeface: Typeface,
+    pub bold: bool,
+    pub italic: bool,
+    pub alignment: Alignment,
+}
+
+/// Where words `width` wide begin, held by their `alignment` at `x`.
+pub fn left_of(x: f32, width: f32, alignment: Alignment) -> f32 {
+    x - width * alignment.share()
+}
+
+/// Where words whose box is `width` wide from `x0` are held by their `alignment`.
+pub fn held_at(x0: f32, width: f32, alignment: Alignment) -> f32 {
+    x0 + width * alignment.share()
+}
+
+/// A colour to draw with on a PDF, as PDFs are marked up for now: Preview's few, red to begin
+/// with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Ink {
     #[default]
@@ -102,10 +388,20 @@ impl Ink {
             Ink::White => "White",
         }
     }
+
+    pub fn colour(self) -> Colour {
+        Colour(self.rgb())
+    }
+
+    /// The ink of this colour, if it is one.
+    pub fn of(colour: Colour) -> Option<Ink> {
+        Ink::ALL.into_iter().find(|ink| ink.colour() == colour)
+    }
 }
 
-/// How heavy a line is drawn, or how large words are set: three steps, each a share of the
-/// page's shorter side, so that "thin" looks thin on a phone's photograph and on a page alike.
+/// How heavy a line is drawn on a PDF, or how large words are set there, as PDFs are marked up
+/// for now: three steps, each a share of the page's shorter side, so that "thin" looks thin on a
+/// phone's photograph and on a page alike.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Weight {
     Light,
@@ -155,8 +451,27 @@ pub enum Shape {
     /// A line with an arrowhead at `to`.
     Arrow { from: Point, to: Point },
     /// Words: their box's top left, and the box they take as the text engine sets them at the
-    /// note's size ([`crate::ink::measure`]).
-    Text { at: Point, words: String, extent: (f32, f32) },
+    /// note's size in their face ([`crate::ink::measure`]).
+    Text { at: Point, words: String, extent: (f32, f32), face: Face },
+    /// A line drawn by hand: the points the pointer went through, in order, which it is drawn
+    /// smoothly through ([`stroke_line`]) -- one, for a press that did not move: a dot.
+    Stroke { brush: Brush, points: Vec<Point> },
+}
+
+/// What a mark's size was chosen as.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Pick {
+    /// One of Chromium's sizes, as its own number ([`PEN_SIZES`], [`HIGHLIGHTER_SIZES`],
+    /// [`TEXT_SIZES`]): a picture's marks.
+    Chromium(f32),
+    /// One of the three weights a PDF is marked up with, for now.
+    Weight(Weight),
+}
+
+impl Default for Pick {
+    fn default() -> Pick {
+        Pick::Weight(Weight::Medium)
+    }
 }
 
 /// One thing drawn on a page.
@@ -164,10 +479,28 @@ pub enum Shape {
 pub struct Note {
     pub page: usize,
     pub shape: Shape,
-    pub ink: Ink,
-    pub weight: Weight,
-    /// A line's width, or the words' size, in the page's units.
+    /// Its colour, exactly as it was chosen: one of Chromium's on a picture, one of the seven
+    /// inks on a PDF.
+    pub colour: Colour,
+    /// A line's width, or the words' size, in the page's units: what is painted.
     pub size: f32,
+    /// What that size was chosen as.
+    pub pick: Pick,
+}
+
+impl Note {
+    #[cfg(test)]
+    pub fn new(page: usize, shape: Shape, colour: Colour, size: f32) -> Note {
+        Note { page, shape, colour, size, pick: Pick::default() }
+    }
+
+    /// The brush that drew it, if it was drawn by hand.
+    pub fn brush(&self) -> Option<Brush> {
+        match &self.shape {
+            Shape::Stroke { brush, .. } => Some(*brush),
+            _ => None,
+        }
+    }
 }
 
 /// A place to take hold of a chosen note and change its shape.
@@ -187,6 +520,124 @@ pub fn distance_to_segment(p: Point, a: Point, b: Point) -> f32 {
     let t = if length <= f32::EPSILON { 0.0 } else { (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / length).clamp(0.0, 1.0) };
     let (x, y) = (a.0 + t * dx, a.1 + t * dy);
     ((p.0 - x).powi(2) + (p.1 - y).powi(2)).sqrt()
+}
+
+/// Whether the segment from `a` to `b` meets the upright square `half` either way of `centre`.
+pub fn square_meets_segment(centre: Point, half: f32, a: Point, b: Point) -> bool {
+    // The segment clipped to the square's slabs, across and down (Liang and Barsky's).
+    let (mut t0, mut t1) = (0.0f32, 1.0f32);
+    for (start, delta, low, high) in [(a.0, b.0 - a.0, centre.0 - half, centre.0 + half), (a.1, b.1 - a.1, centre.1 - half, centre.1 + half)] {
+        if delta.abs() <= f32::EPSILON {
+            if start < low || start > high {
+                return false;
+            }
+            continue;
+        }
+        let (mut near, mut far) = ((low - start) / delta, (high - start) / delta);
+        if near > far {
+            std::mem::swap(&mut near, &mut far);
+        }
+        t0 = t0.max(near);
+        t1 = t1.min(far);
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
+}
+
+/// How far the segment from `a` to `b` is from the upright square `half` either way of
+/// `centre`: nought where they meet.
+pub fn square_to_segment(centre: Point, half: f32, a: Point, b: Point) -> f32 {
+    if square_meets_segment(centre, half, a, b) {
+        return 0.0;
+    }
+    // Apart, the nearest two points are an end of one and a side of the other.
+    let corners = [(centre.0 - half, centre.1 - half), (centre.0 + half, centre.1 - half), (centre.0 + half, centre.1 + half), (centre.0 - half, centre.1 + half)];
+    let mut least = f32::MAX;
+    for i in 0..4 {
+        let (c, d) = (corners[i], corners[(i + 1) % 4]);
+        least = least.min(distance_to_segment(a, c, d)).min(distance_to_segment(b, c, d)).min(distance_to_segment(c, a, b));
+    }
+    least
+}
+
+/// The line a stroke is drawn along: from its first point to its last, through the middles
+/// between its points, each point pulling the line its way as a quadratic curve's control --
+/// a hand's tremble smoothed a little -- in short straight pieces.
+pub fn stroke_line(points: &[Point]) -> Vec<Point> {
+    const PIECES: usize = 6;
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+    let mid = |a: Point, b: Point| ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5);
+    let mut line = vec![points[0]];
+    let mut from = points[0];
+    for i in 1..points.len() - 1 {
+        let (control, to) = (points[i], mid(points[i], points[i + 1]));
+        for k in 1..=PIECES {
+            let t = k as f32 / PIECES as f32;
+            let u = 1.0 - t;
+            line.push((u * u * from.0 + 2.0 * u * t * control.0 + t * t * to.0, u * u * from.1 + 2.0 * u * t * control.1 + t * t * to.1));
+        }
+        from = to;
+    }
+    line.push(points[points.len() - 1]);
+    line
+}
+
+/// The shapes a highlighter's square tip covers along `line`, `half` either way of it: for each
+/// piece of the line, the six-sided shape the square makes moving along it (the two squares at
+/// its ends and what is between them), each wound the same way, so that filled together they are
+/// the stroke. A stroke of one point is its square.
+pub fn highlighter_shapes(line: &[Point], half: f32) -> Vec<Vec<Point>> {
+    let square = |p: Point| [(p.0 - half, p.1 - half), (p.0 + half, p.1 - half), (p.0 + half, p.1 + half), (p.0 - half, p.1 + half)];
+    match line {
+        [] => Vec::new(),
+        [only] => vec![square(*only).to_vec()],
+        _ => line
+            .windows(2)
+            .map(|pair| {
+                let mut corners: Vec<Point> = square(pair[0]).into_iter().chain(square(pair[1])).collect();
+                hull(&mut corners)
+            })
+            .collect(),
+    }
+}
+
+/// The convex hull of `points`, anticlockwise as y goes up (Andrew's monotone chain).
+fn hull(points: &mut [Point]) -> Vec<Point> {
+    points.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let cross = |o: Point, a: Point, b: Point| (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0);
+    let mut lower: Vec<Point> = Vec::new();
+    for p in points.iter() {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], *p) <= 0.0 {
+            lower.pop();
+        }
+        lower.push(*p);
+    }
+    let mut upper: Vec<Point> = Vec::new();
+    for p in points.iter().rev() {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], *p) <= 0.0 {
+            upper.pop();
+        }
+        upper.push(*p);
+    }
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
+}
+
+/// The points of an ellipse inside `a`, round it in `n` steps: what an oval's line is tested
+/// against.
+fn ellipse_points(a: &Area, n: usize) -> Vec<Point> {
+    let (cx, cy) = a.centre();
+    let (rx, ry) = (a.w() * 0.5, a.h() * 0.5);
+    (0..=n).map(|i| {
+        let t = i as f32 / n as f32 * std::f32::consts::TAU;
+        (cx + rx * t.cos(), cy + ry * t.sin())
+    }).collect()
 }
 
 /// An arrow's head, for a line of `width` from `from` to `to`: where the line stops under it,
@@ -210,6 +661,10 @@ impl Shape {
             Shape::Box(a) | Shape::Oval(a) => *a,
             Shape::Arrow { from, to } => Area::between(*from, *to),
             Shape::Text { at, extent, .. } => Area::new(at.0, at.1, at.0 + extent.0, at.1 + extent.1),
+            Shape::Stroke { points, .. } => {
+                let Some(first) = points.first() else { return Area::new(0.0, 0.0, 0.0, 0.0) };
+                points.iter().fold(Area::between(*first, *first), |a, p| Area { x0: a.x0.min(p.0), y0: a.y0.min(p.1), x1: a.x1.max(p.0), y1: a.y1.max(p.1) })
+            }
         }
     }
 
@@ -219,17 +674,19 @@ impl Shape {
             Shape::Box(a) => Shape::Box(Area::between(m((a.x0, a.y0)), m((a.x1, a.y1)))),
             Shape::Oval(a) => Shape::Oval(Area::between(m((a.x0, a.y0)), m((a.x1, a.y1)))),
             Shape::Arrow { from, to } => Shape::Arrow { from: m(*from), to: m(*to) },
-            Shape::Text { at, words, extent } => Shape::Text { at: m(*at), words: words.clone(), extent: *extent },
+            Shape::Text { at, words, extent, face } => Shape::Text { at: m(*at), words: words.clone(), extent: *extent, face: *face },
+            Shape::Stroke { brush, points } => Shape::Stroke { brush: *brush, points: points.iter().map(|p| m(*p)).collect() },
         }
     }
 
     /// The places it can be taken hold of to change it: a box's and an oval's corners, an
-    /// arrow's ends. Words have none; they are moved, and their size is chosen.
+    /// arrow's ends. Words and lines drawn by hand have none; they are moved, and their size is
+    /// chosen.
     pub fn handles(&self) -> Vec<(Handle, Point)> {
         match self {
             Shape::Box(a) | Shape::Oval(a) => a.corners().iter().enumerate().map(|(i, p)| (Handle::Corner(i as u8), *p)).collect(),
             Shape::Arrow { from, to } => vec![(Handle::From, *from), (Handle::To, *to)],
-            Shape::Text { .. } => Vec::new(),
+            Shape::Text { .. } | Shape::Stroke { .. } => Vec::new(),
         }
     }
 
@@ -248,12 +705,14 @@ impl Shape {
         }
     }
 
-    /// Whether it is so small that it is nothing: a press that was not a drag.
+    /// Whether it is so small that it is nothing: a press that was not a drag. A press with a
+    /// pen or a highlighter is a dot, as it is in Chromium.
     pub fn is_speck(&self, least: f32) -> bool {
         match self {
             Shape::Box(a) | Shape::Oval(a) => a.w() < least && a.h() < least,
             Shape::Arrow { from, to } => (to.0 - from.0).hypot(to.1 - from.1) < least,
             Shape::Text { words, .. } => words.trim().is_empty(),
+            Shape::Stroke { points, .. } => points.is_empty(),
         }
     }
 }
@@ -281,16 +740,17 @@ pub fn turn_area(a: &Area, size: (f32, f32), clockwise: bool) -> Area {
 
 impl Note {
     /// The note on a picture turned a quarter. Words stay upright, wherever they go: their middle
-    /// goes where that part of the picture goes.
+    /// goes where that part of the picture goes. A highlighter's square tip is upright either way.
     pub fn turned(&self, size: (f32, f32), clockwise: bool) -> Note {
         let shape = match &self.shape {
             Shape::Box(a) => Shape::Box(turn_area(a, size, clockwise)),
             Shape::Oval(a) => Shape::Oval(turn_area(a, size, clockwise)),
             Shape::Arrow { from, to } => Shape::Arrow { from: turn_point(*from, size, clockwise), to: turn_point(*to, size, clockwise) },
-            Shape::Text { at, words, extent } => {
+            Shape::Text { at, words, extent, face } => {
                 let middle = turn_point((at.0 + extent.0 * 0.5, at.1 + extent.1 * 0.5), size, clockwise);
-                Shape::Text { at: (middle.0 - extent.0 * 0.5, middle.1 - extent.1 * 0.5), words: words.clone(), extent: *extent }
+                Shape::Text { at: (middle.0 - extent.0 * 0.5, middle.1 - extent.1 * 0.5), words: words.clone(), extent: *extent, face: *face }
             }
+            Shape::Stroke { brush, points } => Shape::Stroke { brush: *brush, points: points.iter().map(|p| turn_point(*p, size, clockwise)).collect() },
         };
         Note { shape, ..self.clone() }
     }
@@ -299,7 +759,57 @@ impl Note {
     fn holds(&self, p: Point, slack: f32) -> bool {
         match &self.shape {
             Shape::Arrow { from, to } => distance_to_segment(p, *from, *to) <= slack + self.size * 0.5,
+            Shape::Stroke { .. } => self.near_stroke(p, slack),
             shape => shape.bounds().grown(slack + self.size * 0.5).contains(p),
+        }
+    }
+
+    /// Whether the upright square `half` either way of `centre` meets a line drawn by hand, as it
+    /// is painted: a pen's round tip, a highlighter's square one, swept along its line.
+    fn stroke_meets(&self, centre: Point, half: f32) -> bool {
+        let Shape::Stroke { brush, points } = &self.shape else { return false };
+        let line = stroke_line(points);
+        let tip = self.size * 0.5;
+        match (brush, line.as_slice()) {
+            (_, []) => false,
+            // Two upright squares meet where one grown by the other holds the other's middle.
+            (Brush::Highlighter, [only]) => (only.0 - centre.0).abs() <= half + tip && (only.1 - centre.1).abs() <= half + tip,
+            (Brush::Highlighter, _) => line.windows(2).any(|w| square_meets_segment(centre, half + tip, w[0], w[1])),
+            (Brush::Pen, [only]) => square_to_segment(centre, half, *only, *only) <= tip,
+            (Brush::Pen, _) => line.windows(2).any(|w| square_to_segment(centre, half, w[0], w[1]) <= tip),
+        }
+    }
+
+    /// Whether `p` is on a line drawn by hand, give or take `slack`.
+    fn near_stroke(&self, p: Point, slack: f32) -> bool {
+        self.stroke_meets(p, slack)
+    }
+
+    /// Whether the eraser, the upright square `half` either way of `centre`, touches it: a line
+    /// drawn by hand, a box's, an oval's or an arrow's line -- not what is only inside them -- but
+    /// never words, which Chromium's eraser leaves too (`EraseHelper`, pdf_ink_module.cc, erases
+    /// strokes only).
+    pub fn erased_by(&self, centre: Point, half: f32) -> bool {
+        let reach = self.size * 0.5;
+        let near = |a: Point, b: Point| square_to_segment(centre, half, a, b) <= reach;
+        match &self.shape {
+            Shape::Stroke { .. } => self.stroke_meets(centre, half),
+            Shape::Box(a) => {
+                let c = a.corners();
+                (0..4).any(|i| near(c[i], c[(i + 1) % 4]))
+            }
+            Shape::Oval(a) => ellipse_points(a, 48).windows(2).any(|w| near(w[0], w[1])),
+            Shape::Arrow { from, to } => {
+                let (stop, head) = arrow_head(*from, *to, self.size);
+                // Its line, its head's edges, or inside its head.
+                let inside = {
+                    let side = |a: Point, b: Point| (b.0 - a.0) * (centre.1 - a.1) - (b.1 - a.1) * (centre.0 - a.0);
+                    let s = [side(head[0], head[1]), side(head[1], head[2]), side(head[2], head[0])];
+                    s.iter().all(|v| *v >= 0.0) || s.iter().all(|v| *v <= 0.0)
+                };
+                near(*from, stop) || inside || (0..3).any(|i| square_to_segment(centre, half, head[i], head[(i + 1) % 3]) <= 0.0)
+            }
+            Shape::Text { .. } => false,
         }
     }
 
@@ -338,6 +848,14 @@ pub struct Marks {
 impl Marks {
     pub fn crop(&self, page: usize) -> Option<Area> {
         self.crops.iter().find(|(p, _)| *p == page).map(|(_, a)| *a)
+    }
+
+    /// What the eraser, `half` either way of `centre` on `page`, touches there, taken away whole
+    /// (as Chromium's does): how many marks.
+    pub fn erase(&mut self, page: usize, centre: Point, half: f32) -> usize {
+        let before = self.notes.len();
+        self.notes.retain(|n| n.page != page || !n.erased_by(centre, half));
+        before - self.notes.len()
     }
 
     /// The pages anything is drawn on or cut from, in order.
@@ -517,7 +1035,7 @@ mod tests {
     use super::*;
 
     fn note(shape: Shape) -> Note {
-        Note { page: 0, shape, ink: Ink::Red, weight: Weight::Medium, size: 4.0 }
+        Note::new(0, shape, Ink::Red.colour(), 4.0)
     }
 
     fn boxed(x0: f32, y0: f32, x1: f32, y1: f32) -> Note {
@@ -531,7 +1049,7 @@ mod tests {
         let a = m.add(boxed(10.0, 10.0, 100.0, 60.0));
         assert_eq!((a, m.chosen), (0, Some(0)));
         m.add(note(Shape::Arrow { from: (0.0, 0.0), to: (50.0, 50.0) }));
-        m.add(note(Shape::Text { at: (5.0, 200.0), words: "Grüße 你好".into(), extent: (120.0, 30.0) }));
+        m.add(note(Shape::Text { at: (5.0, 200.0), words: "Grüße 你好".into(), extent: (120.0, 30.0), face: Face::default() }));
         assert_eq!(m.marks().notes.len(), 3);
         assert!(m.edited());
         m.chosen = Some(1);
@@ -601,7 +1119,7 @@ mod tests {
             notes: vec![
                 boxed(10.0, 20.0, 110.0, 70.0),
                 note(Shape::Arrow { from: (5.0, 5.0), to: (395.0, 295.0) }),
-                note(Shape::Text { at: (50.0, 100.0), words: "label".into(), extent: (80.0, 20.0) }),
+                note(Shape::Text { at: (50.0, 100.0), words: "label".into(), extent: (80.0, 20.0), face: Face::default() }),
             ],
             crops: vec![(0, Area::new(1.0, 2.0, 300.0, 250.0))],
             turns: 0,
@@ -665,7 +1183,7 @@ mod tests {
         let a = Shape::Arrow { from: (0.0, 0.0), to: (10.0, 10.0) };
         assert_eq!(a.with_handle(Handle::To, (20.0, 5.0), false), Shape::Arrow { from: (0.0, 0.0), to: (20.0, 5.0) });
         assert_eq!(a.moved(5.0, -5.0), Shape::Arrow { from: (5.0, -5.0), to: (15.0, 5.0) });
-        let t = Shape::Text { at: (1.0, 2.0), words: "x".into(), extent: (10.0, 5.0) };
+        let t = Shape::Text { at: (1.0, 2.0), words: "x".into(), extent: (10.0, 5.0), face: Face::default() };
         assert!(t.handles().is_empty());
         assert_eq!(t.moved(1.0, 1.0).bounds(), Area::new(2.0, 3.0, 12.0, 8.0));
         assert!(Shape::Box(Area::new(0.0, 0.0, 1.0, 2.0)).is_speck(3.0));
@@ -699,5 +1217,170 @@ mod tests {
     fn an_even_rectangle_goes_the_way_it_was_dragged() {
         assert_eq!(corner_to((10.0, 10.0), (0.0, 30.0), true), Area::new(-10.0, 10.0, 10.0, 30.0));
         assert_eq!(corner_to((10.0, 10.0), (12.0, 13.0), false), Area::new(10.0, 10.0, 12.0, 13.0));
+    }
+
+    fn stroke(brush: Brush, points: &[Point], size: f32) -> Note {
+        Note { pick: Pick::Chromium(size), ..Note::new(0, Shape::Stroke { brush, points: points.to_vec() }, PEN.0, size) }
+    }
+
+    #[test]
+    fn chromium_s_colours_and_sizes_are_kept_as_its_own_values() {
+        // As many, in Chromium's order, each as its hex says; and back again.
+        assert_eq!((PEN_COLOURS.len(), HIGHLIGHTER_COLOURS.len(), TEXT_COLOURS.len()), (20, 10, 20));
+        assert_eq!(PEN_COLOURS[0].colour, Colour::BLACK);
+        assert_eq!(PEN_COLOURS[19], Swatch { colour: Colour([0x88, 0x59, 0x45]), name: "Tan 3" });
+        assert_eq!(HIGHLIGHTER_COLOURS[0].colour.hex(), "#f28b82");
+        assert_eq!(TEXT_COLOURS[16].colour.hex(), "#d56e0c", "words' Yellow 3 is their own, not the pen's");
+        // Each list as Chromium 157's source writes it, hex for hex.
+        let hex = |list: &[Swatch]| list.iter().map(|s| s.colour.hex()).collect::<Vec<_>>().join(" ");
+        assert_eq!(hex(&PEN_COLOURS), "#000000 #5f6368 #9aa0a6 #dadce0 #ffffff #f28b82 #fdd663 #81c995 #8ab4f8 #eec9ae #ea4335 #fbbc04 #34a853 #4285f4 #e2a185 #c5221f #f29900 #188038 #1967d2 #885945");
+        assert_eq!(hex(&HIGHLIGHTER_COLOURS), "#f28b82 #fdd663 #34a853 #4285f4 #ffae80 #d93025 #ddf300 #25e387 #5379ff #ff630c");
+        assert_eq!(hex(&TEXT_COLOURS), "#000000 #5f6368 #9aa0a6 #dadce0 #ffffff #f28b82 #fdd663 #81c995 #78d9ec #8ab4f8 #e94235 #fbbc04 #34a853 #24c1e0 #4285f4 #c5221f #d56e0c #188038 #12a4af #1967d2");
+        assert_eq!(PEN_SIZES.map(|s| s.value), [1.0, 2.0, 3.0, 6.0, 8.0]);
+        assert_eq!(HIGHLIGHTER_SIZES.map(|s| s.value), [4.0, 6.0, 8.0, 12.0, 16.0]);
+        assert_eq!(TEXT_SIZES[3], WORDS.1, "words begin at Chromium's fourth size, 12");
+        assert_eq!((PEN, HIGHLIGHTER), ((Colour::BLACK, 3.0), (Colour::of(0xf28b82), 8.0)));
+        // Chromium's names for its values, which are what a mark keeps.
+        assert_eq!(Typeface::ALL.map(Typeface::value), ["sans-serif", "serif", "monospace"]);
+        assert_eq!(Alignment::ALL.map(Alignment::value), ["left", "center", "right"]);
+        assert_eq!(Face::default(), Face { typeface: Typeface::SansSerif, bold: false, italic: false, alignment: Alignment::Left });
+        // A highlighter's colour as Chromium shows it on white: 40 per cent of it.
+        assert_eq!(Colour::of(0xf28b82).on_white(), Colour([250, 209, 205]));
+        assert_eq!(Colour::of(0x000000).on_white(), Colour([153, 153, 153]));
+        // The old seven are a PDF's, as they were.
+        assert_eq!(Ink::of(Ink::Blue.colour()), Some(Ink::Blue));
+        assert_eq!(Ink::of(Colour::BLACK), None, "Preview's black is not quite black");
+    }
+
+    #[test]
+    fn chromium_s_sizes_look_on_a_photograph_as_on_an_a4_page() {
+        // CSS pixels of a page at 100 per cent: three quarters of a point each.
+        assert_eq!(on_picture(3.0, A4_SHORT), 2.25);
+        assert_eq!(on_picture(12.0, A4_SHORT), 9.0);
+        // A 12-megapixel photograph, 3024 short: the pen's 3 is 11.4 of its pixels.
+        assert!((on_picture(3.0, 3024.0) - 11.435).abs() < 0.001);
+        assert!((on_picture(ERASER, 1190.0) - 4.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_eraser_takes_away_lines_and_shapes_it_touches_but_never_words() {
+        let mut marks = Marks {
+            notes: vec![
+                // A pen's line, 4 wide, along y = 100 from x = 0 to 200.
+                stroke(Brush::Pen, &[(0.0, 100.0), (100.0, 100.0), (200.0, 100.0)], 4.0),
+                // A highlighter's, 16 tall, along y = 300.
+                stroke(Brush::Highlighter, &[(0.0, 300.0), (200.0, 300.0)], 16.0),
+                note(Shape::Box(Area::new(300.0, 0.0, 400.0, 100.0))),
+                note(Shape::Oval(Area::new(300.0, 200.0, 400.0, 300.0))),
+                note(Shape::Arrow { from: (500.0, 0.0), to: (500.0, 200.0) }),
+                note(Shape::Text { at: (600.0, 0.0), words: "keep".into(), extent: (80.0, 30.0), face: Face::default() }),
+                // A dot: a press with the pen that did not move.
+                stroke(Brush::Pen, &[(700.0, 700.0)], 6.0),
+            ],
+            ..Marks::default()
+        };
+        // Off everything; inside a box and an oval, away from their lines; on the words.
+        for (centre, why) in [((100.0, 90.0), "above the pen's line"), ((350.0, 50.0), "inside the box"), ((350.0, 250.0), "inside the oval"), ((620.0, 10.0), "on the words")] {
+            assert_eq!(marks.clone().erase(0, centre, 3.0), 0, "{why}");
+        }
+        // The pen's line, 2 either way of it and 3 of the eraser: touched 4.9 off it, not 5.1.
+        assert_eq!(marks.clone().erase(0, (150.0, 104.9), 3.0), 1);
+        assert_eq!(marks.clone().erase(0, (150.0, 105.1), 3.0), 0);
+        // The highlighter's square tip, 8 either way: from 11 off.
+        assert_eq!(marks.clone().erase(0, (100.0, 310.9), 3.0), 1);
+        assert_eq!(marks.clone().erase(0, (100.0, 311.1), 3.0), 0);
+        // A box's edge, an oval's rim, an arrow's line and its head, the dot.
+        assert_eq!(marks.clone().erase(0, (300.0, 50.0), 3.0), 1);
+        assert_eq!(marks.clone().erase(0, (400.0, 250.0), 3.0), 1);
+        assert_eq!(marks.clone().erase(0, (502.0, 100.0), 3.0), 1);
+        assert_eq!(marks.clone().erase(0, (500.0, 195.0), 3.0), 1);
+        assert_eq!(marks.clone().erase(0, (704.0, 700.0), 3.0), 1);
+        // Another page's are not this page's.
+        assert_eq!(marks.clone().erase(1, (150.0, 100.0), 3.0), 0);
+        // Whole lines go, and only those touched: the words stay always.
+        assert_eq!(marks.erase(0, (150.0, 100.0), 3.0), 1);
+        assert_eq!(marks.notes.len(), 6);
+        assert!(matches!(marks.notes[0].shape, Shape::Stroke { brush: Brush::Highlighter, .. }));
+    }
+
+    #[test]
+    fn an_erase_is_one_step_to_undo_and_redo() {
+        let mut m = Markup::new(0);
+        m.add(stroke(Brush::Pen, &[(0.0, 0.0), (100.0, 0.0)], 4.0));
+        m.add(stroke(Brush::Highlighter, &[(0.0, 50.0), (100.0, 50.0)], 8.0));
+        m.add(note(Shape::Box(Area::new(10.0, 10.0, 90.0, 90.0))));
+        // One drag of the eraser across all three, down x = 50 and then along the box's foot.
+        let before = m.begin();
+        for at in [(50.0, 0.0), (50.0, 20.0), (50.0, 50.0), (70.0, 90.0)] {
+            m.adjust(|marks| {
+                marks.erase(0, at, 3.0);
+            });
+        }
+        m.finish(before);
+        assert!(m.marks().notes.is_empty());
+        assert!(m.undo());
+        assert_eq!(m.marks().notes.len(), 3, "all three back at once");
+        assert!(m.redo() && m.marks().notes.is_empty());
+        // An erase that touched nothing is no step.
+        m.undo();
+        let before = m.begin();
+        m.adjust(|marks| {
+            marks.erase(0, (500.0, 500.0), 3.0);
+        });
+        m.finish(before);
+        assert!(m.can_redo(), "nothing was done, so the redo is still there");
+    }
+
+    #[test]
+    fn a_stroke_moves_and_turns_with_the_picture_and_is_found_where_it_is_drawn() {
+        let line = stroke(Brush::Pen, &[(10.0, 20.0), (60.0, 30.0), (110.0, 20.0)], 4.0);
+        let marks = Marks { notes: vec![line.clone()], ..Marks::default() };
+        let mut turned = marks.clone();
+        let mut size = (400.0, 300.0);
+        for _ in 0..4 {
+            turned = turned.turned(size, true);
+            size = (size.1, size.0);
+        }
+        assert_eq!(turned, marks, "four quarters round");
+        // Once: what was 10 from the left and 20 from the top is 20 from the right and 10 down.
+        let once = marks.turned((400.0, 300.0), true);
+        let Shape::Stroke { points, .. } = &once.notes[0].shape else { unreachable!() };
+        assert_eq!(points[0], (280.0, 10.0));
+        assert_eq!(line.shape.moved(5.0, -5.0).bounds(), Area::new(15.0, 15.0, 115.0, 25.0));
+        assert!(line.shape.handles().is_empty() && !line.shape.is_speck(1.0));
+        // Chosen by a press on it, not by one inside its bounds but away from it.
+        let mut m = Markup::new(0);
+        m.add(line);
+        assert_eq!(m.hit(0, (60.0, 26.0), 2.0), Some(0));
+        assert_eq!(m.hit(0, (60.0, 10.0), 2.0), None);
+    }
+
+    #[test]
+    fn a_stroke_is_smoothed_through_the_middles_of_its_points_from_end_to_end() {
+        let points = [(0.0, 0.0), (10.0, 10.0), (20.0, 0.0)];
+        let line = stroke_line(&points);
+        assert_eq!((line[0], *line.last().unwrap()), ((0.0, 0.0), (20.0, 0.0)), "it ends where the hand did");
+        // Through the middle between its last two points; rounding the corner, never out to it.
+        assert!(line.contains(&(15.0, 5.0)), "{line:?}");
+        assert!(line.iter().all(|p| p.1 < 7.0) && line.iter().any(|p| p.1 > 6.0), "{line:?}");
+        assert_eq!(stroke_line(&points[..2]), points[..2].to_vec(), "two points are a straight line");
+        // A highlighter's square tip along a slanting piece: six sides; a dot, its square.
+        let shapes = highlighter_shapes(&[(0.0, 0.0), (10.0, 10.0)], 2.0);
+        assert_eq!(shapes.len(), 1);
+        assert_eq!(shapes[0].len(), 6, "{:?}", shapes[0]);
+        assert!(shapes[0].contains(&(-2.0, -2.0)) && shapes[0].contains(&(12.0, 12.0)) && !shapes[0].contains(&(12.0, -2.0)) && shapes[0].contains(&(2.0, -2.0)));
+        assert_eq!(highlighter_shapes(&[(5.0, 5.0)], 1.0), vec![vec![(4.0, 4.0), (6.0, 4.0), (6.0, 6.0), (4.0, 6.0)]]);
+        // Level: its rectangle.
+        assert_eq!(highlighter_shapes(&[(0.0, 0.0), (10.0, 0.0)], 1.0)[0].len(), 4);
+    }
+
+    #[test]
+    fn words_are_held_by_their_alignment() {
+        assert_eq!(left_of(100.0, 40.0, Alignment::Left), 100.0);
+        assert_eq!(left_of(100.0, 40.0, Alignment::Center), 80.0);
+        assert_eq!(left_of(100.0, 40.0, Alignment::Right), 60.0);
+        for alignment in Alignment::ALL {
+            assert_eq!(held_at(left_of(100.0, 40.0, alignment), 40.0, alignment), 100.0);
+        }
     }
 }

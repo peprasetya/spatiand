@@ -1382,6 +1382,83 @@ day; they pass over without it, and are to be run where it is. A real phone's Ul
 HEIC, and an Android phone, Chrome or macOS showing a saved one as HDR (none here); the Mac, the
 Deck, the Beam Pro and the glasses.
 
+## 2026-11-27: SpatiLoupe's picture tools are Chromium's
+
+The owner: "webview, chromium tools. spatiloupe tools match chromium, if not exists box circle
+arrow crop, add for pictures. but uniform design language" -- and then of PDFs, which SpatiMesh is
+to show with Chromium's own panel restyled: "yes restyle". So a **picture** is marked up with the
+tools of Chromium 157's PDF viewer, in its colours and sizes, with SpatiLoupe's own besides, all in
+the SDK's look; a **PDF keeps the tools it had** (below) until it moves to SpatiMesh.
+
+| Tool (bar order) | On a picture |
+|---|---|
+| Select | as before; a line drawn by hand is chosen by a press on it, moved, recoloured, resized, deleted |
+| Pen | a line by hand, round at its ends and turns (Chromium's pen tip), smoothed a little through the middles between the pointer's points; a press is a dot. Stays in hand |
+| Highlighter | an upright square tip (Chromium's corner rounding 0), laid on see-through (below) |
+| Eraser | takes away whole pen and highlighter lines, boxes, ovals and arrows it touches -- never words (Chromium's `EraseHelper`) -- a drag one step to undo; it reaches Chromium's 3 either way, never less than 8 of the window's pixels, to be aimed by a ray |
+| Text | Chromium's text colours and 16 sizes; the face button ("Aa") opens Font (Sans Serif, Serif, Monospace), Styles (bold, italic: the two Chromium 157 offers; underline and strikethrough are behind a flag it leaves off) and Text alignment (left, center, right). One line held by its alignment: from the place pressed, about it, or up to it; a size or face changed keeps that edge or middle, an alignment changed moves the words about it |
+| Box, Circle, Arrow | as before, in the pen's colours and sizes |
+| Crop | as before |
+
+**Chromium's values, kept as its own** (`markup.rs`, from `chrome/browser/resources/pdf` and
+`pdf/`): the pen's 20 colours, the highlighter's 10 and words' 20 by their hex
+(`PEN_COLORS`, `HIGHLIGHTER_COLORS`, `TEXT_COLORS`), the pen's sizes 1, 2, 3, 6, 8, the
+highlighter's 4, 6, 8, 12, 16 and words' 6 to 100 as numbers, typeface and alignment by Chromium's
+names; its first choices (pen black 3, highlighter `#f28b82` 8, words black 12 sans serif from the
+left). Chromium's sizes are CSS pixels of a page at 100 per cent (`pdf_ink_transform.h`), three
+quarters of a point; on a picture they are scaled by its shorter side against an A4 page's 595
+points, so a size looks on a photograph as on a page (the pen's 3 is 11.4 pixels of a 3024-short
+photograph). The colour, size and face buttons follow what is in hand: the pen's (which a box, an
+oval and an arrow share), the highlighter's, the words'; with a note chosen, its own.
+
+**The highlighter multiplies** what is under it by its colour as Chromium shows it on white (its
+`blendHighlighterColorValue`: 40 per cent over white): on white paper it is Chromium's highlighter
+to the pixel, on a photograph what is under it shows through as through a highlighter's ink. The
+marks are painted as two layers when they are laid over a picture later -- the marks, and what the
+highlighters multiply the picture by (`ink::Layers`), what was under a highlighter in the first
+multiplied too, so the order of drawing holds -- the window laying the second with a multiplying
+blend (`Painter::image_multiplied`, new in the SDK) and a save on the picture's own curve
+(`Curve::multiply`: sRGB as the window does it, light itself for floats, PQ and HLG). An HDR gain
+map is not cleared under a highlighter, which tints the HDR picture as it does the SDR one.
+
+**The bar** (the SDK's look): the nine tools, then the colour (a grid of the palette in hand, five
+across, a highlighter's shown on white as Chromium shows them), the size (a brush's five as lines
+of their thickness, square-ended for the highlighter, as Chromium's size icons; words' sixteen
+numbers four across) and the face; undo, redo. Nothing moves as tools change: each button keeps
+its place, drawn only where it can act, and the glass ends after the last one drawn. In a popup the
+arrows move a glow (the room's sign of where the keys are), Enter or Space chooses, Escape closes;
+the face panel stays open as its choices are made. Under the pointer on the picture: the pen's
+dot, the highlighter's square, the eraser's square, at their sizes. Words being typed are on a
+pane of glass, readable over a white page (they were not), in the face they will have, set about
+the place pressed as their alignment says. New in the SDK: the icons Pen, Highlighter, Eraser,
+Typeface, Bold, Italic, AlignLeft/Center/Right; `Button::draw_bare` (a round button for a colour, a
+weight, a number); `Field::align` and `Field::face`; `Painter::set_face` and spatiand-render's
+`TextFace` (the machine's serif or monospace, bold, italic: the room's own sans serif unless set,
+and again at every picture's start).
+
+**A PDF** keeps Select, Crop, Text, Box, Circle, Arrow, Preview's seven colours in a row and the
+three weights, as before (the colour popup has the new glow and ring). A mark with a line by hand,
+which a PDF is not given for now, is still written properly: an Ink annotation, a highlighter's at
+Chromium's 40 per cent (`/CA`); words' typeface, bold, italic and alignment go into their FreeText.
+
+**Checked** (deepmagpie): SpatiLoupe's tests, 163 (20 new: the palettes hex for hex against
+Chromium's source, the sizes on a picture, the eraser against lines, shapes, a dot and words,
+an erase one step to undo and redo, a line moved, turned four times round and chosen by a press on
+it, the smoothing, a highlighter's square tip; a pen's round ends and dots painted, the
+highlighter on white equal to Chromium's, black staying black, the two layers laid on a picture
+equal to painting on it in order; typefaces, bold, italic and centred lines; the bar's tools, the
+pen and the eraser driven by the pointer, words' face and alignment kept through size changes,
+the popups by keys; a picture saved with a pen's line and a highlighter, a 16-bit PNG highlighted
+at 16 bits; a PDF given lines by hand and set words: Ink annotations, drawn by PDFium with the
+highlighter at 40 per cent over the page equal to a picture's), the SDK's 65 and spatiand-render's
+88 (one new: a face set and set back). The headless room, dark and light: the bar with each tool,
+every popup, a pen line, a highlighter over the paper's lines and on into a photograph, dots, a
+box, a circle, an arrow, and words typed and kept in Serif bold centred; the brush tips; one
+eraser sweep across lines and words (the words stayed), undone and done again; a quarter turn; a
+copy saved and opened; the window's highlighter (the GPU's multiply) against the saved copy's (the
+CPU's) at six places: within one level. A PDF marked up and saved as a copy as before. **Not
+done:** the Mac, the Deck, the Beam Pro and the glasses.
+
 ## 2026-11-19: Live Text -- the text in pictures, PDF pages and paused films
 
 The owner: "I want it can select text from images (also on image of pdf)... even non latin, unicode
