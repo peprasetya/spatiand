@@ -78,6 +78,18 @@ pub struct Remote {
     pub kind: String,
 }
 
+/// How far one of rclone's jobs has gone, as [`Storage::job`] tells it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Progress {
+    /// Bytes moved so far.
+    pub done: u64,
+    /// Of how many, as far as rclone knows yet -- a folder's total grows as it is gone through.
+    /// Never less than `done`.
+    pub total: u64,
+    /// The file being moved now, if one is: its path in what is copied.
+    pub file: Option<String>,
+}
+
 /// A place written `remote:path`, split: `None` for a path on this machine. A name that is
 /// not a remote's is not a remote, so a file whose name has a colon in it is still a file.
 pub fn virtual_place(text: &str) -> Option<(String, String)> {
@@ -286,6 +298,58 @@ impl Storage {
         match response.status().as_u16() {
             200..=299 => Ok(()),
             status => Err(format!("the storage service answered {status}")),
+        }
+    }
+
+    /// One of rclone's calls run as a job of its own (`_async`), looked at every `every` until it
+    /// is over: as long as a large file's copy takes, past any one call's time. `progress` is
+    /// told how far it has gone after each look, and stops the job by answering false
+    /// (`job/stop`, then waited on a few seconds so that it is over before this returns).
+    /// `Ok(true)` once it has finished, `Ok(false)` once it was stopped, its error if it failed.
+    pub fn job(&self, method: &str, mut input: Value, every: Duration, mut progress: impl FnMut(&Progress) -> bool) -> Result<bool, String> {
+        input["_async"] = json!(true);
+        let started = self.rc(method, input)?;
+        let job = started.get("jobid").and_then(|j| j.as_i64()).ok_or("the storage service did not start the job")?;
+        let finished = |status: &Value| status.get("finished").and_then(|f| f.as_bool()) == Some(true);
+        loop {
+            std::thread::sleep(every);
+            let status = self.rc("job/status", json!({"jobid": job}))?;
+            let stats = self.rc("core/stats", json!({"group": format!("job/{job}")})).unwrap_or_default();
+            let done = stats.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0);
+            let total = stats.get("totalBytes").and_then(|b| b.as_u64()).unwrap_or(0);
+            let file = stats
+                .get("transferring")
+                .and_then(|t| t.as_array())
+                .and_then(|t| t.first())
+                .and_then(|t| t.get("name"))
+                .and_then(|n| n.as_str())
+                .map(str::to_string);
+            let going = progress(&Progress { done, total: total.max(done), file });
+            if finished(&status) {
+                let error = status.get("error").and_then(|e| e.as_str()).unwrap_or("");
+                return if error.is_empty() { Ok(true) } else { Err(error.to_string()) };
+            }
+            if !going {
+                let _ = self.rc("job/stop", json!({"jobid": job}));
+                let asked = Instant::now();
+                while asked.elapsed() < Duration::from_secs(5) {
+                    match self.rc("job/status", json!({"jobid": job})) {
+                        Ok(status) if !finished(&status) => std::thread::sleep(Duration::from_millis(100)),
+                        _ => break,
+                    }
+                }
+                return Ok(false);
+            }
+        }
+    }
+
+    /// What is at `path` in the remote, if anything (rclone's `operations/stat`): nothing where a
+    /// folder on the way is missing too.
+    pub fn stat(&self, remote: &str, path: &str) -> Result<Option<Entry>, String> {
+        let answer = self.rc("operations/stat", json!({"fs": format!("{remote}:"), "remote": path.trim_matches('/')}))?;
+        match answer.get("item").filter(|item| !item.is_null()) {
+            Some(item) => serde_json::from_value(item.clone()).map(Some).map_err(|e| e.to_string()),
+            None => Ok(None),
         }
     }
 
@@ -577,6 +641,64 @@ mod tests {
         let forgets: Vec<Value> = seen.iter().filter(|r| r.contains("/rc/vfs/forget")).map(|r| serde_json::from_str(&r[r.find("\r\n\r\n").unwrap() + 4..]).unwrap()).collect();
         assert_eq!(forgets.len(), 2, "no call for no folders");
         assert_eq!(forgets[1], json!({"fs": "My Drive:", "dir0": "Photos", "dir1": ""}));
+    }
+
+    /// A job is started on its own, looked at until it is over and told as it goes; its error is
+    /// its own; and one that is stopped is told to stop and waited on.
+    #[test]
+    fn a_job_is_watched_to_its_end_or_stopped() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let looks = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = looks.clone();
+        // The JSON asked with, as it is sent (pretty), with no spaces to match against.
+        let compact = |request: &str| request.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let (storage, seen) = serve(move |request| {
+            let path = request.split_whitespace().nth(1).unwrap_or("");
+            let asked = compact(request);
+            match path {
+                "/rc/sync/copy" if asked.contains("\"broken\"") => reply("200 OK", br#"{"jobid":8}"#),
+                "/rc/sync/copy" | "/rc/operations/copyfile" => reply("200 OK", br#"{"jobid":7}"#),
+                // Job 7 finishes at its third look, or once it has been told to stop; 8 fails.
+                "/rc/job/status" if asked.contains("\"jobid\":8") => reply("200 OK", br#"{"finished":true,"error":"directory not found"}"#),
+                "/rc/job/status" => {
+                    let n = counted.fetch_add(1, Ordering::SeqCst);
+                    if n >= 2 { reply("200 OK", br#"{"finished":true,"error":""}"#) } else { reply("200 OK", br#"{"finished":false}"#) }
+                }
+                "/rc/job/stop" => {
+                    counted.store(2, Ordering::SeqCst);
+                    reply("200 OK", b"{}")
+                }
+                "/rc/core/stats" => reply("200 OK", br#"{"bytes":50,"totalBytes":40,"transferring":[{"name":"Holiday/a.jpg","bytes":50}]}"#),
+                "/rc/operations/stat" if request.contains("there.jpg") => reply("200 OK", br#"{"item":{"Name":"there.jpg","Path":"Photos/there.jpg","Size":12,"IsDir":false}}"#),
+                "/rc/operations/stat" if request.contains("Photos") => reply("200 OK", br#"{"item":{"Name":"Photos","Path":"Photos","Size":-1,"IsDir":true}}"#),
+                "/rc/operations/stat" => reply("200 OK", br#"{"item":null}"#),
+                _ => reply("404 Not Found", b""),
+            }
+        });
+        let mut told = Vec::new();
+        let every = Duration::from_millis(10);
+        let finished = storage.job("sync/copy", json!({"srcFs": "Drive:Holiday", "dstFs": "/tmp/x"}), every, |p| {
+            told.push(p.clone());
+            true
+        });
+        assert_eq!(finished, Ok(true));
+        assert_eq!(told.len(), 3, "told after each look, the last included");
+        assert_eq!(told[0], Progress { done: 50, total: 50, file: Some("Holiday/a.jpg".into()) }, "the total never below what is done");
+        assert_eq!(storage.job("sync/copy", json!({"srcFs": "broken"}), every, |_| true), Err("directory not found".into()));
+        looks.store(0, Ordering::SeqCst);
+        assert_eq!(storage.job("operations/copyfile", json!({}), every, |_| false), Ok(false));
+        let seen = seen.lock().unwrap();
+        let started: Value = {
+            let asked = seen.iter().find(|r| r.contains("/rc/sync/copy")).unwrap();
+            serde_json::from_str(&asked[asked.find("\r\n\r\n").unwrap() + 4..]).unwrap()
+        };
+        assert_eq!(started, json!({"srcFs": "Drive:Holiday", "dstFs": "/tmp/x", "_async": true}));
+        assert!(seen.iter().any(|r| r.contains("/rc/job/stop") && compact(r).contains("\"jobid\":7")), "told to stop");
+        assert!(seen.iter().any(|r| r.contains("/rc/core/stats") && r.contains("job/7")), "its own stats");
+        drop(seen);
+        assert_eq!(storage.stat("Drive", "/Photos/there.jpg").unwrap().map(|e| (e.name, e.size, e.is_dir)), Some(("there.jpg".into(), 12, false)));
+        assert!(storage.stat("Drive", "Photos").unwrap().unwrap().is_dir);
+        assert_eq!(storage.stat("Drive", "Nowhere/x").unwrap(), None);
     }
 
     /// A part of a file is asked for by a range and read no further, and a service that sends

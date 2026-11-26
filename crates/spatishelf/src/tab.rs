@@ -351,23 +351,15 @@ fn copy_local(from: &Path, to: &Path, done: &mut u64, total: u64, report: &mut d
 /// The size from which a file's copying is watched and said as it goes.
 const WATCHED_FROM: u64 = 8 << 20;
 
-/// Through rclone, waiting for the job and saying how it goes.
-fn rclone_job(storage: &Storage, method: &str, mut input: serde_json::Value, what: &str, report: &mut dyn FnMut(u64, u64, &str)) -> Result<(), String> {
-    input["_async"] = json!(true);
-    let started = storage.rc(method, input)?;
-    let job = started.get("jobid").and_then(|j| j.as_i64()).ok_or("the storage service did not start the job")?;
-    loop {
-        std::thread::sleep(Duration::from_millis(400));
-        let status = storage.rc("job/status", json!({"jobid": job}))?;
-        let stats = storage.rc("core/stats", json!({"group": format!("job/{job}")})).unwrap_or_default();
-        let done = stats.get("bytes").and_then(|b| b.as_u64()).unwrap_or(0);
-        let total = stats.get("totalBytes").and_then(|b| b.as_u64()).unwrap_or(0);
-        report(done, total.max(done), what);
-        if status.get("finished").and_then(|f| f.as_bool()) == Some(true) {
-            let error = status.get("error").and_then(|e| e.as_str()).unwrap_or("");
-            return if error.is_empty() { Ok(()) } else { Err(error.to_string()) };
-        }
-    }
+/// Through rclone, waiting for the job and saying how it goes (`Storage::job`, looked at every
+/// 400 ms; the file chooser's fetches and sends are the same jobs).
+fn rclone_job(storage: &Storage, method: &str, input: serde_json::Value, what: &str, report: &mut dyn FnMut(u64, u64, &str)) -> Result<(), String> {
+    storage
+        .job(method, input, Duration::from_millis(400), |progress| {
+            report(progress.done, progress.total, what);
+            true
+        })
+        .map(|_| ())
 }
 
 /// Copy or move one thing into a folder, by whichever way the two places allow.
