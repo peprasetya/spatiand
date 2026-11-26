@@ -16,7 +16,8 @@ Chromium runs it, what it writes kept:
     folder     a remote's folder typed, gone to and chosen: fetched whole
     save       begun in a remote (--dir scratch:Docs), a name there already: Replace asked, then
                the outbox's path written; a browser's download written beside it in parts and
-               renamed; the sender moves it on, and the remote has it byte for byte
+               renamed; the sender moves it on, the remote has it byte for byte, and the
+               sender's notice is on the room's card
     unreached  no storage service to be had: one quiet line, and this machine's files as ever
 
     tools/spatiand-choose-e2e.py <spatiand-storage> [target/debug] [out-folder]
@@ -116,7 +117,9 @@ def main():
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         return json.load(opener.open(request, timeout=30))
 
-    def run(name, args, steps, environment=env):
+    def run(name, args, steps, environment=env, during=None):
+        """The room with the chooser in it, until its steps are done; `during`, if given, is
+        called while the room is still up."""
         launcher = os.path.join(work, f"{name}.sh")
         quoted = " ".join("'" + a.replace("'", "'\\''") + "'" for a in args)
         # Its output read through a pipe to its end, as Chromium reads it (GetAppOutput): the
@@ -134,7 +137,15 @@ def main():
             "SPATIAND_SNAPSHOT": os.path.join(out, f"room-{name}.png"),
         })
         with open(os.path.join(out, f"spatiand-{name}.log"), "w") as log:
-            subprocess.run([room], env=run_env, stdout=log, stderr=subprocess.STDOUT, timeout=300)
+            room_run = subprocess.Popen([room], env=run_env, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                if during:
+                    during()
+                room_run.wait(timeout=300)
+            finally:
+                if room_run.poll() is None:
+                    room_run.kill()
+                    room_run.wait()
         # The chooser is done by the time the room is; a moment for the launcher to say how.
         for _ in range(50):
             if os.path.exists(os.path.join(work, f"{name}.code")):
@@ -202,16 +213,24 @@ def main():
         check(f"folder: fetched whole into the chooser's own folder ({lines})", got.startswith(fetched_root + "/") and got.endswith("/album"))
         check("folder: what is in it, and in what is in it", os.path.exists(os.path.join(got, "inner", "two.png")) and open(os.path.join(got, "one.png"), "rb").read() == b"one")
 
-        code, lines = run("save", ["--mode", "save", "--dir", "scratch:Docs", "--name", "report.pdf"], [
-            "wait:3", "window:Save as", "key:28", "wait:1.5", f"dump:{shot('replace')}", "key:28", "wait:2",
-        ])
-        check(f"save: chosen (exit {code})", code == "0")
-        saved = lines[0] if len(lines) == 1 else ""
-        check(f"save: a path in the outbox, by its name ({lines})", saved.startswith(outbox_root + "/") and saved.endswith("/report.pdf"))
-        senders = subprocess.run(["pgrep", "-f", "--", f"--send {saved}"], capture_output=True, text=True).stdout.split()
-        check(f"save: its sender running ({senders})", len(senders) == 1)
         new = b"%PDF the new report, " + bytes(range(256)) * 4000
-        if saved:
+        sent = os.path.join(remote, "Docs", "report.pdf")
+        seen = {"saved": "", "senders": []}
+
+        def browser_saves():
+            # With the room still up, as it is when a browser saves: once the chooser is done,
+            # the browser writes its download, the sender moves it on and says so on the card.
+            for _ in range(300):
+                if os.path.exists(os.path.join(work, "save.code")):
+                    break
+                time.sleep(0.1)
+            out_file = os.path.join(work, "save.out")
+            chosen = open(out_file).read().splitlines() if os.path.exists(out_file) else []
+            saved = chosen[0] if len(chosen) == 1 else ""
+            if not saved:
+                return
+            seen["saved"] = saved
+            seen["senders"] = subprocess.run(["pgrep", "-f", "--", f"--send {saved}"], capture_output=True, text=True).stdout.split()
             # The browser: its download written beside the name in parts, then renamed to it.
             with open(saved + ".crdownload", "wb") as part:
                 for i in range(0, len(new), len(new) // 3 + 1):
@@ -219,17 +238,28 @@ def main():
                     part.flush()
                     time.sleep(1)
             os.rename(saved + ".crdownload", saved)
-        sent = os.path.join(remote, "Docs", "report.pdf")
-        for _ in range(300):
-            if open(sent, "rb").read() == new and not os.path.exists(os.path.dirname(saved)):
-                break
-            time.sleep(0.1)
+            for _ in range(300):
+                if open(sent, "rb").read() == new and not os.path.exists(os.path.dirname(saved)):
+                    break
+                time.sleep(0.1)
+
+        # The room stays up for the sender's notice: twelve seconds is the file written in three
+        # and sent in one or two, with room to spare.
+        code, lines = run("save", ["--mode", "save", "--dir", "scratch:Docs", "--name", "report.pdf"], [
+            "wait:3", "window:Save as", "key:28", "wait:1.5", f"dump:{shot('replace')}", "key:28", "wait:2", "wait:12",
+        ], during=browser_saves)
+        check(f"save: chosen (exit {code})", code == "0")
+        saved = lines[0] if len(lines) == 1 else ""
+        check(f"save: a path in the outbox, by its name ({lines})", saved.startswith(outbox_root + "/") and saved.endswith("/report.pdf"))
+        check(f"save: its sender running ({seen['senders']})", len(seen["senders"]) == 1)
         check("save: the remote has it, byte for byte", open(sent, "rb").read() == new)
         check("save: its folder in the outbox taken away", saved and not os.path.exists(os.path.dirname(saved)))
         log = open(os.path.join(own_root, "send.log")).read() if os.path.exists(os.path.join(own_root, "send.log")) else ""
         check("save: the sender's log says so", "sent report.pdf to scratch:Docs/report.pdf" in log)
         time.sleep(0.5)
         check("save: the sender gone", not subprocess.run(["pgrep", "-f", "--", f"--send {saved}"], capture_output=True).stdout)
+        room_log = open(os.path.join(out, "spatiand-save.log")).read()
+        check("save: the sender's notice on the room's card", "a notice from Files on the card" in room_log)
 
         # No service to be had: a runtime folder of its own with none in it, and none installed.
         lonely = tempfile.mkdtemp(prefix="spc-", dir="/tmp")
