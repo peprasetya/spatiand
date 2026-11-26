@@ -1669,5 +1669,6 @@ the Beam Pro's listener's, the Mac's banners'. Each application has one notice a
 kept.
 
 **Tried** in deepmagpie's snapshot room: `examples/embed --notify "Saved report.pdf"` put "Embed test /
-Saved report.pdf -- from the SDK's example" on the card. Type-checked for the Beam Pro. **Not yet:** the
-sender's own notice end to end (with a remote), the Mac and the Beam Pro run, the glasses.
+Saved report.pdf -- from the SDK's example" on the card; `tools/spatiand-choose-e2e.py` saw the sender's
+own notice reach the card once it had sent a browser's saved file to a remote. Type-checked for the Beam
+Pro and on littleotter for the Mac. **Not yet:** the Mac and the Beam Pro run, the glasses.
