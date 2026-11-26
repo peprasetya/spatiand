@@ -206,8 +206,9 @@ Its libc++ is linked in whole (`android-libc/0011`) and it finds its resources b
   begins there. Chromium understands only paths of this machine, so the chooser does the transfers, with rclone,
   and writes paths of this machine as ever:
   - **Opened** from a remote, a file, the files marked (several may be here and there) or a folder with all that is
-    in it are fetched into `$XDG_RUNTIME_DIR/spatiand-choose/fetched/<choice>/` (the temporary folder's where there
-    is no runtime folder), the window saying what, from where and how far, with a Cancel (or Escape) that stops
+    in it are fetched into `spatiand-choose/fetched/<choice>/` in the wearer's cache folder on the disk (`~/.cache`,
+    the Mac's `~/Library/Caches`, the app's own cache on Android -- not the runtime folder, in memory on the Deck),
+    the window saying what, from where and how far, with a Cancel (or Escape) that stops
     rclone's job, takes away what came and goes back to choosing. A fetch is kept a day, for a page that uploads
     what it was given a while later, and taken away by the next chooser to start.
   - **Saved** to a remote (Replace asked first where the name is taken there, as here), the path written is

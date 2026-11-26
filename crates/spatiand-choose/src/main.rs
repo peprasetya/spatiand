@@ -20,8 +20,8 @@
 //! is given paths of this machine all the same, which is all it understands:
 //!
 //! - **opened** from a remote, a file, the files marked or a folder with everything in it are
-//!   fetched first, with rclone, into `$XDG_RUNTIME_DIR/spatiand-choose/fetched/` (the temporary
-//!   folder's where there is no runtime folder), the window saying how far it has come, with a
+//!   fetched first, with rclone, into `spatiand-choose/fetched/` in the wearer's cache folder on the
+//!   disk (`own::base`), the window saying how far it has come, with a
 //!   Cancel that stops it; then their paths there are written. A fetch is taken away a day later,
 //!   by the next chooser to start (`own.rs`);
 //! - **saved** to a remote -- Replace asked first where the name is taken there, as here -- the

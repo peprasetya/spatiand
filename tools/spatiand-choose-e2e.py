@@ -154,8 +154,10 @@ def main():
     def shot(name):
         return os.path.join(out, f"{name}.png")
 
-    fetched_root = os.path.join(runtime, "spatiand-choose", "fetched")
-    outbox_root = os.path.join(runtime, "spatiand-choose", "outbox")
+    # The chooser's own folders are in the cache folder on the disk (its own::base), here the test's.
+    own_root = os.path.join(home, ".cache", "spatiand-choose")
+    fetched_root = os.path.join(own_root, "fetched")
+    outbox_root = os.path.join(own_root, "outbox")
     try:
         # Two megabytes a second, after rclone's first four at once: film.bin's 24 are fetched
         # slowly enough to be seen going.
@@ -224,7 +226,7 @@ def main():
             time.sleep(0.1)
         check("save: the remote has it, byte for byte", open(sent, "rb").read() == new)
         check("save: its folder in the outbox taken away", saved and not os.path.exists(os.path.dirname(saved)))
-        log = open(os.path.join(runtime, "spatiand-choose", "send.log")).read() if os.path.exists(os.path.join(runtime, "spatiand-choose", "send.log")) else ""
+        log = open(os.path.join(own_root, "send.log")).read() if os.path.exists(os.path.join(own_root, "send.log")) else ""
         check("save: the sender's log says so", "sent report.pdf to scratch:Docs/report.pdf" in log)
         time.sleep(0.5)
         check("save: the sender gone", not subprocess.run(["pgrep", "-f", "--", f"--send {saved}"], capture_output=True).stdout)

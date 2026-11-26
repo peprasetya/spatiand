@@ -1,5 +1,4 @@
-//! The chooser's own folders, in `$XDG_RUNTIME_DIR/spatiand-choose` (the temporary folder's
-//! where there is none): `fetched/`, what was chosen in a remote, copied to this machine for the
+//! The chooser's own folders, in the wearer's cache folder on the disk ([`base`]): `fetched/`, what was chosen in a remote, copied to this machine for the
 //! program that asked, which is given paths of this machine only; and `outbox/`, files saved for
 //! a remote, which the program writes there and the chooser's sender moves on (`send.rs`).
 //!
@@ -25,8 +24,21 @@ pub const FETCHED_FOR: Duration = Duration::from_secs(24 * 3600);
 /// What could not be sent is kept a week, for the wearer to find.
 pub const UNSENT_FOR: Duration = Duration::from_secs(7 * 24 * 3600);
 
+/// Where the chooser keeps what it fetched and what waits to be sent: **on the disk**, in the
+/// wearer's cache folder -- not the runtime folder, which on the Deck is in memory and a tenth of it
+/// (a film fetched from a remote did not fit), and is emptied when the machine starts again, with
+/// whatever could not be sent in it. On Android the app's runtime folder is its own cache on the
+/// disk already (crates/spatiand-android's jni sets it so).
 pub fn base() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").filter(|d| !d.is_empty()).map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("spatiand-choose")
+    let var = |name: &str| std::env::var_os(name).filter(|d| !d.is_empty()).map(PathBuf::from);
+    let cache = if cfg!(target_os = "android") {
+        var("XDG_RUNTIME_DIR")
+    } else if cfg!(target_os = "macos") {
+        var("HOME").map(|home| home.join("Library/Caches"))
+    } else {
+        var("XDG_CACHE_HOME").or_else(|| var("HOME").map(|home| home.join(".cache")))
+    };
+    cache.unwrap_or_else(std::env::temp_dir).join("spatiand-choose")
 }
 
 /// A new folder of its own in `parent` (`fetched/` or `outbox/` of [`base`]), made, with the
