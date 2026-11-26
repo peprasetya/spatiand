@@ -411,6 +411,16 @@ final class RoomTap {
     /// macOS's three-finger drag has pressed the button, and its release is to be dropped too.
     private var systemPressed = false
     private var dragging = false
+    /// How far the fingers have carried this drag (points), and which lift of them is waited on.
+    private var dragCarried = 0.0
+    private var dragLift = 0
+    /// **A drag is held a moment after its three fingers lift**, as macOS's own is: fingers that
+    /// have come to the trackpad's edge are lifted, put down again and go on with what they
+    /// carry. The owner, 2026-11-26: "on the 3 finger release, the drag is released too.. Apple
+    /// implementation give time... so if my fingers already at the edge, apple implementation
+    /// give me time to continue the drag". Only one that has carried something: three fingers
+    /// touched and lifted are let go at once, as before.
+    private static let dragGrace = 0.75
     /// Whether macOS is doing three-finger drag itself (Accessibility's setting): then it sends
     /// a held button and nothing needs doing here.
     private lazy var systemDrags = SystemGestures.enabled().contains("three-finger drag")
@@ -1048,22 +1058,39 @@ final class RoomTap {
             if let held = threeDown {
                 if !dragging, now - held.since >= 0.06 {
                     dragging = true
+                    dragCarried = 0
                     buttons |= 1
                     sp_pointer(0, 0, buttons, 0, 0)
                 } else if dragging {
                     // The pad's own size in points, so three fingers carry as far as one does.
-                    sp_pointer(Float((x - held.x) * size.width * 1.6), Float(-(y - held.y) * size.height * 1.6), buttons, 0, 0)
+                    let dx = (x - held.x) * size.width * 1.6, dy = -(y - held.y) * size.height * 1.6
+                    dragCarried += abs(dx) + abs(dy)
+                    sp_pointer(Float(dx), Float(dy), buttons, 0, 0)
                 }
                 threeDown = (held.since, x, y)
             } else {
+                // Back within the moment a drag is held for: it goes on from where they are now.
+                if dragging { dragLift += 1 }
                 threeDown = (now, x, y)
             }
         } else if threeDown != nil {
             threeDown = nil
             if dragging {
-                dragging = false
-                buttons &= ~1
-                sp_pointer(0, 0, buttons, 0, 0)
+                if dragCarried > 4 {
+                    dragLift += 1
+                    let lift = dragLift
+                    later(Self.dragGrace) { [self] in
+                        guard dragging, dragLift == lift, threeDown == nil else { return }
+                        dragging = false
+                        buttons &= ~1
+                        sp_pointer(0, 0, buttons, 0, 0)
+                        gestureLog("drag let go, %.2f s after its fingers", Self.dragGrace)
+                    }
+                } else {
+                    dragging = false
+                    buttons &= ~1
+                    sp_pointer(0, 0, buttons, 0, 0)
+                }
             }
         }
         // The same split frames end a gesture early here: a frame with fewer than three fingers is
