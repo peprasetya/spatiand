@@ -571,7 +571,7 @@ pub(crate) mod tests {
             eprintln!("PDFium is not here (tools/fetch-pdfium.sh): not tried");
             return;
         }
-        use crate::markup::{Area, Ink, Marks, Note, Shape, Weight};
+        use crate::markup::{Area, Ink, Marks, Note, Shape};
         let (name, bytes, password, ..) = crate::annotate::tests::LOCKED[5];
         let dir = std::env::temp_dir().join(format!("spatiloupe-locked-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -593,7 +593,7 @@ pub(crate) mod tests {
             _ => panic!("opened"),
         }
         // Marked up and saved as a copy: written beside it, and its password given back for it.
-        let marks = Marks { notes: vec![Note { page: 0, shape: Shape::Box(Area::new(100.0, 100.0, 300.0, 200.0)), ink: Ink::Red, weight: Weight::Medium, size: 4.0 }], ..Marks::default() };
+        let marks = Marks { notes: vec![Note::new(0, Shape::Box(Area::new(100.0, 100.0, 300.0, 200.0)), Ink::Red.colour(), 4.0)], ..Marks::default() };
         pdf.ask(Ask::Save { marks: marks.clone(), copy: true });
         let (copy, again) = loop {
             if let Answer::Saved { result, password } = next(&pdf) {

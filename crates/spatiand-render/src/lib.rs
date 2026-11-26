@@ -17,4 +17,4 @@ pub mod text;
 pub use camera::{eye_for, eyes_for, sbs_viewport, Eye, EyeSide, StereoConfig};
 pub use ray::{intersect_quad, pick, Bend, Hit, PointerConfig, Quad, Ray};
 pub use sky::{Sky, SkyEye, SkyProjection, SkySource, SkyStereo};
-pub use text::{TextAlign, TextImage, TextRenderer};
+pub use text::{FaceFamily, TextAlign, TextFace, TextImage, TextRenderer};

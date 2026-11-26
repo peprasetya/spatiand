@@ -10,7 +10,41 @@
 //! specified in pixels would silently become unreadable on different optics. Asking for "1.5°
 //! tall" is a statement about legibility that survives a hardware change.
 
-use cosmic_text::{Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
+use cosmic_text::{Align, Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, Weight};
+
+/// A face to set text in other than the room's own sans serif: the machine's serif or monospace,
+/// bold, italic -- words a wearer writes onto a picture, shown in the face they will have while
+/// they are typed (SpatiLoupe's markup). The default is the room's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TextFace {
+    pub family: FaceFamily,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+/// The families a [`TextFace`] is set in: the machine's own for each, with the fallbacks for
+/// every script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum FaceFamily {
+    #[default]
+    SansSerif,
+    Serif,
+    Monospace,
+}
+
+impl TextFace {
+    fn attrs(&self) -> Attrs<'static> {
+        let family = match self.family {
+            FaceFamily::SansSerif => Family::SansSerif,
+            FaceFamily::Serif => Family::Serif,
+            FaceFamily::Monospace => Family::Monospace,
+        };
+        Attrs::new()
+            .family(family)
+            .weight(if self.bold { Weight::BOLD } else { Weight::NORMAL })
+            .style(if self.italic { Style::Italic } else { Style::Normal })
+    }
+}
 
 /// Where a line sits within the width it was given.
 ///
@@ -192,6 +226,8 @@ fn blend(rgba: &mut [u8], (width, height): (u32, u32), (x, y): (i32, i32), c: [u
 pub struct TextRenderer {
     font_system: FontSystem,
     swash_cache: SwashCache,
+    /// What text is set in from now: the room's own sans serif unless told otherwise.
+    face: TextFace,
 }
 
 impl TextRenderer {
@@ -199,7 +235,13 @@ impl TextRenderer {
         Self {
             font_system: font_system(),
             swash_cache: SwashCache::new(),
+            face: TextFace::default(),
         }
+    }
+
+    /// Set what follows in `face`, until it is set again.
+    pub fn set_face(&mut self, face: TextFace) {
+        self.face = face;
     }
 
     /// Pixels per degree for a given eye. See the module note on why sizing is angular.
@@ -263,7 +305,7 @@ impl TextRenderer {
         let line = text.lines().next().unwrap_or("");
         let metrics = Metrics::new(size_px.max(1.0), size_px.max(1.0) * 1.4);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
-        let attrs = Attrs::new().family(Family::SansSerif);
+        let attrs = self.face.attrs();
         {
             let mut b = buffer.borrow_with(&mut self.font_system);
             b.set_size(None, None);
@@ -292,7 +334,7 @@ impl TextRenderer {
         // lines, and tight leading reads as cramped in a way it does not on a monitor.
         let metrics = Metrics::new(size_px, size_px * 1.4);
         let mut buffer = Buffer::new(&mut self.font_system, metrics);
-        let attrs = Attrs::new().family(Family::SansSerif);
+        let attrs = self.face.attrs();
         // The room's own symbols are shaped as a stand-in and painted where it lands, so they
         // are the same picture on every platform: see [`crate::symbols`].
         let stand_ins = crate::symbols::stand_ins(text);
@@ -447,6 +489,26 @@ impl TextRenderer {
 impl Default for TextRenderer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod face_tests {
+    use super::*;
+
+    #[test]
+    fn a_face_sets_text_otherwise_until_the_room_s_own_is_set_again() {
+        let mut r = TextRenderer::new();
+        let words = "Illuminated minimum";
+        let sans = r.render(words, 40.0, 4000, [255; 4]);
+        r.set_face(TextFace { family: FaceFamily::Monospace, ..TextFace::default() });
+        let mono = r.render(words, 40.0, 4000, [255; 4]);
+        // A monospaced face gives the narrow letters as much room as the wide.
+        assert!(mono.width * 10 > sans.width * 11, "{} {}", mono.width, sans.width);
+        r.set_face(TextFace { bold: true, ..TextFace::default() });
+        assert_ne!(r.render(words, 40.0, 4000, [255; 4]), sans, "bold");
+        r.set_face(TextFace::default());
+        assert_eq!(r.render(words, 40.0, 4000, [255; 4]), sans, "the room's own again");
     }
 }
 

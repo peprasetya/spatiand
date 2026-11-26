@@ -598,7 +598,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_gain_map_is_turned_cropped_and_made_neutral_under_the_marks_with_the_picture() {
-        use crate::markup::{Area, Ink, Marks, Note, Shape, Weight};
+        use crate::markup::{Area, Ink, Marks, Note, Shape};
         let dir = std::env::temp_dir().join(format!("spatiloupe-gainmap-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -609,7 +609,7 @@ pub(crate) mod tests {
         // Turned a quarter more while marked (64 by 48 again, upside down from how it is stored),
         // a box drawn, cropped to (8, 8)-(48, 40).
         let marks = Marks {
-            notes: vec![Note { page: 0, shape: Shape::Box(Area::new(30.0, 20.0, 50.0, 40.0)), ink: Ink::Red, weight: Weight::Medium, size: 4.0 }],
+            notes: vec![Note::new(0, Shape::Box(Area::new(30.0, 20.0, 50.0, 40.0)), Ink::Red.colour(), 4.0)],
             crops: vec![(0, Area::new(8.0, 8.0, 48.0, 40.0))],
             turns: 1,
         };
@@ -654,7 +654,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_gain_map_that_cannot_be_carried_is_said_and_the_picture_saved_as_sdr() {
-        use crate::markup::{Area, Ink, Marks, Note, Shape, Weight};
+        use crate::markup::{Area, Ink, Marks, Note, Shape};
         let file = made(64, 48, None, true);
         let Found::Lost(why) = find(&file) else { panic!("{:?}", find(&file)) };
         assert_eq!(why, "its HDR layer is Apple's own kind, which SpatiLoupe cannot carry over");
@@ -666,7 +666,7 @@ pub(crate) mod tests {
         std::fs::write(&path, &file).unwrap();
         // As the view sees it when it is read.
         assert_eq!(crate::picture::read(&path, 256).unwrap().saves.hdr, Some(false));
-        let marks = Marks { notes: vec![Note { page: 0, shape: Shape::Box(Area::new(10.0, 10.0, 30.0, 30.0)), ink: Ink::Red, weight: Weight::Medium, size: 4.0 }], ..Marks::default() };
+        let marks = Marks { notes: vec![Note::new(0, Shape::Box(Area::new(10.0, 10.0, 30.0, 30.0)), Ink::Red.colour(), 4.0)], ..Marks::default() };
         let copy = crate::save::save(&crate::save::Saving { source: path.clone(), marks, frame: (64.0, 48.0), copy: true }).unwrap();
         let bytes = std::fs::read(&copy).unwrap();
         // The picture alone: SDR, no index, nothing after it.
@@ -685,14 +685,14 @@ pub(crate) mod tests {
     #[test]
     #[ignore]
     fn ultra_hdr_for_readers() {
-        use crate::markup::{Area, Ink, Marks, Note, Shape, Weight};
+        use crate::markup::{Area, Ink, Marks, Note, Shape};
         let dir = std::path::PathBuf::from(std::env::var("SPATILOUPE_OUT").expect("SPATILOUPE_OUT"));
         std::fs::write(dir.join("ultra-hdr.jpg"), ultra_hdr(640, 480, None)).unwrap();
         // And one with Apple's own kind of gain map, which is not carried.
         std::fs::write(dir.join("apple-hdr.jpg"), made(640, 480, None, true)).unwrap();
         std::fs::copy(dir.join("ultra-hdr.jpg"), dir.join("ultra-hdr-marked.jpg")).unwrap();
         let marks = Marks {
-            notes: vec![Note { page: 0, shape: Shape::Box(Area::new(200.0, 100.0, 500.0, 300.0)), ink: Ink::Red, weight: Weight::Medium, size: 8.0 }],
+            notes: vec![Note::new(0, Shape::Box(Area::new(200.0, 100.0, 500.0, 300.0)), Ink::Red.colour(), 8.0)],
             crops: vec![(0, Area::new(40.0, 40.0, 600.0, 440.0))],
             turns: 1,
         };

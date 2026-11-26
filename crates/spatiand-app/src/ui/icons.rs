@@ -112,6 +112,21 @@ pub enum Icon {
     Translate,
     /// All of it chosen: a frame of dashes.
     SelectAll,
+    /// Drawing by hand: a pen and the line it leaves.
+    Pen,
+    /// A highlighter: a marker's flat tip over the line it marks.
+    Highlighter,
+    /// What is drawn taken away: an eraser on its line.
+    Eraser,
+    /// Words' typeface: a capital and a small letter.
+    Typeface,
+    /// Words heavy, and slanted.
+    Bold,
+    Italic,
+    /// Lines set from the left, about the middle, from the right.
+    AlignLeft,
+    AlignCenter,
+    AlignRight,
 }
 
 impl Icon {
@@ -187,6 +202,15 @@ impl Icon {
             Icon::LineThick => r#"<path d="M5.5 12h13" stroke-width="5"/>"#,
             Icon::Translate => r#"<path d="M3.5 5.5h9M8 3.5v2M10.8 5.5c-.7 4.2-3.2 7.6-6.8 9.6M5.8 9.4c1.4 2.4 3.4 4.2 5.6 5.2M12.6 20.5l3.9-9 3.9 9M14 17.4h5"/>"#,
             Icon::SelectAll => r#"<rect x="4.5" y="4.5" width="15" height="15" rx="2" stroke-dasharray="3 2.6"/><path d="M8.5 9.5h7M8.5 12.5h7M8.5 15.5h4"/>"#,
+            Icon::Pen => r#"<path d="M17.6 3.6l2.8 2.8-10.5 10.5-3.9 1.1 1.1-3.9z"/><path d="M15.4 5.8l2.8 2.8M3.5 21c1.6-1.1 3.1-1.3 4.6-.6s3 .5 4.4-.5"/>"#,
+            Icon::Highlighter => r#"<path d="M8.6 11.8l6.6-8.6 5.1 3.9-6.6 8.6z"/><path d="M8.6 11.8l-1.2 4.6 2.4 1.8 3.9-2.5"/><path d="M3.5 21.2h17" stroke-width="2.6"/>"#,
+            Icon::Eraser => r#"<path d="M4 15l9-9 6 6-7 7H8z"/><path d="M8.5 10.5l6 6M12 19h8"/>"#,
+            Icon::Typeface => r#"<path d="M3 19L8 5l5 14M4.8 14h6.4"/><circle cx="17.3" cy="15.9" r="3.1"/><path d="M20.4 12.6V19"/>"#,
+            Icon::Bold => r#"<path d="M7.5 4.8h5.6a3.4 3.4 0 0 1 0 6.8H7.5zM7.5 11.6h6.4a3.8 3.8 0 0 1 0 7.6H7.5z" stroke-width="2.5"/>"#,
+            Icon::Italic => r#"<path d="M10.5 4.8h7M6.5 19.2h7M14.4 4.8l-4 14.4"/>"#,
+            Icon::AlignLeft => r#"<path d="M4 6h16M4 10h10M4 14h16M4 18h10"/>"#,
+            Icon::AlignCenter => r#"<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>"#,
+            Icon::AlignRight => r#"<path d="M4 6h16M10 10h10M4 14h16M10 18h10"/>"#,
         }
     }
 }
@@ -247,7 +271,7 @@ mod tests {
             Back, Forward, Up, Down, Play, Pause, Options, Info, Close, Plus, Grid, List, Search, Home, Folder, Desktop, Document, Download, Picture, Film, Music, Drive,
             Cloud, Trash, Rotate, Cube, Terminal, Link, Import, Server, Refresh, Eye, Back10, Forward10, Lock, SortName, SortRecent, Shuffle, Speaker, Muted,
             Star, Pin, Puzzle, Copy, Globe, Warning, Cut, Pencil, Paste, Disclose, Disclosed, Markup, Pointer, Crop, Text, Square, Oval, Arrow, Undo, Redo, Save,
-            LineThin, LineMedium, LineThick, Translate, SelectAll,
+            LineThin, LineMedium, LineThick, Translate, SelectAll, Pen, Highlighter, Eraser, Typeface, Bold, Italic, AlignLeft, AlignCenter, AlignRight,
         ];
         for icon in all {
             let (_, _, rgba) = render(icon, 48).unwrap_or_else(|| panic!("{icon:?} does not render"));

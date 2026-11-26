@@ -837,12 +837,13 @@ impl View {
             self.trouble_at = Some(Instant::now());
             return;
         } else if self.markable() {
-            let (turns, may_crop) = match &self.doc {
-                Doc::Picture(shown) => (shown.orientation, true),
-                Doc::Pdf(paper) => (0, paper.rights.modify),
-                _ => (0, true),
+            // A picture is drawn on with Chromium's tools; a PDF with its own, for now.
+            let (turns, may_crop, picture) = match &self.doc {
+                Doc::Picture(shown) => (shown.orientation, true, true),
+                Doc::Pdf(paper) => (0, paper.rights.modify, false),
+                _ => (0, true, false),
             };
-            let desk = self.desk.get_or_insert_with(|| Box::new(Desk::new(turns)));
+            let desk = self.desk.get_or_insert_with(|| Box::new(Desk::new(turns, picture)));
             desk.on = true;
             // A PDF whose pages its owner does not allow changed is not cropped.
             desk.may_crop = may_crop;
@@ -3390,6 +3391,9 @@ mod tests {
         view.input(&chord('a', true));
         assert!(view.marking(), "Command-Shift-A takes the tools out");
         view.placed = view.placements(view.bounds);
+        // What drawing tells the tools of the pages before any input reaches them.
+        let regions = view.regions();
+        desk(&mut view).regions = regions;
         view
     }
 
@@ -3658,13 +3662,19 @@ mod tests {
         view.input(&click(true));
         view.input(&click(false));
         let note = desk(&mut view).markup.marks().notes[0].clone();
-        let Drawn::Text { at, words, extent } = &note.shape else { panic!("words") };
+        let Drawn::Text { at, words, extent, .. } = &note.shape else { panic!("words") };
         assert_eq!(words, "Hi there");
         let start = place.to_page((500.0, 400.0));
         assert!((at.0 - start.0).abs() < 0.01 && (at.1 - start.1).abs() < 0.01);
         assert!(extent.0 > note.size && extent.1 > note.size, "measured: {extent:?}");
-        // What the room's speech is told while the tools are out.
-        assert!(view.describe().1.starts_with("Markup is on, with the select tool, in red."));
+        // Chromium's words: black, 12, on a picture 1500 short 22.7 of its pixels.
+        assert_eq!((note.colour, note.pick), (crate::markup::Colour::BLACK, crate::markup::Pick::Chromium(12.0)));
+        assert!((note.size - 12.0 * 0.75 * 1500.0 / 595.0).abs() < 0.01, "{}", note.size);
+        // What the room's speech is told while the tools are out: the tool, and -- the press
+        // elsewhere having chosen nothing -- nothing it draws with.
+        assert!(view.describe().1.starts_with("Markup is on, with the select tool.\n"), "{}", view.describe().1);
+        desk(&mut view).choose(Tool::Text);
+        assert!(view.describe().1.starts_with("Markup is on, with the text tool, in black, 12 sans serif."), "{}", view.describe().1);
     }
 
     #[test]

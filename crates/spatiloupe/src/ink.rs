@@ -2,15 +2,26 @@
 //! saved, at its own size -- so that what is saved is what was seen, on the CPU and so with no
 //! GPU's limit on a picture's size. Lines and shapes by tiny-skia (resvg's); words by
 //! cosmic-text with the room's own fonts and their fallbacks for every script
-//! (`spatiand_render::text::font_system`), whose glyph outlines are also a PDF's words
-//! (`annotate`).
+//! (`spatiand_render::text::font_system`), in the typeface, weight and slant chosen, whose glyph
+//! outlines are also a PDF's words (`annotate`).
+//!
+//! A pen's line is drawn with a round tip, round at its ends and where it turns, as Chromium's
+//! pen is (`GetCornerRounding` 1, pdf_ink_brush.cc). A highlighter's tip is an upright square
+//! (its rounding 0), and it is laid on see-through: what is under it is multiplied by its colour
+//! as Chromium shows that colour on white ([`Colour::on_white`]) -- so that on white it is
+//! Chromium's highlighter to the pixel, and on a photograph what is under it shows through, as
+//! through a highlighter's ink. When the marks are painted as a layer of their own, to be laid
+//! over the picture afterwards (the window's, and a saved picture's), what the highlighters
+//! multiply the picture by is a second layer, [`Layers::tint`], and what is under a highlighter in
+//! the first is multiplied there too: the picture multiplied by the one and the other laid over
+//! it come to the marks painted on the picture in their order.
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Metrics, Shaping, SwashCache, SwashContent};
+use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Command, Family, FontSystem, Metrics, Shaping, Style, SwashCache, SwashContent, Weight};
 use resvg::tiny_skia::{FillRule, LineCap, LineJoin, Mask, Paint, Path, PathBuilder, PixmapMut, Rect as SkRect, Stroke, Transform};
 
-use crate::markup::{arrow_head, Area, Note, Point, Shape};
+use crate::markup::{arrow_head, highlighter_shapes, stroke_line, Area, Brush, Colour, Face, Note, Point, Shape, Typeface};
 
 /// The space between lines of words, as a share of their size.
 pub const LEADING: f32 = 1.25;
@@ -50,27 +61,46 @@ impl Map {
     }
 }
 
-fn attrs() -> Attrs<'static> {
-    Attrs::new().family(Family::SansSerif).cache_key_flags(CacheKeyFlags::DISABLE_HINTING)
+/// Words' attributes in `face`: the machine's family for its typeface -- whatever fonts it has
+/// for sans serif, serif and monospace, with the fallbacks for every script -- bold and italic
+/// where asked (a font with no italic is slanted by the text engine).
+fn attrs(face: &Face) -> Attrs<'static> {
+    let family = match face.typeface {
+        Typeface::SansSerif => Family::SansSerif,
+        Typeface::Serif => Family::Serif,
+        Typeface::Monospace => Family::Monospace,
+    };
+    Attrs::new()
+        .family(family)
+        .weight(if face.bold { Weight::BOLD } else { Weight::NORMAL })
+        .style(if face.italic { Style::Italic } else { Style::Normal })
+        .cache_key_flags(CacheKeyFlags::DISABLE_HINTING)
 }
 
-/// `words` set `px` large, as one line each (no wrapping): the room's sans serif, shaped, with
-/// whatever font has the letters a script needs.
-fn set(fonts: &mut Fonts, words: &str, px: f32) -> Buffer {
+/// `words` set `px` large in `face`, as one line each (no wrapping): shaped, with whatever font
+/// has the letters a script needs.
+fn set(fonts: &mut Fonts, words: &str, px: f32, face: &Face) -> Buffer {
     let px = px.max(0.5);
     let mut buffer = Buffer::new(&mut fonts.system, Metrics::new(px, px * LEADING));
     {
         let mut b = buffer.borrow_with(&mut fonts.system);
         b.set_size(None, None);
-        b.set_text(words, &attrs(), Shaping::Advanced, None);
+        b.set_text(words, &attrs(face), Shaping::Advanced, None);
         b.shape_until_scroll(false);
     }
     buffer
 }
 
-/// How wide and tall `words` are set `size` large, in the units of `size`.
-pub fn measure(fonts: &mut Fonts, words: &str, size: f32) -> (f32, f32) {
-    let buffer = set(fonts, words, REFERENCE);
+/// How far in each line of set words begins: a line shorter than the longest lies in the words'
+/// box as their alignment says.
+fn line_starts(buffer: &Buffer, face: &Face) -> Vec<f32> {
+    let widest = buffer.layout_runs().fold(0.0f32, |w, run| w.max(run.line_w));
+    buffer.layout_runs().map(|run| (widest - run.line_w) * face.alignment.share()).collect()
+}
+
+/// How wide and tall `words` are set `size` large in `face`, in the units of `size`.
+pub fn measure(fonts: &mut Fonts, words: &str, size: f32, face: &Face) -> (f32, f32) {
+    let buffer = set(fonts, words, REFERENCE, face);
     let (mut width, mut lines) = (0.0f32, 0usize);
     for run in buffer.layout_runs() {
         width = width.max(run.line_w);
@@ -90,17 +120,18 @@ pub enum Segment {
     Close,
 }
 
-/// The outlines of `words` set `size` large, their box's top left at (0, 0), down the page as
-/// a page's units are: what a PDF's words are drawn with, which then need no font in the PDF.
-/// A glyph with no outline (a colour emoji's picture) is left out.
-pub fn outlines(fonts: &mut Fonts, words: &str, size: f32) -> Vec<Segment> {
-    let buffer = set(fonts, words, REFERENCE);
+/// The outlines of `words` set `size` large in `face`, their box's top left at (0, 0), down the
+/// page as a page's units are: what a PDF's words are drawn with, which then need no font in the
+/// PDF. A glyph with no outline (a colour emoji's picture) is left out.
+pub fn outlines(fonts: &mut Fonts, words: &str, size: f32, face: &Face) -> Vec<Segment> {
+    let buffer = set(fonts, words, REFERENCE, face);
+    let starts = line_starts(&buffer, face);
     let scale = size / REFERENCE;
     let mut out = Vec::new();
-    for run in buffer.layout_runs() {
+    for (run, start) in buffer.layout_runs().zip(starts) {
         for glyph in run.glyphs.iter() {
             // Where the glyph's origin is, as `LayoutGlyph::physical` puts it, but not rounded.
-            let (gx, gy) = (glyph.x + glyph.font_size * glyph.x_offset, run.line_y + glyph.y - glyph.font_size * glyph.y_offset);
+            let (gx, gy) = (start + glyph.x + glyph.font_size * glyph.x_offset, run.line_y + glyph.y - glyph.font_size * glyph.y_offset);
             let key = glyph.physical((0.0, 0.0), 1.0).cache_key;
             let Some(commands) = fonts.cache.get_outline_commands_uncached(&mut fonts.system, key) else { continue };
             // The outline's y is up from the baseline; the page's is down.
@@ -119,9 +150,9 @@ pub fn outlines(fonts: &mut Fonts, words: &str, size: f32) -> Vec<Segment> {
     out
 }
 
-/// A note's line, as tiny-skia draws it.
-fn ink_paint(note: &Note) -> Paint<'static> {
-    let [r, g, b] = note.ink.rgb();
+/// A colour as tiny-skia draws it.
+fn ink_paint(colour: Colour) -> Paint<'static> {
+    let [r, g, b] = colour.rgb();
     let mut paint = Paint::default();
     paint.set_color_rgba8(r, g, b, 255);
     paint.anti_alias = true;
@@ -138,9 +169,102 @@ fn outline_of(corners: &[Point]) -> Option<Path> {
     path.finish()
 }
 
+/// A stroke's points through `map`, each one not where the one before it is.
+fn mapped(points: &[Point], map: Map) -> Vec<Point> {
+    let mut out: Vec<Point> = Vec::with_capacity(points.len());
+    for p in points.iter().map(|p| map.point(*p)) {
+        if out.last() != Some(&p) {
+            out.push(p);
+        }
+    }
+    out
+}
+
+/// A pen's line through `points`, by the middles between them as [`stroke_line`] has it, to be
+/// stroked: none for a dot.
+fn pen_path(points: &[Point]) -> Option<Path> {
+    if points.len() < 2 {
+        return None;
+    }
+    let mut path = PathBuilder::new();
+    path.move_to(points[0].0, points[0].1);
+    for i in 1..points.len() - 1 {
+        let (control, next) = (points[i], points[i + 1]);
+        path.quad_to(control.0, control.1, (control.0 + next.0) * 0.5, (control.1 + next.1) * 0.5);
+    }
+    let last = points[points.len() - 1];
+    path.line_to(last.0, last.1);
+    path.finish()
+}
+
+/// What a highlighter's square tip, `half` either way, covers along `points`: one path of the
+/// shapes it sweeps, each wound alike, to be filled.
+fn highlighter_path(points: &[Point], half: f32) -> Option<Path> {
+    let mut path = PathBuilder::new();
+    for shape in highlighter_shapes(&stroke_line(points), half) {
+        path.move_to(shape[0].0, shape[0].1);
+        for p in &shape[1..] {
+            path.line_to(p.0, p.1);
+        }
+        path.close();
+    }
+    path.finish()
+}
+
+/// A highlighter laid where `path` covers: what is painted under it already (`under`,
+/// tiny-skia's, its colour multiplied by its alpha) multiplied by `colour` as Chromium shows it on
+/// white, by as much as the path covers each pixel -- and, when the marks are a layer of their
+/// own, `tint` too (three bytes a pixel and a fourth, white where nothing is): what the picture
+/// under the layer is to be multiplied by. Nothing outside `clip`.
+fn highlight(under: &mut PixmapMut, mut tint: Option<&mut [u8]>, path: &Path, colour: Colour, clip: Option<&Mask>) {
+    let (w, h) = (under.width() as i32, under.height() as i32);
+    let b = path.bounds();
+    let (x0, y0) = ((b.left().floor() as i32 - 1).clamp(0, w), (b.top().floor() as i32 - 1).clamp(0, h));
+    let (x1, y1) = ((b.right().ceil() as i32 + 1).clamp(0, w), (b.bottom().ceil() as i32 + 1).clamp(0, h));
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    // Where it covers, in a mask of its own bounds only: one the picture's size for every stroke
+    // would be the picture's size again for each.
+    let (bw, bh) = ((x1 - x0) as u32, (y1 - y0) as u32);
+    let Some(mut cover) = Mask::new(bw, bh) else { return };
+    let Some(moved) = path.clone().transform(Transform::from_translate(-x0 as f32, -y0 as f32)) else { return };
+    cover.fill_path(&moved, FillRule::Winding, true, Transform::identity());
+    let m = colour.on_white().rgb().map(|v| v as u32);
+    let data = under.data_mut();
+    for y in 0..bh {
+        for x in 0..bw {
+            let mut a = cover.data()[(y * bw + x) as usize] as u32;
+            if a == 0 {
+                continue;
+            }
+            let i = ((y0 as u32 + y) * w as u32 + x0 as u32 + x) as usize;
+            if let Some(clip) = clip {
+                a = a * clip.data()[i] as u32 / 255;
+                if a == 0 {
+                    continue;
+                }
+            }
+            // What is there times 1 - a (1 - m): white where it does not cover, its colour where
+            // it does. In 255ths of 255ths.
+            for k in 0..3 {
+                let f = 65025 - a * (255 - m[k]);
+                let c = &mut data[i * 4 + k];
+                *c = ((*c as u32 * f + 32512) / 65025) as u8;
+                if let Some(tint) = tint.as_deref_mut() {
+                    let t = &mut tint[i * 4 + k];
+                    *t = ((*t as u32 * f + 32512) / 65025) as u8;
+                }
+            }
+        }
+    }
+}
+
 /// Paint `notes` into `pixmap` (its pixels multiplied by their alpha, as tiny-skia keeps them)
-/// through `map`, nothing outside `clip` (in its pixels).
-pub fn paint(pixmap: &mut PixmapMut, notes: &[&Note], map: Map, clip: Option<Area>, fonts: &mut Fonts) {
+/// through `map`, nothing outside `clip` (in its pixels). `tint` is where the highlighters go
+/// when `pixmap` is a layer of the marks alone ([`Layers::tint`], its size); without it they
+/// multiply `pixmap` itself, a picture being painted on.
+pub fn paint(pixmap: &mut PixmapMut, mut tint: Option<&mut [u8]>, notes: &[&Note], map: Map, clip: Option<Area>, fonts: &mut Fonts) {
     let (width, height) = (pixmap.width(), pixmap.height());
     let mask = clip.and_then(|c| {
         let mut mask = Mask::new(width, height)?;
@@ -149,8 +273,16 @@ pub fn paint(pixmap: &mut PixmapMut, notes: &[&Note], map: Map, clip: Option<Are
         Some(mask)
     });
     for note in notes {
-        let paint = ink_paint(note);
+        let paint = ink_paint(note.colour);
         let width_px = (note.size * map.scale).max(0.1);
+        // A box or an oval of no size yet -- the one being drawn, as its press goes down -- is
+        // nothing to stroke.
+        if let Shape::Box(a) | Shape::Oval(a) = &note.shape {
+            let a = map.area(a);
+            if a.w() < 0.05 && a.h() < 0.05 {
+                continue;
+            }
+        }
         match &note.shape {
             Shape::Box(a) => {
                 let a = map.area(a);
@@ -182,26 +314,48 @@ pub fn paint(pixmap: &mut PixmapMut, notes: &[&Note], map: Map, clip: Option<Are
                     pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), mask.as_ref());
                 }
             }
-            Shape::Text { at, words, .. } => {
+            Shape::Text { at, words, face, .. } => {
                 let origin = map.point(*at);
                 let bounds = clip.unwrap_or(Area::new(0.0, 0.0, width as f32, height as f32));
-                paint_words(pixmap, words, origin, note.size * map.scale, note.ink.rgb(), bounds, fonts);
+                paint_words(pixmap, words, origin, note.size * map.scale, note.colour.rgb(), face, bounds, fonts);
+            }
+            Shape::Stroke { brush: Brush::Pen, points } => {
+                let points = mapped(points, map);
+                match pen_path(&points) {
+                    Some(path) => {
+                        let stroke = Stroke { width: width_px, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Stroke::default() };
+                        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), mask.as_ref());
+                    }
+                    // A press that did not move: a dot, the tip's own.
+                    None => {
+                        if let Some(dot) = points.first().and_then(|p| PathBuilder::from_circle(p.0, p.1, width_px * 0.5)) {
+                            pixmap.fill_path(&dot, &paint, FillRule::Winding, Transform::identity(), mask.as_ref());
+                        }
+                    }
+                }
+            }
+            Shape::Stroke { brush: Brush::Highlighter, points } => {
+                if let Some(path) = highlighter_path(&mapped(points, map), width_px * 0.5) {
+                    highlight(pixmap, tint.as_deref_mut(), &path, note.colour, mask.as_ref());
+                }
             }
         }
     }
 }
 
-/// Words set `px` large with their box's top left at `origin`, in `rgb`, blended into `pixmap`
-/// within `bounds`.
-fn paint_words(pixmap: &mut PixmapMut, words: &str, origin: Point, px: f32, rgb: [u8; 3], bounds: Area, fonts: &mut Fonts) {
+/// Words set `px` large in `face` with their box's top left at `origin`, in `rgb`, blended into
+/// `pixmap` within `bounds`.
+#[allow(clippy::too_many_arguments)]
+fn paint_words(pixmap: &mut PixmapMut, words: &str, origin: Point, px: f32, rgb: [u8; 3], face: &Face, bounds: Area, fonts: &mut Fonts) {
     let (width, height) = (pixmap.width() as i32, pixmap.height() as i32);
     let (x0, y0) = (bounds.x0.floor().max(0.0) as i32, bounds.y0.floor().max(0.0) as i32);
     let (x1, y1) = ((bounds.x1.ceil() as i32).min(width), (bounds.y1.ceil() as i32).min(height));
-    let buffer = set(fonts, words, px);
+    let buffer = set(fonts, words, px, face);
+    let starts = line_starts(&buffer, face);
     let data = pixmap.data_mut();
-    for run in buffer.layout_runs() {
+    for (run, start) in buffer.layout_runs().zip(starts) {
         for glyph in run.glyphs.iter() {
-            let physical = glyph.physical((origin.0, origin.1 + run.line_y), 1.0);
+            let physical = glyph.physical((origin.0 + start, origin.1 + run.line_y), 1.0);
             let Some(image) = fonts.cache.get_image_uncached(&mut fonts.system, physical.cache_key) else { continue };
             let (left, top) = (physical.x + image.placement.left, physical.y - image.placement.top);
             let (w, h) = (image.placement.width as i32, image.placement.height as i32);
@@ -265,16 +419,32 @@ pub fn unpremultiply(rgba: &mut [u8]) {
     }
 }
 
-/// `notes` painted on nothing, `width` by `height`, through `map`: a layer of the marks alone
-/// (four bytes a pixel, alpha multiplied in, as tiny-skia keeps them), to be laid over a picture
-/// being saved at the picture's own depth (`depth::lay`).
-pub fn layer(width: u32, height: u32, notes: &[&Note], map: Map) -> Result<Vec<u8>, String> {
-    let mut rgba = vec![0u8; width as usize * height as usize * 4];
+/// Whether any of `notes` is a highlighter's, and so needs a tint to be laid with.
+pub fn tints(notes: &[&Note]) -> bool {
+    notes.iter().any(|n| n.brush() == Some(Brush::Highlighter))
+}
+
+/// The marks painted as layers of their own, to be laid over a picture: `over`, the marks
+/// themselves (four bytes a pixel, alpha multiplied in, as tiny-skia keeps them), which is laid
+/// over it; and `tint`, what the highlighters multiply it by first (three bytes a pixel and a
+/// fourth, 255; white where there is none), none if there are no highlighters.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Layers {
+    pub over: Vec<u8>,
+    pub tint: Option<Vec<u8>>,
+}
+
+/// `notes` painted on nothing, `width` by `height`, through `map`: the marks' layers, to be laid
+/// over a picture being saved at the picture's own depth (`depth::lay`).
+pub fn layer(width: u32, height: u32, notes: &[&Note], map: Map) -> Result<Layers, String> {
+    let size = width as usize * height as usize * 4;
+    let mut over = vec![0u8; size];
+    let mut tint = tints(notes).then(|| vec![255u8; size]);
     if !notes.is_empty() {
-        let mut pixmap = PixmapMut::from_bytes(&mut rgba, width, height).ok_or("a picture of no size")?;
-        paint(&mut pixmap, notes, map, None, &mut fonts());
+        let mut pixmap = PixmapMut::from_bytes(&mut over, width, height).ok_or("a picture of no size")?;
+        paint(&mut pixmap, tint.as_deref_mut(), notes, map, None, &mut fonts());
     }
-    Ok(rgba)
+    Ok(Layers { over, tint })
 }
 
 /// Paint `notes` over a picture `width` by `height` (four bytes a pixel, alpha not multiplied
@@ -284,7 +454,7 @@ pub fn paint_over(rgba: &mut [u8], width: u32, height: u32, notes: &[&Note], map
     premultiply(rgba);
     {
         let mut pixmap = PixmapMut::from_bytes(rgba, width, height).ok_or("a picture of no size")?;
-        paint(&mut pixmap, notes, map, None, &mut fonts());
+        paint(&mut pixmap, None, notes, map, None, &mut fonts());
     }
     unpremultiply(rgba);
     Ok(())
@@ -293,16 +463,26 @@ pub fn paint_over(rgba: &mut [u8], width: u32, height: u32, notes: &[&Note], map
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markup::{Ink, Weight};
+    use crate::markup::{Alignment, Ink, Typeface, HIGHLIGHTER_COLOURS, PEN_COLOURS};
 
     fn note(shape: Shape, ink: Ink, size: f32) -> Note {
-        Note { page: 0, shape, ink, weight: Weight::Medium, size }
+        Note::new(0, shape, ink.colour(), size)
+    }
+
+    fn words(at: Point, words: &str) -> Shape {
+        Shape::Text { at, words: words.into(), extent: (0.0, 0.0), face: Face::default() }
+    }
+
+    fn stroke(brush: Brush, points: &[Point], colour: Colour, size: f32) -> Note {
+        Note::new(0, Shape::Stroke { brush, points: points.to_vec() }, colour, size)
     }
 
     fn pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * width + x) * 4) as usize;
         [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
     }
+
+    const ONE: Map = Map { scale: 1.0, dx: 0.0, dy: 0.0 };
 
     #[test]
     fn a_red_box_s_edge_is_where_it_should_be_and_its_inside_is_untouched() {
@@ -327,10 +507,10 @@ mod tests {
         let notes = [
             note(Shape::Oval(Area::new(10.0, 10.0, 110.0, 60.0)), Ink::Green, 3.0),
             note(Shape::Arrow { from: (150.0, 150.0), to: (290.0, 150.0) }, Ink::Blue, 4.0),
-            note(Shape::Text { at: (10.0, 100.0), words: "Grüße 你好".into(), extent: (0.0, 0.0) }, Ink::White, 30.0),
+            note(words((10.0, 100.0), "Grüße 你好"), Ink::White, 30.0),
         ];
         let refs: Vec<&Note> = notes.iter().collect();
-        paint_over(&mut rgba, w, h, &refs, Map { scale: 1.0, dx: 0.0, dy: 0.0 }).unwrap();
+        paint_over(&mut rgba, w, h, &refs, ONE).unwrap();
         // The oval's leftmost point, at its middle height; not its corner.
         assert_eq!(pixel(&rgba, w, 10, 35), [50, 180, 75, 255]);
         assert_eq!(pixel(&rgba, w, 12, 12), [0, 0, 0, 255]);
@@ -342,20 +522,21 @@ mod tests {
         let inked = |x0: u32, x1: u32| (100..140).flat_map(|y| (x0..x1).map(move |x| (x, y))).filter(|&(x, y)| pixel(&rgba, w, x, y)[0] > 128).count();
         assert!(inked(10, 300) > 150, "words drawn: {}", inked(10, 300));
         // Both scripts: something in the right part, where the Chinese is set.
-        let (width, _) = measure(&mut fonts(), "Grüße ", 30.0);
+        let (width, _) = measure(&mut fonts(), "Grüße ", 30.0, &Face::default());
         assert!(inked(10 + width as u32 + 2, 300) > 40, "the Chinese drawn too ({width})");
     }
 
     #[test]
     fn words_measure_in_proportion_to_their_size_and_their_outlines_fill_that_box() {
         let mut fonts = fonts();
-        let small = measure(&mut fonts, "Arrow here", 20.0);
-        let large = measure(&mut fonts, "Arrow here", 40.0);
+        let plain = Face::default();
+        let small = measure(&mut fonts, "Arrow here", 20.0, &plain);
+        let large = measure(&mut fonts, "Arrow here", 40.0, &plain);
         assert!((large.0 - small.0 * 2.0).abs() < 0.01 && (large.1 - small.1 * 2.0).abs() < 0.01, "{small:?} {large:?}");
         assert!(small.0 > 60.0 && small.0 < 200.0 && (small.1 - 25.0).abs() < 0.01, "{small:?}");
         // Two lines are twice as tall.
-        assert!((measure(&mut fonts, "a\nb", 20.0).1 - 50.0).abs() < 0.01);
-        let outline = outlines(&mut fonts, "Arrow here", 20.0);
+        assert!((measure(&mut fonts, "a\nb", 20.0, &plain).1 - 50.0).abs() < 0.01);
+        let outline = outlines(&mut fonts, "Arrow here", 20.0, &plain);
         assert!(outline.len() > 40, "{}", outline.len());
         let points: Vec<Point> = outline
             .iter()
@@ -372,19 +553,128 @@ mod tests {
     }
 
     #[test]
+    fn a_typeface_bold_and_italic_set_words_otherwise() {
+        let mut fonts = fonts();
+        let face = |typeface, bold, italic| Face { typeface, bold, italic, alignment: Alignment::Left };
+        let width = |fonts: &mut Fonts, f: Face| measure(fonts, "Illuminated minimum", 20.0, &f).0;
+        let sans = width(&mut fonts, face(Typeface::SansSerif, false, false));
+        let mono = width(&mut fonts, face(Typeface::Monospace, false, false));
+        let bold = width(&mut fonts, face(Typeface::SansSerif, true, false));
+        // A monospaced font gives the narrow letters as much room as the wide; bold is wider.
+        assert!(mono > sans * 1.1, "{mono} {sans}");
+        assert!(bold > sans * 1.02, "{bold} {sans}");
+        // Italic is slanted: its outlines are not the upright ones.
+        let upright = outlines(&mut fonts, "l", 20.0, &face(Typeface::SansSerif, false, false));
+        let italic = outlines(&mut fonts, "l", 20.0, &face(Typeface::SansSerif, false, true));
+        assert_ne!(upright, italic);
+        // Lines of a centred note lie about its middle: the short one in from the left.
+        let centred = Face { alignment: Alignment::Center, ..Face::default() };
+        let left_of = |segments: Vec<Segment>| segments.iter().filter_map(|s| if let Segment::Move(p) = s { (p.1 > 25.0).then_some(p.0) } else { None }).fold(f32::MAX, f32::min);
+        let shifted = left_of(outlines(&mut fonts, "WWWWWW\ni", 20.0, &centred));
+        let plain = left_of(outlines(&mut fonts, "WWWWWW\ni", 20.0, &Face::default()));
+        assert!(shifted > plain + 20.0, "{shifted} {plain}");
+    }
+
+    #[test]
+    fn a_pen_draws_round_ended_lines_and_dots() {
+        let (w, h) = (200u32, 100u32);
+        let mut rgba = [255u8, 255, 255, 255].repeat((w * h) as usize);
+        let red = PEN_COLOURS[10].colour;
+        let notes = [stroke(Brush::Pen, &[(20.0, 50.0), (60.0, 50.0), (100.0, 50.0)], red, 10.0), stroke(Brush::Pen, &[(150.0, 50.0)], red, 10.0)];
+        let refs: Vec<&Note> = notes.iter().collect();
+        paint_over(&mut rgba, w, h, &refs, ONE).unwrap();
+        assert_eq!(pixel(&rgba, w, 60, 50), [0xea, 0x43, 0x35, 255], "along the line");
+        assert_eq!(pixel(&rgba, w, 60, 57), [255, 255, 255, 255], "5 either way of it and no more");
+        // Its ends are round: beyond its last point by half its width straight on, not at the
+        // corner a square end would have.
+        assert!(pixel(&rgba, w, 103, 50)[1] < 120, "{:?}", pixel(&rgba, w, 103, 50));
+        assert!(pixel(&rgba, w, 104, 54)[1] > 200, "{:?}", pixel(&rgba, w, 104, 54));
+        // A press that did not move: a dot as wide as the pen.
+        assert_eq!(pixel(&rgba, w, 150, 50), [0xea, 0x43, 0x35, 255]);
+        assert!(pixel(&rgba, w, 150, 53)[1] < 120 && pixel(&rgba, w, 154, 54)[1] > 200);
+    }
+
+    #[test]
+    fn a_highlighter_on_white_is_chromium_s_and_lets_what_is_under_it_show() {
+        let (w, h) = (200u32, 60u32);
+        // White on the left, black on the right, and a highlighter across both, 16 tall.
+        let mut rgba: Vec<u8> = (0..w * h).flat_map(|i| if i % w < 100 { [255, 255, 255, 255] } else { [0, 0, 0, 255] }).collect();
+        let yellow = HIGHLIGHTER_COLOURS[1].colour;
+        let marker = stroke(Brush::Highlighter, &[(10.0, 30.0), (190.0, 30.0)], yellow, 16.0);
+        paint_over(&mut rgba, w, h, &[&marker], ONE).unwrap();
+        // On white: Chromium's yellow at 40 per cent over white, (fdd663) to (fef3c1).
+        assert_eq!(pixel(&rgba, w, 50, 30), [0xfe, 0xef, 0xc1, 255]);
+        assert_eq!(yellow.on_white(), Colour([0xfe, 0xef, 0xc1]));
+        // On black: still black, as under a highlighter's ink; and nothing past its tip.
+        assert_eq!(pixel(&rgba, w, 150, 30), [0, 0, 0, 255]);
+        assert_eq!(pixel(&rgba, w, 50, 39), [255, 255, 255, 255]);
+        // Its tip is square and upright: its end is square, out to the tip's corner.
+        assert_eq!(pixel(&rgba, w, 3, 23), [0xfe, 0xef, 0xc1, 255]);
+        // Twice over the same place: twice as deep, as two highlighters are.
+        let mut twice = [255u8, 255, 255, 255].repeat((w * h) as usize);
+        paint_over(&mut twice, w, h, &[&marker, &marker], ONE).unwrap();
+        assert!(pixel(&twice, w, 50, 30)[2] < 0xc1 - 30, "{:?}", pixel(&twice, w, 50, 30));
+        // A stroke over itself is laid once.
+        let mut doubled = [255u8, 255, 255, 255].repeat((w * h) as usize);
+        let back = stroke(Brush::Highlighter, &[(10.0, 30.0), (190.0, 30.0), (20.0, 30.0)], yellow, 16.0);
+        paint_over(&mut doubled, w, h, &[&back], ONE).unwrap();
+        assert_eq!(pixel(&doubled, w, 50, 30), [0xfe, 0xef, 0xc1, 255]);
+    }
+
+    #[test]
+    fn the_layers_laid_over_a_picture_are_the_marks_painted_on_it() {
+        // A picture: a ramp, with a white band. Marks in an order a layer must keep: a pen line,
+        // a highlighter over it, words over that.
+        let (w, h) = (120u32, 80u32);
+        let picture: Vec<u8> = (0..w * h).flat_map(|i| {
+            let (x, y) = (i % w, i / w);
+            if y > 60 { [255, 255, 255, 255] } else { [(x * 2) as u8, 120, (255 - x * 2) as u8, 255] }
+        }).collect();
+        let notes = [
+            stroke(Brush::Pen, &[(10.0, 20.0), (110.0, 20.0)], PEN_COLOURS[13].colour, 6.0),
+            stroke(Brush::Highlighter, &[(60.0, 5.0), (60.0, 75.0)], HIGHLIGHTER_COLOURS[0].colour, 16.0),
+            note(words((5.0, 40.0), "Hi"), Ink::Black, 20.0),
+        ];
+        let refs: Vec<&Note> = notes.iter().collect();
+        let mut direct = picture.clone();
+        paint_over(&mut direct, w, h, &refs, ONE).unwrap();
+        let layers = layer(w, h, &refs, ONE).unwrap();
+        let tint = layers.tint.as_ref().expect("a highlighter's tint");
+        // Laid: the picture multiplied by the tint, then the marks over it.
+        let mut laid = picture.clone();
+        for (i, px) in laid.chunks_exact_mut(4).enumerate() {
+            let (t, m) = (&tint[i * 4..i * 4 + 3], &layers.over[i * 4..i * 4 + 4]);
+            for k in 0..3 {
+                let under = px[k] as f32 * t[k] as f32 / 255.0;
+                px[k] = (m[k] as f32 + under * (1.0 - m[3] as f32 / 255.0)).round() as u8;
+            }
+        }
+        let worst = laid.iter().zip(&direct).map(|(a, b)| (*a as i32 - *b as i32).abs()).max().unwrap();
+        assert!(worst <= 2, "the layers come to the painting, but for rounding: {worst}");
+        // The pen's line under the highlighter is tinted by it, as painted in that order.
+        assert_ne!(pixel(&laid, w, 60, 20), pixel(&laid, w, 20, 20));
+        // No highlighter, no tint.
+        assert!(layer(w, h, &refs[..1], ONE).unwrap().tint.is_none());
+    }
+
+    #[test]
     fn nothing_is_drawn_outside_the_clip() {
         let (w, h) = (100u32, 100u32);
         let mut data = vec![0u8; (w * h * 4) as usize];
+        let mut tint = vec![255u8; (w * h * 4) as usize];
         let boxed = note(Shape::Box(Area::new(10.0, 10.0, 90.0, 90.0)), Ink::Red, 6.0);
-        let words = note(Shape::Text { at: (0.0, 40.0), words: "WWWWWWWW".into(), extent: (0.0, 0.0) }, Ink::Red, 30.0);
+        let written = note(words((0.0, 40.0), "WWWWWWWW"), Ink::Red, 30.0);
+        let marker = stroke(Brush::Highlighter, &[(0.0, 70.0), (100.0, 70.0)], HIGHLIGHTER_COLOURS[3].colour, 12.0);
         {
             let mut pixmap = PixmapMut::from_bytes(&mut data, w, h).unwrap();
-            paint(&mut pixmap, &[&boxed, &words], Map { scale: 1.0, dx: 0.0, dy: 0.0 }, Some(Area::new(0.0, 0.0, 50.0, 100.0)), &mut fonts());
+            paint(&mut pixmap, Some(&mut tint), &[&boxed, &written, &marker], ONE, Some(Area::new(0.0, 0.0, 50.0, 100.0)), &mut fonts());
         }
         assert!(pixel(&data, w, 10, 50)[3] > 0, "the left edge, inside");
+        assert!(pixel(&tint, w, 20, 70)[0] < 255, "the highlighter, inside");
         for y in 0..h {
             for x in 51..w {
                 assert_eq!(pixel(&data, w, x, y)[3], 0, "({x}, {y}) is outside");
+                assert_eq!(pixel(&tint, w, x, y), [255, 255, 255, 255], "({x}, {y}) is outside");
             }
         }
     }

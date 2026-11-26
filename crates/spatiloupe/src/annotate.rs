@@ -19,7 +19,7 @@
 use pdfium_render::prelude::*;
 
 use crate::ink::{self, Segment};
-use crate::markup::{arrow_head, Area, Marks, Note, Point, Shape};
+use crate::markup::{arrow_head, highlighter_shapes, stroke_line, Alignment, Area, Brush, Colour, Face, Marks, Note, Point, Shape, Typeface, HIGHLIGHTER_OPACITY};
 
 /// PDFium's numbers for what it makes, from `fpdf_annot.h` and `fpdf_save.h`.
 const FREETEXT: i32 = 3;
@@ -119,7 +119,7 @@ const KAPPA: f32 = 0.552_284_8;
 /// A note's appearance, drawn in its page's own space through `affine`.
 fn appearance(note: &Note, affine: &Affine, fonts: &mut ink::Fonts) -> Drawing {
     let mut d = Drawing::new();
-    let rgb = colour(note.ink.rgb());
+    let rgb = colour(note.colour.rgb());
     let width = note.size as f64;
     let p = |q: Point| affine.apply(q);
     match &note.shape {
@@ -155,12 +155,40 @@ fn appearance(note: &Note, affine: &Affine, fonts: &mut ink::Fonts) -> Drawing {
             d.op(&[p(head[2])], "l");
             d.raw("h f");
         }
-        Shape::Text { at, words, .. } => {
+        // A line drawn by hand: a pen's stroked round, along the line it is painted along; a
+        // highlighter's square tip's shapes filled, see-through by the annotation's own opacity
+        // (its `/CA`, which PDFium gives the appearance as the graphics state `GS`) -- 40 per
+        // cent, as Chromium writes its highlighter into a PDF (pdfium_ink_writer.cc).
+        Shape::Stroke { brush: Brush::Pen, points } => {
+            let line = stroke_line(points);
+            d.raw(&format!("{} w 1 J 1 j [] 0 d {rgb} RG", n(width)));
+            if let [only] = line.as_slice() {
+                // A dot: a line of no length, which a round cap draws as one.
+                d.op(&[p(*only)], "m");
+                d.op(&[p(*only)], "l");
+            } else {
+                for (i, q) in line.iter().enumerate() {
+                    d.op(&[p(*q)], if i == 0 { "m" } else { "l" });
+                }
+            }
+            d.raw("S");
+        }
+        Shape::Stroke { brush: Brush::Highlighter, points } => {
+            d.raw(&format!("/GS gs {rgb} rg"));
+            for shape in highlighter_shapes(&stroke_line(points), note.size * 0.5) {
+                for (i, q) in shape.iter().enumerate() {
+                    d.op(&[p(*q)], if i == 0 { "m" } else { "l" });
+                }
+                d.raw("h");
+            }
+            d.raw("f");
+        }
+        Shape::Text { at, words, face, .. } => {
             d.raw(&format!("{rgb} rg"));
             let mut current = (0.0f32, 0.0f32);
             let mut start = current;
             let shift = |q: Point| (q.0 + at.0, q.1 + at.1);
-            for segment in ink::outlines(fonts, words, note.size) {
+            for segment in ink::outlines(fonts, words, note.size, face) {
                 match segment {
                     Segment::Move(q) => {
                         let q = shift(q);
@@ -499,6 +527,39 @@ enum Made {
     Circle,
     Arrow,
     FreeText,
+    /// A line drawn by hand.
+    Ink,
+}
+
+/// A FreeText's default appearance and default style, for a reader that sets its words again
+/// itself: the standard font of their typeface (`/Helv`, `/TiRo`, `/Cour` and their bold and
+/// italic), its size and colour; and the same as CSS, with the words' alignment.
+fn text_styles(face: &Face, size: f32, rgb: [u8; 3]) -> (String, String) {
+    let font = match (face.typeface, face.bold, face.italic) {
+        (Typeface::SansSerif, false, false) => "Helv",
+        (Typeface::SansSerif, true, false) => "HeBo",
+        (Typeface::SansSerif, false, true) => "HeOb",
+        (Typeface::SansSerif, true, true) => "HeBO",
+        (Typeface::Serif, false, false) => "TiRo",
+        (Typeface::Serif, true, false) => "TiBo",
+        (Typeface::Serif, false, true) => "TiIt",
+        (Typeface::Serif, true, true) => "TiBI",
+        (Typeface::Monospace, false, false) => "Cour",
+        (Typeface::Monospace, true, false) => "CoBo",
+        (Typeface::Monospace, false, true) => "CoOb",
+        (Typeface::Monospace, true, true) => "CoBO",
+    };
+    let da = format!("/{font} {} Tf {} rg", n(size as f64), colour(rgb));
+    // CSS's own family names are Chromium's typefaces'.
+    let standard = match face.typeface {
+        Typeface::SansSerif => "Helvetica",
+        Typeface::Serif => "Times",
+        Typeface::Monospace => "Courier",
+    };
+    let style = format!("{}{}", if face.italic { "italic " } else { "" }, if face.bold { "bold " } else { "" });
+    let align = if face.alignment == Alignment::Left { String::new() } else { format!("; text-align: {}", face.alignment.value()) };
+    let ds = format!("font: {style}{standard},{} {}pt; color: {}{align}", face.typeface.value(), n(size as f64), Colour(rgb).hex().to_uppercase());
+    (da, ds)
 }
 
 /// Where PDFium writes a save: into memory.
@@ -590,7 +651,11 @@ pub fn annotate(pdfium: &Pdfium, bytes: &[u8], marks: &Marks, password: Option<&
                     let name = format!("spatiloupe-{stamp}-{index}-{k}");
                     let drawing = appearance(note, &affine, &mut fonts);
                     let margin = note.size as f64 * 0.5 + 1.0;
-                    let rgb = note.ink.rgb();
+                    let rgb = note.colour.rgb();
+                    let point = |p: Point| {
+                        let (x, y) = affine.apply(p);
+                        FS_POINTF { x: x as f32, y: y as f32 }
+                    };
                     let kind = match &note.shape {
                         Shape::Box(_) => {
                             unsafe { make(b, page, SQUARE, &drawing.bounds(margin), Some(rgb), note.size, &name, &when, &drawing.ops, |_| {}) }?;
@@ -600,12 +665,25 @@ pub fn annotate(pdfium: &Pdfium, bytes: &[u8], marks: &Marks, password: Option<&
                             unsafe { make(b, page, CIRCLE, &drawing.bounds(margin), Some(rgb), note.size, &name, &when, &drawing.ops, |_| {}) }?;
                             Made::Circle
                         }
+                        // A line drawn by hand: an Ink annotation, its line its ink list (Chromium's
+                        // own are page objects; an annotation is what Preview or Acrobat can move
+                        // or delete). PDFs are not given the pen or the highlighter for now, but
+                        // marks that have them are written as they look.
+                        Shape::Stroke { brush, points } => {
+                            let line: Vec<FS_POINTF> = stroke_line(points).into_iter().map(point).collect();
+                            let alpha = if *brush == Brush::Highlighter { (HIGHLIGHTER_OPACITY * 255.0).round() as u32 } else { 255 };
+                            unsafe {
+                                make(b, page, INK, &drawing.bounds(margin), Some(rgb), note.size, &name, &when, &drawing.ops, |annot| {
+                                    b.FPDFAnnot_AddInkStroke(annot, line.as_ptr(), line.len() as _);
+                                    if alpha < 255 {
+                                        b.FPDFAnnot_SetColor(annot, COLOUR, rgb[0] as u32, rgb[1] as u32, rgb[2] as u32, alpha);
+                                    }
+                                })
+                            }?;
+                            Made::Ink
+                        }
                         Shape::Arrow { from, to } => {
                             let (stop, head) = arrow_head(*from, *to, note.size);
-                            let point = |p: Point| {
-                                let (x, y) = affine.apply(p);
-                                FS_POINTF { x: x as f32, y: y as f32 }
-                            };
                             let strokes = [vec![point(*from), point(stop)], vec![point(head[1]), point(head[0]), point(head[2])]];
                             unsafe {
                                 make(b, page, INK, &drawing.bounds(margin), Some(rgb), note.size, &name, &when, &drawing.ops, |annot| {
@@ -618,16 +696,14 @@ pub fn annotate(pdfium: &Pdfium, bytes: &[u8], marks: &Marks, password: Option<&
                             arrows.push(ArrowLine { name: name.clone(), line: [a.0, a.1, z.0, z.1], rgb, width: note.size as f64 });
                             Made::Arrow
                         }
-                        Shape::Text { at, words, extent } => {
+                        Shape::Text { at, words, extent, face } => {
                             // The words' box, and anything of theirs that reaches past it.
                             let mut reach = Drawing::new();
                             for corner in Area::new(at.0, at.1, at.0 + extent.0, at.1 + extent.1).corners() {
                                 reach.reach.push(affine.apply(corner));
                             }
                             reach.reach.extend_from_slice(&drawing.reach);
-                            let size = note.size;
-                            let da = format!("/Helv {} Tf {} rg", n(size as f64), colour(rgb));
-                            let ds = format!("font: Helvetica,sans-serif {}pt; color: #{:02X}{:02X}{:02X}", n(size as f64), rgb[0], rgb[1], rgb[2]);
+                            let (da, ds) = text_styles(face, note.size, rgb);
                             unsafe {
                                 make(b, page, FREETEXT, &reach.bounds(1.0), None, 0.0, &name, &when, &drawing.ops, |annot| {
                                     b.FPDFAnnot_SetStringValue_str(annot, "Contents", words);
@@ -686,7 +762,7 @@ fn found(pdfium: &Pdfium, bytes: &[u8], pages: usize, made: &[(usize, String, Ma
             Made::Circle => PdfPageAnnotationType::Circle,
             Made::FreeText => PdfPageAnnotationType::FreeText,
             Made::Arrow if lines => PdfPageAnnotationType::Line,
-            Made::Arrow => PdfPageAnnotationType::Ink,
+            Made::Arrow | Made::Ink => PdfPageAnnotationType::Ink,
         };
         if annotation.annotation_type() != want {
             return Err(format!("{name} was written as {:?}", annotation.annotation_type()));
@@ -698,7 +774,7 @@ fn found(pdfium: &Pdfium, bytes: &[u8], pages: usize, made: &[(usize, String, Ma
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::markup::{Ink, Weight};
+    use crate::markup::Ink;
 
     /// PDFium, where it is here (tools/fetch-pdfium.sh); without it, a test says so and passes.
     fn pdfium() -> Option<Pdfium> {
@@ -719,14 +795,14 @@ pub(crate) mod tests {
         // A page as it is, and one turned a quarter (/Rotate 90): shown 800 across and 600 down.
         let path = crate::pdf::tests::made_turned("marked.pdf", &[(600.0, 800.0, "first", 0), (600.0, 800.0, "second", 90)]);
         let original = std::fs::read(&path).unwrap();
-        let note = |page, shape, ink, size| Note { page, shape, ink, weight: Weight::Medium, size };
-        let extent = ink::measure(&mut ink::fonts(), "Grüße 你好", 24.0);
+        let note = |page, shape, ink: Ink, size| Note::new(page, shape, ink.colour(), size);
+        let extent = ink::measure(&mut ink::fonts(), "Grüße 你好", 24.0, &Face::default());
         let marks = Marks {
             notes: vec![
                 note(0, Shape::Box(Area::new(100.0, 100.0, 300.0, 200.0)), Ink::Red, 4.0),
                 note(0, Shape::Oval(Area::new(100.0, 300.0, 300.0, 400.0)), Ink::Green, 4.0),
                 note(0, Shape::Arrow { from: (100.0, 500.0), to: (400.0, 600.0) }, Ink::Blue, 4.0),
-                note(0, Shape::Text { at: (100.0, 650.0), words: "Grüße 你好".into(), extent }, Ink::Black, 24.0),
+                note(0, Shape::Text { at: (100.0, 650.0), words: "Grüße 你好".into(), extent, face: Face::default() }, Ink::Black, 24.0),
                 note(1, Shape::Box(Area::new(50.0, 50.0, 250.0, 150.0)), Ink::Red, 4.0),
             ],
             crops: vec![(1, Area::new(20.0, 20.0, 700.0, 500.0))],
@@ -820,8 +896,8 @@ pub(crate) mod tests {
     #[test]
     fn an_encrypted_pdf_marked_up_stays_encrypted_as_it_was() {
         let Some(pdfium) = pdfium() else { return };
-        let note = |shape, ink, size| Note { page: 0, shape, ink, weight: Weight::Medium, size };
-        let extent = ink::measure(&mut ink::fonts(), "Grüße 你好", 24.0);
+        let note = |shape, ink: Ink, size| Note::new(0, shape, ink.colour(), size);
+        let extent = ink::measure(&mut ink::fonts(), "Grüße 你好", 24.0, &Face::default());
         for (name, original, password, revision, annotate_ok, modify_ok) in LOCKED {
             // What its owner allows, as SpatiLoupe reads it.
             let rights = crate::pdf::rights(&pdfium, std::path::Path::new(name), Some(original), password);
@@ -838,7 +914,7 @@ pub(crate) mod tests {
                     note(Shape::Box(Area::new(100.0, 100.0, 300.0, 200.0)), Ink::Red, 4.0),
                     note(Shape::Oval(Area::new(100.0, 300.0, 300.0, 400.0)), Ink::Green, 4.0),
                     note(Shape::Arrow { from: (100.0, 500.0), to: (400.0, 600.0) }, Ink::Blue, 4.0),
-                    note(Shape::Text { at: (100.0, 650.0), words: "Grüße 你好".into(), extent }, Ink::Black, 24.0),
+                    note(Shape::Text { at: (100.0, 650.0), words: "Grüße 你好".into(), extent, face: Face::default() }, Ink::Black, 24.0),
                 ],
                 crops: if modify_ok { vec![(0, Area::new(20.0, 20.0, 580.0, 780.0))] } else { Vec::new() },
                 turns: 0,
@@ -890,6 +966,47 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn lines_drawn_by_hand_and_set_words_are_written_as_they_look() {
+        use crate::markup::{Brush, Pick, Typeface, HIGHLIGHTER_COLOURS, PEN_COLOURS};
+        let Some(pdfium) = pdfium() else { return };
+        // PDFs are not given the pen, the highlighter or a face for now; what has them is
+        // written all the same, as it looks.
+        let path = crate::pdf::tests::made_turned("strokes.pdf", &[(600.0, 800.0, "strokes", 0)]);
+        let original = std::fs::read(&path).unwrap();
+        let stroke = |brush, points: Vec<Point>, colour, size| Note { pick: Pick::Chromium(size), ..Note::new(0, Shape::Stroke { brush, points }, colour, size) };
+        let face = Face { typeface: Typeface::Serif, bold: true, italic: true, alignment: Alignment::Center };
+        let extent = ink::measure(&mut ink::fonts(), "Serif", 30.0, &face);
+        let marks = Marks {
+            notes: vec![
+                stroke(Brush::Pen, vec![(100.0, 100.0), (300.0, 120.0), (500.0, 100.0)], PEN_COLOURS[10].colour, 6.0),
+                stroke(Brush::Highlighter, vec![(100.0, 300.0), (500.0, 300.0)], HIGHLIGHTER_COLOURS[1].colour, 20.0),
+                Note::new(0, Shape::Text { at: (100.0, 500.0), words: "Serif".into(), extent, face }, PEN_COLOURS[0].colour, 30.0),
+            ],
+            ..Marks::default()
+        };
+        let bytes = annotate(&pdfium, &original, &marks, None).unwrap();
+        let document = pdfium.load_pdf_from_byte_slice(&bytes, None).unwrap();
+        let page = document.pages().get(0).unwrap();
+        type Kind = PdfPageAnnotationType;
+        assert_eq!(page.annotations().iter().map(|a| a.annotation_type()).collect::<Vec<_>>(), [Kind::Ink, Kind::Ink, Kind::FreeText]);
+        drop(page);
+        drop(document);
+        let tail = String::from_utf8_lossy(&bytes[original.len()..]).into_owned();
+        assert!(tail.contains("font: italic bold Times,serif 30pt; color: #000000; text-align: center"), "{tail}");
+        // As PDFium draws the page, a point a pixel: the pen's Red 2 along its line; the
+        // highlighter at 40 per cent over the white page, which is what it is in a picture.
+        let (w, rgba) = drawn(&pdfium, &bytes, 0, 600);
+        let at = |x: u32, y: u32| {
+            let i = ((y * w + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2]]
+        };
+        let near = |a: [u8; 3], b: [u8; 3]| (0..3).all(|k| (a[k] as i32 - b[k] as i32).abs() <= 3);
+        assert!(near(at(150, 106), [0xea, 0x43, 0x35]), "{:?}", at(150, 106));
+        assert!(near(at(300, 300), HIGHLIGHTER_COLOURS[1].colour.on_white().rgb()), "{:?}", at(300, 300));
+        assert!(near(at(300, 320), [255, 255, 255]), "{:?}", at(300, 320));
+    }
+
+    #[test]
     fn a_moment_is_written_as_a_pdf_writes_it() {
         assert_eq!(pdf_date(0), "D:19700101000000Z");
         assert_eq!(pdf_date(1_795_100_400), "D:20261119150000Z");
@@ -915,7 +1032,7 @@ pub(crate) mod tests {
     #[test]
     fn appearances_are_drawn_in_the_page_s_space() {
         let plain = Affine::from_corners((0.0, 800.0), (600.0, 800.0), (0.0, 0.0), (600.0, 800.0));
-        let note = |shape| Note { page: 0, shape, ink: Ink::Red, weight: Weight::Medium, size: 3.0 };
+        let note = |shape| Note::new(0, shape, Ink::Red.colour(), 3.0);
         let mut fonts = ink::fonts();
         let boxed = appearance(&note(Shape::Box(Area::new(10.0, 20.0, 110.0, 70.0))), &plain, &mut fonts);
         assert_eq!(boxed.ops, "3 w 0 J 0 j [] 0 d 0.922 0.2 0.141 RG\n10 780 m\n110 780 l\n110 730 l\n10 730 l\nh S\n");
@@ -926,7 +1043,7 @@ pub(crate) mod tests {
         let arrow = appearance(&note(Shape::Arrow { from: (0.0, 0.0), to: (100.0, 0.0) }), &plain, &mut fonts);
         assert!(arrow.ops.contains("0 800 m\n87.6 800 l\nS\n100 800 m\n"), "{}", arrow.ops);
         assert!(arrow.ops.ends_with("h f\n"));
-        let words = appearance(&note(Shape::Text { at: (50.0, 100.0), words: "Hi 你好".into(), extent: (0.0, 0.0) }), &plain, &mut fonts);
+        let words = appearance(&note(Shape::Text { at: (50.0, 100.0), words: "Hi 你好".into(), extent: (0.0, 0.0), face: Face::default() }), &plain, &mut fonts);
         assert!(words.ops.starts_with("0.922 0.2 0.141 rg\n") && words.ops.ends_with("f\n"));
         assert!(words.ops.matches(" c\n").count() > 10, "the glyphs' curves");
         // Below the words' top, which is 700 up the page; above their foot.
@@ -1004,7 +1121,7 @@ pub(crate) mod tests {
 #[cfg(test)]
 mod a_pdf_here {
     use super::*;
-    use crate::markup::{Ink, Weight};
+    use crate::markup::Ink;
 
     /// A PDF on this computer marked up as SpatiLoupe marks one -- a box, an oval, an arrow and
     /// words on its first page, and that page cropped -- and written beside it as
@@ -1021,15 +1138,15 @@ mod a_pdf_here {
             let page = document.pages().get(0).unwrap();
             (page.width().value, page.height().value)
         };
-        let note = |shape, ink, size| Note { page: 0, shape, ink, weight: Weight::Medium, size };
+        let note = |shape, ink: Ink, size| Note::new(0, shape, ink.colour(), size);
         let words = "Markup: Grüße, Привет, 你好";
-        let extent = ink::measure(&mut ink::fonts(), words, 18.0);
+        let extent = ink::measure(&mut ink::fonts(), words, 18.0, &Face::default());
         let marks = Marks {
             notes: vec![
                 note(Shape::Box(Area::new(w * 0.1, h * 0.1, w * 0.5, h * 0.25)), Ink::Red, 3.0),
                 note(Shape::Oval(Area::new(w * 0.55, h * 0.1, w * 0.9, h * 0.25)), Ink::Green, 3.0),
                 note(Shape::Arrow { from: (w * 0.2, h * 0.5), to: (w * 0.7, h * 0.35) }, Ink::Blue, 3.0),
-                note(Shape::Text { at: (w * 0.1, h * 0.6), words: words.into(), extent }, Ink::Black, 18.0),
+                note(Shape::Text { at: (w * 0.1, h * 0.6), words: words.into(), extent, face: Face::default() }, Ink::Black, 18.0),
             ],
             crops: vec![(0, Area::new(w * 0.05, h * 0.05, w * 0.95, h * 0.8))],
             turns: 0,
