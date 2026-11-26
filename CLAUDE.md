@@ -56,3 +56,10 @@ system but carries Chromium's (`wl_display_connect_to_fd` inside it); the Beam P
 checkout lacked the sources only because Chromium's DEPS marks them Linux-only; copied from the Deck's
 tree of the same version). Chromium cannot use the Rust crate: its Ozone/Wayland is C++ against
 libwayland's C API. Both speak the same protocol, `spatiand_xr_v1` included, on the same socket.
+
+This table says how it was built on 2026-11-10; a session wrote it, and it is **not a rule of the
+owner's**. The owner, 2026-11-26: **"i do not put that rule. if can be unify, why not"** -- a library
+that SpatiMesh, the other apps and the room can share is to be one. Proposed for the 159 Chromium
+build: one libwayland, built from the source Chromium pins and carried beside the programs, used by
+Chromium, by the Rust apps (wayland-rs's libwayland mode) and by every room (today the Deck's room
+uses the system's libwayland-server, the Mac's and the Beam Pro's smithay's Rust code).
