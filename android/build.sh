@@ -86,7 +86,7 @@ cp -R ../mac/icons $OUT/assets/icons
 mkdir -p $OUT/assets/licences
 cp ../third_party/NOTICES.md $OUT/assets/licences/
 cp "../third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv3" $OUT/assets/licences/
-cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" $OUT/assets/licences/OpenSSL-LICENSE.txt
+cp "$FF/share/boringssl/LICENSE" $OUT/assets/licences/BoringSSL-LICENSE.txt
 # SpatiMesh as on the Deck: Chromium's Linux browser built for Android's libc (third_party/chromium,
 # CHROMIUM_TARGET=android, its package step: spatimesh-android.tar.gz, unpacked), when it has been.
 # Its resources and launcher go in the assets, for the app to unpack (MainActivity.unpackSpatiMesh);

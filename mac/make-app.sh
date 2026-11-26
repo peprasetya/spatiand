@@ -35,7 +35,7 @@ mkdir -p "$app/Contents/Resources/licences"
 cp ../third_party/NOTICES.md "$app/Contents/Resources/licences/"
 . ../third_party/ffmpeg/versions.sh
 cp "../third_party/ffmpeg/src/ffmpeg-$FFMPEG_VERSION/COPYING.LGPLv3" "$app/Contents/Resources/licences/"
-cp "../third_party/ffmpeg/src/openssl-$OPENSSL_VERSION/LICENSE.txt" "$app/Contents/Resources/licences/OpenSSL-LICENSE.txt"
+cp "$FFMPEG/share/boringssl/LICENSE" "$app/Contents/Resources/licences/BoringSSL-LICENSE.txt"
 cp Resources/hrtf/NOTICE.txt "$app/Contents/Resources/licences/mysofa-NOTICE.txt" 2>/dev/null || true
 OWN="spatireel spatiloupe spatiquill spatishelf spatipal spatikey spatiand-choose"
 for own in $OWN; do
@@ -96,7 +96,7 @@ cp Resources/Spatiand.icns "$app/Contents/Resources/Spatiand.icns"
 # would look them up, in a theme of the app's own.
 cp -R icons "$app/Contents/Resources/icons"
 # SpatiMesh: the Deck's Chromium, its Linux UI built for this Mac (docs/spatimesh-mac-port.md,
-# out/mac-ozone; FFmpeg and OpenSSL already in its framework's Libraries, third_party/chromium/
+# out/mac-ozone; FFmpeg already in its framework's Libraries, third_party/chromium/
 # mac/ozbuild.sh). Carried in Contents/Helpers, where the room finds it and starts it as the
 # Deck's room starts its own (crates/spatiand/src/own.rs). Taken from SPATIAND_SPATIMESH_APP, else
 # the first there of: the build's output, ~/Developer/SpatiMesh.app, and the SpatiMesh of the app

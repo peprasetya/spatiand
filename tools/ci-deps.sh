@@ -50,8 +50,10 @@ linux() {
 
 android() {
     apt_update_once
+    # CMake for the BoringSSL that android/build.sh builds into FFmpeg for Android.
     $SUDO apt-get install -y -qq --no-install-recommends \
-        build-essential pkg-config clang curl ca-certificates unzip git make openjdk-17-jdk-headless
+        build-essential pkg-config clang curl ca-certificates unzip git make cmake openjdk-17-jdk-headless
+    boringssl
     rust
     rustup target add aarch64-linux-android
     command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
@@ -80,12 +82,44 @@ export PATH=\"\$HOME/.cargo/bin:\$PATH\"
     echo "Android: . ~/.spatiand-ci-env first"
 }
 
+# BoringSSL, which FFmpeg's https is built with: SpatiMesh's own, read from the source of its
+# Chromium (third_party/ffmpeg/versions.sh). Where there is no Chromium tree, as here, the same
+# source: the revision named by the DEPS of the Chromium third_party/chromium/build.sh pins, with
+# SpatiMesh's own patch to it (third_party/chromium/patches/sub/boringssl) committed on it. Dated
+# as the patch is dated, so that every run makes the same commit, which FFmpeg's stamp names (and
+# a cached FFmpeg is still the one it asks for); for Chromium 157 that is the very commit of
+# deepmagpie's tree.
+boringssl() {
+    [ -z "${BORINGSSL_FETCHED:-}" ] || return 0
+    BORINGSSL_FETCHED=1
+    . third_party/ffmpeg/versions.sh
+    [ -d "$BORINGSSL_SRC" ] && return 0
+    chromium=$(sed -n 's/^CHROMIUM_VERSION=\([^ ]*\).*/\1/p' third_party/chromium/build.sh)
+    rev=$(curl -fsSL "https://chromium.googlesource.com/chromium/src/+/refs/tags/$chromium/DEPS?format=TEXT" |
+        base64 -d | sed -n "s/^ *'boringssl_revision': '\([0-9a-f]*\)',.*/\1/p")
+    [ -n "$rev" ] || { echo "no boringssl_revision in the DEPS of Chromium $chromium" >&2; exit 1; }
+    dir="$HOME/boringssl-$rev"
+    if [ ! -d "$dir/.git" ]; then
+        git init -q "$dir"
+        git -C "$dir" fetch -q --depth 1 https://boringssl.googlesource.com/boringssl "$rev"
+        git -C "$dir" checkout -q FETCH_HEAD
+        for p in "$(pwd)"/third_party/chromium/patches/sub/boringssl/*.patch; do
+            git -C "$dir" -c user.name="Spatiand build" -c user.email=spatiand@localhost am -q --committer-date-is-author-date "$p"
+        done
+    fi
+    export SPATIAND_BORINGSSL="$dir"
+    ENV_LINES="${ENV_LINES}export SPATIAND_BORINGSSL=\"$dir\"
+"
+}
+
 # FFmpeg: the version Spatiand ships everywhere (third_party/ffmpeg/versions.sh), built by the same
 # script that builds it for the Deck, into third_party/ffmpeg/out/linux -- which CI keeps between runs.
+# Its https is the BoringSSL above, built with CMake, inside it: no OpenSSL of the system's.
 ffmpeg() {
     apt_update_once
     $SUDO apt-get install -y -qq --no-install-recommends build-essential pkg-config nasm curl xz-utils \
-        libopus-dev libssl-dev libva-dev libdrm-dev zlib1g-dev libbz2-dev
+        git cmake ninja-build libopus-dev libva-dev libdrm-dev zlib1g-dev libbz2-dev
+    boringssl
     third_party/ffmpeg/build.sh linux
     prefix="$(pwd)/third_party/ffmpeg/out/linux"
     ENV_LINES="${ENV_LINES}export FFMPEG_PKG_CONFIG_PATH=\"$prefix/lib/pkgconfig\"

@@ -19,12 +19,11 @@ if [ ! "$X/libxkbcommon.a" -nt "$xkb_built/libxkbcommon.a" ]; then
     cp "$xkb_built"/include/xkbcommon/*.h third_party/spatiand_xkbcommon/include/xkbcommon/
 fi
 nice -n 10 python3 ../../depot_tools/siso.py ninja -C out/mac-ozone -k 0 chrome --offline
-# Spatiand's FFmpeg and the OpenSSL it links, in the framework's Libraries, where its rpath looks
-# (mac/0001). The bundle step makes that folder again on every build.
+# Spatiand's FFmpeg, in the framework's Libraries, where its rpath looks (mac/0001); its https
+# is BoringSSL's, inside its own libraries (third_party/ffmpeg). The bundle step makes that folder
+# again on every build.
 L="out/mac-ozone/SpatiMesh.app/Contents/Frameworks/SpatiMesh Framework.framework/Versions/Current/Libraries"
 if [ -d "$L" ]; then
   cp -a third_party/spatiand_ffmpeg/lib/*.dylib "$L/"
-  cp -a "$HOME/Applications/Spatiand.app/Contents/Frameworks/libssl.3.dylib" \
-        "$HOME/Applications/Spatiand.app/Contents/Frameworks/libcrypto.3.dylib" "$L/"
 fi
 echo "end $(date)"

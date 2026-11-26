@@ -25,7 +25,7 @@ libc = "0.2"
 # decoder with a 16x16 probe context, and this GPU refuses any video context below 64x64. Both
 # codecs, measured. See docs/remote.md.
 #
-# The FFmpeg Spatiand ships on every platform (third_party/ffmpeg, 9.0.2), found through
+# The FFmpeg Spatiand ships on every platform (third_party/ffmpeg, 9.1), found through
 # pkg-config; `ffmpeg8` is the newest API rsmpeg names, and third_party/rsmpeg's patch makes it
 # build against FFmpeg 9.
 rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg8", "link_system_ffmpeg"] }

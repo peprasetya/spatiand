@@ -76,6 +76,9 @@ case "$FFMPEG_LICENCE" in
     *) die "FFmpeg at $FFMPEG says its licence is '$FFMPEG_LICENCE', not LGPL version 3 or later" ;;
 esac
 [ -f "$FFMPEG_SOURCE/COPYING.LGPLv3" ] || die "no FFmpeg source at $FFMPEG_SOURCE, for its licence; set SPATIAND_FFMPEG_SOURCE"
+# The BoringSSL inside FFmpeg's libraries: its licence, and the commit it was built from, come with them.
+[ -f "$FFMPEG/share/boringssl/LICENSE" ] || die "no BoringSSL licence in $FFMPEG/share/boringssl: an FFmpeg built before its https was BoringSSL's? third_party/ffmpeg/build.sh linux"
+BORINGSSL_REVISION=$(sed -n 's/.* boringssl \([^ ]*\).*/\1/p' "$FFMPEG/.version")
 [ -f "$PDFIUM/lib/libpdfium.so" ] || die "no PDFium at $PDFIUM: tools/fetch-pdfium.sh linux-x64, or set SPATIAND_PDFIUM"
 [ "$(cat "$PDFIUM/.version" 2>/dev/null)" = "$PDFIUM_VERSION" ] ||
     die "PDFium at $PDFIUM is $(cat "$PDFIUM/.version" 2>/dev/null || echo unknown), and this tree's is $PDFIUM_VERSION (tools/fetch-pdfium.sh)"
@@ -178,6 +181,7 @@ echo "== licences =="
 cp LICENSE "$P/licences/LICENSE"
 cp third_party/NOTICES.md "$P/licences/NOTICES.md"
 cp "$FFMPEG_SOURCE/COPYING.LGPLv3" "$P/licences/FFmpeg-COPYING.LGPLv3"
+cp "$FFMPEG/share/boringssl/LICENSE" "$P/licences/BoringSSL-LICENSE.txt"
 cp third_party/chromium/patches/base/COPYING "$P/licences/COPYING.GPLv3"
 mkdir -p "$P/licences/pdfium"
 cp "$PDFIUM/LICENSE" "$P/licences/pdfium/LICENSE"
@@ -204,13 +208,20 @@ platform, NOTICES.md.
 FFmpeg $FFMPEG_VERSION -- spatiand/lib/libav*.so.*, libsw*.so.*
     LGPL version 3 or later (licences/FFmpeg-COPYING.LGPLv3, which incorporates
     licences/COPYING.GPLv3). Linked dynamically: these are ordinary shared libraries, and can be
-    replaced with a build of one's own of the same version. Built unchanged from
-    https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz by third_party/ffmpeg/build.sh,
+    replaced with a build of one's own of the same version. Built from
+    https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz, with the patch in
+    third_party/ffmpeg/patches/ffmpeg (its TLS code on BoringSSL), by third_party/ffmpeg/build.sh,
     configured as:
         $FFMPEG_CONFIGURATION
-    without --enable-gpl or --enable-nonfree; --enable-version3 because OpenSSL's Apache licence
-    is compatible with LGPL 3, not 2.1. Its OpenSSL, zlib, bzip2, Opus, libva and libdrm are
-    SteamOS's own, not carried here.
+    without --enable-gpl or --enable-nonfree; --enable-version3 because the BoringSSL built into
+    it is under the Apache licence, which is compatible with LGPL 3, not 2.1. Its zlib, bzip2,
+    Opus, libva, libdrm and C++ runtime are SteamOS's own, not carried here.
+
+BoringSSL -- inside FFmpeg's libraries (libavformat.so.*, libavutil.so.*), for its https
+    Apache 2.0 (licences/BoringSSL-LICENSE.txt). SpatiMesh's own, built from commit
+    $BORINGSSL_REVISION of its Chromium's third_party/boringssl/src: the revision that
+    Chromium's DEPS names (https://boringssl.googlesource.com/boringssl), with SpatiMesh's patch
+    to it (third_party/chromium/patches/sub/boringssl) committed on it.
 
 PDFium $PDFIUM_VERSION -- spatiand/lib/libpdfium.so, which SpatiLoupe draws PDFs with
     BSD 3-clause and the licences of its parts (licences/pdfium/), as built by
@@ -243,7 +254,7 @@ Rust crates compiled into Spatiand's programs -- spatiand/bin/*
     (third_party/rsmpeg, MIT). Their licence texts: licences/rust-crates.txt.
 
 Not carried, but used where SteamOS has them: libmysofa and its default.sofa (the room's spatial
-sound), PipeWire, Mesa, libinput, libseat, xkbcommon, OpenSSL and the rest that ldd lists.
+sound), PipeWire, Mesa, libinput, libseat, xkbcommon and the rest that ldd lists.
 
 -------------------------------------------------------------------------------
 Go modules in the storage service: module, version, licence
