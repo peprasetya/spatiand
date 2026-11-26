@@ -228,6 +228,14 @@ pub fn in_glasses(state: &mut crate::Spatiand) {
 }
 
 fn launch(state: &mut crate::Spatiand, name: &str) {
+    // A program by its path rather than one of Spatiand's own by name: the self-tests' (the
+    // SDK's examples, `Spatiand --selftest-desk <path>`); the menu bar names its applications.
+    if name.starts_with('/') {
+        log::info!("opening {name} (a self-test's program)");
+        let app = spatiand_shell::AppEntry { name: name.to_string(), exec: format!("\"{name}\""), icon: None, categories: Vec::new() };
+        crate::own::launch(&app, &state.socket_name.clone(), &[]);
+        return;
+    }
     match crate::own::list().into_iter().find(|a| a.name.eq_ignore_ascii_case(name)) {
         Some(app) => {
             log::info!("opening {} (asked for from the Mac's menu bar)", app.name);

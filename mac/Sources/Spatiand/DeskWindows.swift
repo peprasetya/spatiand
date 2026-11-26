@@ -207,6 +207,7 @@ final class DeskWindows: NSObject, NSWindowDelegate {
         }
         view.autoresizingMask = [.maxXMargin, .minYMargin]
         view.frame = NSRect(x: rect.minX, y: hostView.bounds.height - rect.minY - rect.height, width: rect.width, height: rect.height)
+        print("desk: window \(id) is inside a place in window \(host) at \(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height))")
     }
 
     /// A Dock icon and the keys watched while there are windows; neither once there are none.
