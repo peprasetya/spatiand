@@ -325,6 +325,16 @@ know (13), every event of it listened for; patch 0020's copy of the protocol is 
 Tried in the Deck build's test room: the SDK's `examples/embed --page file:///...pdf` showed the PDF in its
 place, no tabs, no bar.
 
+**The PDF viewer in the room's own look, and no Google Drive button (patch 0036; 2026-11-27).** The owner,
+of SpatiLoupe's PDFs shown through SpatiMesh with Chromium's own tools: "yes restyle", one design language
+with the room's applications. The viewer's toolbar, side panels (the pen, highlighter and eraser, their sizes
+and colours), menus and fields take the room's colours (`ui::theme` of `crates/spatiand-app`: ground, panel,
+ink, hint, mark, selection, separator) and Roboto, defined once in `elements/shared_vars.css` and followed by
+the viewer's own variables; dark as the room is by default, light as its look says (patch 0014), where the
+viewer was dark only. The ground around the pages is the room's (`pdf_viewer.ts`, and `pdf_util.cc` for the
+first frame). Save to Google Drive is off by default (`kPdfSaveToDrive`). Seen in the Deck build's test room,
+dark and light, with the drawing tools open.
+
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
 scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look

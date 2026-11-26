@@ -1,0 +1,324 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 27 Nov 2026 01:51:33 +0700
+Subject: [PATCH] Spatiand: the PDF viewer in the room's own look, and no
+ Google Drive button
+
+The owner, 2026-11-27, choosing Chromium's own PDF tools for SpatiLoupe's PDFs (shown through
+SpatiMesh in its window): "yes restyle" -- with "uniform design language" with the room's
+applications. The viewer's toolbar, side panels, menus, fields and the ground around the pages take
+the room's look (crates/spatiand-app's ui::theme: its ground, panel, ink, hint, mark, selection,
+separator; Roboto), defined once in shared_vars.css and followed by the viewer's own variables; dark
+as the room is by default and light as its look says (prefers-color-scheme, which SpatiMesh takes
+from the room, patch 0014), where the viewer was dark only. The page and zoom fields are the room's
+quiet rounded fields. The ground around the pages (pdf_viewer.ts, and the first frame's,
+pdf_util.cc) is the room's. Save to Google Drive is off by default (kPdfSaveToDrive): nothing of
+Google's in the room.
+---
+ .../resources/pdf/elements/pdf_shared.css     | 16 +++----
+ .../resources/pdf/elements/shared_vars.css    | 48 +++++++++++++++----
+ .../pdf/elements/side_panel_shared.css        |  3 +-
+ .../pdf/elements/viewer_page_selector.css     |  7 +--
+ .../pdf/elements/viewer_pdf_sidenav.css       |  4 +-
+ .../resources/pdf/elements/viewer_toolbar.css |  6 ++-
+ chrome/browser/resources/pdf/index.css        |  4 +-
+ chrome/browser/resources/pdf/pdf_viewer.css   |  4 +-
+ chrome/browser/resources/pdf/pdf_viewer.ts    |  9 +++-
+ components/pdf/common/pdf_util.cc             |  3 +-
+ pdf/pdf_features.cc                           |  3 +-
+ 11 files changed, 75 insertions(+), 32 deletions(-)
+
+diff --git a/chrome/browser/resources/pdf/elements/pdf_shared.css b/chrome/browser/resources/pdf/elements/pdf_shared.css
+index 5db40d5543..20b847b467 100644
+--- a/chrome/browser/resources/pdf/elements/pdf_shared.css
++++ b/chrome/browser/resources/pdf/elements/pdf_shared.css
+@@ -15,7 +15,7 @@ cr-icon-button {
+ }
+ 
+ cr-icon-button:hover {
+-  background: rgba(255, 255, 255, 0.08);
++  background: var(--spatiand-hover);
+   border-radius: 50%;
+ }
+ 
+@@ -27,13 +27,13 @@ cr-icon-button:hover {
+    supports light and dark modes. */
+ cr-action-menu,
+ viewer-bookmark {
+-  --cr-menu-background-color: var(--google-grey-900);
++  --cr-menu-background-color: var(--spatiand-panel);
+   --cr-menu-shadow: rgba(0, 0, 0, .3) 0 1px 2px 0,
+                     rgba(0, 0, 0, .15) 0 3px 6px 2px;
+-  --cr-primary-text-color: var(--google-grey-200);
+-  --cr-menu-background-focus-color: var(--google-grey-700);
++  --cr-primary-text-color: var(--spatiand-ink-row);
++  --cr-menu-background-focus-color: var(--spatiand-selected);
+   --cr-separator-line: var(--cr-separator-height) solid
+-      rgba(255, 255, 255, .1);
++      var(--spatiand-separator);
+   --cr-action-menu-disabled-item-color: var(--cr-primary-text-color);
+   --cr-action-menu-disabled-item-opacity: var(--cr-disabled-opacity);
+ }
+@@ -41,13 +41,13 @@ viewer-bookmark {
+ .md-select {
+   --cr-fallback-color-neutral-outline: rgb(117, 117, 117);
+   --cr-focus-outline-color: var(--viewer-icon-focus-outline-color);
+-  --md-select-option-bg-color: var(--google-grey-900-white-4-percent);
++  --md-select-option-bg-color: var(--spatiand-panel);
+   /* cr-fallback-color-on-surface for dark mode */
+-  --md-select-text-color: rgb(227, 227, 227);
++  --md-select-text-color: var(--spatiand-ink-row);
+   background-image: url(chrome://resources/images/dark/arrow_down.svg);
+ }
+ 
+ .md-select:hover {
+   /* --cr-fallback-color-state-hover-on-subtle_ in dark mode */
+-  background-color: rgba(253, 252, 251, .10);
++  background-color: var(--spatiand-hover);
+ }
+diff --git a/chrome/browser/resources/pdf/elements/shared_vars.css b/chrome/browser/resources/pdf/elements/shared_vars.css
+index 0ecae8d93e..f4bb2d54a3 100644
+--- a/chrome/browser/resources/pdf/elements/shared_vars.css
++++ b/chrome/browser/resources/pdf/elements/shared_vars.css
+@@ -8,15 +8,30 @@
+  * #css_wrapper_metadata_end */
+ 
+ html {
++  /* Spatiand: the room's own look (crates/spatiand-app's ui::theme), so that a PDF in SpatiMesh,
++   * and in a viewer's window that shows it through SpatiMesh, looks like the room's applications.
++   * Dark, as the room is by default; light below, as the room's look says (patch 0014). */
++  --spatiand-ground: rgb(11, 13, 18);
++  --spatiand-panel: rgb(26, 28, 32);
++  --spatiand-hover: rgba(255, 255, 255, 0.05);
++  --spatiand-selected: rgba(107, 173, 255, 0.20);
++  --spatiand-mark: rgb(115, 184, 255);
++  --spatiand-ink: rgb(255, 255, 255);
++  --spatiand-ink-row: rgb(199, 209, 230);
++  --spatiand-ink-hint: rgb(128, 140, 168);
++  --spatiand-separator: rgba(255, 255, 255, 0.10);
++  --spatiand-field: rgba(255, 255, 255, 0.08);
++  --spatiand-font: Roboto, 'Noto Sans', sans-serif;
++
+   --iron-icon-height: 20px;
+   --iron-icon-width: 20px;
+-  --viewer-border-color: rgb(94, 94, 94);
+-  --viewer-icon-focus-outline-color: var(--google-grey-500);
++  --viewer-border-color: var(--spatiand-separator);
++  --viewer-icon-focus-outline-color: var(--spatiand-mark);
+ <if expr="enable_pdf_ink2">
+-  --viewer-icon-ink-background-color: rgb(143, 143, 143);
+-  --viewer-icon-ink-fill-color: rgb(199, 199, 199);
+-  --viewer-icon-ink-selected-fill-color: rgb(168, 199, 250);
+-  --viewer-icon-ink-selected-background-color: rgba(76, 141, 246, 0.32);
++  --viewer-icon-ink-background-color: var(--spatiand-ink-hint);
++  --viewer-icon-ink-fill-color: var(--spatiand-ink-row);
++  --viewer-icon-ink-selected-fill-color: var(--spatiand-mark);
++  --viewer-icon-ink-selected-background-color: var(--spatiand-selected);
+   /* Always use light mode version of cr-fallback-color-primary. */
+   --viewer-text-annotation-active-color: rgb(11, 87, 208);
+ 
+@@ -52,7 +67,22 @@ html {
+   --viewer-text-annotation-padding-y-rotated:
+       calc(2 * var(--viewer-text-annotation-offset-y-rotated));
+ </if>
+-  --viewer-pdf-toolbar-background-color: rgb(60, 60, 60);
+-  --viewer-side-background-color: rgb(40, 41, 42);
+-  --viewer-text-input-selection-color: rgba(255, 255, 255, 0.3);
++  --viewer-pdf-toolbar-background-color: var(--spatiand-panel);
++  --viewer-side-background-color: var(--spatiand-panel);
++  --viewer-text-input-selection-color: var(--spatiand-selected);
++}
++
++@media (prefers-color-scheme: light) {
++  html {
++    --spatiand-ground: rgb(244, 245, 248);
++    --spatiand-panel: rgb(232, 233, 236);
++    --spatiand-hover: rgba(0, 0, 0, 0.04);
++    --spatiand-selected: rgba(41, 112, 242, 0.16);
++    --spatiand-mark: rgb(26, 102, 224);
++    --spatiand-ink: rgb(15, 18, 26);
++    --spatiand-ink-row: rgb(41, 46, 61);
++    --spatiand-ink-hint: rgb(112, 122, 143);
++    --spatiand-separator: rgba(0, 0, 0, 0.075);
++    --spatiand-field: rgba(0, 0, 0, 0.06);
++  }
+ }
+diff --git a/chrome/browser/resources/pdf/elements/side_panel_shared.css b/chrome/browser/resources/pdf/elements/side_panel_shared.css
+index f0f9bbc9b0..889757fbe0 100644
+--- a/chrome/browser/resources/pdf/elements/side_panel_shared.css
++++ b/chrome/browser/resources/pdf/elements/side_panel_shared.css
+@@ -10,7 +10,8 @@
+ 
+ :host {
+   background-color: var(--viewer-side-background-color);
+-  color: var(--google-grey-100);
++  color: var(--spatiand-ink-row);
++  font-family: var(--spatiand-font);
+   display: block;
+   height: 100%;
+   overflow-y: auto;
+diff --git a/chrome/browser/resources/pdf/elements/viewer_page_selector.css b/chrome/browser/resources/pdf/elements/viewer_page_selector.css
+index ca2acc7bc6..c60fa62d8d 100644
+--- a/chrome/browser/resources/pdf/elements/viewer_page_selector.css
++++ b/chrome/browser/resources/pdf/elements/viewer_page_selector.css
+@@ -11,7 +11,7 @@
+  * affected and be reversed. */
+ #content {
+   align-items: center;
+-  color: #fff;
++  color: var(--spatiand-ink);
+   direction: ltr;
+   display: flex;
+   font-size: 0.81rem;
+@@ -33,9 +33,10 @@ input,
+ }
+ 
+ input {
+-  background: rgba(0, 0, 0, 0.5);
++  background: var(--spatiand-field);
+   border: none;
+-  color: white;
++  border-radius: 6px;
++  color: inherit;
+   font-family: inherit;
+   line-height: inherit;
+   outline: none;
+diff --git a/chrome/browser/resources/pdf/elements/viewer_pdf_sidenav.css b/chrome/browser/resources/pdf/elements/viewer_pdf_sidenav.css
+index 4dfee8f4e5..d682a8f52d 100644
+--- a/chrome/browser/resources/pdf/elements/viewer_pdf_sidenav.css
++++ b/chrome/browser/resources/pdf/elements/viewer_pdf_sidenav.css
+@@ -14,7 +14,7 @@
+  * #css_wrapper_metadata_end */
+ 
+ :host {
+-  --sidenav-selected-tab-color: var(--google-blue-300);
++  --sidenav-selected-tab-color: var(--spatiand-mark);
+   background-color: var(--viewer-side-background-color);
+   display: flex;
+   height: 100%;
+@@ -31,7 +31,7 @@
+ 
+ /* These are dummy styles currently - replace with real content. */
+ #content {
+-  color: white;
++  color: var(--spatiand-ink);
+   flex: 1;
+   overflow-x: hidden;
+ }
+diff --git a/chrome/browser/resources/pdf/elements/viewer_toolbar.css b/chrome/browser/resources/pdf/elements/viewer_toolbar.css
+index c6a96c4a34..d3d5840ccf 100644
+--- a/chrome/browser/resources/pdf/elements/viewer_toolbar.css
++++ b/chrome/browser/resources/pdf/elements/viewer_toolbar.css
+@@ -22,7 +22,8 @@
+ #toolbar {
+   align-items: center;
+   background-color: var(--viewer-pdf-toolbar-background-color);
+-  color: white;
++  color: var(--spatiand-ink);
++  font-family: var(--spatiand-font);
+   display: flex;
+   height: var(--viewer-pdf-toolbar-height);
+   padding: 0 16px;
+@@ -120,8 +121,9 @@ input {
+ }
+ 
+ input {
+-  background: rgba(0, 0, 0, 0.5);
++  background: var(--spatiand-field);
+   border: none;
++  border-radius: 6px;
+   caret-color: currentColor;
+   color: inherit;
+   font-family: inherit;
+diff --git a/chrome/browser/resources/pdf/index.css b/chrome/browser/resources/pdf/index.css
+index 24d6cfa19e..88380435e7 100644
+--- a/chrome/browser/resources/pdf/index.css
++++ b/chrome/browser/resources/pdf/index.css
+@@ -8,7 +8,9 @@ html {
+ }
+ 
+ body {
+-  background-color: rgb(40, 40, 40);
++  /* Spatiand: the room's ground, as around the pages (pdf_viewer.ts getBackgroundColor). */
++  background-color: var(--spatiand-ground, rgb(11, 13, 18));
++  font-family: var(--spatiand-font, Roboto, sans-serif);
+   color: var(--primary-text-color);
+   line-height: 154%;
+   margin: 0;
+diff --git a/chrome/browser/resources/pdf/pdf_viewer.css b/chrome/browser/resources/pdf/pdf_viewer.css
+index 8fb930d5ea..695a987ba5 100644
+--- a/chrome/browser/resources/pdf/pdf_viewer.css
++++ b/chrome/browser/resources/pdf/pdf_viewer.css
+@@ -23,7 +23,7 @@
+ 
+ viewer-pdf-sidenav,
+ viewer-toolbar {
+-  --pdf-toolbar-text-color: rgb(241, 241, 241);
++  --pdf-toolbar-text-color: var(--spatiand-ink-row);
+ }
+ 
+ <if expr="enable_pdf_ink2">
+@@ -33,7 +33,7 @@ viewer-toolbar {
+ </if>
+ 
+ viewer-toolbar {
+-  --active-button-bg: rgba(255, 255, 255, 0.24);
++  --active-button-bg: var(--spatiand-selected);
+   z-index: 1;
+ }
+ 
+diff --git a/chrome/browser/resources/pdf/pdf_viewer.ts b/chrome/browser/resources/pdf/pdf_viewer.ts
+index 759454350f..98578c86fb 100644
+--- a/chrome/browser/resources/pdf/pdf_viewer.ts
++++ b/chrome/browser/resources/pdf/pdf_viewer.ts
+@@ -168,7 +168,9 @@ export const LOCAL_STORAGE_TWO_UP_VIEW_ENABLED_KEY: string = 'twoUpViewEnabled';
+  * The background color used for the regular viewer.
+  */
+ // LINT.IfChange(PdfBackgroundColor)
+-const BACKGROUND_COLOR: number = 0xff282828;
++const BACKGROUND_COLOR: number = 0xff0b0d12;
++// Spatiand: the room's ground in its light look.
++const SPATIAND_LIGHT_BACKGROUND_COLOR: number = 0xfff4f5f8;
+ // clang-format off
+ // LINT.ThenChange(//components/pdf/common/pdf_util.cc:PdfBackgroundColor)
+ // clang-format on
+@@ -481,7 +483,10 @@ export class PdfViewerElement extends PdfViewerBaseElement {
+   }
+ 
+   getBackgroundColor(): number {
+-    return BACKGROUND_COLOR;
++    // Spatiand: the room's ground around the pages, light or dark as the room's look is.
++    return window.matchMedia('(prefers-color-scheme: light)').matches ?
++        SPATIAND_LIGHT_BACKGROUND_COLOR :
++        BACKGROUND_COLOR;
+   }
+ 
+   setPluginSrc(plugin: HTMLEmbedElement) {
+diff --git a/components/pdf/common/pdf_util.cc b/components/pdf/common/pdf_util.cc
+index 47178da0b6..284f520f28 100644
+--- a/components/pdf/common/pdf_util.cc
++++ b/components/pdf/common/pdf_util.cc
+@@ -18,7 +18,8 @@
+ namespace {
+ 
+ // LINT.IfChange(PdfBackgroundColor)
+-constexpr SkColor kPdfExtensionBackgroundColor = SkColorSetRGB(40, 40, 40);
++// Spatiand: the room's ground (its dark look), as the viewer's (pdf_viewer.ts).
++constexpr SkColor kPdfExtensionBackgroundColor = SkColorSetRGB(11, 13, 18);
+ // clang-format off
+ // LINT.ThenChange(//chrome/browser/resources/pdf/pdf_viewer.ts:PdfBackgroundColor)
+ // clang-format on
+diff --git a/pdf/pdf_features.cc b/pdf/pdf_features.cc
+index 9261dfb982..ff5089a5be 100644
+--- a/pdf/pdf_features.cc
++++ b/pdf/pdf_features.cc
+@@ -88,7 +88,8 @@ const base::FeatureParam<bool> kPdfInk2TextAnnotationsExtraStyles{
+ 
+ #if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+ // Saves the PDF file to Google Drive.
+-BASE_FEATURE(kPdfSaveToDrive, base::FEATURE_ENABLED_BY_DEFAULT);
++// Spatiand: no Google Drive button in the viewer's toolbar.
++BASE_FEATURE(kPdfSaveToDrive, base::FEATURE_DISABLED_BY_DEFAULT);
+ 
+ // Enables the survey for saving PDF to Google Drive.
+ BASE_FEATURE(kPdfSaveToDriveSurvey, base::FEATURE_DISABLED_BY_DEFAULT);
