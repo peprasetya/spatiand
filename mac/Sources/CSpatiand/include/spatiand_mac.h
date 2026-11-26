@@ -61,6 +61,7 @@ enum {
     SP_FILES_DROP = 44,       // they were let go of over window id
     SP_MAC_DRAG_IN_ROOM = 45, // the drag begun in window id is offered to an application of the room's; the Mac's own waits
     SP_MAC_DRAG_END = 46,     // that drag was let go of in the room: call the Mac's own off
+    SP_DESK_EMBED = 47,       // 2D: window id is the inside of a place in window a, at text's "x,y,w,h"
 };
 
 typedef void (*sp_asked_fn)(void *user, int32_t what, uint32_t id, double a, double b, double c,

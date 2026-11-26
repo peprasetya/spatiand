@@ -311,7 +311,7 @@ final class Room {
                       let body = (said["host"] as? [String: Any])?["Clipboard"] as? [String: Any] else { return }
                 self.pasteboard.fromHost(body)
             }
-        case SP_DESK_OPEN, SP_DESK_PICTURE, SP_DESK_TITLE, SP_DESK_SIZE, SP_DESK_CLOSE:
+        case SP_DESK_OPEN, SP_DESK_PICTURE, SP_DESK_TITLE, SP_DESK_SIZE, SP_DESK_CLOSE, SP_DESK_EMBED:
             DispatchQueue.main.async { DeskWindows.shared.asked(what, id: id, a: a, b: b, text: text) }
         default:
             break

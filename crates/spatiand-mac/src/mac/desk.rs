@@ -78,6 +78,9 @@ struct Told {
     size: (i32, i32),
     commit: Option<CommitCounter>,
     picture: Option<u32>,
+    /// The inside of a place in another window (`crate::embed`): that window's id and the
+    /// place's rectangle, as last said. Shown in that window's Mac window, not one of its own.
+    inside: Option<(u32, crate::embed::Rect)>,
 }
 
 #[derive(Default)]
@@ -113,8 +116,24 @@ fn windows(state: &crate::Spatiand) -> Vec<(u32, smithay::desktop::Window)> {
         .elements()
         .filter(|w| w.toplevel().is_some())
         .filter(|w| !state.app_id_of(w).is_some_and(|app| super::is_mac_window(&app)))
+        // The inside of another window's place is shown in that window's Mac window.
+        .filter(|w| !crate::embed::is_guest_window(state, w))
         .filter_map(|w| Some((state.layout.id_of(w)? as u32, w.clone())))
         .collect()
+}
+
+/// The windows inside the places of the windows shown: id, window, the host's id, the place.
+fn insides(state: &crate::Spatiand, shown: &[(u32, smithay::desktop::Window)]) -> Vec<(u32, smithay::desktop::Window, u32, crate::embed::Rect)> {
+    let mut found = Vec::new();
+    for (host_id, host) in shown {
+        let Some(host_surface) = host.wl_surface().map(|s| s.into_owned()) else { continue };
+        for (rect, guest) in crate::embed::guests_of(state, &host_surface) {
+            let Some(window) = state.space.elements().find(|w| w.wl_surface().is_some_and(|s| *s == guest)).cloned() else { continue };
+            let Some(id) = state.layout.id_of(&window) else { continue };
+            found.push((id as u32, window, *host_id, rect));
+        }
+    }
+    found
 }
 
 /// The picture a window shows: the `IOSurface` its placeholder names, and the commit it came
@@ -240,7 +259,13 @@ fn list_parked(state: &crate::Spatiand, desk: &mut Desk) {
 fn tell(state: &mut crate::Spatiand, desk: &mut Desk) {
     let parked = desk.parked.clone();
     let now: Vec<_> = windows(state).into_iter().filter(|(id, _)| !parked.contains(id)).collect();
-    let gone: Vec<u32> = desk.told.keys().filter(|id| !now.iter().any(|(n, _)| n == *id)).copied().collect();
+    let inside = insides(state, &now);
+    let gone: Vec<u32> = desk
+        .told
+        .keys()
+        .filter(|id| !now.iter().any(|(n, _)| n == *id) && !inside.iter().any(|(n, ..)| n == *id))
+        .copied()
+        .collect();
     for id in gone {
         desk.told.remove(&id);
         if desk.keyboard == Some(id) {
@@ -260,7 +285,7 @@ fn tell(state: &mut crate::Spatiand, desk: &mut Desk) {
                 let app = state.app_id_of(&window).unwrap_or_default();
                 ffi::call_text(Asked::DeskOpen, id, size.0 as f64, size.1 as f64, 0.0, &format!("{title}\n{app}"));
                 ffi::tell_window(Asked::DeskPicture, id, surface as f64, 0.0, 0.0);
-                desk.told.insert(id, Told { window, title, size, commit: Some(commit), picture: Some(surface) });
+                desk.told.insert(id, Told { window, title, size, commit: Some(commit), picture: Some(surface), inside: None });
             }
             Some(told) => {
                 if told.title != title {
@@ -270,6 +295,30 @@ fn tell(state: &mut crate::Spatiand, desk: &mut Desk) {
                 if told.size != size {
                     ffi::tell_window(Asked::DeskSize, id, size.0 as f64, size.1 as f64, 0.0);
                     told.size = size;
+                }
+                if told.commit != Some(commit) || told.picture != Some(surface) {
+                    ffi::tell_window(Asked::DeskPicture, id, surface as f64, 0.0, 0.0);
+                    told.commit = Some(commit);
+                    told.picture = Some(surface);
+                }
+            }
+        }
+    }
+    // The insides of places, in the Mac windows of the windows they are in: after those, which
+    // they go into.
+    for (id, window, host, rect) in inside {
+        let Some((surface, commit, _)) = picture_of(&window) else { continue };
+        let place = || format!("{},{},{},{}", rect.x, rect.y, rect.w, rect.h);
+        match desk.told.get_mut(&id) {
+            None => {
+                ffi::call_text(Asked::DeskEmbed, id, host as f64, 0.0, 0.0, &place());
+                ffi::tell_window(Asked::DeskPicture, id, surface as f64, 0.0, 0.0);
+                desk.told.insert(id, Told { window, title: String::new(), size: (rect.w, rect.h), commit: Some(commit), picture: Some(surface), inside: Some((host, rect)) });
+            }
+            Some(told) => {
+                if told.inside != Some((host, rect)) {
+                    ffi::call_text(Asked::DeskEmbed, id, host as f64, 0.0, 0.0, &place());
+                    told.inside = Some((host, rect));
                 }
                 if told.commit != Some(commit) || told.picture != Some(surface) {
                     ffi::tell_window(Asked::DeskPicture, id, surface as f64, 0.0, 0.0);
@@ -310,6 +359,8 @@ fn apply(state: &mut crate::Spatiand, desk: &mut Desk) {
                 let Some(window) = desk.told.get(&id).map(|t| t.window.clone()) else { continue };
                 if pressed {
                     focus(state, desk, id, &window);
+                    // A press elsewhere in a window gives it back the keyboard a place in it had.
+                    crate::embed::pressed(state, surface(desk, id).as_ref());
                 }
                 let Some(pointer) = state.seat.get_pointer() else { continue };
                 let button_state = if pressed { ButtonState::Pressed } else { ButtonState::Released };
@@ -392,8 +443,19 @@ fn surface(desk: &Desk, id: u32) -> Option<smithay::reexports::wayland_server::p
     desk.told.get(&id).and_then(|t| t.window.wl_surface().map(|s| s.into_owned()))
 }
 
-/// The keyboard to a window, the keys held for the last one let go of first.
+/// The keyboard to a window, the keys held for the last one let go of first. For the inside of a
+/// place, its host's Mac window is the one the keys come from: the keyboard goes to that window,
+/// and inside it to the place's (`crate::embed::pressed`, as in the room).
 fn focus(state: &mut crate::Spatiand, desk: &mut Desk, id: u32, window: &smithay::desktop::Window) {
+    if let Some((host, _)) = desk.told.get(&id).and_then(|t| t.inside) {
+        if let Some(surface) = window.wl_surface().map(|s| s.into_owned()) {
+            crate::embed::pressed(state, Some(&surface));
+        }
+        if let Some(host_window) = desk.told.get(&host).map(|t| t.window.clone()) {
+            focus(state, desk, host, &host_window);
+        }
+        return;
+    }
     if desk.keyboard == Some(id) {
         return;
     }

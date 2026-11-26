@@ -120,6 +120,11 @@ final class DeskWindows: NSObject, NSWindowDelegate {
     static let shared = DeskWindows()
 
     private var windows: [UInt32: NSWindow] = [:]
+    /// Windows that are the inside of a place in another's (SP_DESK_EMBED): shown as a view in
+    /// that window's view, at the place, and pointed at there -- the Mac gives a view inside
+    /// another the mouse over it by itself. Their keys are the window's they are in: the session
+    /// gives them on to the inside when it was pressed in last, as the room does.
+    private var insides: [UInt32: DeskView] = [:]
     private var keyWatch: Any?
     /// Closed by the session, not by the owner: not to be asked about again.
     private var closing: Set<UInt32> = []
@@ -134,7 +139,11 @@ final class DeskWindows: NSObject, NSWindowDelegate {
             let lines = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
             open(id, size: NSSize(width: max(a, 64), height: max(b, 64)), title: lines.first.map(String.init) ?? "", app: lines.count > 1 ? String(lines[1]) : "")
         case SP_DESK_PICTURE:
-            (windows[id]?.contentView as? DeskView)?.show(surface: UInt32(a))
+            ((windows[id]?.contentView as? DeskView) ?? insides[id])?.show(surface: UInt32(a))
+        case SP_DESK_EMBED:
+            let n = text.split(separator: ",").compactMap { Double($0) }
+            guard n.count == 4 else { return }
+            embed(id, in: UInt32(a), at: NSRect(x: n[0], y: n[1], width: n[2], height: n[3]))
         case SP_DESK_TITLE:
             windows[id]?.title = text.isEmpty ? "Spatiand" : text
         case SP_DESK_SIZE:
@@ -142,6 +151,10 @@ final class DeskWindows: NSObject, NSWindowDelegate {
             let size = NSSize(width: a, height: b)
             if window.contentRect(forFrameRect: window.frame).size != size { window.setContentSize(size) }
         case SP_DESK_CLOSE:
+            if let inside = insides.removeValue(forKey: id) {
+                inside.removeFromSuperview()
+                return
+            }
             guard let window = windows.removeValue(forKey: id) else { return }
             closing.insert(id)
             window.close()
@@ -174,6 +187,26 @@ final class DeskWindows: NSObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(window.contentView)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// The inside of a place, as a view in its host's: `rect` is from the host's top left in its
+    /// pixels, which are its view's points. The host's view is not flipped, so the place's top
+    /// is measured down from its top, and kept there as the window is resized.
+    private func embed(_ id: UInt32, in host: UInt32, at rect: NSRect) {
+        guard let hostView = windows[host]?.contentView as? DeskView else { return }
+        let view: DeskView
+        if let made = insides[id] {
+            view = made
+        } else {
+            view = DeskView(id: id, size: rect.size)
+            insides[id] = view
+        }
+        if view.superview !== hostView {
+            view.removeFromSuperview()
+            hostView.addSubview(view)
+        }
+        view.autoresizingMask = [.maxXMargin, .minYMargin]
+        view.frame = NSRect(x: rect.minX, y: hostView.bounds.height - rect.minY - rect.height, width: rect.width, height: rect.height)
     }
 
     /// A Dock icon and the keys watched while there are windows; neither once there are none.
@@ -272,6 +305,10 @@ final class DeskWindows: NSObject, NSWindowDelegate {
 
     /// The glasses have the windows, or the session is ending: every Mac window goes.
     func closeAll() {
+        for (_, inside) in insides {
+            inside.removeFromSuperview()
+        }
+        insides.removeAll()
         for (id, window) in windows {
             closing.insert(id)
             window.close()

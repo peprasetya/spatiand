@@ -116,6 +116,11 @@ pub enum Asked {
     /// That drag has ended in the room -- let go of there, taken or not: the Mac's own is to be
     /// called off, let go of over nothing.
     MacDragEnd = 46,
+    /// 2D mode: window `id` is the inside of a place in window `a` (`crate::embed`), at the
+    /// rectangle `text` says ("x,y,width,height", in window `a`'s pixels from its top left): shown
+    /// there, in that Mac window, rather than as a Mac window of its own. Said again when the
+    /// rectangle changes; `DeskPicture` and `DeskClose` are as for any window.
+    DeskEmbed = 47,
 }
 
 pub type Callback =

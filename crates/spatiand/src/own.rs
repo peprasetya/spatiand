@@ -92,6 +92,17 @@ fn directories() -> Vec<PathBuf> {
     found
 }
 
+/// The folder the room's own programs are in -- the one with its chooser, of those
+/// [`directories`] names -- which every program it starts is told as `SPATIAND_APPS_DIR`.
+fn apps_dir() -> Option<PathBuf> {
+    let found = directories();
+    found
+        .iter()
+        .find(|dir| dir.join("spatiand-choose").exists() || dir.join("libspatiand-choose.so").exists())
+        .cloned()
+        .or_else(|| found.into_iter().next())
+}
+
 /// On Android, the APK's native library folder: where `libspatiand.so` -- this code -- was
 /// loaded from, read off the process's own map of what it has loaded.
 fn native_library_dir() -> Option<PathBuf> {
@@ -366,6 +377,10 @@ pub fn launch(app: &AppEntry, wayland_display: &str, extra: &[(String, String)])
         let dir = native.to_string_lossy().into_owned();
         extra.push(("SPATIAND_APPS_DIR".into(), dir.clone()));
         extra.push(("LD_LIBRARY_PATH".into(), dir));
+    } else if let Some(dir) = apps_dir() {
+        // Elsewhere too, where the room's own programs are: SpatiMesh asks the room's chooser
+        // there, on every system alike (its patch "files chosen in Spatiand's chooser").
+        extra.push(("SPATIAND_APPS_DIR".into(), dir.to_string_lossy().into_owned()));
     }
     // The assistant's key into the room (`crate::assist`): to the assistant alone, and not to
     // any other program, whose children -- a terminal's shells -- would inherit it.
