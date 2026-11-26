@@ -63,6 +63,11 @@ pub use pose::{HeadPose, Poses};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WindowId(pub(crate) u32);
 
+/// A place in one of this application's windows for another application's window
+/// ([`App::embed`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EmbedId(pub(crate) u32);
+
 /// Whether the wearer is being drawn one picture or a picture for each eye.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -264,6 +269,17 @@ pub enum Event {
     /// drawn at this size, in pixels ([`App::eye_size`]). A room that drives the glasses
     /// itself never says.
     EyeSize { width: u32, height: u32 },
+    /// A window has gone inside a place in this window ([`App::embed`]): from now it is drawn
+    /// there.
+    EmbedAttached { window: WindowId, embed: EmbedId },
+    /// The window inside a place here has gone -- closed or ended. The place stays, and can take
+    /// another ([`App::show_page`] again).
+    EmbedDetached { window: WindowId, embed: EmbedId },
+    /// The window inside a place here said something ([`App::post_to_host`] on its side).
+    EmbedMessage { window: WindowId, embed: EmbedId, message: String },
+    /// This window is the inside of another's place, and that window said something
+    /// ([`App::embed_send`] on its side).
+    HostMessage { window: WindowId, message: String },
 }
 
 impl Event {
@@ -297,7 +313,11 @@ impl Event {
             | Event::DragEntered { window, .. }
             | Event::DragMoved { window, .. }
             | Event::DragLeft { window }
-            | Event::Dropped { window, .. } => Some(*window),
+            | Event::Dropped { window, .. }
+            | Event::EmbedAttached { window, .. }
+            | Event::EmbedDetached { window, .. }
+            | Event::EmbedMessage { window, .. }
+            | Event::HostMessage { window, .. } => Some(*window),
         }
     }
 }
@@ -517,6 +537,75 @@ impl App {
             let _ = std::io::Read::read_to_string(&mut file, &mut answer);
             let _ = reply.send(answer);
         });
+    }
+
+    /// A place in this window for another application's window, drawn in it at the rectangle
+    /// given ([`App::set_embed_rect`]) and pointed at and typed into there -- a page of
+    /// SpatiMesh's ([`App::show_page`]), or a program this application starts itself with
+    /// [`App::embed_token`] in its environment as `SPATIAND_EMBED_TOKEN` (an application of this
+    /// SDK so started opens its first window as the place's inside by itself). `None` in a room
+    /// that cannot (`spatiand_xr_v1` before 13) and on a desktop. See `spatiand_xr_embed_v1`.
+    pub fn embed(&mut self, window: WindowId) -> Option<EmbedId> {
+        let embed = self.wire.embed(window)?;
+        // The room says the place's name at once; waited for here, so that it can be used now.
+        let _ = self.queue.roundtrip(&mut self.wire);
+        Some(embed)
+    }
+
+    /// The place's name, to give the window that is to go inside it.
+    pub fn embed_token(&self, embed: EmbedId) -> Option<String> {
+        self.wire.embed_token(embed)
+    }
+
+    /// Where the place is, in the window's own coordinates (as its pointer events are). Takes
+    /// effect with the window's next picture, or [`App::commit`]; no size hides what is inside
+    /// and keeps it.
+    pub fn set_embed_rect(&mut self, embed: EmbedId, x: i32, y: i32, width: i32, height: i32) {
+        self.wire.set_embed_rect(embed, (x, y, width, height));
+    }
+
+    /// Show a page of SpatiMesh's inside the place: an address of the web, or `file:` for a file
+    /// (written as an address is: `url::Url::from_file_path` or the like), in the profile named
+    /// or SpatiMesh's own choice. No tabs, no address bar: the page and SpatiMesh's own viewers
+    /// (a PDF's). [`Event::EmbedAttached`] says when it is there.
+    pub fn show_page(&mut self, embed: EmbedId, url: &str, profile: Option<&str>) -> Result<(), String> {
+        let token = self.wire.embed_token(embed).ok_or("That place has no name yet.")?;
+        let mut asked = serde_json::json!({ "do": "open_embedded", "token": token, "url": url });
+        if let Some(profile) = profile {
+            asked["profile"] = profile.into();
+        }
+        let answer = self.ask_system(&asked.to_string(), std::time::Duration::from_secs(5))?;
+        let answer: serde_json::Value = serde_json::from_str(&answer).map_err(|_| "The room's answer could not be read.".to_string())?;
+        match answer.get("error").and_then(|e| e.as_str()) {
+            Some(why) => Err(why.to_string()),
+            None => Ok(()),
+        }
+    }
+
+    /// Say something to the window inside the place (it hears [`Event::HostMessage`]).
+    pub fn embed_send(&mut self, embed: EmbedId, message: &str) {
+        self.wire.embed_send(embed, message);
+    }
+
+    /// Give the keyboard to the window inside the place, as a press in it would.
+    pub fn embed_focus(&mut self, embed: EmbedId) {
+        self.wire.embed_focus(embed);
+    }
+
+    /// Take the place away: the window inside is asked to close.
+    pub fn close_embed(&mut self, embed: EmbedId) {
+        self.wire.close_embed(embed);
+    }
+
+    /// The window a place is in.
+    pub fn embed_window(&self, embed: EmbedId) -> Option<WindowId> {
+        self.wire.embed_window(embed)
+    }
+
+    /// Say something to the window this one is the inside of (it hears [`Event::EmbedMessage`]).
+    /// Nothing, when this window is not inside a place.
+    pub fn post_to_host(&mut self, window: WindowId, message: &str) {
+        self.wire.post_to_host(window, message);
     }
 
     /// Open a link in SpatiMesh (`spatiand_xr_v1.ask_system`, `open_link`): in the profile

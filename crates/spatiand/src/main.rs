@@ -50,6 +50,7 @@ mod notifications;
 // The room's card for a platform's own notifications, one logic for all (the Deck's
 // notifications, the Beam Pro's, the Mac's).
 mod notices;
+mod embed;
 mod own;
 mod pip;
 mod pointer;

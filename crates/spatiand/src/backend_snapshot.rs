@@ -2281,9 +2281,15 @@ fn pointer_event_on(
         None => (surface, Point::from((0.0, 0.0))),
     };
     let focus = (!on_room).then_some(target);
+    let pressed_on = focus.as_ref().map(|(surface, _)| surface.clone());
     pointer.motion(state, focus, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: 100 });
     pointer.frame(state);
     if let Some((button, pressed)) = button {
+        // The keyboard into the window inside a place pressed in, or back to its host, as every
+        // backend's press does through `PointerState::button`.
+        if pressed {
+            crate::embed::pressed(state, pressed_on.as_ref());
+        }
         let button_state = if pressed { smithay::backend::input::ButtonState::Pressed } else { smithay::backend::input::ButtonState::Released };
         pointer.button(state, &ButtonEvent { button, state: button_state, serial: SERIAL_COUNTER.next_serial(), time: 110 });
         pointer.frame(state);

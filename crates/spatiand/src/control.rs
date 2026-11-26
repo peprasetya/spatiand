@@ -145,6 +145,9 @@ impl Control {
                         if Spatiand::is_environment(&window) {
                             flags.push("room");
                         }
+                        if crate::embed::is_guest_window(state, &window) {
+                            flags.push("embedded");
+                        }
                         let app = state.app_id_of(&window).unwrap_or_else(|| "-".into());
                         let size = window.geometry().size;
                         tell(&format!(

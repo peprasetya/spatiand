@@ -485,6 +485,21 @@ impl WindowLayout {
         }
     }
 
+    /// Take a window's place in the room away and keep its number: the window inside another's
+    /// place (`crate::embed`), which is drawn and heard as part of that one, while what is
+    /// keyed by its number -- its sound above all -- goes on. `place` gives it one again.
+    pub fn unplace(&mut self, window: &Window) {
+        let Some(id) = self.id_of(window) else {
+            return;
+        };
+        self.placements.remove(&id);
+        self.hidden.remove(&id);
+        self.pinned.retain(|p| *p != id);
+        if self.focused == Some(id) {
+            self.focused = self.placements.keys().copied().next();
+        }
+    }
+
     pub fn remove(&mut self, window: &Window) {
         let Some(key) = Self::key(window) else {
             return;

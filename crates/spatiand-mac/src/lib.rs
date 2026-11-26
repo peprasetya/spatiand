@@ -95,6 +95,8 @@ mod install;
 mod notices;
 #[path = "../../spatiand/src/own.rs"]
 mod own;
+#[path = "../../spatiand/src/embed.rs"]
+mod embed;
 #[path = "../../spatiand/src/pip.rs"]
 mod pip;
 #[path = "../../spatiand/src/pointer.rs"]

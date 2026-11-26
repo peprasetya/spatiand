@@ -26,6 +26,7 @@ use smithay::wayland::compositor::with_states;
 use spatiand_proto::server::spatiand_xr_surface_v1::{
     self, EyeLayout as WireLayout, Layer as WireLayer, ResizeAnchor as WireAnchor,
 };
+use spatiand_proto::server::spatiand_xr_embed_v1::{self, SpatiandXrEmbedV1};
 use spatiand_proto::server::spatiand_xr_v1::{self, SpatiandXrV1};
 use spatiand_proto::server::spatiand_xr_pose_channel_v1::{self, SpatiandXrPoseChannelV1};
 
@@ -201,6 +202,24 @@ impl XrState {
 struct Pending {
     surface: Option<WlSurface>,
     next: XrState,
+    /// The place this surface's window said it is the inside of, since the last commit: a
+    /// token, or empty for none (`set_embedded`). Not in `XrState`, which is copied every frame.
+    embedded: Option<String>,
+}
+
+/// What a surface said about being the inside of a place since its last commit, taken: the
+/// commit handler's to act on (`crate::embed::committed`).
+pub fn take_embedded(object: &spatiand_xr_surface_v1::SpatiandXrSurfaceV1) -> Option<String> {
+    object.data::<Mutex<Pending>>()?.lock().ok()?.embedded.take()
+}
+
+/// A host said something to the window inside its place: told on that window's own object, if
+/// it is new enough to be told.
+pub fn tell_host_message(surface: &WlSurface, message: String) {
+    let object = with_states(surface, |states| states.data_map.get::<Object>().and_then(|o| o.0.lock().ok()?.clone()));
+    if let Some(object) = object.filter(|o| o.version() >= 13) {
+        object.host_message(message);
+    }
 }
 
 /// What the surface is currently being drawn as.
@@ -475,7 +494,7 @@ fn ask_system(json: String, answer: std::os::fd::OwnedFd) {
 impl Dispatch<SpatiandXrV1, ()> for Spatiand {
     fn request(
         state: &mut Self,
-        _client: &Client,
+        client: &Client,
         resource: &SpatiandXrV1,
         request: spatiand_xr_v1::Request,
         _data: &(),
@@ -500,6 +519,7 @@ impl Dispatch<SpatiandXrV1, ()> for Spatiand {
                     Mutex::new(Pending {
                         surface: Some(surface.clone()),
                         next: XrState::default(),
+                        embedded: None,
                     }),
                 );
                 state.xr_surfaces.push((surface, object));
@@ -512,17 +532,28 @@ impl Dispatch<SpatiandXrV1, ()> for Spatiand {
                 state.pose_channels_to_open = true;
             }
             spatiand_xr_v1::Request::AskSystem { json, answer } => {
-                // A link for SpatiMesh is the room's own to open, on every platform; the
-                // rest is the system's (`ask_system`).
+                // A link for SpatiMesh, and a page of SpatiMesh's inside a place in the asker's
+                // window, are the room's own to open, on every platform; the rest is the
+                // system's (`ask_system`).
                 let asked = serde_json::from_str::<serde_json::Value>(&json).ok();
-                match asked.as_ref().filter(|v| v.get("do").and_then(|d| d.as_str()) == Some("open_link")) {
-                    Some(v) => {
-                        let url = v.get("url").and_then(|u| u.as_str()).unwrap_or_default();
-                        let profile = v.get("profile").and_then(|p| p.as_str());
-                        let reply = crate::own::open_link(state, url, profile);
+                let what = asked.as_ref().and_then(|v| v.get("do")).and_then(|d| d.as_str()).unwrap_or_default().to_string();
+                let text = |key: &str| asked.as_ref().and_then(|v| v.get(key)).and_then(|t| t.as_str()).map(str::to_string);
+                match what.as_str() {
+                    "open_link" => {
+                        let reply = crate::own::open_link(state, &text("url").unwrap_or_default(), text("profile").as_deref());
                         answer_at_once(answer, reply.as_bytes());
                     }
-                    None => ask_system(json, answer),
+                    "open_embedded" => {
+                        let reply = crate::own::open_embedded(
+                            state,
+                            client,
+                            &text("token").unwrap_or_default(),
+                            &text("url").unwrap_or_default(),
+                            text("profile").as_deref(),
+                        );
+                        answer_at_once(answer, reply.as_bytes());
+                    }
+                    _ => ask_system(json, answer),
                 }
             }
             spatiand_xr_v1::Request::Destroy => {}
@@ -548,7 +579,7 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
         request: spatiand_xr_surface_v1::Request,
         data: &Mutex<Pending>,
         _dh: &DisplayHandle,
-        _data_init: &mut DataInit<'_, Self>,
+        data_init: &mut DataInit<'_, Self>,
     ) {
         let Ok(mut pending) = data.lock() else {
             return;
@@ -710,6 +741,23 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
                 pending.next.frame_orientation = (length > 1e-3).then(|| q.map(|c| c / length));
                 pending.next.frame_token = token;
             }
+            // A place in this window for another's (`crate::embed`).
+            spatiand_xr_surface_v1::Request::GetEmbed { id } => {
+                let object = data_init.init(id, ());
+                match pending.surface.clone() {
+                    Some(host) => crate::embed::made(state, host, object),
+                    // The surface is gone: a place nobody will see, and no token to give out.
+                    None => {}
+                }
+            }
+            spatiand_xr_surface_v1::Request::SetEmbedded { token } => {
+                pending.embedded = Some(token);
+            }
+            spatiand_xr_surface_v1::Request::PostToHost { message } => {
+                if let Some(surface) = pending.surface.clone() {
+                    crate::embed::post_to_host(state, &surface, message);
+                }
+            }
             spatiand_xr_surface_v1::Request::Destroy => release(state, &mut pending),
             _ => {}
         }
@@ -736,6 +784,37 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, Mutex<Pending>> for S
         if let Ok(mut pending) = data.lock() {
             release(state, &mut pending);
         }
+    }
+}
+
+impl Dispatch<SpatiandXrEmbedV1, ()> for Spatiand {
+    fn request(
+        state: &mut Self,
+        _client: &Client,
+        resource: &SpatiandXrEmbedV1,
+        request: spatiand_xr_embed_v1::Request,
+        _data: &(),
+        _dh: &DisplayHandle,
+        _data_init: &mut DataInit<'_, Self>,
+    ) {
+        match request {
+            spatiand_xr_embed_v1::Request::SetRect { x, y, width, height } => {
+                crate::embed::set_rect(state, resource, crate::embed::Rect { x, y, w: width, h: height });
+            }
+            spatiand_xr_embed_v1::Request::Send { message } => crate::embed::send(state, resource, message),
+            spatiand_xr_embed_v1::Request::Focus => crate::embed::focus(state, resource),
+            spatiand_xr_embed_v1::Request::Destroy => crate::embed::destroyed(state, resource),
+            _ => {}
+        }
+    }
+
+    fn destroyed(
+        state: &mut Self,
+        _client: smithay::reexports::wayland_server::backend::ClientId,
+        resource: &SpatiandXrEmbedV1,
+        _data: &(),
+    ) {
+        crate::embed::destroyed(state, resource);
     }
 }
 
@@ -802,6 +881,8 @@ fn release(state: &mut Spatiand, pending: &mut Pending) {
     let Some(surface) = pending.surface.take() else {
         return;
     };
+    // Its places, and its being inside one, go with it.
+    crate::embed::gone(state, &surface);
     if state.sky_owner.as_ref() == Some(&surface) {
         state.sky_owner = None;
         log::info!("the environment is free again; the application holding it has gone");

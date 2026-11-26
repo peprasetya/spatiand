@@ -221,6 +221,9 @@ pub struct Spatiand {
     /// first served. Claimed when the request arrives rather than when it commits, because
     /// two clients asking in the same frame have to get different answers.
     pub sky_owner: Option<WlSurface>,
+    /// Places in windows for other applications' windows, and which of those has the keyboard
+    /// (`spatiand_xr_embed_v1`; see [`crate::embed`]).
+    pub embeds: crate::embed::Embeds,
     /// Every client's `spatiand_xr_v1`, to be told when the wearer goes between one picture
     /// and two. See [`Spatiand::set_display_stereo`].
     pub xr_globals: Vec<spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1>,
@@ -335,7 +338,7 @@ impl Spatiand {
         // Stereo, head-locked and immersive surfaces. Binding it says nothing and changes
         // nothing: an application that ignores it is an ordinary window, which is the whole
         // design. See `crate::xr` and the protocol XML.
-        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(12, ());
+        dh.create_global::<Self, spatiand_proto::server::spatiand_xr_v1::SpatiandXrV1, _>(13, ());
         // The assistant's way into the room: bound by anyone, answered for one (`crate::assist`).
         dh.create_global::<Self, spatiand_proto::server::spatiand_assist_v1::SpatiandAssistV1, _>(1, ());
 
@@ -413,6 +416,7 @@ impl Spatiand {
             xwayland_shell_state,
             xr_surfaces: Vec::new(),
             sky_owner: None,
+            embeds: Default::default(),
             xr_globals: Vec::new(),
             display_stereo: false,
             pose_clients: Vec::new(),
@@ -733,6 +737,8 @@ impl Spatiand {
         // Run every frame by every backend, which makes it the one place that is certain to be
         // reached: windows that have started saying they are picture in picture are pinned here.
         crate::pip::auto_pin(self);
+        // And places whose host went without a word are forgotten here.
+        crate::embed::tidy(self);
         let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
         self.sync_activation(focus.as_ref());
         let focused = self
@@ -740,7 +746,7 @@ impl Spatiand {
             .elements()
             .find(|w| self.layout.is_focused(w) && !self.layout.is_hidden(w))
             .cloned();
-        let wanted = focused.as_ref().and_then(Self::keyboard_target);
+        let wanted = focused.as_ref().and_then(|w| self.keyboard_target_for(w));
         if wanted == self.focus_settled {
             return;
         }
@@ -755,6 +761,16 @@ impl Spatiand {
                 self.focus_settled = None;
             }
         }
+    }
+
+    /// What the seat should be given for a window: the window inside one of its places when the
+    /// wearer last pressed there (`crate::embed`), else the window itself.
+    fn keyboard_target_for(&self, window: &smithay::desktop::Window) -> Option<KeyboardFocus> {
+        use smithay::wayland::seat::WaylandFocus;
+        if let Some(inside) = window.wl_surface().and_then(|s| crate::embed::keyboard_inside(self, &s)) {
+            return Some(KeyboardFocus::Wayland(inside));
+        }
+        Self::keyboard_target(window)
     }
 
     /// What the seat should be given for a window: the X11 window itself where there is one.
@@ -858,7 +874,7 @@ impl Spatiand {
                 }
             }
         }
-        let target = Self::keyboard_target(window);
+        let target = self.keyboard_target_for(window);
         if let Some(target) = target {
             let Some(keyboard) = self.seat.get_keyboard() else {
                 return;
@@ -989,6 +1005,10 @@ impl Spatiand {
             .elements()
             .filter_map(|window| {
                 if self.is_vr_companion(window, &room_pids) {
+                    return None;
+                }
+                // The inside of another window's place is part of that one, not a window to go to.
+                if crate::embed::is_guest_window(self, window) {
                     return None;
                 }
                 let id = self.layout.id_of(window)?;
@@ -1233,8 +1253,13 @@ impl CompositorHandler for Spatiand {
         // Whatever the client asked `spatiand_xr_v1` for since its last commit takes effect
         // now, which is what makes every request in that protocol double-buffered like the
         // rest of a surface's state.
-        if let Some((_, object)) = self.xr_surfaces.iter().find(|(s, _)| s == surface) {
-            crate::xr::commit(surface, &object.clone());
+        if let Some(object) = self.xr_surfaces.iter().find(|(s, _)| s == surface).map(|(_, o)| o.clone()) {
+            crate::xr::commit(surface, &object);
+            // A host's places take their new rectangles with its picture, and a window that
+            // said a place's token goes inside it -- before its initial configure, below, so
+            // that the first size it is offered is the place's.
+            let embedded = crate::xr::take_embedded(&object);
+            crate::embed::committed(self, surface, embedded);
         }
 
         // Popup bookkeeping is keyed on the popup's own surface, not on the root found above:
@@ -1505,6 +1530,8 @@ impl XdgShellHandler for Spatiand {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        // Out of the place it was inside, and its own places' windows asked to close.
+        crate::embed::gone(self, surface.wl_surface());
         // Resolve to an owned Window before touching `space` again: `elements()` holds an
         // immutable borrow for as long as the iterator chain is alive.
         let window = self

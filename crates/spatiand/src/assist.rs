@@ -622,6 +622,10 @@ fn window_list(state: &Spatiand, windows: &[crate::scene::WindowQuad]) -> Vec<Va
         .space
         .elements()
         .filter_map(|w| {
+            // The inside of another window's place is shown as part of that one.
+            if crate::embed::is_guest_window(state, w) {
+                return None;
+            }
             let id = state.layout.id_of(w)?;
             let size = windows.iter().find(|q| &q.window == w).map(|q| q.pixels);
             let private = secret(state, w);

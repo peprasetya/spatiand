@@ -2489,9 +2489,10 @@ pub fn run(
                         crate::audio::Kind::Environment {
                             yaw: xr.sky_yaw_urad() as f64 * 1e-6,
                         }
-                    } else if runtime.state.layout.is_pinned(window) {
+                    } else if runtime.state.layout.is_pinned(&crate::embed::heard_from(&runtime.state, window)) {
                         crate::audio::Kind::glass(head)
-                    } else if let Some(placement) = runtime.state.layout.get(window) {
+                    } else if let Some(placement) = runtime.state.layout.get(&crate::embed::heard_from(&runtime.state, window)) {
+                        // The inside of another window's place is heard from that window.
                         crate::audio::Kind::Window(placement)
                     } else {
                         continue;

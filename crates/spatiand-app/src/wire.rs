@@ -22,7 +22,7 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::decoration::zv1::client::{zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-use spatiand_proto::client::{spatiand_assist_v1, spatiand_xr_pose_channel_v1, spatiand_xr_surface_v1, spatiand_xr_v1};
+use spatiand_proto::client::{spatiand_assist_v1, spatiand_xr_embed_v1, spatiand_xr_pose_channel_v1, spatiand_xr_surface_v1, spatiand_xr_v1};
 
 use crate::keys::Keyboard;
 use crate::{Anchor, Button, Event, EyeLayout, Layer, Mode, WindowId};
@@ -148,6 +148,21 @@ pub(crate) struct Wire {
     pub(crate) pose_state: crate::pose::Poses,
     /// ... and the size a viewer that is not on this machine wants each eye drawn at.
     pub(crate) eye_size: Option<(u32, u32)>,
+    /// Places in this application's windows for other applications' windows
+    /// (`spatiand_xr_embed_v1`, see [`crate::App::embed`]).
+    embeds: HashMap<crate::EmbedId, Embed>,
+    next_embed: u32,
+    /// The place this application's first window is to be the inside of, from its environment
+    /// (`SPATIAND_EMBED_TOKEN`): taken by that window, so a second is a window of its own.
+    embed_token: Option<String>,
+}
+
+/// A place in one of this application's windows.
+struct Embed {
+    object: spatiand_xr_embed_v1::SpatiandXrEmbedV1,
+    window: WindowId,
+    /// Its name, once the room has said it.
+    token: Option<String>,
 }
 
 /// Text's names, the best first.
@@ -184,7 +199,7 @@ impl Wire {
         let data_devices: Option<wl_data_device_manager::WlDataDeviceManager> = globals.bind(&handle, 1..=3, ()).ok();
         let data_device = data_devices.as_ref().map(|m| m.get_data_device(&seat, &handle, ()));
         let dmabuf = globals.bind(&handle, 3..=3, ()).ok();
-        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=12, ()).ok();
+        let xr: Option<spatiand_xr_v1::SpatiandXrV1> = globals.bind(&handle, 1..=13, ()).ok();
         // Only a process the room gave its assistant's key to has any business here, and it says
         // the key at once: every question before that is refused.
         let assist: Option<spatiand_assist_v1::SpatiandAssistV1> = match std::env::var("SPATIAND_ASSIST_KEY") {
@@ -244,6 +259,9 @@ impl Wire {
             pose_channel: None,
             pose_state: crate::pose::Poses::NotAsked,
             eye_size: None,
+            embeds: HashMap::new(),
+            next_embed: 1,
+            embed_token: std::env::var("SPATIAND_EMBED_TOKEN").ok().filter(|t| !t.is_empty()),
         };
         Ok((wire, queue))
     }
@@ -270,6 +288,17 @@ impl Wire {
             decoration.set_mode(zxdg_toplevel_decoration_v1::Mode::ServerSide);
             decoration
         });
+        // The inside of another window's place, when this application was started to be one:
+        // said before the first commit, so that it is never a window of the room's of its own,
+        // and its first size is the place's.
+        let embedded = match (self.xr.as_ref().filter(|xr| xr.version() >= 13), self.embed_token.take()) {
+            (Some(xr), Some(token)) => {
+                let object = xr.get_xr_surface(&surface, &self.handle, id);
+                object.set_embedded(token);
+                Some(object)
+            }
+            _ => None,
+        };
         // With nothing attached: this is what asks for the first configure.
         surface.commit();
         self.ids.insert(surface.clone(), id);
@@ -280,7 +309,7 @@ impl Wire {
                 xdg,
                 toplevel,
                 decoration,
-                xr: None,
+                xr: embedded,
                 viewport: None,
                 configured: false,
                 asked: None,
@@ -518,6 +547,63 @@ impl Wire {
     }
 
     /// Ask to be told when the compositor would like the window's next picture.
+    /// A place in a window for another application's window: the room says its token at once
+    /// (dispatched with the next events).
+    pub(crate) fn embed(&mut self, window: WindowId) -> Option<crate::EmbedId> {
+        if self.xr.as_ref().is_none_or(|xr| xr.version() < 13) {
+            return None;
+        }
+        let embed = crate::EmbedId(self.next_embed);
+        self.next_embed += 1;
+        let handle = self.handle.clone();
+        let object = self.xr_of(window)?.get_embed(&handle, embed);
+        self.embeds.insert(embed, Embed { object, window, token: None });
+        Some(embed)
+    }
+
+    pub(crate) fn embed_token(&self, embed: crate::EmbedId) -> Option<String> {
+        self.embeds.get(&embed)?.token.clone()
+    }
+
+    pub(crate) fn embed_window(&self, embed: crate::EmbedId) -> Option<WindowId> {
+        self.embeds.get(&embed).map(|e| e.window)
+    }
+
+    /// Takes effect with the window's next commit.
+    pub(crate) fn set_embed_rect(&mut self, embed: crate::EmbedId, rect: (i32, i32, i32, i32)) {
+        if let Some(e) = self.embeds.get(&embed) {
+            e.object.set_rect(rect.0, rect.1, rect.2, rect.3);
+        }
+    }
+
+    pub(crate) fn embed_send(&mut self, embed: crate::EmbedId, message: &str) {
+        if let Some(e) = self.embeds.get(&embed) {
+            e.object.send(message.to_string());
+        }
+    }
+
+    pub(crate) fn embed_focus(&mut self, embed: crate::EmbedId) {
+        if let Some(e) = self.embeds.get(&embed) {
+            e.object.focus();
+        }
+    }
+
+    pub(crate) fn close_embed(&mut self, embed: crate::EmbedId) {
+        if let Some(e) = self.embeds.remove(&embed) {
+            e.object.destroy();
+        }
+    }
+
+    /// Say something to the window this one is the inside of.
+    pub(crate) fn post_to_host(&mut self, window: WindowId, message: &str) {
+        if self.xr.as_ref().is_none_or(|xr| xr.version() < 13) {
+            return;
+        }
+        if let Some(xr) = self.xr_of(window) {
+            xr.post_to_host(message.to_string());
+        }
+    }
+
     pub(crate) fn ask_frame(&mut self, id: WindowId) {
         let Some(window) = self.windows.get_mut(&id) else { return };
         if !std::mem::replace(&mut window.frame_asked, true) {
@@ -1068,6 +1154,37 @@ impl Dispatch<spatiand_xr_surface_v1::SpatiandXrSurfaceV1, WindowId> for Wire {
                 // A second asking replaces the first: the room has stopped waiting for it.
                 state.describing.insert(*id, fd);
                 state.events.push(Event::Describe { window: *id });
+            }
+            spatiand_xr_surface_v1::Event::HostMessage { message } => {
+                state.events.push(Event::HostMessage { window: *id, message });
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<spatiand_xr_embed_v1::SpatiandXrEmbedV1, crate::EmbedId> for Wire {
+    fn event(
+        state: &mut Self,
+        _: &spatiand_xr_embed_v1::SpatiandXrEmbedV1,
+        event: spatiand_xr_embed_v1::Event,
+        embed: &crate::EmbedId,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(window) = state.embeds.get(embed).map(|e| e.window) else {
+            return;
+        };
+        match event {
+            spatiand_xr_embed_v1::Event::Token { token } => {
+                if let Some(e) = state.embeds.get_mut(embed) {
+                    e.token = Some(token);
+                }
+            }
+            spatiand_xr_embed_v1::Event::Attached => state.events.push(Event::EmbedAttached { window, embed: *embed }),
+            spatiand_xr_embed_v1::Event::Detached => state.events.push(Event::EmbedDetached { window, embed: *embed }),
+            spatiand_xr_embed_v1::Event::Message { message } => {
+                state.events.push(Event::EmbedMessage { window, embed: *embed, message })
             }
             _ => {}
         }

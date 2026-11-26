@@ -4034,6 +4034,10 @@ pub fn collect_windows(
             // later, and the next frame will draw it.
             continue;
         };
+        // The inside of another window's place is drawn as part of that window, below.
+        if crate::embed::is_guest(state, &surface) {
+            continue;
+        }
         if let Err(e) = import_surface_tree(renderer, &surface) {
             // Reported once per window rather than once per frame. A window that never draws
             // is one of the hardest things to diagnose from the outside -- it runs, it counts,
@@ -4112,70 +4116,12 @@ pub fn collect_windows(
         let mut popups = Vec::new();
         push_subsurfaces(renderer, &surface, (-origin.0, -origin.1), &mut popups);
 
-        // Menus, dropdowns and submenus, in the order the client stacked them. Each is its own
-        // surface with its own buffer -- importing the toplevel's tree does not reach them,
-        // which is why a window whose menu was open still drew as if it were not.
-        // Smithay lists a menu's submenus before the menu itself (front to back); here the later
-        // one is drawn nearer and pressed first, so the list is turned round.
-        let listed: Vec<_> = smithay::desktop::PopupManager::popups_for_surface(&surface).collect();
-        for (popup, offset) in listed.into_iter().rev() {
-            let popup_surface = popup.wl_surface().clone();
-            // Said out loud, once per menu, for the same reason the window's three failures
-            // are: a menu that does not appear is indistinguishable from a menu the
-            // application never opened, and the difference is the whole diagnosis.
-            if let Err(e) = import_surface_tree(renderer, &popup_surface) {
-                if note_once(3, &popup_surface) {
-                    log::warn!("a menu has a surface but nothing to draw from it: {e}");
-                }
-                continue;
-            }
-            let imported = with_renderer_surface_state(&popup_surface, |st| {
-                let t = st.texture::<smithay::backend::renderer::gles::GlesTexture>(
-                    renderer.context_id(),
-                )?;
-                let ((pw, ph), crop) = shape_of(st)?;
-                Some((t.tex_id(), pw, ph, crop, has_no_alpha(t)))
-            })
-            .flatten();
-            let Some((texture, pw, ph, crop, opaque)) = imported else {
-                if note_once(4, &popup_surface) {
-                    // Whether there is a buffer at all separates the two very different
-                    // reasons this happens: a client that has not painted yet, and a buffer
-                    // we failed to make a texture from.
-                    let buffered = with_renderer_surface_state(&popup_surface, |st| {
-                        st.buffer_size().is_some()
-                    })
-                    .unwrap_or(false);
-                    log::info!(
-                        "a menu is open but has nothing to draw yet (buffer: {})",
-                        if buffered { "yes" } else { "none" }
-                    );
-                }
-                continue;
-            };
-            // `offset` is where the menu's window is from this window's, as the protocol has it;
-            // its surface starts that much less where its own window starts in it, as smithay's
-            // `Window` places it. Taken as the surface's, a menu of a client drawing its own
-            // shadow was off by the shadow (Chromium's: 16 across, 10 down).
-            let mine = popup.geometry().loc;
-            let offset = (offset.x - mine.x, offset.y - mine.y);
-            if note_once(5, &popup_surface) {
-                log::info!("menu {pw}x{ph} at ({}, {})", offset.0, offset.1);
-            }
-            // A menu drawn by an application's GPU is a placeholder too, as its window is.
-            #[cfg(target_os = "macos")]
-            let texture = crate::mac::remote_video::substitute(renderer, &popup_surface, texture);
-            popups.push(PopupQuad {
-                surface: popup_surface.clone(),
-                texture,
-                offset,
-                pixels: (pw, ph),
-                crop,
-                opaque,
-                input: None,
-            });
-            push_subsurfaces(renderer, &popup_surface, offset, &mut popups);
-        }
+        // The windows inside its places (`crate::embed`), over its own picture and under its
+        // menus: drawn and pointed at in its pixels, as a menu is.
+        push_guests(renderer, state, &surface, origin, &mut popups);
+
+        // Menus, dropdowns and submenus, in the order the client stacked them.
+        push_popups(renderer, &surface, (0, 0), &mut popups);
 
         // The same treatment for an X11 application's menus, which are not popups as far as
         // the protocol is concerned -- they are separate top-level windows that X has asked
@@ -4341,6 +4287,128 @@ fn window_part_of(geometry: Option<(i32, i32, i32, i32)>, size: (u32, u32), crop
 /// `parent`'s subsurfaces and theirs, at `origin` in the window's pixels, as quads like its menus':
 /// the same drawing, and the same pointing, as each gets the pointer in its own coordinates. A
 /// subsurface with nothing committed is left out until it has something to show.
+/// A surface's menus, dropdowns and submenus, placed from `base`: where the surface's window starts
+/// in the pixels of the window being drawn -- nothing for the window's own, the place's corner for
+/// the window inside a place.
+fn push_popups(
+    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    base: (i32, i32),
+    popups: &mut Vec<PopupQuad>,
+) {
+    use smithay::backend::renderer::utils::{import_surface_tree, with_renderer_surface_state};
+    use smithay::backend::renderer::Renderer;
+    // Menus, dropdowns and submenus, in the order the client stacked them. Each is its own
+    // surface with its own buffer -- importing the toplevel's tree does not reach them,
+    // which is why a window whose menu was open still drew as if it were not.
+    // Smithay lists a menu's submenus before the menu itself (front to back); here the later
+    // one is drawn nearer and pressed first, so the list is turned round.
+    let listed: Vec<_> = smithay::desktop::PopupManager::popups_for_surface(surface).collect();
+    for (popup, offset) in listed.into_iter().rev() {
+        let popup_surface = popup.wl_surface().clone();
+        // Said out loud, once per menu, for the same reason the window's three failures
+        // are: a menu that does not appear is indistinguishable from a menu the
+        // application never opened, and the difference is the whole diagnosis.
+        if let Err(e) = import_surface_tree(renderer, &popup_surface) {
+            if note_once(3, &popup_surface) {
+                log::warn!("a menu has a surface but nothing to draw from it: {e}");
+            }
+            continue;
+        }
+        let imported = with_renderer_surface_state(&popup_surface, |st| {
+            let t = st.texture::<smithay::backend::renderer::gles::GlesTexture>(
+                renderer.context_id(),
+            )?;
+            let ((pw, ph), crop) = shape_of(st)?;
+            Some((t.tex_id(), pw, ph, crop, has_no_alpha(t)))
+        })
+        .flatten();
+        let Some((texture, pw, ph, crop, opaque)) = imported else {
+            if note_once(4, &popup_surface) {
+                // Whether there is a buffer at all separates the two very different
+                // reasons this happens: a client that has not painted yet, and a buffer
+                // we failed to make a texture from.
+                let buffered = with_renderer_surface_state(&popup_surface, |st| {
+                    st.buffer_size().is_some()
+                })
+                .unwrap_or(false);
+                log::info!(
+                    "a menu is open but has nothing to draw yet (buffer: {})",
+                    if buffered { "yes" } else { "none" }
+                );
+            }
+            continue;
+        };
+        // `offset` is where the menu's window is from this window's, as the protocol has it;
+        // its surface starts that much less where its own window starts in it, as smithay's
+        // `Window` places it. Taken as the surface's, a menu of a client drawing its own
+        // shadow was off by the shadow (Chromium's: 16 across, 10 down).
+        let mine = popup.geometry().loc;
+        let offset = (base.0 + offset.x - mine.x, base.1 + offset.y - mine.y);
+        if note_once(5, &popup_surface) {
+            log::info!("menu {pw}x{ph} at ({}, {})", offset.0, offset.1);
+        }
+        // A menu drawn by an application's GPU is a placeholder too, as its window is.
+        #[cfg(target_os = "macos")]
+        let texture = crate::mac::remote_video::substitute(renderer, &popup_surface, texture);
+        popups.push(PopupQuad {
+            surface: popup_surface.clone(),
+            texture,
+            offset,
+            pixels: (pw, ph),
+            crop,
+            opaque,
+            input: None,
+        });
+        push_subsurfaces(renderer, &popup_surface, offset, popups);
+    }
+}
+
+/// The windows inside a window's places (`crate::embed`), each at its place's rectangle -- given
+/// in the host surface's coordinates, so from `origin`, where the window starts in its surface --
+/// with their subsurfaces and their own menus, which may hang out of the place as any menu may.
+fn push_guests(
+    renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
+    state: &crate::state::Spatiand,
+    host: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    origin: (i32, i32),
+    popups: &mut Vec<PopupQuad>,
+) {
+    use smithay::backend::renderer::utils::{import_surface_tree, with_renderer_surface_state};
+    use smithay::backend::renderer::Renderer;
+    use smithay::wayland::seat::WaylandFocus;
+    for (rect, guest) in crate::embed::guests_of(state, host) {
+        if import_surface_tree(renderer, &guest).is_err() {
+            continue;
+        }
+        let imported = with_renderer_surface_state(&guest, |st| {
+            let t = st.texture::<smithay::backend::renderer::gles::GlesTexture>(renderer.context_id())?;
+            let ((pw, ph), crop) = shape_of(st)?;
+            Some((t.tex_id(), pw, ph, crop, has_no_alpha(t)))
+        })
+        .flatten();
+        // Nothing drawn yet: the place shows the host's own picture until it is.
+        let Some((texture, pw, ph, crop, opaque)) = imported else {
+            continue;
+        };
+        // Where its window starts in its surface, which a client drawing a shadow moves, as a
+        // menu's does.
+        let geometry = state
+            .space
+            .elements()
+            .find(|w| w.wl_surface().is_some_and(|s| *s == guest))
+            .map(|w| w.geometry().loc)
+            .unwrap_or_default();
+        let corner = (rect.x - origin.0, rect.y - origin.1);
+        let offset = (corner.0 - geometry.x, corner.1 - geometry.y);
+        #[cfg(target_os = "macos")]
+        let texture = crate::mac::remote_video::substitute(renderer, &guest, texture);
+        popups.push(PopupQuad { surface: guest.clone(), texture, offset, pixels: (pw, ph), crop, opaque, input: None });
+        push_subsurfaces(renderer, &guest, offset, popups);
+        push_popups(renderer, &guest, corner, popups);
+    }
+}
+
 fn push_subsurfaces(
     renderer: &mut smithay::backend::renderer::gles::GlesRenderer,
     parent: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,

@@ -266,23 +266,79 @@ pub fn adopt(shell: &mut spatiand_shell::Shell) {
 /// 0012.)
 pub fn link_entry(url: &str, profile: Option<&str>) -> Result<AppEntry, String> {
     let web = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).is_some_and(|rest| !rest.is_empty());
-    if !web || url.len() > 2048 || url.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\\' | '\'' | '`')) {
+    if !web || url.len() > 2048 || !plain(url) {
         return Err("That is not an address SpatiMesh can be given.".into());
     }
-    let folder = match profile {
-        None => None,
-        Some("default") => Some("Default".to_string()),
-        Some(id) if !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric()) => Some(format!("Spatiand-{id}")),
-        Some(_) => return Err("That is not one of SpatiMesh's profiles.".into()),
-    };
     let start = chromium_spatimesh().ok_or("SpatiMesh is not installed here.")?;
-    let profile = folder.map(|f| format!(" --profile-directory={f} --ask-profile-lock")).unwrap_or_default();
+    let profile = profile_switches(profile)?;
     Ok(AppEntry {
         name: "SpatiMesh".into(),
         exec: format!("{start} --ozone-platform=wayland{profile} \"{url}\""),
         icon: None,
         categories: Vec::new(),
     })
+}
+
+/// Nothing in it that a command line could read as anything but one argument.
+fn plain(text: &str) -> bool {
+    !text.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\\' | '\'' | '`'))
+}
+
+/// SpatiMesh's switches for a profile named as its folder in the shared data is: see
+/// [`link_entry`].
+fn profile_switches(profile: Option<&str>) -> Result<String, String> {
+    let folder = match profile {
+        None => None,
+        Some("default") => Some("Default".to_string()),
+        Some(id) if !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric()) => Some(format!("Spatiand-{id}")),
+        Some(_) => return Err("That is not one of SpatiMesh's profiles.".into()),
+    };
+    Ok(folder.map(|f| format!(" --profile-directory={f} --ask-profile-lock")).unwrap_or_default())
+}
+
+/// A page for SpatiMesh to show inside a place in a client's window (`ask_system`'s
+/// `open_embedded`; `crate::embed`): SpatiMesh's own start, as an application's window -- no tabs,
+/// no address bar -- that says the place's token as it opens (`--spatiand-embed`, SpatiMesh's
+/// own patch). An address of the web, or `file:` for a file of the wearer's, which is what a viewer
+/// shows this way; written as an address is, with nothing a command line could split.
+pub fn embedded_entry(token: &str, url: &str, profile: Option<&str>) -> Result<AppEntry, String> {
+    if token.len() != 32 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("That is not a place's token.".into());
+    }
+    let web = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).is_some_and(|rest| !rest.is_empty());
+    let file = url.strip_prefix("file:///").is_some_and(|rest| !rest.is_empty());
+    if !(web || file) || url.len() > 8192 || !plain(url) {
+        return Err("That is not an address SpatiMesh can show.".into());
+    }
+    let start = chromium_spatimesh().ok_or("SpatiMesh is not installed here.")?;
+    let profile = profile_switches(profile)?;
+    Ok(AppEntry {
+        name: "SpatiMesh".into(),
+        exec: format!("{start} --ozone-platform=wayland{profile} --spatiand-embed={token} \"--app={url}\""),
+        icon: None,
+        categories: Vec::new(),
+    })
+}
+
+/// Show a page inside a place in a client's window, for that client. What to answer it. The
+/// place must be one of the asker's own: a token is not a way into another's window.
+pub fn open_embedded(state: &mut crate::state::Spatiand, asker: &smithay::reexports::wayland_server::Client, token: &str, url: &str, profile: Option<&str>) -> String {
+    use smithay::reexports::wayland_server::Resource;
+    let ours = state.embeds.slots.iter().any(|s| s.token == token && s.host.client().is_some_and(|c| c.id() == asker.id()));
+    if !ours {
+        return serde_json::json!({ "error": "That place is not in one of your windows." }).to_string();
+    }
+    match embedded_entry(token, url, profile) {
+        Ok(app) => {
+            log::info!("a client asked for a page of SpatiMesh's inside a place in its window");
+            match &mut state.own_launches {
+                Some(waiting) => waiting.push(app),
+                None => launch(&app, &state.socket_name.clone(), &[]),
+            }
+            r#"{"ok":true}"#.to_string()
+        }
+        Err(why) => serde_json::json!({ "error": why }).to_string(),
+    }
 }
 
 /// Open a link in SpatiMesh for a client that asked. What to answer it.

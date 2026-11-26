@@ -1350,6 +1350,10 @@ impl PointerState {
             }
             if self.held.len() == 1 {
                 self.pressed_on = pointer.current_focus();
+                // A press in the window inside another's place gives it the keyboard; one
+                // elsewhere in that window gives it back (`crate::embed`). Here, so that every
+                // backend's press does it.
+                crate::embed::pressed(state, self.pressed_on.as_ref());
             }
         } else if self.held.is_empty() {
             self.hold.released();

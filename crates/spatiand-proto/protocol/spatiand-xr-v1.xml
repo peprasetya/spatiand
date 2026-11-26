@@ -52,7 +52,7 @@
     The per-frame values are not on the wire at all -- see the pose channel.
   </description>
 
-  <interface name="spatiand_xr_v1" version="12">
+  <interface name="spatiand_xr_v1" version="13">
     <description summary="stereoscopic and head-tracked surfaces">
       The factory. Binding it says nothing and changes nothing.
     </description>
@@ -116,6 +116,13 @@
           its lock: SpatiMesh asks for it in its own window, as for a new
           window of that profile, and opens nothing if it is refused.
           `{"ok": true}` once it is on its way.
+        - `{"do": "open_embedded", "token": t, "url": u, "profile": id}` (since
+          13): open that address -- of the web, or `file:` for a file of the
+          wearer's -- in SpatiMesh as the inside of a place in the asker's own
+          window, the place whose `token` this is (spatiand_xr_embed_v1): no
+          tabs, no address bar, no frame. `profile` as for `open_link`.
+          `{"ok": true}` once it is on its way; the place says `attached`
+          when it has it.
 
         An answer of `{"error": "..."}` says what went wrong in words fit to
         show.
@@ -169,7 +176,7 @@
     </enum>
   </interface>
 
-  <interface name="spatiand_xr_surface_v1" version="12">
+  <interface name="spatiand_xr_surface_v1" version="13">
     <description summary="how a surface is drawn for two eyes">
       All state here is double-buffered: it takes effect on the next
       wl_surface.commit, like everything else about a surface. Changing layout
@@ -589,6 +596,146 @@
       </description>
       <arg name="key" type="uint" enum="media_key"/>
       <arg name="pressed" type="uint" summary="0 or 1"/>
+    </event>
+
+    <request name="get_embed" since="13">
+      <description summary="a place in this window for another application's window">
+        A rectangle of this surface's window in which the room shows another
+        application's window -- a page of SpatiMesh's inside a viewer's own,
+        say -- as part of this one: what a toolkit calls a web view, between
+        two programs. See spatiand_xr_embed_v1. Asked of a toplevel's surface;
+        a window may have several.
+      </description>
+      <arg name="id" type="new_id" interface="spatiand_xr_embed_v1"/>
+    </request>
+
+    <request name="set_embedded" since="13">
+      <description summary="this window is the inside of another's place">
+        This surface's toplevel is the inside of the place whose token this is
+        (spatiand_xr_embed_v1.token), not a window of the room's: it has no
+        place, title bar or buttons of its own, is not among the windows the
+        wearer switches between, and is sized by the place
+        (xdg_toplevel.configure with its rectangle's size, which the client
+        should take as it comes and draw no frame or shadow round). It is shown
+        in the other window, pointed at and typed into there, and goes where
+        that window goes -- hidden, moved, pinned, faded and closed with it.
+        Its sound is heard from that window.
+
+        Double-buffered: it takes effect on the next commit, which should be
+        the first, before anything is drawn, so that the window never appears
+        in the room on its own. A token that names no place, or a place that
+        has a window already, leaves this an ordinary window, and the room
+        says so in its log. An empty token is no place.
+      </description>
+      <arg name="token" type="string" summary="the place's token, as it was given"/>
+    </request>
+
+    <request name="post_to_host" since="13">
+      <description summary="say something to the window this one is inside">
+        For the window this surface's window is the inside of
+        (`set_embedded`): sent on there as spatiand_xr_embed_v1.message. What
+        is said is the two applications' own business -- usually one JSON
+        object; the room only carries it, keeping the order. Not delivered,
+        and dropped, when this window is not the inside of a place.
+      </description>
+      <arg name="message" type="string"/>
+    </request>
+
+    <event name="host_message" since="13">
+      <description summary="the window this one is inside said something">
+        spatiand_xr_embed_v1.send, from the window this surface's window is
+        the inside of.
+      </description>
+      <arg name="message" type="string"/>
+    </event>
+  </interface>
+
+  <interface name="spatiand_xr_embed_v1" version="13">
+    <description summary="a place in a window for another application's window">
+      Made with spatiand_xr_surface_v1.get_embed, on the window that keeps the
+      place -- the host. The room sends `token` at once: the name of this
+      place, which the window to go in it is given -- by `ask_system`'s
+      `open_embedded` for SpatiMesh, or, for a program the host starts itself,
+      in that program's environment as SPATIAND_EMBED_TOKEN -- and says with
+      spatiand_xr_surface_v1.set_embedded. One window at a time is the inside
+      of a place.
+
+      The inside is drawn in the host's window at the rectangle, over the
+      host's own picture and its subsurfaces and under the host's menus; its
+      own menus may hang out of the rectangle, as any menu may out of its
+      window. The pointer over it is its own, in its own coordinates; a press
+      in it gives it the keyboard, and a press elsewhere in the host's window
+      gives the keyboard back to the host.
+
+      Destroying this object, or the host's window closing, asks the inside to
+      close (xdg_toplevel.close) and forgets the token.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="take the place away">
+        The window inside is asked to close.
+      </description>
+    </request>
+
+    <request name="set_rect">
+      <description summary="where the place is in the host's surface">
+        In the host surface's own coordinates, as its pointer events are. The
+        window inside is configured to the rectangle's size whenever it
+        changes. A rectangle of no size hides the inside and keeps it.
+
+        Double-buffered with the host's surface: it takes effect on the host's
+        next wl_surface.commit, so that a host laying itself out anew moves the
+        place in the same frame as its own picture.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <request name="send">
+      <description summary="say something to the window inside">
+        Sent on as spatiand_xr_surface_v1.host_message to the window inside;
+        dropped while there is none. The two applications' own business, as
+        with post_to_host.
+      </description>
+      <arg name="message" type="string"/>
+    </request>
+
+    <request name="focus">
+      <description summary="give the keyboard to the window inside">
+        As a press in it would, while the host's window has the keyboard: for
+        a host that opens a page meant to be typed into at once.
+      </description>
+    </request>
+
+    <event name="token">
+      <description summary="the place's name">
+        Sent once, as the object is made. Unguessable, and good for as long
+        as the object lives: a window that closed can be followed by another
+        with the same token.
+      </description>
+      <arg name="token" type="string"/>
+    </event>
+
+    <event name="attached">
+      <description summary="a window is inside">
+        The window that said set_embedded with this place's token has
+        committed it; from now it is drawn here.
+      </description>
+    </event>
+
+    <event name="detached">
+      <description summary="the window inside has gone">
+        Closed or ended; the place is empty and keeps its token.
+      </description>
+    </event>
+
+    <event name="message">
+      <description summary="the window inside said something">
+        spatiand_xr_surface_v1.post_to_host, from the window inside.
+      </description>
+      <arg name="message" type="string"/>
     </event>
   </interface>
 
