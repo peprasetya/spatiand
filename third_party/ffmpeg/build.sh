@@ -140,7 +140,12 @@ linux)
     # experimental), and its C++ runtime (libstdc++, libgcc_s) for BoringSSL's: each a library
     # every Linux the Deck or CI is has already. On deepmagpie, for SpatiMesh, built inside the
     # Ubuntu 22.04 root its Chromium is built in (third_party/chromium/build.sh), whose programs
-    # load it while they build: one built on deepmagpie itself asks for its glibc, 2.43.
+    # load it while they build: one built on deepmagpie itself asks for its glibc, 2.43. On the
+    # Deck, inside its build container, which has no libva or Opus headers and no nasm: SteamOS's
+    # headers and nasm are in ~/spatiand-build, so
+    #   distrobox enter holo -- env PKG_CONFIG_PATH=$HOME/spatiand-build/pkgconfig \
+    #       PATH=$HOME/spatiand-build/nasm/bin:/usr/bin:/bin nice -n 19 sh third_party/ffmpeg/build.sh linux
+    # (BoringSSL: its copy there, versions.sh).
     build_boringssl
     openssl_pc -lstdc++
     (cd "$build" && PKG_CONFIG_PATH="$build/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" "$src/ffmpeg-$FFMPEG_VERSION/configure" $common \
