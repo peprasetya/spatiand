@@ -6,6 +6,9 @@
 //! host, and the host answers "green", which turns it green. Everything each side hears is logged
 //! (`host:` and `inside:`), which is what `tools/spatiand-embed-e2e.py` reads.
 //!
+//! `--page <address>`: the inside is a page of SpatiMesh's instead (`App::show_page`) -- a `file:`
+//! address of a PDF shows SpatiMesh's PDF viewer in the place.
+//!
 //! ```text
 //! SPATIAND_BACKEND=snapshot SPATIAND_CLIENT=target/debug/examples/embed target/debug/spatiand
 //! ```
@@ -53,14 +56,22 @@ fn host() -> Result<(), String> {
                         app.set_embed_rect(place, 200, 125, 400, 250);
                         let token = app.embed_token(place).unwrap_or_default();
                         log::info!("host: a place, its token {} long", token.len());
-                        // Its own connection to the room: the one handed down is this program's.
-                        let started = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
-                            .arg("--inside")
-                            .env("SPATIAND_EMBED_TOKEN", token)
-                            .env_remove("SPATIAND_APP_FD")
-                            .spawn();
-                        if let Err(e) = started {
-                            log::error!("host: could not start the window inside: {e}");
+                        let page = std::env::args().skip_while(|a| a != "--page").nth(1);
+                        if let Some(page) = page {
+                            match app.show_page(place, &page, None) {
+                                Ok(()) => log::info!("host: SpatiMesh asked for the page"),
+                                Err(e) => log::error!("host: SpatiMesh could not be asked: {e}"),
+                            }
+                        } else {
+                            // Its own connection to the room: the one handed down is this program's.
+                            let started = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?)
+                                .arg("--inside")
+                                .env("SPATIAND_EMBED_TOKEN", token)
+                                .env_remove("SPATIAND_APP_FD")
+                                .spawn();
+                            if let Err(e) = started {
+                                log::error!("host: could not start the window inside: {e}");
+                            }
                         }
                     }
                     fill(&mut app, window, BLUE);

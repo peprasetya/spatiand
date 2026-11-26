@@ -262,6 +262,29 @@ got none and said the browser had no WebGL (spatiand.com's room), while chrome:/
 hardware accelerated. Upstream Chromium allows it; so does SpatiMesh now. The per-site setting stays,
 to block WebGL where wanted, as patch 0001 does for the JavaScript JIT.
 
+**Files are chosen in the room's own chooser, on every system (patch 0034; 2026-11-27).** The owner:
+"do make this for 159. spatimesh is spatiand app". A page's file input, Save as, a download's place and a
+folder to upload ask `crates/spatiand-choose` (a window of the room, run as a program that writes what was
+chosen) wherever the room says its programs are (`SPATIAND_APPS_DIR`, which it gives every program it
+starts, on every system since `own::apps_dir`): `spatiand-choose`, or `libspatiand-choose.so` in an APK's
+library folder. Outside the room, the desktop's own dialog, as before. It replaced android-libc/0019 (the
+Beam Pro's) and the Mac port's own copy; until then the Deck's SpatiMesh asked the desktop portal. Tried in
+the Deck build's test room: the file input opened the chooser and the page got the file typed into it.
+
+**A page inside another application's window (patch 0035; 2026-11-27).** The owner: "the build true webview,
+spatiloupe use webview for chromium best for. this can be useful in future". The room keeps places in its
+applications' windows for other applications' windows (`spatiand_xr_v1` 13, `spatiand_xr_embed_v1`, the
+room's `crate::embed`); a viewer asks it for a page of SpatiMesh's in one (`ask_system` `open_embedded`,
+`App::show_page` in the SDK), and the room starts SpatiMesh as an application's window -- no tabs, no address
+bar -- with `--spatiand-embed=<the place's token> --app=<address>` (a `file:` address for a PDF, shown by
+Chromium's own viewer). The token goes from that start's command line (the one forwarded to a running
+SpatiMesh) with the window's creation (`BrowserWindowCreateParams`) to its Wayland toplevel
+(`PlatformWindowInitProperties`), which says it before its first commit (`set_embedded`): never a window of
+the room's own, and offered the place's size from the start. The protocol is bound at the newest both sides
+know (13), every event of it listened for; patch 0020's copy of the protocol is the room's version 13.
+Tried in the Deck build's test room: the SDK's `examples/embed --page file:///...pdf` showed the PDF in its
+place, no tabs, no bar.
+
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
 scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look

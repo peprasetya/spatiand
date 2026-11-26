@@ -26,7 +26,7 @@ the password field focused, no field at all and the password nowhere in it.
  chrome/browser/spatiand/describe.h            |  18 +
  chrome/browser/spatiand/main_parts.cc         |   2 +
  third_party/wayland-protocols/BUILD.gn        |   5 +
- .../spatiand/spatiand-xr-v1.xml               | 701 ++++++++++++++++++
+ .../spatiand/spatiand-xr-v1.xml               | 963 ++++++++++++++++++
  ui/ozone/platform/wayland/BUILD.gn            |   3 +
  ui/ozone/platform/wayland/host/spatiand_xr.cc | 114 +++
  ui/ozone/platform/wayland/host/spatiand_xr.h  |  40 ++
@@ -349,10 +349,10 @@ index 7beb117992..0bcf68eedc 100644
  }
 diff --git a/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
 new file mode 100644
-index 0000000000..8048cd2517
+index 0000000000..2694fef818
 --- /dev/null
 +++ b/third_party/wayland-protocols/spatiand/spatiand-xr-v1.xml
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,963 @@
 +<?xml version="1.0" encoding="UTF-8"?>
 +<protocol name="spatiand_xr_v1">
 +
@@ -407,7 +407,7 @@ index 0000000000..8048cd2517
 +    The per-frame values are not on the wire at all -- see the pose channel.
 +  </description>
 +
-+  <interface name="spatiand_xr_v1" version="11">
++  <interface name="spatiand_xr_v1" version="13">
 +    <description summary="stereoscopic and head-tracked surfaces">
 +      The factory. Binding it says nothing and changes nothing.
 +    </description>
@@ -459,6 +459,25 @@ index 0000000000..8048cd2517
 +        - `{"do": "open_with", "id": app, "path": p, "type": mime}`: open the
 +          file with that application, in the room, as any of the system's own
 +          applications is opened there; `{"ok": true}` once it is on its way.
++
++        And one the room answers itself, on every system:
++
++        - `{"do": "open_link", "url": u, "profile": id}`: open that address of
++          the web in SpatiMesh -- started if it is not running, else handed to
++          the one that is. `profile`, where given, is one of SpatiMesh's
++          profiles as its folder in the shared data is named
++          (its folder in `apps/spatimesh/profiles`); without it SpatiMesh opens the
++          profile it would open itself. A profile with a lock is opened behind
++          its lock: SpatiMesh asks for it in its own window, as for a new
++          window of that profile, and opens nothing if it is refused.
++          `{"ok": true}` once it is on its way.
++        - `{"do": "open_embedded", "token": t, "url": u, "profile": id}` (since
++          13): open that address -- of the web, or `file:` for a file of the
++          wearer's -- in SpatiMesh as the inside of a place in the asker's own
++          window, the place whose `token` this is (spatiand_xr_embed_v1): no
++          tabs, no address bar, no frame. `profile` as for `open_link`.
++          `{"ok": true}` once it is on its way; the place says `attached`
++          when it has it.
 +
 +        An answer of `{"error": "..."}` says what went wrong in words fit to
 +        show.
@@ -512,7 +531,7 @@ index 0000000000..8048cd2517
 +    </enum>
 +  </interface>
 +
-+  <interface name="spatiand_xr_surface_v1" version="10">
++  <interface name="spatiand_xr_surface_v1" version="13">
 +    <description summary="how a surface is drawn for two eyes">
 +      All state here is double-buffered: it takes effect on the next
 +      wl_surface.commit, like everything else about a surface. Changing layout
@@ -852,6 +871,40 @@ index 0000000000..8048cd2517
 +      <arg name="enable" type="uint" summary="0 or 1"/>
 +    </request>
 +
++    <enum name="media_key" since="12">
++      <description summary="a keyboard's keys for what is playing">
++        The keys a keyboard has for a player, whatever the system it is plugged
++        into calls them. `play_pause` is the one key most keyboards have for
++        both; `play` and `pause` are a keyboard's that has one for each.
++      </description>
++      <entry name="play_pause" value="1"/>
++      <entry name="play" value="2"/>
++      <entry name="pause" value="3"/>
++      <entry name="stop" value="4"/>
++      <entry name="next" value="5"/>
++      <entry name="previous" value="6"/>
++      <entry name="fast_forward" value="7"/>
++      <entry name="rewind" value="8"/>
++    </enum>
++
++    <request name="set_media_keys" since="12">
++      <description summary="this surface is playing something">
++        A surface that is playing something the wearer would pause, or go
++        forward or back in -- a film, music -- says so while it is, and is sent
++        a keyboard's media keys with `media_key`, wherever the keyboard is
++        typing: they are not the focused window's keys, and are never sent as
++        keys. Of several surfaces that say so, the one the keyboard is typing
++        into has them, or else the newest of them.
++
++        When no surface says so, the play key starts SpatiReel if it is not
++        running, and does nothing if it is; the other keys do nothing.
++
++        Off by default; to be turned off when nothing is playing any more.
++        Double-buffered like everything else here.
++      </description>
++      <arg name="enable" type="uint" summary="0 or 1"/>
++    </request>
++
 +    <event name="pinch" since="6">
 +      <description summary="the wearer pinched over this surface">
 +        How much the fingers spread since the last `pinch`: a factor, in
@@ -875,8 +928,169 @@ index 0000000000..8048cd2517
 +        of names and words likely to be said: file names, a page's headings),
 +        "directory", and "commands" (a terminal's last commands, the last one
 +        last). A client with nothing to say closes it at once.
++
++        This is the client's own account of itself, and may hold more than is
++        on show: a whole page, a terminal's scroll-back. It is not what the
++        wearer sees. The assistant's account of what the wearer sees is the
++        room's own picture of the window as it is shown (spatiand_assist_v1,
++        "seen": cropped to the part in view, at whatever zoom it is drawn);
++        this text goes with it only when a request reaches past what is on
++        screen ("the rest of the article", "the other window"), and is marked
++        to the model as not on screen. A client need not, and should not, try
++        to answer with only what is on show.
 +      </description>
 +      <arg name="fd" type="fd" summary="where to write the description"/>
++    </event>
++
++    <event name="media_key" since="12">
++      <description summary="a media key was pressed or let go">
++        A keyboard's media key, for this surface because it said it is playing
++        (`set_media_keys`). `pressed` is 1 as the key goes down and 0 as it
++        comes up; a key held is not repeated, and what holding one means -- to
++        keep going forward -- is the client's to do between the two.
++      </description>
++      <arg name="key" type="uint" enum="media_key"/>
++      <arg name="pressed" type="uint" summary="0 or 1"/>
++    </event>
++
++    <request name="get_embed" since="13">
++      <description summary="a place in this window for another application's window">
++        A rectangle of this surface's window in which the room shows another
++        application's window -- a page of SpatiMesh's inside a viewer's own,
++        say -- as part of this one: what a toolkit calls a web view, between
++        two programs. See spatiand_xr_embed_v1. Asked of a toplevel's surface;
++        a window may have several.
++      </description>
++      <arg name="id" type="new_id" interface="spatiand_xr_embed_v1"/>
++    </request>
++
++    <request name="set_embedded" since="13">
++      <description summary="this window is the inside of another's place">
++        This surface's toplevel is the inside of the place whose token this is
++        (spatiand_xr_embed_v1.token), not a window of the room's: it has no
++        place, title bar or buttons of its own, is not among the windows the
++        wearer switches between, and is sized by the place
++        (xdg_toplevel.configure with its rectangle's size, which the client
++        should take as it comes and draw no frame or shadow round). It is shown
++        in the other window, pointed at and typed into there, and goes where
++        that window goes -- hidden, moved, pinned, faded and closed with it.
++        Its sound is heard from that window.
++
++        Double-buffered: it takes effect on the next commit, which should be
++        the first, before anything is drawn, so that the window never appears
++        in the room on its own. A token that names no place, or a place that
++        has a window already, leaves this an ordinary window, and the room
++        says so in its log. An empty token is no place.
++      </description>
++      <arg name="token" type="string" summary="the place's token, as it was given"/>
++    </request>
++
++    <request name="post_to_host" since="13">
++      <description summary="say something to the window this one is inside">
++        For the window this surface's window is the inside of
++        (`set_embedded`): sent on there as spatiand_xr_embed_v1.message. What
++        is said is the two applications' own business -- usually one JSON
++        object; the room only carries it, keeping the order. Not delivered,
++        and dropped, when this window is not the inside of a place.
++      </description>
++      <arg name="message" type="string"/>
++    </request>
++
++    <event name="host_message" since="13">
++      <description summary="the window this one is inside said something">
++        spatiand_xr_embed_v1.send, from the window this surface's window is
++        the inside of.
++      </description>
++      <arg name="message" type="string"/>
++    </event>
++  </interface>
++
++  <interface name="spatiand_xr_embed_v1" version="13">
++    <description summary="a place in a window for another application's window">
++      Made with spatiand_xr_surface_v1.get_embed, on the window that keeps the
++      place -- the host. The room sends `token` at once: the name of this
++      place, which the window to go in it is given -- by `ask_system`'s
++      `open_embedded` for SpatiMesh, or, for a program the host starts itself,
++      in that program's environment as SPATIAND_EMBED_TOKEN -- and says with
++      spatiand_xr_surface_v1.set_embedded. One window at a time is the inside
++      of a place.
++
++      The inside is drawn in the host's window at the rectangle, over the
++      host's own picture and its subsurfaces and under the host's menus; its
++      own menus may hang out of the rectangle, as any menu may out of its
++      window. The pointer over it is its own, in its own coordinates; a press
++      in it gives it the keyboard, and a press elsewhere in the host's window
++      gives the keyboard back to the host.
++
++      Destroying this object, or the host's window closing, asks the inside to
++      close (xdg_toplevel.close) and forgets the token.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="take the place away">
++        The window inside is asked to close.
++      </description>
++    </request>
++
++    <request name="set_rect">
++      <description summary="where the place is in the host's surface">
++        In the host surface's own coordinates, as its pointer events are. The
++        window inside is configured to the rectangle's size whenever it
++        changes. A rectangle of no size hides the inside and keeps it.
++
++        Double-buffered with the host's surface: it takes effect on the host's
++        next wl_surface.commit, so that a host laying itself out anew moves the
++        place in the same frame as its own picture.
++      </description>
++      <arg name="x" type="int"/>
++      <arg name="y" type="int"/>
++      <arg name="width" type="int"/>
++      <arg name="height" type="int"/>
++    </request>
++
++    <request name="send">
++      <description summary="say something to the window inside">
++        Sent on as spatiand_xr_surface_v1.host_message to the window inside;
++        dropped while there is none. The two applications' own business, as
++        with post_to_host.
++      </description>
++      <arg name="message" type="string"/>
++    </request>
++
++    <request name="focus">
++      <description summary="give the keyboard to the window inside">
++        As a press in it would, while the host's window has the keyboard: for
++        a host that opens a page meant to be typed into at once.
++      </description>
++    </request>
++
++    <event name="token">
++      <description summary="the place's name">
++        Sent once, as the object is made. Unguessable, and good for as long
++        as the object lives: a window that closed can be followed by another
++        with the same token.
++      </description>
++      <arg name="token" type="string"/>
++    </event>
++
++    <event name="attached">
++      <description summary="a window is inside">
++        The window that said set_embedded with this place's token has
++        committed it; from now it is drawn here.
++      </description>
++    </event>
++
++    <event name="detached">
++      <description summary="the window inside has gone">
++        Closed or ended; the place is empty and keeps its token.
++      </description>
++    </event>
++
++    <event name="message">
++      <description summary="the window inside said something">
++        spatiand_xr_surface_v1.post_to_host, from the window inside.
++      </description>
++      <arg name="message" type="string"/>
 +    </event>
 +  </interface>
 +
@@ -918,6 +1132,54 @@ index 0000000000..8048cd2517
 +    <request name="ask">
 +      <description summary="a question or an action">
 +        One JSON object; the answer is written into `answer` and it is closed.
++
++        `{"do": "seen"}` is what the wearer sees, made by the room the same
++        way for every window, on every platform: the window they are looking
++        at (the one in the middle of the view; else the focused one in view;
++        else the one filling most of it; never the assistant's own), its
++        picture as shown -- the part inside the field of view only, at the
++        zoom it is drawn at -- with which part that is (`part`, `[u0, u1, v0,
++        v1]` of the window from its top left), how much of the view it fills,
++        and the other windows in view. `"window"` names another; `"view":
++        true` adds the left eye's picture of the whole view as last drawn
++        (`view_png`); `"picture": false` leaves the pictures out. A room with
++        no head to look from (a flat room) answers with every window whole.
++        `{"do": "target"}`, the window a request with none named acts on, is
++        likewise the one looked at when the room knows where the wearer looks.
++
++        `{"do": "avatar", ...}` is the assistant's figure, laid over what was
++        said of it before (a key left out stays as it was): `path` its file (a
++        GLB or a VRM; none for the room's own robot), `visible`, `state` (what
++        it is doing: idle, listening, checking, attentive, hearing,
++        transcribing, thinking, pondering, working, talking, happy; `mood` for
++        a room older than these), `wave: true` (a wave, each time it is said),
++        `size` (0.5 to 3 times its usual height), `signs` (the lights over its
++        head, shown unless false), `options` (`{"group": "option"}`: a node
++        named `group=option` is shown only while it is the one chosen, and a
++        group's first option until one is), `pose` (an animation held until
++        another is asked for, or none -- or, for a figure with a person's
++        skeleton, a pose of its own making: an object of its body's parts,
++        each with where it points from the figure's own point of view,
++        `{"left_upper_arm": "down, out, a little back", "head": "tilt left"}`,
++        held over its animation), `move` with `moves` (an animation
++        played once, each time `moves` counts up), `expression` (a face held:
++        a VRM expression, or a morph target by its name), `colors`
++        (`{"material": "#rrggbb"}`), `motions` (`{"name": file}`: motions made
++        from words, played as its animations of those names) and `character`
++        (who the figure is: `pixel`, or `pal:` and the pal's folder). An animation named
++        after the state plays by itself, `idle` standing in for any the figure
++        lacks. A figure's skeleton is posed by the room the same way on every
++        platform (docs/spatipal-pals.md).
++
++        Where the figure stands is the room's: beside the assistant's own
++        window while that is on show in the view and the place beside it is in
++        sight, else in a corner of the view, drawn smaller there rather than
++        further in. The wearer may press and drag it elsewhere -- remembered
++        for each `character` -- and a double press puts it back.
++
++        Only the room and the assistant use this interface: a copy of this
++        file in a client (Chromium's) needs no change for what is added here,
++        and is brought up to date with that client's next monthly build.
 +      </description>
 +      <arg name="json" type="string" summary="what is asked, as JSON"/>
 +      <arg name="answer" type="fd" summary="where the answer is written"/>

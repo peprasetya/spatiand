@@ -1,54 +1,47 @@
-From bd5cd1a2e8d8bee60c0e1e6e50c5240b1d19efa6 Mon Sep 17 00:00:00 2001
-From: Spatiand-build <claude@prasetya.id>
-Date: Sun, 8 Nov 2026 20:15:47 +0700
-Subject: [PATCH] Spatiand: built for Android libc: files chosen in Spatiand's
- own chooser
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 27 Nov 2026 01:29:16 +0700
+Subject: [PATCH] Spatiand: files chosen in Spatiand's own chooser, on every
+ system
 
-There is no desktop portal on Android to ask, as there is on the Deck: a page's file input, Save as,
-a folder to upload or an extension to load ask Spatiand's chooser instead, a window of the room
-(libspatiand-choose.so, beside SpatiMesh in the APK), run as a program that writes what was chosen.
-It starts where the page asked, else where the last choice was, else Downloads, else Android's own
-Download folder where Spatiand may read it.
+The owner, 2026-11-27: "do make this for 159. spatimesh is spatiand app" -- SpatiMesh reaching the
+room's remotes when a page wants a file, Save as, a download's place or a folder to upload. The room's
+chooser (crates/spatiand-choose, a window of the room run as a program that writes what was chosen)
+offers them; SpatiMesh asked it only on the Beam Pro (android-libc/0019) and on the Mac (its port's
+own copy), and the Deck's asked the desktop portal. Now one file dialog for every system: in the room
+-- whose own programs' folder it says to every program it starts as SPATIAND_APPS_DIR -- the chooser
+there, as spatiand-choose or, in an APK's library folder, libspatiand-choose.so; outside it, the
+desktop's own, as before. It starts where the page asked, else where the last choice was, else
+Downloads, else Android's own Download folder where Spatiand may read it. Replaces android-libc/0019
+and the Mac port's copy.
 ---
- ui/shell_dialogs/BUILD.gn                     |   7 +
- .../select_file_dialog_linux_spatiand.cc      | 202 ++++++++++++++++++
- .../select_file_dialog_linux_spatiand.h       |  54 +++++
- ui/shell_dialogs/shell_dialog_linux.cc        |   9 +-
- 4 files changed, 271 insertions(+), 1 deletion(-)
+ ui/shell_dialogs/BUILD.gn                     |   2 +
+ .../select_file_dialog_linux_spatiand.cc      | 225 ++++++++++++++++++
+ .../select_file_dialog_linux_spatiand.h       |  58 +++++
+ ui/shell_dialogs/shell_dialog_linux.cc        |   6 +
+ 4 files changed, 291 insertions(+)
  create mode 100644 ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
  create mode 100644 ui/shell_dialogs/select_file_dialog_linux_spatiand.h
 
 diff --git a/ui/shell_dialogs/BUILD.gn b/ui/shell_dialogs/BUILD.gn
-index 8de23c6560..cc300bdff5 100644
+index b113be5131..bacfac60e0 100644
 --- a/ui/shell_dialogs/BUILD.gn
 +++ b/ui/shell_dialogs/BUILD.gn
-@@ -2,6 +2,7 @@
- # Use of this source code is governed by a BSD-style license that can be
- # found in the LICENSE file.
- 
-+import("//build/config/compiler/compiler.gni")
- import("//build/config/features.gni")
- import("//build/config/ui.gni")
- import("//testing/test.gni")
-@@ -59,6 +60,12 @@ component("shell_dialogs") {
+@@ -56,6 +56,8 @@ component("shell_dialogs") {
+     sources += [
+       "select_file_dialog_linux.cc",
+       "select_file_dialog_linux.h",
++      "select_file_dialog_linux_spatiand.cc",
++      "select_file_dialog_linux_spatiand.h",
        "shell_dialog_linux.cc",
      ]
      deps += [ "//ui/linux:linux_ui" ]
-+    if (spatiand_android_libc) {
-+      sources += [
-+        "select_file_dialog_linux_spatiand.cc",
-+        "select_file_dialog_linux_spatiand.h",
-+      ]
-+    }
-     if (use_dbus) {
-       sources += [
-         "select_file_dialog_linux_portal.cc",
 diff --git a/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc b/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
 new file mode 100644
-index 0000000000..de2a498c81
+index 0000000000..d26501a1e5
 --- /dev/null
 +++ b/ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
-@@ -0,0 +1,202 @@
+@@ -0,0 +1,225 @@
 +// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
@@ -80,14 +73,32 @@ index 0000000000..de2a498c81
 +  std::vector<std::string> accept;
 +};
 +
++// Spatiand's chooser, wherever the room keeps its own programs: the folder it says
++// (SPATIAND_APPS_DIR, which it gives every program it starts) under the program's name, or the
++// name Android carries it as in the APK's library folder; and in a Mac's Spatiand.app, beside the
++// room's own program. Nothing outside the room: SpatiMesh run on a desktop of its own asks that
++// desktop as any browser does.
++base::FilePath FindChooser() {
++  std::unique_ptr<base::Environment> env = base::Environment::Create();
++  const std::string apps = env->GetVar("SPATIAND_APPS_DIR").value_or("");
++  if (!apps.empty()) {
++    for (const char* name : {"spatiand-choose", "libspatiand-choose.so"}) {
++      const base::FilePath chooser = base::FilePath(apps).Append(name);
++      if (base::PathExists(chooser)) {
++        return chooser;
++      }
++    }
++  }
++  return base::FilePath();
++}
++
 +// The chooser run, and what it wrote: nothing if it is not here, or nothing was chosen. Off the
 +// UI thread: it waits for the wearer.
 +std::optional<std::vector<base::FilePath>> RunChooser(Asked asked) {
 +  std::unique_ptr<base::Environment> env = base::Environment::Create();
-+  const std::string apps = env->GetVar("SPATIAND_APPS_DIR").value_or("");
-+  const base::FilePath chooser = base::FilePath(apps).Append("libspatiand-choose.so");
-+  if (apps.empty() || !base::PathExists(chooser)) {
-+    LOG(WARNING) << "Spatiand: no file chooser at " << chooser.value();
++  const base::FilePath chooser = FindChooser();
++  if (chooser.empty()) {
++    LOG(WARNING) << "Spatiand: no file chooser where the room keeps its programs";
 +    return std::nullopt;
 +  }
 +  // Where to begin: the folder of what was asked about, else where the last choice was, else
@@ -160,6 +171,11 @@ index 0000000000..de2a498c81
 +    : SelectFileDialogLinux(listener, std::move(policy)) {}
 +
 +SelectFileDialogLinuxSpatiand::~SelectFileDialogLinuxSpatiand() = default;
++
++// static
++bool SelectFileDialogLinuxSpatiand::Available() {
++  return !FindChooser().empty();
++}
 +
 +bool SelectFileDialogLinuxSpatiand::IsRunning(gfx::NativeWindow parent_window) const {
 +  return running_;
@@ -253,10 +269,10 @@ index 0000000000..de2a498c81
 +}  // namespace ui
 diff --git a/ui/shell_dialogs/select_file_dialog_linux_spatiand.h b/ui/shell_dialogs/select_file_dialog_linux_spatiand.h
 new file mode 100644
-index 0000000000..067b7e8c60
+index 0000000000..8cacc4bfed
 --- /dev/null
 +++ b/ui/shell_dialogs/select_file_dialog_linux_spatiand.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,58 @@
 +// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
@@ -283,6 +299,10 @@ index 0000000000..067b7e8c60
 +  SelectFileDialogLinuxSpatiand(Listener* listener, std::unique_ptr<SelectFilePolicy> policy);
 +  SelectFileDialogLinuxSpatiand(const SelectFileDialogLinuxSpatiand&) = delete;
 +  SelectFileDialogLinuxSpatiand& operator=(const SelectFileDialogLinuxSpatiand&) = delete;
++
++  // Whether SpatiMesh is in the room, with the room's chooser to ask: then it is asked, on every
++  // system, rather than the desktop's own.
++  static bool Available();
 +
 +  // SelectFileDialog:
 +  bool IsRunning(gfx::NativeWindow parent_window) const override;
@@ -312,30 +332,26 @@ index 0000000000..067b7e8c60
 +
 +#endif  // UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
 diff --git a/ui/shell_dialogs/shell_dialog_linux.cc b/ui/shell_dialogs/shell_dialog_linux.cc
-index 154651427f..9cfa3db8cd 100644
+index 154651427f..b40dd29c1d 100644
 --- a/ui/shell_dialogs/shell_dialog_linux.cc
 +++ b/ui/shell_dialogs/shell_dialog_linux.cc
-@@ -12,12 +12,19 @@
- #include "ui/shell_dialogs/select_file_dialog_linux_portal.h"
- #endif
- 
-+#if defined(__TERMUX__)
+@@ -6,6 +6,7 @@
+ #include "build/config/linux/dbus/buildflags.h"
+ #include "ui/linux/linux_ui.h"
+ #include "ui/shell_dialogs/select_file_dialog_linux.h"
 +#include "ui/shell_dialogs/select_file_dialog_linux_spatiand.h"
-+#endif
-+
- namespace ui {
+ #include "ui/shell_dialogs/select_file_policy.h"
  
+ #if BUILDFLAG(USE_DBUS)
+@@ -17,6 +18,11 @@ namespace ui {
  SelectFileDialog* CreateSelectFileDialog(
      SelectFileDialog::Listener* listener,
      std::unique_ptr<SelectFilePolicy> policy) {
--#if BUILDFLAG(USE_DBUS)
-+#if defined(__TERMUX__)
-+  // Spatiand: no desktop portal on Android; Spatiand's own chooser (android-libc/0019).
-+  return new SelectFileDialogLinuxSpatiand(listener, std::move(policy));
-+#elif BUILDFLAG(USE_DBUS)
++  // In the room, the room's own chooser, on every system: it reaches the room's remotes as well
++  // as this machine's folders (crates/spatiand-choose).
++  if (SelectFileDialogLinuxSpatiand::Available()) {
++    return new SelectFileDialogLinuxSpatiand(listener, std::move(policy));
++  }
+ #if BUILDFLAG(USE_DBUS)
    return new SelectFileDialogLinuxPortal(listener, std::move(policy));
  #else
-   const LinuxUi* linux_ui = LinuxUi::instance();
--- 
-2.53.0
-
