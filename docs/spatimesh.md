@@ -307,8 +307,10 @@ to block WebGL where wanted, as patch 0001 does for the JavaScript JIT.
 folder to upload ask `crates/spatiand-choose` (a window of the room, run as a program that writes what was
 chosen) wherever the room says its programs are (`SPATIAND_APPS_DIR`, which it gives every program it
 starts, on every system since `own::apps_dir`): `spatiand-choose`, or `libspatiand-choose.so` in an APK's
-library folder. Outside the room, the desktop's own dialog, as before. It replaced android-libc/0019 (the
-Beam Pro's) and the Mac port's own copy; until then the Deck's SpatiMesh asked the desktop portal. Tried in
+library folder. Outside the room, the desktop's own dialog, as before; where there is none either (Android's
+libc, the Mac), the room's chooser all the same, which cancels when it is not found -- no dialog at all would
+be called on. It replaced android-libc/0019 (the Beam Pro's) and the Mac port's own copy (mac/wip/linux-ui.patch
+keeps only its BUILD.gn conditions); until then the Deck's SpatiMesh asked the desktop portal. Tried in
 the Deck build's test room: the file input opened the chooser and the page got the file typed into it.
 
 **A page inside another application's window (patch 0035; 2026-11-27).** The owner: "the build true webview,

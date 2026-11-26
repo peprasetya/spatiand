@@ -18,8 +18,8 @@ and the Mac port's copy.
  ui/shell_dialogs/BUILD.gn                     |   2 +
  .../select_file_dialog_linux_spatiand.cc      | 225 ++++++++++++++++++
  .../select_file_dialog_linux_spatiand.h       |  58 +++++
- ui/shell_dialogs/shell_dialog_linux.cc        |   6 +
- 4 files changed, 291 insertions(+)
+ ui/shell_dialogs/shell_dialog_linux.cc        |  10 +
+ 4 files changed, 294 insertions(+), 1 deletion(-)
  create mode 100644 ui/shell_dialogs/select_file_dialog_linux_spatiand.cc
  create mode 100644 ui/shell_dialogs/select_file_dialog_linux_spatiand.h
 
@@ -332,7 +332,7 @@ index 0000000000..8cacc4bfed
 +
 +#endif  // UI_SHELL_DIALOGS_SELECT_FILE_DIALOG_LINUX_SPATIAND_H_
 diff --git a/ui/shell_dialogs/shell_dialog_linux.cc b/ui/shell_dialogs/shell_dialog_linux.cc
-index 154651427f..b40dd29c1d 100644
+index 154651427f..9ef2563027 100644
 --- a/ui/shell_dialogs/shell_dialog_linux.cc
 +++ b/ui/shell_dialogs/shell_dialog_linux.cc
 @@ -6,6 +6,7 @@
@@ -355,3 +355,14 @@ index 154651427f..b40dd29c1d 100644
  #if BUILDFLAG(USE_DBUS)
    return new SelectFileDialogLinuxPortal(listener, std::move(policy));
  #else
+@@ -24,7 +30,9 @@ SelectFileDialog* CreateSelectFileDialog(
+   if (linux_ui) {
+     return linux_ui->CreateSelectFileDialog(listener, std::move(policy));
+   }
+-  return nullptr;
++  // No desktop's dialog to be had either (Android's libc, the Mac): the room's chooser all the
++  // same, which says it was not found and cancels -- no dialog at all would be called on.
++  return new SelectFileDialogLinuxSpatiand(listener, std::move(policy));
+ #endif
+ }
+ 

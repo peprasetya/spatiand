@@ -242,7 +242,9 @@ mac/wip/linux-ui.patch`, and `patch -p1` the libwayland one in `third_party/wayl
   macOS's Touch ID keys and iCloud Keychain, which are not offered), the passkey dialog's Linux
   branches, `SpatikeyPasswordStoreBackend`; Password Manager opens `Spatiand.app/Contents/MacOS/spatikey`.
 - **Files** are chosen in Spatiand's chooser (`android-libc/0019` brought over):
-  `Spatiand.app/Contents/MacOS/spatiand-choose`, which `mac/make-app.sh` does not carry yet.
+  `Spatiand.app/Contents/MacOS/spatiand-choose`, which `mac/make-app.sh` carries. Since 2026-11-27 it is
+  the shared patch 0034, the same on every system; the wip's own copy was folded into it (the wip keeps
+  only `ui/shell_dialogs/BUILD.gn`'s Mac conditions), so the wip applies after 0034 from the 159 build on.
 - Rig: `sk.sh` (the stand-in SpatiKey service), `menus.html`, `ext-parts`, `SM_APP`; the rig runs
   with `--use-mock-keychain` (over ssh the login keychain is locked). A copy of the bundle runs only
   from a folder named `SpatiMesh.app`.
