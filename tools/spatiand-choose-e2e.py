@@ -260,6 +260,10 @@ def main():
         check("save: the sender gone", not subprocess.run(["pgrep", "-f", "--", f"--send {saved}"], capture_output=True).stdout)
         room_log = open(os.path.join(out, "spatiand-save.log")).read()
         check("save: the sender's notice on the room's card", "a notice from Files on the card" in room_log)
+        # Where it went, for SpatiMesh's downloads list: sent/<outbox folder>.json.
+        record_path = os.path.join(own_root, "sent", os.path.basename(os.path.dirname(saved)) + ".json") if saved else ""
+        record = json.load(open(record_path)) if record_path and os.path.exists(record_path) else {}
+        check(f"save: a record of where it went, for the browser ({record})", record.get("in") == "scratch:Docs" and record.get("to") == "scratch:Docs/report.pdf")
 
         # No service to be had: a runtime folder of its own with none in it, and none installed.
         lonely = tempfile.mkdtemp(prefix="spc-", dir="/tmp")

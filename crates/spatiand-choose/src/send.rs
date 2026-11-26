@@ -190,6 +190,37 @@ fn tell(summary: &str, body: &str) {
     }
 }
 
+/// How long a record of where a file went is kept: as long as a browser's downloads list is
+/// likely to be looked through for it.
+const SENT_KEPT: std::time::Duration = std::time::Duration::from_secs(90 * 24 * 3600);
+
+/// Where a file sent from the outbox went, for SpatiMesh's downloads list and bubble (its patch
+/// "a download saved into a remote says where it is"): the browser wrote the file into the outbox
+/// folder and finds it gone once it is sent, so it would say "Deleted"; this record, by the outbox
+/// folder's name (`sent/<folder>.json`: `in`, the remote's folder, `to`, the file there), lets it
+/// say "Saved in Drive:Documents" instead. Records older than [`SENT_KEPT`] go as one is made.
+fn remember_sent(base: &Path, folder: &Path, to: &Place) {
+    let (Some(id), Place::Remote(remote, path)) = (folder.file_name(), to) else { return };
+    let sent = base.join("sent");
+    if std::fs::create_dir_all(&sent).is_err() {
+        return;
+    }
+    for entry in std::fs::read_dir(&sent).into_iter().flatten().flatten() {
+        let old = entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|age| age > SENT_KEPT));
+        if old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let within = path.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
+    let record = serde_json::json!({ "in": format!("{remote}:{within}"), "to": to.shown() });
+    // Written whole, then renamed into place: the browser may be reading for it at any moment.
+    let at = sent.join(format!("{}.json", id.to_string_lossy()));
+    let part = sent.join(format!(".{}.part", id.to_string_lossy()));
+    if std::fs::write(&part, record.to_string()).is_ok() && std::fs::rename(&part, &at).is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+}
+
 /// `--send <file> <remote:path>`: what the sender does, all of it. Its exit code.
 pub fn run(file: &Path, to: &str) -> i32 {
     let base = own::base();
@@ -214,6 +245,7 @@ pub fn run(file: &Path, to: &str) -> i32 {
         Ok(()) => {
             log::info!("sent {name} to {}", to.shown());
             let _ = std::fs::remove_dir_all(folder);
+            remember_sent(&base, folder, &to);
             tell(&format!("Saved {name}"), &format!("in {}", to.shown()));
             0
         }
@@ -270,6 +302,28 @@ pub fn start(file: &Path, to: &Place) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::remote::stand_in::Folder;
+
+    #[test]
+    fn a_sent_file_leaves_a_record_of_where_it_went_by_its_outbox_folder() {
+        let base = scratch("record");
+        let folder = base.join("outbox").join("1a2b3c-4d-0");
+        std::fs::create_dir_all(&folder).unwrap();
+        remember_sent(&base, &folder, &Place::remote("Drive", "Documents/Reports/report.pdf"));
+        let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(base.join("sent/1a2b3c-4d-0.json")).unwrap()).unwrap();
+        assert_eq!(record["in"], "Drive:Documents/Reports");
+        assert_eq!(record["to"], "Drive:Documents/Reports/report.pdf");
+        // At the remote's top: its name and nothing after the colon; no part file left beside it.
+        let top = base.join("outbox").join("top-0");
+        remember_sent(&base, &top, &Place::remote("NAS", "report.pdf"));
+        let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(base.join("sent/top-0.json")).unwrap()).unwrap();
+        assert_eq!(record["in"], "NAS:");
+        let names: Vec<String> = std::fs::read_dir(base.join("sent")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.iter().all(|n| n.ends_with(".json")), "{names:?}");
+        // A place of this machine is no remote's: nothing recorded.
+        remember_sent(&base, &base.join("outbox").join("here-0"), &Place::Local("/tmp/x.pdf".into()));
+        assert!(!base.join("sent/here-0.json").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("spatiand-choose-send-{name}-{}", std::process::id()));

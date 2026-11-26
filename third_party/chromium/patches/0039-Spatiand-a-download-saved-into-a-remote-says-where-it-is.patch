@@ -1,0 +1,371 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Spatiand build <claude@prasetya.id>
+Date: Fri, 27 Nov 2026 06:54:31 +0700
+Subject: [PATCH] Spatiand: a download saved into a remote says where it is
+
+The owner, 2026-11-27: "How can it land in deleted? New download just say ad where it's
+downloaded." A download saved through the room's chooser into a remote is written into the
+chooser's outbox and moved from there to the remote by the chooser's sender; the browser, finding
+the file gone from where it put it, said "Deleted". Now the sender leaves a record of where it went
+(.../spatiand-choose/sent/<outbox folder>.json), which chrome/browser/spatiand/saved_in.cc reads off
+the UI thread -- once the download is finished, and again every few seconds while it is still being
+sent, for half an hour -- and keeps on the download: the downloads page says "Saved in
+Drive:Documents" in place of "Deleted", the item active and with no Show in folder (the file is not
+on this machine), and the downloads bubble says the same in its status. Found by the bubble's
+update service, which hears of every download, and by the page.
+---
+ chrome/browser/BUILD.gn                       |   2 +
+ .../bubble/download_bubble_update_service.cc  |   9 ++
+ chrome/browser/download/download_ui_model.cc  |  10 ++
+ chrome/browser/resources/downloads/item.ts    |  10 +-
+ chrome/browser/spatiand/saved_in.cc           | 139 ++++++++++++++++++
+ chrome/browser/spatiand/saved_in.h            |  32 ++++
+ .../ui/webui/downloads/downloads.mojom        |   3 +
+ .../webui/downloads/downloads_list_tracker.cc |  12 ++
+ .../test/data/webui/downloads/test_support.ts |   1 +
+ 9 files changed, 216 insertions(+), 2 deletions(-)
+ create mode 100644 chrome/browser/spatiand/saved_in.cc
+ create mode 100644 chrome/browser/spatiand/saved_in.h
+
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index fd24a3839b..482ecab1db 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1847,6 +1847,8 @@ source_set("core") {
+       "spatiand/profile_service.h",
+       "spatiand/profiles_sync.cc",
+       "spatiand/profiles_sync.h",
++      "spatiand/saved_in.cc",
++      "spatiand/saved_in.h",
+       "spatiand/settings_sync.cc",
+       "spatiand/settings_sync.h",
+       "spatiand/shared_folder.cc",
+diff --git a/chrome/browser/download/bubble/download_bubble_update_service.cc b/chrome/browser/download/bubble/download_bubble_update_service.cc
+index 8d33131ca6..16e22c4ff1 100644
+--- a/chrome/browser/download/bubble/download_bubble_update_service.cc
++++ b/chrome/browser/download/bubble/download_bubble_update_service.cc
+@@ -10,6 +10,10 @@
+ 
+ #include "base/functional/bind.h"
+ #include "base/logging.h"
++#include "build/build_config.h"
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/saved_in.h"
++#endif
+ #include "base/memory/raw_ptr.h"
+ #include "base/numerics/safe_conversions.h"
+ #include "base/supports_user_data.h"
+@@ -848,6 +852,11 @@ void DownloadBubbleUpdateService::OnDownloadUpdated(
+   if (delayed_crx_guids_.contains(item->GetGuid())) {
+     return;
+   }
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: a download saved through the room's chooser into a remote is looked for there once
++  // it is finished, and said to be there (chrome/browser/spatiand/saved_in.h).
++  spatiand::LookUpSavedIn(item);
++#endif
+   CacheManager& cache = GetCacheForItem(item);
+   // When persisted web app download items are restored from the history
+   // database, we first get a OnDownloadCreated() notification about the item
+diff --git a/chrome/browser/download/download_ui_model.cc b/chrome/browser/download/download_ui_model.cc
+index c1f21ea28e..d6708c0448 100644
+--- a/chrome/browser/download/download_ui_model.cc
++++ b/chrome/browser/download/download_ui_model.cc
+@@ -13,6 +13,9 @@
+ #include "base/strings/utf_string_conversions.h"
+ #include "base/time/time.h"
+ #include "build/build_config.h"
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/saved_in.h"
++#endif
+ #include "chrome/browser/browser_process.h"
+ #include "chrome/browser/download/download_commands.h"
+ #include "chrome/browser/download/download_item_warning_data.h"
+@@ -1133,6 +1136,13 @@ DownloadUIModel::BubbleStatusTextBuilder::GetInProgressStatusText() const {
+ std::u16string
+ DownloadUIModel::StatusTextBuilderBase::GetCompletedRemovedOrSavedStatusText()
+     const {
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: saved through the room's chooser into a remote: where it is now.
++  if (std::optional<std::u16string> place =
++          spatiand::SavedIn(model_->GetDownloadItem())) {
++    return u"Saved in " + *place;
++  }
++#endif
+   if (model_->GetFileExternallyRemoved()) {
+     return l10n_util::GetStringUTF16(IDS_DOWNLOAD_STATUS_REMOVED);
+   }
+diff --git a/chrome/browser/resources/downloads/item.ts b/chrome/browser/resources/downloads/item.ts
+index 3b41624ed3..ccfbadc33c 100644
+--- a/chrome/browser/resources/downloads/item.ts
++++ b/chrome/browser/resources/downloads/item.ts
+@@ -209,7 +209,8 @@ export class DownloadsItemElement extends DownloadsItemElementBase {
+       return false;
+     }
+ 
+-    if (this.data.fileExternallyRemoved) {
++    // Spatiand: one saved into a remote is not on this machine.
++    if (this.data.fileExternallyRemoved || this.data.savedIn) {
+       return false;
+     }
+     switch (this.data.state) {
+@@ -774,7 +775,8 @@ export class DownloadsItemElement extends DownloadsItemElementBase {
+     if (!this.data) {
+       return true;
+     }
+-    if (this.data.fileExternallyRemoved) {
++    // Spatiand: one saved into a remote is where it was saved, not gone.
++    if (this.data.fileExternallyRemoved && !this.data.savedIn) {
+       return false;
+     }
+     switch (this.data.state) {
+@@ -990,6 +992,10 @@ export class DownloadsItemElement extends DownloadsItemElementBase {
+       case State.kInterrupted:
+         return this.data.lastReasonText;
+       case State.kComplete:
++        // Spatiand: saved through the room's chooser into a remote: where it is now.
++        if (this.data.savedIn) {
++          return 'Saved in ' + this.data.savedIn;
++        }
+         return this.data.fileExternallyRemoved ?
+             loadTimeData.getString('statusRemoved') :
+             '';
+diff --git a/chrome/browser/spatiand/saved_in.cc b/chrome/browser/spatiand/saved_in.cc
+new file mode 100644
+index 0000000000..2422002476
+--- /dev/null
++++ b/chrome/browser/spatiand/saved_in.cc
+@@ -0,0 +1,139 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/spatiand/saved_in.h"
++
++#include <memory>
++#include <utility>
++
++#include "base/files/file_path.h"
++#include "base/files/file_util.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/supports_user_data.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/task/thread_pool.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "components/download/public/common/download_item.h"
++
++namespace spatiand {
++
++namespace {
++
++const char kKey[] = "spatiand-saved-in";
++
++// A download still being sent is looked for again this often, this many times (half an hour,
++// as long as the chooser's sender waits for a file to be written).
++constexpr base::TimeDelta kAgain = base::Seconds(5);
++constexpr int kTries = 360;
++
++// The record of a download in the chooser's outbox -- .../spatiand-choose/sent/<folder>.json --
++// or none, for a path anywhere else.
++std::optional<base::FilePath> RecordOf(const base::FilePath& target) {
++  const base::FilePath folder = target.DirName();
++  const base::FilePath outbox = folder.DirName();
++  const base::FilePath base = outbox.DirName();
++  if (target.empty() || outbox.BaseName().value() != "outbox" ||
++      base.BaseName().value() != "spatiand-choose") {
++    return std::nullopt;
++  }
++  return base.Append("sent").Append(folder.BaseName().value() + ".json");
++}
++
++// Off the UI thread: the remote's folder the record names, if it is there yet.
++std::optional<std::u16string> ReadRecord(const base::FilePath& record) {
++  std::string text;
++  if (!base::ReadFileToStringWithMaxSize(record, &text, 64 * 1024)) {
++    return std::nullopt;
++  }
++  std::optional<base::DictValue> dict = base::JSONReader::ReadDict(text, base::JSON_PARSE_RFC);
++  const std::string* place = dict ? dict->FindString("in") : nullptr;
++  if (!place || place->empty()) {
++    return std::nullopt;
++  }
++  return base::UTF8ToUTF16(*place);
++}
++
++// Kept on the download: where it went, once known, and the looking for it meanwhile.
++class Lookup : public base::SupportsUserData::Data {
++ public:
++  explicit Lookup(download::DownloadItem* item) : item_(item) {}
++  Lookup(const Lookup&) = delete;
++  Lookup& operator=(const Lookup&) = delete;
++  ~Lookup() override = default;
++
++  const std::optional<std::u16string>& place() const { return place_; }
++
++  void Start(base::FilePath record) {
++    if (busy_ || place_) {
++      return;
++    }
++    busy_ = true;
++    Ask(std::move(record));
++  }
++
++ private:
++  void Ask(base::FilePath record) {
++    base::ThreadPool::PostTaskAndReplyWithResult(
++        FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
++        base::BindOnce(&ReadRecord, record),
++        base::BindOnce(&Lookup::Read, weak_factory_.GetWeakPtr(), record));
++  }
++
++  void Read(base::FilePath record, std::optional<std::u16string> found) {
++    if (found) {
++      busy_ = false;
++      place_ = std::move(found);
++      item_->UpdateObservers();
++      return;
++    }
++    // Not sent yet -- still being written, or on its way -- or never to be.
++    if (++tries_ >= kTries) {
++      busy_ = false;
++      return;
++    }
++    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++        FROM_HERE, base::BindOnce(&Lookup::Ask, weak_factory_.GetWeakPtr(), std::move(record)),
++        kAgain);
++  }
++
++  // The download this is kept on, which outlives it.
++  raw_ptr<download::DownloadItem> item_;
++  std::optional<std::u16string> place_;
++  bool busy_ = false;
++  int tries_ = 0;
++  base::WeakPtrFactory<Lookup> weak_factory_{this};
++};
++
++}  // namespace
++
++std::optional<std::u16string> SavedIn(const download::DownloadItem* item) {
++  if (!item) {
++    return std::nullopt;
++  }
++  const auto* lookup = static_cast<const Lookup*>(item->GetUserData(&kKey));
++  return lookup ? lookup->place() : std::nullopt;
++}
++
++void LookUpSavedIn(download::DownloadItem* item) {
++  if (!item || item->GetState() != download::DownloadItem::COMPLETE) {
++    return;
++  }
++  std::optional<base::FilePath> record = RecordOf(item->GetTargetFilePath());
++  if (!record) {
++    return;
++  }
++  auto* lookup = static_cast<Lookup*>(item->GetUserData(&kKey));
++  if (!lookup) {
++    auto made = std::make_unique<Lookup>(item);
++    lookup = made.get();
++    item->SetUserData(&kKey, std::move(made));
++  }
++  lookup->Start(*std::move(record));
++}
++
++}  // namespace spatiand
+diff --git a/chrome/browser/spatiand/saved_in.h b/chrome/browser/spatiand/saved_in.h
+new file mode 100644
+index 0000000000..fea3535861
+--- /dev/null
++++ b/chrome/browser/spatiand/saved_in.h
+@@ -0,0 +1,32 @@
++// Copyright 2026 Spatiand. Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_SPATIAND_SAVED_IN_H_
++#define CHROME_BROWSER_SPATIAND_SAVED_IN_H_
++
++#include <optional>
++#include <string>
++
++namespace download {
++class DownloadItem;
++}  // namespace download
++
++namespace spatiand {
++
++// Where a download saved through the room's chooser into a remote is now. The browser wrote it
++// into the chooser's outbox (.../spatiand-choose/outbox/<folder>/<name>), and the chooser's
++// sender moved it from there to the remote, leaving a record of where (.../spatiand-choose/sent/
++// <folder>.json, crates/spatiand-choose): the remote's folder, "Drive:Documents", once known.
++// Without this a download sent on was "Deleted" in the downloads page, the file being gone from
++// where the browser put it.
++std::optional<std::u16string> SavedIn(const download::DownloadItem* item);
++
++// Looks for that record off the UI thread, for a finished download in the chooser's outbox whose
++// record is not known yet; the item's observers are told when it is found (the downloads page
++// and bubble then say "Saved in <folder>"). One still being sent is looked for again, every few
++// seconds, for half an hour.
++void LookUpSavedIn(download::DownloadItem* item);
++
++}  // namespace spatiand
++
++#endif  // CHROME_BROWSER_SPATIAND_SAVED_IN_H_
+diff --git a/chrome/browser/ui/webui/downloads/downloads.mojom b/chrome/browser/ui/webui/downloads/downloads.mojom
+index 3ac6fde31b..6adfa2d717 100644
+--- a/chrome/browser/ui/webui/downloads/downloads.mojom
++++ b/chrome/browser/ui/webui/downloads/downloads.mojom
+@@ -66,6 +66,9 @@ enum SafeBrowsingState {
+ // UI.
+ struct Data {
+   bool file_externally_removed;
++  // Spatiand: saved through the room's chooser into a remote, the remote's folder it is in
++  // now (chrome/browser/spatiand/saved_in.h): "Drive:Documents". Empty for any other.
++  string saved_in;
+   bool is_dangerous;
+   [RenamedFrom=is_mixed_content]
+   bool is_insecure;
+diff --git a/chrome/browser/ui/webui/downloads/downloads_list_tracker.cc b/chrome/browser/ui/webui/downloads/downloads_list_tracker.cc
+index 3db0daa4c7..0e98490c17 100644
+--- a/chrome/browser/ui/webui/downloads/downloads_list_tracker.cc
++++ b/chrome/browser/ui/webui/downloads/downloads_list_tracker.cc
+@@ -23,6 +23,10 @@
+ #include "base/time/time.h"
+ #include "chrome/browser/download/download_crx_util.h"
+ #include "chrome/browser/download/download_item_model.h"
++#include "build/build_config.h"
++#if BUILDFLAG(IS_LINUX)
++#include "chrome/browser/spatiand/saved_in.h"
++#endif
+ #include "chrome/browser/download/download_item_warning_data.h"
+ #include "chrome/browser/download/download_query.h"
+ #include "chrome/browser/download/download_stats.h"
+@@ -392,6 +396,14 @@ downloads::mojom::DataPtr DownloadsListTracker::CreateDownloadData(
+   file_value->total = download_item->GetTotalBytes();
+   file_value->file_externally_removed =
+       download_item->GetFileExternallyRemoved();
++#if BUILDFLAG(IS_LINUX)
++  // Spatiand: saved through the room's chooser into a remote, which moved it from where it was
++  // written: where it is now, not "Deleted".
++  spatiand::LookUpSavedIn(download_item);
++  if (std::optional<std::u16string> place = spatiand::SavedIn(download_item)) {
++    file_value->saved_in = base::UTF16ToUTF8(*place);
++  }
++#endif
+   file_value->resume = download_item->CanResume();
+   file_value->otr = IsIncognito(*download_item);
+ 
+diff --git a/chrome/test/data/webui/downloads/test_support.ts b/chrome/test/data/webui/downloads/test_support.ts
+index d016d7fbe3..35ae48dd11 100644
+--- a/chrome/test/data/webui/downloads/test_support.ts
++++ b/chrome/test/data/webui/downloads/test_support.ts
+@@ -105,6 +105,7 @@ export function createDownload(config?: Partial<MojomData>): MojomData {
+         dangerType: DangerType.kNoApplicableDangerType,
+         dateString: '',
+         fileExternallyRemoved: false,
++        savedIn: '',
+         fileName: 'download 1',
+         filePath: '/some/file/path',
+         fileUrl: 'file:///some/file/path',

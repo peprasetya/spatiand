@@ -386,6 +386,23 @@ own sentence and then "Page 1" and the five lines. Not done: a word hemera was u
 (SpatiLoupe dotted it), and Live Text on pictures in web pages; the Mac's build needs the wip's `IS_MAC_LINUX_UI`
 for these (and 0037's) `IS_LINUX` conditions at the 159 port.
 
+**A download saved into a remote says where it is (patch 0039; 2026-11-27).** The owner: "How can it land in
+deleted? New download just say ad where it's downloaded." A download saved through the room's chooser (patch 0034)
+into a remote is written by the browser into the chooser's outbox (`.../spatiand-choose/outbox/<folder>/<name>`),
+and the chooser's sender moves it from there to the remote once it is whole; the browser, finding the file gone from
+where it put it the next time the downloads page looked, said "Deleted". The sender now leaves a record of where it
+went (`.../spatiand-choose/sent/<folder>.json`: `in`, the remote's folder, `to`, the file there; kept 90 days,
+`crates/spatiand-choose`'s `remember_sent`), and `chrome/browser/spatiand/saved_in.cc` reads it off the UI thread
+once the download is finished -- again every 5 s while it is still being sent, for half an hour -- and keeps it on
+the download: the downloads page says "Saved in Drive:Documents" where it said "Deleted", the item stays active and
+has no Show in folder (the file is not on this machine), and the downloads bubble's status says the same. The bubble's
+update service, which hears of every download, and the page both ask for it. Tried in the Deck build's test room
+(build 75, `tools/spatimesh-saved-in-e2e.py`): a page's download link, the chooser asked where (prompt for each
+download on), `scratch:Docs` typed and the file saved there; the remote had it byte for byte, the record was left, and
+the downloads page said "fresh.bin  Saved in scratch:Docs". Not seen: the bubble -- the toolbar's downloads button
+pressed in the test room showed no bubble, with or without this patch's text (not looked into); the Mac and the Beam
+Pro (the Mac's wip needs `IS_MAC_LINUX_UI` for these `IS_LINUX` conditions too, at the 159 port).
+
 **A right thumb resting no longer throws the page (patch 0011).** Chromium timed each scroll frame
 from the last pointer frame of any kind, so the pointer moving under a resting right thumb made a
 scroll's frames look a moment apart, and its end, a quarter of a second after the last of them, look
