@@ -18,6 +18,8 @@ pub mod subs;
 pub mod timing;
 
 #[cfg(feature = "engine")]
+pub mod cover;
+#[cfg(feature = "engine")]
 mod deinterlace;
 #[cfg(feature = "engine")]
 pub mod fetch;

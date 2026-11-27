@@ -45,8 +45,10 @@ impl Source for Local {
                     title: if folder { entry.name.clone() } else { library::title(&entry.name) },
                     detail: if folder { Some("Folder".into()) } else { library::told_by_name(&entry.name) },
                     folder,
-                    // A film's tile is a frame of it, which is as wide as films are.
-                    aspect: (!folder).then_some(16.0 / 9.0),
+                    // A film's tile is the cover it carries, or a frame of it where it carries
+                    // none (`picture`): a poster or as wide as films are, which is not known
+                    // until it has come -- the folder's shape follows what comes.
+                    aspect: None,
                     pictured: !folder && !entry.name.to_lowercase().ends_with(".strm"),
                     name: entry.name,
                     path: Some(entry.path),
@@ -56,8 +58,11 @@ impl Source for Local {
             .collect())
     }
 
+    /// The cover the film carries -- a Matroska file's attached `cover.jpg`, an MP4's `covr` --
+    /// and a frame of it where it carries none: what SpatiShelf's tile of it is too
+    /// (`spatiand_media::cover::tile`). No picture beside the film (a `poster.jpg`) is looked for.
     fn picture(&self, item: &Item) -> Option<Picture> {
-        spatiand_media::still::grab_file(&Local::path_of(item), 480).map(Picture::Pixels)
+        spatiand_media::cover::tile_file(&Local::path_of(item), 480).map(Picture::Pixels)
     }
 
     fn play(&self, item: &Item) -> Result<Play, String> {

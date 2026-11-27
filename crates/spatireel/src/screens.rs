@@ -103,7 +103,7 @@ impl Screen {
         let Some(still) = still else { return };
         match self {
             Screen::Home(home) if home.ticket == ticket => home.arrived.push((index, still)),
-            Screen::Browse(browse) if browse.ticket == ticket => browse.arrived.push((index, still)),
+            Screen::Browse(browse) if browse.ticket == ticket => browse.pictured(index, still),
             _ => {}
         }
     }
@@ -543,6 +543,19 @@ impl Browse {
         self.grid.top();
     }
 
+    /// A tile's picture has come, to be put on the GPU at the next drawing. Where the source
+    /// could not say what shape it would be, it is known now, and the folder takes the shape
+    /// most of its pictures have (`shape`): this machine's films are posters where they carry
+    /// covers, frames where they do not.
+    fn pictured(&mut self, origin: usize, still: Still) {
+        let at = self.origin.iter().position(|o| *o == origin);
+        if let Some(item) = at.and_then(|at| self.items.get_mut(at)).filter(|item| item.aspect.is_none() && still.height > 0) {
+            item.aspect = Some(still.width as f32 / still.height as f32);
+            self.grid.shape = Browse::shape(&self.items);
+        }
+        self.arrived.push((origin, still));
+    }
+
     /// A picture not fetched, because its tile was no longer on show: it is not asked for.
     fn passed(&mut self, origin: usize) {
         if let Some(at) = self.origin.iter().position(|o| *o == origin) {
@@ -550,13 +563,18 @@ impl Browse {
         }
     }
 
+    /// Posters where most of what is here has posters, frames where it has frames: by the
+    /// pictures' own shapes, whatever kind of server sent them -- as the source says they are,
+    /// or, where it cannot say (this machine's films: a cover or a frame), as they have come.
+    fn shape(items: &[Item]) -> Shape {
+        Shape::of(items.iter().filter(|i| i.pictured).filter_map(|i| i.aspect), Shape::Wide)
+    }
+
     pub fn listed(&mut self, result: Result<Vec<Item>, String>) {
         match result {
             Err(e) => self.state = State::Failed(e),
             Ok(items) => {
-                // Posters where most of what is here has posters, frames where it has
-                // frames: by the pictures' own shapes, whatever kind of server sent them.
-                self.grid.shape = Shape::of(items.iter().filter(|i| i.pictured).filter_map(|i| i.aspect), Shape::Wide);
+                self.grid.shape = Browse::shape(&items);
                 self.tiles = items
                     .iter()
                     .map(|item| Tile { title: item.title.clone(), detail: item.detail.clone(), progress: item.progress, icon: item.folder.then_some(Icon::Folder), ..Tile::default() })
@@ -1237,5 +1255,43 @@ mod tests {
         let mut b = browse();
         // Nothing has been drawn, so nothing is on show.
         assert!(b.wanted().is_empty());
+    }
+
+    fn picture(width: u32, height: u32) -> Still {
+        Still { width, height, rgba: vec![0; (width * height * 4) as usize] }
+    }
+
+    /// This machine's films: a cover or a frame, which shape is not known until it comes. The
+    /// folder is as wide as films are until then, and takes the shape most of what has come has;
+    /// a server's pictures, of the shape it said, change nothing.
+    #[test]
+    fn a_folder_of_this_machines_films_takes_the_shape_of_the_pictures_that_come() {
+        let mut b = Browse::new(0, "This Deck".into(), true, false);
+        b.listed(Ok(vec![item("Dir", true, 0), item("a.mkv", false, 0), item("b.mkv", false, 0), item("c.mp4", false, 0)]));
+        assert_eq!(b.grid.shape, Shape::Wide);
+        // The first cover: posters.
+        b.pictured(1, picture(320, 480));
+        assert_eq!(b.grid.shape, Shape::Tall);
+        assert_eq!(b.arrived.len(), 1);
+        // A frame of a film without one: one each, the posters kept (as Shape::of weighs a tie).
+        b.pictured(3, picture(480, 270));
+        assert_eq!(b.grid.shape, Shape::Tall);
+        // Another frame: most are frames now.
+        b.pictured(2, picture(480, 200));
+        assert_eq!(b.grid.shape, Shape::Wide);
+        // The same tile's picture again changes nothing: its shape is known.
+        b.pictured(2, picture(320, 480));
+        assert_eq!(b.grid.shape, Shape::Wide);
+        // In whatever order the wearer has put them: by where each was in the list as it came.
+        b.arrange(Sort::Random);
+        assert!(b.items.iter().filter(|i| !i.folder).all(|i| i.aspect.is_some()));
+
+        // A server that says its pictures' shapes: the folder keeps the shape it said.
+        let mut b = Browse::new(0, "Jellyfin".into(), false, true);
+        let poster = |key: &str| Item { aspect: Some(2.0 / 3.0), ..item(key, false, 0) };
+        b.listed(Ok(vec![poster("a"), poster("b")]));
+        assert_eq!(b.grid.shape, Shape::Tall);
+        b.pictured(0, picture(480, 270));
+        assert_eq!(b.grid.shape, Shape::Tall);
     }
 }

@@ -214,9 +214,10 @@ impl Kind {
         }
     }
 
-    /// Whether a tile of it can have a picture of what is in it.
+    /// Whether a tile of it can have a picture of what is in it: a picture, a film (its cover or
+    /// a frame of it), a song (its cover).
     pub fn pictured(self) -> bool {
-        matches!(self, Kind::Picture | Kind::Film)
+        matches!(self, Kind::Picture | Kind::Film | Kind::Music)
     }
 }
 

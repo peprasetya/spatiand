@@ -717,13 +717,23 @@ impl Player {
                 (index >= 0).then_some(index as usize)
             };
             let mut video_stream = best(ffi::AVMEDIA_TYPE_VIDEO, -1);
+            // A file whose only pictures are those it carries of itself -- a song -- plays with
+            // the cover a library shows it by (`cover`): its front cover, not whichever of a
+            // front and a back FFmpeg would take, nor Matroska's landscape or small one.
+            if let Some(index) = video_stream.filter(|&index| (*streams[index]).disposition & ffi::AV_DISPOSITION_ATTACHED_PIC as c_int != 0) {
+                video_stream = crate::cover::chosen(format).or(Some(index));
+            }
             let audio_stream = best(ffi::AVMEDIA_TYPE_AUDIO, video_stream.map_or(-1, |v| v as c_int));
             // The pictures' decoder: the platform's, or software's. Where neither will decode
             // them, the sound is still played if there is any; and if not, the file is closed.
             let mut pictures_decoder = None;
             if let Some(index) = video_stream {
                 let stream = streams[index];
-                let wanted = std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() != Ok("0");
+                // A song's cover is one picture, not a film, and is decoded in software as its
+                // tile is (`cover`): AMD's VCN refused a 4:4:4 JPEG cover ("Unsupported sampling
+                // factor"), and the song showed none while it played.
+                let cover = (*stream).disposition & ffi::AV_DISPOSITION_ATTACHED_PIC as c_int != 0;
+                let wanted = std::env::var("SPATIAND_MEDIA_HARDWARE").as_deref() != Ok("0") && !cover;
                 let opened = open_decoder(stream, wanted).or_else(|e| {
                     log::warn!("{e}; trying without the platform's decoder");
                     open_decoder(stream, false)
