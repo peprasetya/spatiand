@@ -22,9 +22,29 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/versions.sh"
-platform=${1:?mac, android or linux}
-out=$here/out/$platform
 src=$here/src
+fetch() { # name url
+    [ -d "$src/$1" ] && return
+    # Unpacked and patched aside, and moved into place whole: a download cut short (ffmpeg.org
+    # stalls at times; a stall of a minute ends it) leaves nothing a later run takes for the source.
+    part=$(mktemp -d "$src/.fetch.XXXXXX")
+    curl -fsSL --speed-limit 1024 --speed-time 60 "$2" | tar -xJ -C "$part"
+    for p in "$here/patches/${1%%-*}"/*.patch; do
+        [ -f "$p" ] && (cd "$part/$1" && patch -p1 < "$p")
+    done
+    [ -d "$src/$1" ] || mv "$part/$1" "$src/$1"
+    rm -rf "$part"
+}
+# `build.sh fetch`: the source alone, for a build that cannot reach the network itself --
+# third_party/chromium/build.sh builds this inside a root with no name lookup, so it fetches first,
+# on the machine.
+if [ "${1:-}" = fetch ]; then
+    mkdir -p "$src"
+    fetch "ffmpeg-$FFMPEG_VERSION" "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
+    exit 0
+fi
+platform=${1:?mac, android, linux or fetch}
+out=$here/out/$platform
 # Which BoringSSL: its checkout's commit, and a checksum of whatever is changed in it and not
 # committed, so that the stamp names what was built and another one is a rebuild.
 top=$(git -C "$BORINGSSL_SRC" rev-parse --show-toplevel 2>/dev/null || true)
@@ -48,18 +68,6 @@ command -v cmake >/dev/null || { echo "BoringSSL is built with CMake (3.22 or la
 mkdir -p "$src"
 jobs=$( (sysctl -n hw.ncpu || nproc) 2>/dev/null )
 
-fetch() { # name url
-    [ -d "$src/$1" ] && return
-    # Unpacked and patched aside, and moved into place whole: a download cut short (ffmpeg.org
-    # stalls at times; a stall of a minute ends it) leaves nothing a later run takes for the source.
-    part=$(mktemp -d "$src/.fetch.XXXXXX")
-    curl -fsSL --speed-limit 1024 --speed-time 60 "$2" | tar -xJ -C "$part"
-    for p in "$here/patches/${1%%-*}"/*.patch; do
-        [ -f "$p" ] && (cd "$part/$1" && patch -p1 < "$p")
-    done
-    [ -d "$src/$1" ] || mv "$part/$1" "$src/$1"
-    rm -rf "$part"
-}
 fetch "ffmpeg-$FFMPEG_VERSION" "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
 
 rm -rf "$out"

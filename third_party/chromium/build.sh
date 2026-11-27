@@ -349,6 +349,9 @@ build() {
     if [ -z "${SPATIAND_FFMPEG:-}" ]; then
         repo=$(cd "$here/../.." && pwd)
         boringssl=$work/chromium/src/third_party/boringssl/src
+        # Its source fetched here first: the root has no name lookup, and a build inside it
+        # cannot reach ffmpeg.org (found 2026-11-27, the first time this ran without the source).
+        "$repo/third_party/ffmpeg/build.sh" fetch
         # Nothing made in the root's own folders: /media is an empty tmpfs with the two put on it,
         # and the home is in /tmp, which is this machine's.
         home=$(mktemp -d /tmp/spatiand-ffmpeg-XXXXXX)
