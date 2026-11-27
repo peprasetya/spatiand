@@ -3,6 +3,7 @@
 A 3D spatial desktop: windows hung on a sphere around you, seen through XREAL
 glasses. It runs on three systems: the Steam Deck (a third mode alongside
 Desktop and Game), the XREAL Beam Pro (Android) and a Mac.
+[spatiand.com](https://spatiand.com/) shows it.
 
 Windows stay where you left them when you turn your head. Each one's sound
 comes from where the window is. The Deck's own screen becomes a control panel
@@ -266,7 +267,9 @@ Download the newest release from the
     open it the first time with right-click → Open (it is not notarised).
 
 See [docs/install.md](docs/install.md) for what each does and what to check
-when something is wrong.
+when something is wrong. When it is still wrong,
+[open an issue](https://github.com/peprasetya/spatiand/issues/new/choose): its form asks for
+what is needed to find it. More about each part is on [spatiand.com](https://spatiand.com/).
 
 ## Tested on
 

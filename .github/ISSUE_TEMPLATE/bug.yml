@@ -1,0 +1,65 @@
+name: Something is wrong
+description: Spatiand or one of its apps did not do what it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying Spatiand. One person builds it, and it is tested on his own Steam Deck,
+        Beam Pro and Mac with first-generation XREAL Air glasses, so your machine may show what his
+        never did. The more of this form you fill in, the sooner it can be found.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: System
+      options:
+        - Steam Deck
+        - Other Linux
+        - XREAL Beam Pro
+        - Mac
+        - Another computer through spatiand-host
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: The release's date, as on the Releases page (for example 2026-11-20), or the commit if you built it yourself.
+    validations:
+      required: true
+  - type: dropdown
+    id: glasses
+    attributes:
+      label: Glasses
+      options:
+        - XREAL Air (first generation)
+        - XREAL Air 2
+        - XREAL Air 2 Pro
+        - XREAL Air 2 Ultra
+        - XREAL One or One Pro
+        - Other glasses
+        - None (on the screen only)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: System version
+      description: SteamOS build, Linux distribution, Android build, or macOS version.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        Steam Deck and Linux: `~/.local/share/spatiand-session.log` (the session before: `.log.1`) and `~/.local/share/spatiand-apps.log`.
+        Mac: `~/Library/Logs/Spatiand/spatiand.log` and `~/.local/share/spatiand-apps.log`.
+        Beam Pro: `adb logcat` while it happens.
+        Look through it before you paste it: it can hold names of your files and windows.
+      render: text
