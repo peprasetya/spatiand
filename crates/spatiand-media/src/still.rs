@@ -60,7 +60,7 @@ pub fn whole_file(path: &std::path::Path) -> Option<Deep> {
     whole_named(file_name(path)?)
 }
 
-fn file_name(path: &std::path::Path) -> Option<CString> {
+pub(crate) fn file_name(path: &std::path::Path) -> Option<CString> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -95,15 +95,48 @@ fn whole_named(name: CString) -> Option<Deep> {
 }
 
 fn opened<T>(name: CString, read: impl FnOnce(*mut ffi::AVFormatContext) -> Option<T>) -> Option<T> {
+    opened_with(name, &[], read)
+}
+
+/// `name` opened, FFmpeg told `options` (its protocols' and demuxers'), and read by `read`.
+pub(crate) fn opened_with<T>(name: CString, options: &[(&str, &str)], read: impl FnOnce(*mut ffi::AVFormatContext) -> Option<T>) -> Option<T> {
     unsafe {
+        let mut told: *mut ffi::AVDictionary = ptr::null_mut();
+        for (key, value) in options {
+            if let (Ok(key), Ok(value)) = (CString::new(*key), CString::new(*value)) {
+                ffi::av_dict_set(&mut told, key.as_ptr(), value.as_ptr(), 0);
+            }
+        }
         let mut format = ptr::null_mut();
-        if ffi::avformat_open_input(&mut format, name.as_ptr(), ptr::null(), ptr::null_mut()) < 0 {
+        let opened = ffi::avformat_open_input(&mut format, name.as_ptr(), ptr::null(), &mut told);
+        ffi::av_dict_free(&mut told);
+        if opened < 0 {
             return None;
         }
         let read = read(format);
         ffi::avformat_close_input(&mut format);
         read
     }
+}
+
+/// A frame of an open film, as [`grab`] takes one: a little way in, no wider than `width`.
+pub(crate) unsafe fn frame_of(format: *mut ffi::AVFormatContext, width: u32) -> Option<Still> {
+    from_open::<u8>(format, Some(width)).map(|(w, h, rgba, _)| Still { width: w as u32, height: h as u32, rgba })
+}
+
+/// A decoded picture made a [`Still`] no wider than `width`, and put the right way up as its
+/// own display matrix says: a JPEG's EXIF orientation, which FFmpeg's decoders give as one.
+pub(crate) unsafe fn still_of(frame: *const ffi::AVFrame, width: u32) -> Option<Still> {
+    let (w, h, rgba) = <u8 as Sample>::pixels(frame, width)?;
+    let side = ffi::av_frame_get_side_data(frame, ffi::AV_FRAME_DATA_DISPLAYMATRIX);
+    let matrix = (!side.is_null() && !(*side).data.is_null() && (*side).size >= 36).then(|| {
+        let mut matrix = [0i32; 9];
+        ptr::copy_nonoverlapping((*side).data as *const i32, matrix.as_mut_ptr(), 9);
+        matrix
+    });
+    let still = Still { width: w as u32, height: h as u32, rgba };
+    let upright = Upright::of(matrix);
+    Some(if upright == Upright::default() { still } else { upright.apply(&still) })
 }
 
 /// A sample of a picture in memory: eight bits (RGBA) or sixteen (RGBA64, this machine's order).
@@ -118,7 +151,9 @@ impl Sample for u8 {
     /// contrasty, and a BT.709 one's colours off.
     unsafe fn pixels(frame: *const ffi::AVFrame, width: u32) -> Option<(usize, usize, Vec<u8>)> {
         let (w, h) = fitted(frame, width)?;
-        let scaler = ffi::sws_getContext((*frame).width, (*frame).height, (*frame).format, w, h, ffi::AV_PIX_FMT_RGBA, ffi::SWS_BILINEAR as c_int, ptr::null_mut(), ptr::null_mut(), ptr::null());
+        // A JPEG's full-range format named as its studio one, the range told below: named as it
+        // is, the scaler says "deprecated pixel format used" for every cover and photograph.
+        let scaler = ffi::sws_getContext((*frame).width, (*frame).height, studio((*frame).format), w, h, ffi::AV_PIX_FMT_RGBA, ffi::SWS_BILINEAR as c_int, ptr::null_mut(), ptr::null_mut(), ptr::null());
         if scaler.is_null() {
             return None;
         }
@@ -152,14 +187,7 @@ impl Sample for u16 {
         };
         // A full-range ("J") format is the same samples as its studio one: named so, the scaler
         // leaves them be.
-        let from = match (*frame).format {
-            ffi::AV_PIX_FMT_YUVJ420P => ffi::AV_PIX_FMT_YUV420P,
-            ffi::AV_PIX_FMT_YUVJ422P => ffi::AV_PIX_FMT_YUV422P,
-            ffi::AV_PIX_FMT_YUVJ444P => ffi::AV_PIX_FMT_YUV444P,
-            ffi::AV_PIX_FMT_YUVJ440P => ffi::AV_PIX_FMT_YUV440P,
-            ffi::AV_PIX_FMT_YUVJ411P => ffi::AV_PIX_FMT_YUV411P,
-            other => other,
-        };
+        let from = studio((*frame).format);
         let desc = ffi::av_pix_fmt_desc_get((*frame).format);
         let bits = (*desc).comp[0].depth.clamp(1, 16) as u32;
         let scaler = ffi::sws_getContext((*frame).width, (*frame).height, from, w, h, ffi::AV_PIX_FMT_YUVA444P16LE, ffi::SWS_BILINEAR as c_int, ptr::null_mut(), ptr::null_mut(), ptr::null());
@@ -183,6 +211,19 @@ impl Sample for u16 {
             px[i * 4 + 3] = if alpha { u16::from_le(planes[3][i]) } else { u16::MAX };
         }
         Some((w as usize, h as usize, px))
+    }
+}
+
+/// A full-range ("J") YUV format's studio-range twin: the same samples, the range said apart
+/// (`yuv` reads it from the frame either way).
+fn studio(format: c_int) -> c_int {
+    match format {
+        ffi::AV_PIX_FMT_YUVJ420P => ffi::AV_PIX_FMT_YUV420P,
+        ffi::AV_PIX_FMT_YUVJ422P => ffi::AV_PIX_FMT_YUV422P,
+        ffi::AV_PIX_FMT_YUVJ444P => ffi::AV_PIX_FMT_YUV444P,
+        ffi::AV_PIX_FMT_YUVJ440P => ffi::AV_PIX_FMT_YUV440P,
+        ffi::AV_PIX_FMT_YUVJ411P => ffi::AV_PIX_FMT_YUV411P,
+        other => other,
     }
 }
 

@@ -1821,3 +1821,107 @@ that opens nothing: the same; a remote's PDF copied into the cache and shown fro
 the Mac and the Beam Pro (their SpatiMesh with patch 0035 comes with the 159 build), the Deck itself, the
 glasses; the light look; a real cloud or SMB remote, and a large PDF's copy; SpatiMesh's Save into a
 remote; a locked PDF in SpatiMesh's viewer.
+
+## 2026-11-27: films and songs shown by their covers
+
+The owner: "bring mkvtoolnix and mp4box/atomicparsley/cover reading in subler to show media with cover,
+including for spatishelf". None of those tools is shipped or called: what they write into a file is read by
+Spatiand's own FFmpeg, through one function every app uses, `spatiand_media::cover::tile` (and `tile_file`
+for this machine's files by their own names) -- the same code on the Deck, Linux, the Beam Pro and the Mac.
+
+**Where it shows, and in what order.**
+
+- **SpatiShelf**, every tile and every row of its list, this machine's folders and the storage service's
+  remotes alike: a film's or a song's picture is the cover it carries; a film without one, a frame of it a
+  little way in, as before; a song without one, its kind's mark, as before. Songs had no pictures at all
+  until now (`Kind::pictured`). This machine's films are now opened by their own names (`proto::path_of`):
+  one whose name is not UTF-8 was opened by its name made text, the name of nothing, and had no picture
+  (now seen: a Latin-1 `Dun\xe9.mp4` and `Chanson \xe9t\xe9.mp3` show their covers).
+- **SpatiReel**, this machine's folders: the same -- its cover, else a frame (`source::local`). No picture
+  beside the film (a `poster.jpg`, `folder.jpg`) is looked for, as none ever was; were one ever honoured, it
+  would come before the cover the file carries, as Jellyfin and Kodi put the wearer's own art first. A
+  folder's shape follows what comes (`Browse::pictured`): this machine cannot say before a picture comes
+  whether it is a poster or a frame, so a folder starts as wide as films are and takes the shape most of its
+  pictures have once they come -- posters where its films carry covers. A picture of another shape is cut to
+  the grid's, as a server's always were. A **server's** films (Jellyfin, Emby, Vibrefy, DLNA) keep the
+  server's own pictures and their files are not read for one: the server has its own (Jellyfin takes the
+  cover out of the file itself).
+- **SpatiReel playing a song** shows the same cover: of several -- a front and a back, Matroska's four --
+  the one the tile shows (`cover::chosen`), where FFmpeg's own choice was the first of two alike, the back
+  cover in the test file. And it is decoded in software, as the tile is: the player gave a song's cover to
+  the GPU's decoder like a film, and the Radeon's VCN refused a 4:4:4 JPEG ("Unsupported sampling factor"),
+  so the song showed no picture at all while it played (seen with `examples/frame`: "no picture came";
+  after, the front cover).
+
+**How FFmpeg 9.1 gives each kind** -- its demuxers' sources read, and each kind made with deepmagpie's
+`/usr/bin/ffmpeg` and opened by Spatiand's FFmpeg in `cover.rs`'s tests. Every one is an *attached picture*,
+a video stream marked `AV_DISPOSITION_ATTACHED_PIC` whose picture is its `attached_pic` packet, there as
+soon as the file is opened, before any packet is read -- except one Matroska case:
+
+| Kind, as written by | What FFmpeg makes of it |
+|---|---|
+| Matroska attachment (mkvtoolnix, `ffmpeg -attach`) of type `image/jpeg`, `image/png`, `image/gif`, `image/tiff` | an attached picture, its `filename` and `mimetype` as tags |
+| Matroska attachment of any other type: `image/webp`, the wrong `image/jpg`, `application/octet-stream` | **an attachment stream** (`AVMEDIA_TYPE_ATTACHMENT`, codec none), the bytes in its extradata, the same tags. Read too: a picture where its type or name says so and its bytes begin as a JPEG, PNG, WebP, GIF, TIFF or BMP's do; a font is not |
+| MP4, M4V, M4A, MOV `covr` (AtomicParsley, MP4Box, Subler; QuickTime's `com.apple.quicktime.artwork`) | an attached picture for each picture in it; one marked neither JPEG, PNG nor BMP (type 0) FFmpeg passes over |
+| MP3 ID3v2 `APIC` (also AIFF and WAV with an ID3 chunk) | an attached picture for each, its kind as `comment` ("Cover (front)", "Cover (back)", "Other"...) |
+| FLAC `PICTURE` | the same |
+| Ogg Vorbis, Opus (Speex, FLAC, Theora) `METADATA_BLOCK_PICTURE` | the same |
+| WMA `WM/Picture`, APE tags' `Cover Art (Front)` | the same (not tried) |
+
+**Which is the cover**, where a file carries several (`cover::rank`): Matroska's `cover`, a picture said to
+be the front cover, or MP4's covr (which says nothing of itself, and is the cover); then `cover_land`,
+`small_cover`, `small_cover_land` -- the portrait cover first, the owner's word for a tile, then the large
+before the small, as 120 pixels made three times as large is a blur; then one named like a poster or of
+ID3's kind "Other"; then any other picture -- a back cover, an artist, a logo -- before none; of two alike,
+the first in the file. One that will not decode is passed for the next. A JPEG's EXIF orientation, which
+FFmpeg's decoder gives as a display matrix, is obeyed.
+
+**What is read.** Only what opening the file reads: the header, where covers are -- or an MP4's index at its
+end, which FFmpeg seeks to. A remote's file, through the storage service's address, is read by FFmpeg's
+`http:` asking a megabyte at a time while the header is read (`initial_request_size`), never "all the
+rest", and giving up after 20 s of silence. A server of the test's own counting what it sent: the cover of
+a 46 MB Matroska film cost 131 KB in one request; of a 69 MB MP4 with its index at the end, about 200 KB in
+two; a frame of a 46 MB film without a cover about half a megabyte in four. Through the real storage service
+(an rclone alias remote), the cover of a 46 MB film: rclone counted 885 KB. A song without a cover is known
+for one by its header alone: no frame is looked for in a file with no pictures of its own.
+
+**The storage service reads ahead.** rclone's VFS, which serves the storage service's `/dav/` (cache mode
+off), puts a read-ahead of `--buffer-size` (16 MiB by default) on every file it opens to read
+(`ReadFileHandle` ... `WithBuffer`), whatever part was asked for. A file smaller than that is read whole by
+it, a larger one as far as the read-ahead gets before the request ends: the ten files of the test folder
+(34.6 MB) had the service read 47.8 MB from the disk for their tiles, most of it for the two films without
+covers, whose frames take four requests each. That is the storage service's way with every remote read, as
+it was for the frames before; nothing of it is changed here. **The proper way** is the storage service not
+reading ahead for a request with a bounded range -- a VFS without the buffer for those, or the buffer
+turned down -- which is a decision about its reads for playing films too.
+
+**Also:** the scaler is told a JPEG's full-range format by its studio name and the range apart (`still.rs`,
+`studio`), as the sixteen-bit path already did: told it as it was, FFmpeg wrote "deprecated pixel format
+used" for every cover and every photograph.
+
+**Tried** on deepmagpie, with FFmpeg 9.1 (this branch's `third_party/ffmpeg/out`, copied from the 9.1 build
+of e1b0945): `cover.rs`'s eleven tests, which make their media with `/usr/bin/ffmpeg` in a folder of their
+own (`SPATIAND_TEST_FFMPEG` names another; with none they say so and try nothing) -- mkvtoolnix's four
+covers, the portrait one attached last and chosen; the landscape one before the small; a WebP and an
+octet-stream JPEG as attachment streams; a font alone, a frame; an MP4's and an M4A's covr; an MP3's front
+cover chosen over its back (and FFmpeg alone taking the back); FLAC, Opus and Vorbis pictures; a JPEG turned
+by its EXIF; a film without a cover, a frame, and a song without one, nothing; and the server counting bytes
+-- with all of spatiand-media's tests (85 passing, one slow one ignored as always), SpatiShelf's (60) and
+SpatiReel's (47, one new: a folder of this machine's films taking the shape of what comes). In the snapshot room, a folder of ten made with
+`/usr/bin/ffmpeg` -- Arrival.mkv with mkvtoolnix's four, Dune.mp4 with covr, Sintel.mkv with a WebP cover,
+Concert.mkv with only a font and Home Video.mp4 with nothing; an MP3 with a back and a front cover, a FLAC, an
+Opus and an M4A with theirs, and a plain MP3 -- looked at: SpatiShelf's tiles and list here and through a
+storage service of the test's own over an rclone alias remote, each the cover chosen (Arrival's portrait
+`cover.jpg`, the MP3's front), frames for the two without, the music mark for the plain song; SpatiReel's
+folder as posters, the two frames cut to the posters' shape. A song playing in SpatiReel could not be shown
+in that room -- without PipeWire, SpatiReel ends every song at once, a cover or none -- so its picture was
+taken by `examples/frame`, which decodes and draws as SpatiReel does. The Android type-check of
+spatiand-media, SpatiShelf and SpatiReel with their tests, against FFmpeg 9.1 for Android; and a type-check
+of the three for the Mac from deepmagpie (stand-in headers, nothing linked).
+
+**Not done:** the Deck, the Mac, the Beam Pro and the glasses; the owner's own films and songs, and a cloud
+or SMB remote; a Matroska file whose attachments mkvpropedit put at its end (FFmpeg reaches them through the
+SeekHead, as it does tags there: not tried, as no tool here writes one); WMA and APE pictures; an MP4 covr of
+type 0 and a JPEG XL cover (this FFmpeg has no decoder for it), which show no cover; a song whose only cover
+is an attachment stream (a WebP in an MKA) has it on its tile but not while it plays, as the player plays
+streams and an attachment is none.

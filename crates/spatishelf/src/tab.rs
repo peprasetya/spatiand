@@ -165,14 +165,17 @@ fn parse_time(text: &str) -> Option<i64> {
     Some(days * 86400 + h * 3600 + min * 60 + s - offset)
 }
 
-/// A small picture of a file, for its tile.
+/// A small picture of a file, for its tile. A film's or a song's is the cover it carries, and a
+/// film without one a frame of it (`spatiand_media::cover::tile`, SpatiReel's too); a song
+/// without one has none, and its tile is its kind's mark.
 fn picture(place: &Place, kind: Kind, size: u32, storage: &Mutex<Option<Storage>>) -> Option<(u32, u32, Vec<u8>)> {
     let shrink = |image: image::DynamicImage| {
         let small = image.thumbnail(size, size).to_rgba8();
         let (w, h) = small.dimensions();
         Some((w, h, small.into_raw()))
     };
-    let still = |source: &str| spatiand_media::still::grab(source, size).map(|s| (s.width, s.height, s.rgba));
+    let pixels = |still: spatiand_media::still::Still| (still.width, still.height, still.rgba);
+    let still = |source: &str| spatiand_media::still::grab(source, size).map(pixels);
     match (place, kind) {
         (Place::Local(path), Kind::Picture) => {
             let ending = Path::new(path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
@@ -189,7 +192,8 @@ fn picture(place: &Place, kind: Kind, size: u32, storage: &Mutex<Option<Storage>
             }
             shrink(image)
         }
-        (Place::Local(path), Kind::Film) => still(path),
+        // By the file's own name: one that is not UTF-8 is opened as it is.
+        (Place::Local(path), Kind::Film | Kind::Music) => spatiand_media::cover::tile_file(&proto::path_of(path), size).map(pixels),
         (Place::Remote(remote, path), Kind::Picture) => {
             let storage = storage.lock().unwrap().clone()?;
             let ending = Path::new(path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
@@ -199,9 +203,10 @@ fn picture(place: &Place, kind: Kind, size: u32, storage: &Mutex<Option<Storage>
             let bytes = storage.read(remote, path, 40 << 20).ok()?;
             shrink(image::load_from_memory(&bytes).ok()?)
         }
-        (Place::Remote(remote, path), Kind::Film) => {
+        // Through the storage service's address, read only as far as the cover (or the frame) is.
+        (Place::Remote(remote, path), Kind::Film | Kind::Music) => {
             let storage = storage.lock().unwrap().clone()?;
-            still(&storage.url(remote, path))
+            spatiand_media::cover::tile(&storage.url(remote, path), size).map(pixels)
         }
         _ => None,
     }
